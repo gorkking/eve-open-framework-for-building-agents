@@ -869,7 +869,7 @@ See the [Kapso adapter documentation](https://chat-sdk.dev/adapters/vendor-offic
 npm install eve@latest chat @photon-ai/chat-adapter-imessage @chat-adapter/state-memory
 \`\`\`
 
-Scaffold and provision this integration with \`eve channels add imessage\`, or install it manually below. The in-memory state store is for local development. Use Redis or PostgreSQL in production. The adapter is vendor-official.`,
+Run \`eve channels add imessage\` to create a named Photon project through browser authorization or provide an existing project ID and secret, then register your phone and webhook and scaffold the channel for Vercel or another host. The generated channel sends read receipts when it accepts inbound messages. The in-memory state store is for local development. Use Redis or PostgreSQL in production. The adapter is vendor-official.`,
     quickStart: `Create \`agent/channels/imessage.ts\`:
 
 \`\`\`ts
@@ -902,7 +902,7 @@ export default channel;
 \`\`\`
 
 See the [Photon adapter documentation](https://chat-sdk.dev/adapters/vendor-official/photon) for all supported events and credentials.`,
-    configure: `Set \`IMESSAGE_PROJECT_ID\` and \`IMESSAGE_PROJECT_SECRET\`, then point Photon’s signed webhook at \`/eve/v1/imessage\`. Photon supports cloud and self-hosted deployments. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `The guided \`eve channels add imessage\` flow can create a named Photon project or use existing project credentials, and registers the signed webhook automatically. On Vercel it stores Photon project credentials in Vercel Connect; for another host it writes the three Photon values to \`.env.local\` and tells you which encrypted runtime variables to copy. For manual setup, set \`IMESSAGE_PROJECT_ID\`, \`IMESSAGE_PROJECT_SECRET\`, and \`IMESSAGE_WEBHOOK_SECRET\`, then point Photon’s signed webhook at \`/eve/v1/imessage\`. Photon supports cloud and self-hosted deployments. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-dial": {
     logo: "dial",

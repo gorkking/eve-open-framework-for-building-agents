@@ -21,6 +21,8 @@ export interface PhotonProjectCredentials {
 export interface PhotonConnectorRef {
   id: string;
   uid: string;
+  /** Direct project URL used until Photon is available as a managed trigger connector. */
+  webhookUrl?: string;
 }
 
 /** Effects used to provision a Photon connector. */
@@ -77,6 +79,21 @@ function createData(credentials: PhotonProjectCredentials): string {
   return JSON.stringify({ values: [{ value: encodePhotonConnectCredential(credentials) }] });
 }
 
+function parseProjectDomain(stdout: string): string | undefined {
+  try {
+    const value: unknown = JSON.parse(stdout);
+    if (!isRecord(value) || !Array.isArray(value["domains"])) return undefined;
+    const domain = value["domains"].find(
+      (candidate) => isRecord(candidate) && typeof candidate["name"] === "string",
+    );
+    return isRecord(domain) && typeof domain["name"] === "string"
+      ? `https://${domain["name"]}${PHOTON_TRIGGER_PATH}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function requireCreatedConnector(result: RunVercelCaptureResult): PhotonConnectorRef {
   if (!result.ok) throw new Error("Photon connector creation failed.");
   const connector = parseCreatedPhotonConnector(result.stdout);
@@ -87,8 +104,9 @@ function requireCreatedConnector(result: RunVercelCaptureResult): PhotonConnecto
 }
 
 /**
- * Creates a Photon API-key connector, then attaches the linked project and its
- * eve iMessage trigger destination. Secrets travel over stdin, never argv.
+ * Creates a Photon API-key connector and attaches the linked project. Photon
+ * webhooks go directly to the project's eve route until the managed Photon
+ * connector supports trigger forwarding. Secrets travel over stdin, never argv.
  */
 export async function provisionPhotonConnector(
   options: ProvisionPhotonConnectorOptions,
@@ -107,7 +125,6 @@ export async function provisionPhotonConnector(
         "@-",
         "--name",
         options.slug,
-        "--triggers",
         "-F",
         "json",
         "--scope",
@@ -125,7 +142,7 @@ export async function provisionPhotonConnector(
   options.signal?.throwIfAborted();
   const connector = requireCreatedConnector(result);
 
-  const attached = await withPhase(options.log, "Connecting Photon webhook...", () =>
+  const attached = await withPhase(options.log, "Connecting Photon credentials...", () =>
     deps.runVercel(
       [
         "connect",
@@ -135,9 +152,6 @@ export async function provisionPhotonConnector(
         options.project.projectId,
         "--environment",
         "production",
-        "--triggers",
-        "--trigger-path",
-        PHOTON_TRIGGER_PATH,
         "--yes",
         "--scope",
         options.project.orgId,
@@ -153,8 +167,29 @@ export async function provisionPhotonConnector(
   options.signal?.throwIfAborted();
   if (!attached) {
     throw new Error(
-      `Photon connector was created, but its webhook could not be attached. Run \`vercel connect attach ${connector.uid} --triggers --trigger-path ${PHOTON_TRIGGER_PATH}\`.`,
+      `Photon connector was created, but its credentials could not be attached. Run \`vercel connect attach ${connector.uid} --environment production --yes\`.`,
     );
   }
-  return connector;
+
+  const domains = await deps.runVercelCaptureStdout(
+    [
+      "api",
+      `/v9/projects/${options.project.projectId}/domains?teamId=${options.project.orgId}`,
+      "--scope",
+      options.project.orgId,
+    ],
+    {
+      cwd: options.projectRoot,
+      nonInteractive: true,
+      onOutput,
+      signal: options.signal,
+    },
+  );
+  const webhookUrl = domains.ok ? parseProjectDomain(domains.stdout) : undefined;
+  if (webhookUrl === undefined) {
+    throw new Error(
+      "Photon credentials were connected, but eve could not resolve the project URL.",
+    );
+  }
+  return { ...connector, webhookUrl };
 }

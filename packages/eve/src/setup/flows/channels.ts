@@ -1,4 +1,4 @@
-import type { ChannelKind } from "#setup/scaffold/index.js";
+import { deriveSlackConnectorSlug, type ChannelKind } from "#setup/scaffold/index.js";
 import { toErrorMessage } from "#shared/errors.js";
 
 import { interactiveAsker } from "../ask.js";
@@ -230,6 +230,7 @@ export async function runChannelsFlow(input: {
   );
   let state: SetupState = {
     ...createDefaultSetupState(),
+    agentName: await deriveSlackConnectorSlug(appRoot),
     project: projectResolutionFromDeployment(deployment),
     projectPath: { kind: "resolved", inPlace: true, path: appRoot },
   };

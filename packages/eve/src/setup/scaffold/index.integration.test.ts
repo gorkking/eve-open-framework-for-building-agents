@@ -174,7 +174,7 @@ describe("ensureChannel", () => {
     expect(result.action).toBe("created");
     const source = await readFile(join(projectRoot, "agent/channels/imessage.ts"), "utf8");
     expect(source).toContain('getToken("spectrum.photon.codes/imessage0"');
-    expect(source).toContain("credentials: photonCredentials");
+    expect(source).toContain("await photonCredentials()");
     const packageJson = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
     };
@@ -184,6 +184,34 @@ describe("ensureChannel", () => {
       "@vercel/connect": "0.0.0-connect",
       chat: "0.0.0-chat",
     });
+  });
+
+  test("writes a portable Photon iMessage channel and local secrets", async () => {
+    const projectRoot = await createTempDir();
+    await mkdir(join(projectRoot, "agent"), { recursive: true });
+    await writeFile(join(projectRoot, "package.json"), "{}\n", "utf8");
+
+    await ensureChannel({
+      projectRoot,
+      kind: "imessage",
+      imessageCredentials: "environment",
+      imessageEnvironment: {
+        projectId: "photon-project",
+        projectSecret: "photon-secret",
+        webhookSecret: "webhook-secret",
+      },
+      chatPackageVersion: "0.0.0-chat",
+      chatStateMemoryPackageVersion: "0.0.0-state",
+      photonAdapterPackageVersion: "0.0.0-photon",
+    });
+
+    const source = await readFile(join(projectRoot, "agent/channels/imessage.ts"), "utf8");
+    expect(source).toContain("process.env.IMESSAGE_PROJECT_ID");
+    expect(source).not.toContain("@vercel/connect");
+    expect(source).toContain("imessage.markRead(thread.id, message.id)");
+    await expect(readFile(join(projectRoot, ".env.local"), "utf8")).resolves.toContain(
+      "IMESSAGE_PROJECT_SECRET=photon-secret",
+    );
   });
 
   test("requires a Photon connector UID for iMessage", async () => {
@@ -548,7 +576,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      `packages:\n  - packages/*\nallowBuilds:\n  esbuild: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - packages/*\nallowBuilds:\n  esbuild: true\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -571,7 +599,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      `${existingPolicy}\n${RELEASE_AGE_POLICY}`,
+      `allowBuilds:\n  sharp: true\n  protobufjs: true\n\n${RELEASE_AGE_POLICY}`,
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -586,7 +614,7 @@ describe("ensureChannel", () => {
     );
     await writeFile(
       pnpmWorkspacePath,
-      "minimumReleaseAgeExclude:\n  - react\nallowBuilds:\n  sharp: false\n",
+      "minimumReleaseAgeExclude:\n  - react\nallowBuilds:\n  protobufjs: true\n  sharp: false\n",
       "utf8",
     );
 
@@ -597,7 +625,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\nallowBuilds:\n  sharp: false\n',
+      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\nallowBuilds:\n  protobufjs: true\n  sharp: false\n',
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -631,7 +659,7 @@ describe("ensureChannel", () => {
     expect(result.filesWritten).not.toContain(join(projectRoot, "pnpm-workspace.yaml"));
     await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(false);
     await expect(readFile(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
-      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
@@ -1028,7 +1056,7 @@ describe("scaffoldBaseProject", () => {
 
     await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(false);
     await expect(readFile(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
-      `packages:\n  - apps/*\n\nallowBuilds:\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - apps/*\n\nallowBuilds:\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
@@ -1071,7 +1099,7 @@ describe("scaffoldBaseProject", () => {
 
     await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(false);
     await expect(readFile(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
-      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),

@@ -103,7 +103,7 @@ type SlackChannelMutationResult = SlackChannelWrittenResult | SlackChannelSkippe
 interface IMessageChannelWrittenResult {
   kind: "imessage";
   action: "created" | "overwritten";
-  filesWritten: [string];
+  filesWritten: string[];
   filesOverwritten?: [string];
   filesSkipped: [];
   packageJsonUpdated: PackageJsonMutation[];
@@ -410,14 +410,10 @@ export async function deriveSlackConnectorSlug(
   return normalizeSlackConnectorSlug(dir || DEFAULT_SLACK_CONNECTOR_SLUG);
 }
 
-function buildIMessageTemplate(connectorUid: string): string {
-  return `import { createMemoryState } from "@chat-adapter/state-memory";
-import { createiMessageAdapter } from "@photon-ai/chat-adapter-imessage";
-import { getToken } from "@vercel/connect";
-import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "eve/channels/chat-sdk";
-
-async function photonCredentials() {
+function buildIMessageTemplate(connectorUid?: string): string {
+  const connectImport = connectorUid ? 'import { getToken } from "@vercel/connect";\n' : "";
+  const credentials = connectorUid
+    ? `async function photonCredentials() {
   const credential = await getToken(${JSON.stringify(connectorUid)}, {
     subject: { type: "app" },
   });
@@ -427,26 +423,42 @@ async function photonCredentials() {
     projectId: credential.slice(0, separator),
     projectSecret: credential.slice(separator + 1),
   };
-}
+}`
+    : `async function photonCredentials() {
+  const projectId = process.env.IMESSAGE_PROJECT_ID;
+  const projectSecret = process.env.IMESSAGE_PROJECT_SECRET;
+  if (!projectId || !projectSecret) throw new Error("Photon project credentials are required.");
+  return { projectId, projectSecret };
+}`;
+  return `import { createMemoryState } from "@chat-adapter/state-memory";
+import { createiMessageAdapter } from "@photon-ai/chat-adapter-imessage";
+${connectImport}import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "eve/channels/chat-sdk";
+
+${credentials}
+
+const { projectId, projectSecret } = await photonCredentials();
+const imessage = createiMessageAdapter({
+  projectId,
+  projectSecret,
+  webhookSecret: process.env.IMESSAGE_WEBHOOK_SECRET,
+});
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "eve",
-  adapters: {
-    imessage: createiMessageAdapter({
-      credentials: photonCredentials,
-      webhookSecret: process.env.IMESSAGE_WEBHOOK_SECRET,
-    }),
-  },
+  adapters: { imessage },
   state: createMemoryState(),
   streaming: false,
 });
 
 bot.onNewMention(async (thread: Thread, message: Message) => {
+  await imessage.markRead(thread.id, message.id);
   await thread.subscribe();
   await send(message.text, { thread });
 });
 
 bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await imessage.markRead(thread.id, message.id);
   await send(message.text, { thread });
 });
 
@@ -537,8 +549,16 @@ export interface EnsureChannelOptions {
   slackConnectorSlug?: SlackConnectorSlug;
   /** Credential source rendered into a Slack channel. Defaults to Vercel Connect. */
   slackCredentials?: "vercel-connect" | "environment";
-  /** Exact Photon API-key connector UID used by the iMessage channel. */
+  /** Exact Photon connector UID, or environment credentials when omitted. */
   photonConnectorUid?: string;
+  /** Credential source rendered into an iMessage channel. Defaults to Vercel Connect. */
+  imessageCredentials?: "vercel-connect" | "environment";
+  /** Portable Photon values written to .env.local after managed provisioning. */
+  imessageEnvironment?: {
+    projectId: string;
+    projectSecret: string;
+    webhookSecret: string;
+  };
   connectPackageVersion?: string;
   chatPackageVersion?: string;
   chatStateMemoryPackageVersion?: string;
@@ -681,19 +701,27 @@ async function ensureIMessageChannel(
       packageJsonUpdated: [],
     };
   }
-  if (!options.photonConnectorUid) {
+  const credentials = options.imessageCredentials ?? "vercel-connect";
+  if (credentials === "vercel-connect" && !options.photonConnectorUid) {
     throw new Error("Photon connector UID is required to scaffold the iMessage channel.");
   }
-
   const packageJsonPath = join(options.projectRoot, "package.json");
+  const packageManagerConfiguration = await applyPackageManagerWorkspaceConfiguration({
+    packageManager: options.packageManager ?? "pnpm",
+    projectRoot: options.projectRoot,
+  });
   const dependencies = [
-    [
-      CONNECT_PACKAGE_NAME,
-      resolveVersionToken(
-        "connectPackageVersion",
-        options.connectPackageVersion ?? DEFAULT_CONNECT_PACKAGE_VERSION,
-      ),
-    ],
+    ...(credentials === "vercel-connect"
+      ? ([
+          [
+            CONNECT_PACKAGE_NAME,
+            resolveVersionToken(
+              "connectPackageVersion",
+              options.connectPackageVersion ?? DEFAULT_CONNECT_PACKAGE_VERSION,
+            ),
+          ],
+        ] as const)
+      : []),
     [
       CHAT_PACKAGE_NAME,
       resolveVersionToken(
@@ -721,13 +749,26 @@ async function ensureIMessageChannel(
     packageJsonUpdated.push(...(await ensurePackageDependency(packageJsonPath, name, version)));
   }
 
-  await writeTextFile(filePath, buildIMessageTemplate(options.photonConnectorUid), {
-    force: options.force,
-  });
+  const filesWritten = [filePath, ...packageManagerConfiguration.filesWritten];
+  if (options.imessageEnvironment) {
+    const env = await appendEnv(join(options.projectRoot, ".env.local"), {
+      IMESSAGE_PROJECT_ID: options.imessageEnvironment.projectId,
+      IMESSAGE_PROJECT_SECRET: options.imessageEnvironment.projectSecret,
+      IMESSAGE_WEBHOOK_SECRET: options.imessageEnvironment.webhookSecret,
+    });
+    if (env.written.length > 0) filesWritten.push(join(options.projectRoot, ".env.local"));
+  }
+  await writeTextFile(
+    filePath,
+    buildIMessageTemplate(
+      credentials === "vercel-connect" ? options.photonConnectorUid : undefined,
+    ),
+    { force: options.force },
+  );
   const result: IMessageChannelWrittenResult = {
     kind: "imessage",
     action: fileAlreadyExists ? "overwritten" : "created",
-    filesWritten: [filePath],
+    filesWritten,
     filesSkipped: [],
     packageJsonUpdated,
   };

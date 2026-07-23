@@ -174,6 +174,7 @@ describe("runChannelsFlow", () => {
           ...NO_REGISTRATIONS,
           webAppPresent: true,
           slackOwners: ["agent/channels/slack.ts"],
+          imessageOwners: ["agent/channels/imessage.ts"],
         })),
         addChannels: createAddChannelsDeps(),
       },

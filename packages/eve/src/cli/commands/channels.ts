@@ -1,8 +1,12 @@
-import { isEveProject, listAuthoredChannels, type ChannelKind } from "#setup/scaffold/index.js";
+import {
+  deriveSlackConnectorSlug,
+  isEveProject,
+  listAuthoredChannels,
+  type ChannelKind,
+} from "#setup/scaffold/index.js";
 
 import { interactiveAsker } from "#setup/ask.js";
 import type { AddChannelsDeps } from "#setup/boxes/add-channels.js";
-import { configurePhotonWebhook } from "#setup/boxes/configure-photon-webhook.js";
 import type { DeployProjectDeps } from "#setup/boxes/deploy-project.js";
 import {
   channelSetupEnvironment,
@@ -104,6 +108,7 @@ async function runAddChannelsFlow(
   // fallback instead of the directory basename, as the dissolved engine did.
   const state: SetupState = {
     ...createDefaultSetupState(),
+    agentName: await deriveSlackConnectorSlug(appRoot),
     project: projectResolutionFromDeployment(deployment),
     projectPath: { kind: "resolved", inPlace: true, path: appRoot },
   };
@@ -138,7 +143,6 @@ async function runAddChannelsFlow(
         assertCanAddSelectedChannels(selectedChannels, await inspectRegistrations());
       },
     }),
-
   ];
 
   const sink: OutputSink = { write: (line) => prompter.log.message(line) };
@@ -161,20 +165,10 @@ async function runAddChannelsFlow(
     finalState = result.state;
   }
 
-  if (finalState.channels.includes("imessage") && !finalState.photonWebhookConfigured) {
-    const configured = await runInteractive(
-      [configurePhotonWebhook({ asker: interactiveAsker(prompter), prompter })],
-      finalState,
-      sink,
-      { snapshot: snapshotSetupState },
-    );
-    if (configured.kind === "cancelled") return;
-    finalState = configured.state;
-  }
-
   const addedVercelChannel =
     finalState.slackbotAttached ||
-    (environment.vercel.kind === "available" && finalState.channels.includes("web"));
+    (environment.vercel.kind === "available" &&
+      (finalState.channels.includes("imessage") || finalState.channels.includes("web")));
   if (addedVercelChannel) {
     finalState = await deployChannelSetup({
       state: finalState,

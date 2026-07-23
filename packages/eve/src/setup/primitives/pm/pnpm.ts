@@ -35,6 +35,7 @@ export const PNPM_WORKSPACE_CONTENT = [
   "minimumReleaseAgeExclude:",
   ...RELEASE_AGE_EXCLUSIONS.map(formatReleaseAgeExclusion),
   "allowBuilds:",
+  "  protobufjs: true",
   "  sharp: false",
   "# Compatibility for eve releases with an incomplete runtime manifest.",
   "packageExtensions:",
@@ -44,7 +45,7 @@ export const PNPM_WORKSPACE_CONTENT = [
   "",
 ].join("\n");
 
-const SHARP_BUILD_POLICY = "  sharp: false";
+const BUILD_POLICIES = ["  protobufjs: true", "  sharp: false"] as const;
 
 function releaseAgeExclusionName(line: string): string {
   return line
@@ -63,27 +64,27 @@ function findYamlBlockEnd(lines: readonly string[], startIndex: number): number 
   return blockEnd;
 }
 
-function withSharpBuildPolicy(source: string): string {
+function withBuildPolicies(source: string): string {
   const normalized = source.endsWith("\n") ? source : `${source}\n`;
   const lines = normalized.split("\n");
   const allowBuildsIndex = lines.findIndex((line) => line === "allowBuilds:");
 
   if (allowBuildsIndex < 0) {
     const prefix = normalized.trim().length === 0 ? "" : `${normalized}\n`;
-    return `${prefix}allowBuilds:\n${SHARP_BUILD_POLICY}\n`;
+    return `${prefix}allowBuilds:\n${BUILD_POLICIES.join("\n")}\n`;
   }
 
   const blockEnd = findYamlBlockEnd(lines, allowBuildsIndex);
   const allowBuildsBlock = lines.slice(allowBuildsIndex + 1, blockEnd);
-  if (allowBuildsBlock.some((line) => /^\s+sharp:/.test(line))) {
-    return source;
-  }
+  const missing = BUILD_POLICIES.filter((policy) => {
+    const name = policy.trim().split(":", 1)[0];
+    return !allowBuildsBlock.some((line) => line.trim().startsWith(`${name}:`));
+  });
+  if (missing.length === 0) return source;
 
   let insertAt = blockEnd;
-  while (insertAt > allowBuildsIndex + 1 && lines[insertAt - 1] === "") {
-    insertAt -= 1;
-  }
-  lines.splice(insertAt, 0, SHARP_BUILD_POLICY);
+  while (insertAt > allowBuildsIndex + 1 && lines[insertAt - 1] === "") insertAt -= 1;
+  lines.splice(insertAt, 0, ...missing);
   return lines.join("\n");
 }
 
@@ -123,7 +124,7 @@ async function ensurePnpmWorkspacePolicy(filePath: string): Promise<"skipped" | 
   }
 
   const current = await readFile(filePath, "utf8");
-  const next = withReleaseAgeExclusions(withSharpBuildPolicy(current));
+  const next = withReleaseAgeExclusions(withBuildPolicies(current));
   if (next === current) {
     return "skipped";
   }

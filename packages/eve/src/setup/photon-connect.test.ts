@@ -4,7 +4,6 @@ import type { ChannelSetupLog } from "./cli/index.js";
 import {
   encodePhotonConnectCredential,
   parseCreatedPhotonConnector,
-  PHOTON_TRIGGER_PATH,
   provisionPhotonConnector,
 } from "./photon-connect.js";
 
@@ -45,14 +44,20 @@ describe("Photon Connect provisioning", () => {
   });
 
   test("creates with stdin credentials and attaches the eve webhook", async () => {
-    const runVercelCaptureStdout = vi.fn(async () => ({
-      ok: true as const,
-      stdout: JSON.stringify({
-        id: "scl_photon",
-        uid: "spectrum.photon.codes/imessage0",
-        supportedSubjectTypes: ["app"],
-      }),
-    }));
+    const runVercelCaptureStdout = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true as const,
+        stdout: JSON.stringify({
+          id: "scl_photon",
+          uid: "spectrum.photon.codes/imessage0",
+          supportedSubjectTypes: ["app"],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        stdout: JSON.stringify({ domains: [{ name: "imessage0.vercel.app" }] }),
+      });
     const runVercel = vi.fn(async () => true);
 
     await expect(
@@ -64,7 +69,11 @@ describe("Photon Connect provisioning", () => {
         slug: "imessage0",
         deps: { runVercel, runVercelCaptureStdout },
       }),
-    ).resolves.toEqual({ id: "scl_photon", uid: "spectrum.photon.codes/imessage0" });
+    ).resolves.toEqual({
+      id: "scl_photon",
+      uid: "spectrum.photon.codes/imessage0",
+      webhookUrl: "https://imessage0.vercel.app/eve/v1/imessage",
+    });
 
     expect(runVercelCaptureStdout).toHaveBeenCalledWith(
       [
@@ -77,7 +86,6 @@ describe("Photon Connect provisioning", () => {
         "@-",
         "--name",
         "imessage0",
-        "--triggers",
         "-F",
         "json",
         "--scope",
@@ -98,13 +106,15 @@ describe("Photon Connect provisioning", () => {
         "prj_123",
         "--environment",
         "production",
-        "--triggers",
-        "--trigger-path",
-        PHOTON_TRIGGER_PATH,
         "--yes",
         "--scope",
         "team_123",
       ],
+      expect.objectContaining({ cwd: "/tmp/imessage0", nonInteractive: true }),
+    );
+    expect(runVercelCaptureStdout).toHaveBeenNthCalledWith(
+      2,
+      ["api", "/v9/projects/prj_123/domains?teamId=team_123", "--scope", "team_123"],
       expect.objectContaining({ cwd: "/tmp/imessage0", nonInteractive: true }),
     );
   });

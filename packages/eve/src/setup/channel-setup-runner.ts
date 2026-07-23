@@ -9,6 +9,10 @@ export async function runChannelSetup(
   context: ChannelSetupContext,
   options: {
     configureVercelServices?: boolean;
+    imessageCredentials?: "vercel-connect" | "environment";
+    imessageWebhookBaseUrl?: string;
+    photonProject?: "create" | { projectId: string; projectSecret: string };
+    photonProjectName?: string;
     slackCredentials?: "vercel-connect" | "environment";
     ensureLinkedProject?: "interactive-vercel-link";
   },
@@ -20,6 +24,10 @@ export async function runChannelSetup(
     presetCreateSlackbot: context.presetCreateSlackbot,
     force: context.force,
     configureVercelServices: options.configureVercelServices,
+    imessageCredentials: options.imessageCredentials,
+    imessageWebhookBaseUrl: options.imessageWebhookBaseUrl,
+    photonProject: options.photonProject,
+    photonProjectName: options.photonProjectName,
     slackCredentials: options.slackCredentials,
     ensureLinkedProject: options.ensureLinkedProject,
     deps: context.deps,
