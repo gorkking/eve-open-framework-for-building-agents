@@ -2,6 +2,7 @@ import { isEveProject, listAuthoredChannels, type ChannelKind } from "#setup/sca
 
 import { interactiveAsker } from "#setup/ask.js";
 import type { AddChannelsDeps } from "#setup/boxes/add-channels.js";
+import { configurePhotonWebhook } from "#setup/boxes/configure-photon-webhook.js";
 import type { DeployProjectDeps } from "#setup/boxes/deploy-project.js";
 import {
   channelSetupEnvironment,
@@ -35,7 +36,7 @@ export interface CliLogger {
   log(message: string): void;
 }
 
-const KNOWN_CHANNEL_KINDS: readonly ChannelKind[] = ["slack", "web"];
+const KNOWN_CHANNEL_KINDS: readonly ChannelKind[] = ["imessage", "slack", "web"];
 
 function isChannelKind(value: string): value is ChannelKind {
   return KNOWN_CHANNEL_KINDS.includes(value as ChannelKind);
@@ -127,12 +128,17 @@ async function runAddChannelsFlow(
       presetChannels: kind === undefined ? undefined : [kind],
       disabledChannelReasons,
       validateSelection: async (selectedChannels) => {
-        if (!selectedChannels.includes("web") && !selectedChannels.includes("slack")) {
+        if (
+          !selectedChannels.includes("imessage") &&
+          !selectedChannels.includes("web") &&
+          !selectedChannels.includes("slack")
+        ) {
           return;
         }
         assertCanAddSelectedChannels(selectedChannels, await inspectRegistrations());
       },
     }),
+
   ];
 
   const sink: OutputSink = { write: (line) => prompter.log.message(line) };
@@ -153,6 +159,17 @@ async function runAddChannelsFlow(
     });
     if (result.kind === "cancelled") return;
     finalState = result.state;
+  }
+
+  if (finalState.channels.includes("imessage") && !finalState.photonWebhookConfigured) {
+    const configured = await runInteractive(
+      [configurePhotonWebhook({ asker: interactiveAsker(prompter), prompter })],
+      finalState,
+      sink,
+      { snapshot: snapshotSetupState },
+    );
+    if (configured.kind === "cancelled") return;
+    finalState = configured.state;
   }
 
   const addedVercelChannel =

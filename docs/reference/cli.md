@@ -20,7 +20,7 @@ The `eve` binary (`bin: eve`) runs from your app root, and every command first l
 | `eve link`                    | Link the directory to a Vercel project and pull AI Gateway credentials                                                                                |
 | `eve deploy`                  | Deploy the agent to Vercel production (links first if needed)                                                                                         |
 | `eve eval`                    | Run evals against the local app or a remote target                                                                                                    |
-| `eve channels add [kind]`     | Scaffold a channel interactively, or by kind (`slack` \| `web`)                                                                                       |
+| `eve channels add [kind]`     | Scaffold a channel interactively, or by kind (`imessage` \| `slack` \| `web`)                                                                         |
 | `eve channels list`           | List user-authored channels                                                                                                                           |
 | `eve extension init [target]` | Create a new extension package                                                                                                                        |
 | `eve extension build`         | Build the current package as an extension                                                                                                             |
@@ -240,7 +240,7 @@ See [Evals](../evals/overview) for authoring evals.
 eve channels add [kind] [-f] [-y]
 ```
 
-Scaffolds a channel into `agent/channels/`. With no `kind` it prompts interactively; pass a `kind` (`slack` \| `web`) to scaffold one directly. When the Vercel CLI has an authenticated session, eve scaffolds the Vercel-integrated variant and asks whether to deploy after setup. Without one, Slack setup asks whether to set up Vercel Connect or use portable credentials. The portable variant reads `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` and adds both names to `.env.example`.
+Scaffolds a channel into `agent/channels/`. With no `kind` it prompts interactively; pass a `kind` (`imessage` \| `slack` \| `web`) to scaffold one directly. When the Vercel CLI has an authenticated session, eve scaffolds the Vercel-integrated variant and asks whether to deploy after setup. Without one, Slack setup asks whether to set up Vercel Connect or use portable credentials. The portable variant reads `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` and adds both names to `.env.example`. iMessage setup currently uses Photon and stores its project credentials in Vercel Connect.
 
 | Flag          | Type | Default | Description                                               |
 | ------------- | ---- | ------- | --------------------------------------------------------- |

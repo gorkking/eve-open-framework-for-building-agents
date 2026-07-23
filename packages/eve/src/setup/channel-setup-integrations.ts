@@ -1,3 +1,4 @@
+import { IMESSAGE_CHANNEL_SETUP } from "./channel-setup-imessage.js";
 import type { ChannelSetupIntegration } from "./channel-setup-integration.js";
 import { SLACK_CHANNEL_SETUP } from "./channel-setup-slack.js";
 import { WEB_CHANNEL_SETUP } from "./channel-setup-web.js";
@@ -7,6 +8,7 @@ import type { ChannelKind } from "./scaffold/index.js";
 export const CHANNEL_SETUP_INTEGRATIONS: readonly ChannelSetupIntegration[] = [
   WEB_CHANNEL_SETUP,
   SLACK_CHANNEL_SETUP,
+  IMESSAGE_CHANNEL_SETUP,
 ];
 
 /** Resolves a channel setup integration by its filesystem-facing kind. */

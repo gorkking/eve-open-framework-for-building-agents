@@ -23,6 +23,8 @@ interface ChannelScaffold {
   label: string;
   /** Optional picker hint. */
   hint?: string;
+  /** Whether setup requires a linked Vercel project. */
+  requiresVercelProject?: boolean;
 }
 
 /**
@@ -34,6 +36,13 @@ interface ChannelScaffold {
  */
 const CHANNEL_SCAFFOLDS: readonly ChannelScaffold[] = [
   { slug: "eve", kind: "web", label: "Web Chat", hint: "Next.js app" },
+  {
+    slug: "chat-sdk-photon",
+    kind: "imessage",
+    label: "iMessage",
+    hint: "Connects Photon and deploys to Vercel",
+    requiresVercelProject: true,
+  },
   {
     slug: "slack",
     kind: "slack",
@@ -52,6 +61,8 @@ export interface ScaffoldableChannel {
   label: string;
   /** Optional picker hint. */
   hint?: string;
+  /** Whether setup requires a linked Vercel project. */
+  requiresVercelProject?: boolean;
 }
 
 function buildScaffoldableChannels(): ScaffoldableChannel[] {
@@ -75,6 +86,9 @@ function buildScaffoldableChannels(): ScaffoldableChannel[] {
     };
     if (scaffold.hint !== undefined) {
       channel.hint = scaffold.hint;
+    }
+    if (scaffold.requiresVercelProject !== undefined) {
+      channel.requiresVercelProject = scaffold.requiresVercelProject;
     }
     channels.push(channel);
   }

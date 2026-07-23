@@ -79,7 +79,9 @@ function channelAlreadyAdded(
   registrations: ExistingChannelRegistrations,
   channel: ChannelKind,
 ): boolean {
-  return channel === "web" ? registrations.webAppPresent : registrations.slackOwners.length > 0;
+  if (channel === "web") return registrations.webAppPresent;
+  if (channel === "imessage") return registrations.imessageOwners.length > 0;
+  return registrations.slackOwners.length > 0;
 }
 
 function appendChannel(channels: readonly ChannelKind[], channel: ChannelKind): ChannelKind[] {
