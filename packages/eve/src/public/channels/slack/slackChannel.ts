@@ -166,16 +166,8 @@ type SlackSessionFailedHandler = (
   channel: SlackEventContext,
 ) => void | Promise<void>;
 
-function defaultThreadParticipation(): SlackThreadParticipationResult<boolean> {
+function defaultThreadReplies(): SlackThreadReplyResult<boolean> {
   return { respond: true, state: true };
-}
-
-async function defaultSubscribedThreadMessage(
-  ctx: SlackInboundMessageContext,
-  message: SlackMessage,
-): Promise<SlackInboundResult> {
-  if (message.author?.isBot || !(await ctx.isSubscribed())) return null;
-  return { auth: defaultSlackAuth(message, ctx) };
 }
 
 function readSlackMessageDeliveryData(value: unknown): SlackMessageDeliveryData | undefined {
@@ -197,8 +189,8 @@ function readSlackMessageDeliveryData(value: unknown): SlackMessageDeliveryData 
  * step boundaries. Anything written here must round-trip through
  * `JSON.stringify` / `JSON.parse`.
  */
-/** Context for a durable Slack thread participation handler. */
-export interface SlackThreadParticipationContext<TState> extends SessionContext {
+/** Context for a durable Slack thread reply policy. */
+export interface SlackThreadReplyContext<TState> extends SessionContext {
   /** Durable user-defined state returned after the previous thread reply. */
   readonly state: TState;
   /** Whether this message explicitly mentions the installed bot. */
@@ -210,7 +202,7 @@ export interface SlackThreadParticipationContext<TState> extends SessionContext 
 }
 
 /** Response decision and durable user-defined state after one thread reply. */
-export interface SlackThreadParticipationResult<TState> {
+export interface SlackThreadReplyResult<TState> {
   /** Whether this message should dispatch an agent turn. */
   readonly respond: boolean;
   /** Optional short observability label. Do not include message content or secrets. */
@@ -219,15 +211,15 @@ export interface SlackThreadParticipationResult<TState> {
   readonly state: TState;
 }
 
-/** Custom durable Slack thread participation behavior. */
-export interface SlackThreadParticipation<TState> {
+/** Custom durable policy for deciding whether to respond to thread replies. */
+export interface SlackThreadReplies<TState> {
   /** JSON-serializable state assigned when a top-level message starts the thread. */
   readonly initialState: TState;
   /** Runs for each admitted reply after durable state is hydrated. */
-  handle(
+  onReply(
     message: SlackMessage,
-    ctx: SlackThreadParticipationContext<TState>,
-  ): SlackThreadParticipationResult<TState> | Promise<SlackThreadParticipationResult<TState>>;
+    ctx: SlackThreadReplyContext<TState>,
+  ): SlackThreadReplyResult<TState> | Promise<SlackThreadReplyResult<TState>>;
 }
 
 interface SlackMessageDeliveryData {
@@ -237,8 +229,8 @@ interface SlackMessageDeliveryData {
 }
 
 export interface SlackChannelState {
-  /** User-defined durable state for thread participation. */
-  participationState?: unknown;
+  /** User-defined durable state for thread reply policy. */
+  threadReplyState?: unknown;
   /** Slack channel id seeded by the inbound mention. */
   channelId: string | null;
   /** Slack thread root ts. */
@@ -424,11 +416,6 @@ export interface SlackInboundMessageContext extends SlackContext {
    * `"no_active_turn"` are successful outcomes.
    */
   cancel(options?: SlackCancelOptions): Promise<CancelTurnResult>;
-  /**
-   * Returns whether this message belongs to a thread with an active eve session.
-   * This webhook-side lookup does not read the durable subscription state.
-   */
-  isSubscribed(): Promise<boolean>;
   /** Returns whether the inbound event explicitly mentions this bot. */
   isBotMentioned(): boolean;
   /**
@@ -561,7 +548,7 @@ export interface SlackChannelInternalEvents extends Omit<
   readonly "authorization.required"?: SlackEventHandler<"authorization.required">;
 }
 
-export interface SlackChannelConfig<TParticipationState = never> {
+export interface SlackChannelConfig<TThreadReplyState = never> {
   readonly credentials?: SlackChannelCredentials;
   readonly botName?: string;
 
@@ -586,13 +573,13 @@ export interface SlackChannelConfig<TParticipationState = never> {
   readonly threadContext?: LoadThreadContextMessagesOptions;
 
   /**
-   * Participates in replies to threads that have an eve session. Pass `true`
-   * to respond to every admitted human reply, or provide user-defined durable
-   * state and a handler that decides whether to respond. The handler runs for
-   * thread replies after durable session and Slack channel state are hydrated;
-   * top-level messages bypass it and initialize the configured state.
+   * Responds to replies in threads with an active eve session. Pass `true` to
+   * respond to every admitted human reply, or provide durable user-defined
+   * state and an `onReply` policy that decides whether to respond. The policy
+   * runs after Slack channel state and `defineState` are hydrated; top-level
+   * messages bypass it and initialize the configured state.
    */
-  readonly threadParticipation?: true | SlackThreadParticipation<TParticipationState>;
+  readonly threadReplies?: true | SlackThreadReplies<TThreadReplyState>;
 
   /**
    * Handles human-authored Slack messages. Specialized `onAppMention` and
@@ -743,8 +730,8 @@ function defineSlackChannel(
  * fallback ahead of unsupplied mention and DM defaults; otherwise unsupplied
  * fields keep their defaults.
  */
-export function slackChannel<TParticipationState = never>(
-  config: SlackChannelConfig<TParticipationState> = {},
+export function slackChannel<TThreadReplyState = never>(
+  config: SlackChannelConfig<TThreadReplyState> = {},
 ): SlackChannel {
   const uploadPolicy = mergeUploadPolicy(config.uploadPolicy);
   const slackFetchFile = createSlackFetchFile({ botToken: config.credentials?.botToken });
@@ -781,10 +768,10 @@ export function slackChannel<TParticipationState = never>(
       pendingToolCallMessage: null,
       lastReasoningTypingAtMs: null,
       lastReasoningTypingStatus: null,
-      participationState:
-        typeof config.threadParticipation === "object"
-          ? structuredClone(config.threadParticipation.initialState)
-          : config.threadParticipation === true
+      threadReplyState:
+        typeof config.threadReplies === "object"
+          ? structuredClone(config.threadReplies.initialState)
+          : config.threadReplies === true
             ? true
             : undefined,
       pendingAuthMessageTs: {},
@@ -793,42 +780,40 @@ export function slackChannel<TParticipationState = never>(
       const delivery = readSlackMessageDeliveryData(payload.channelData);
       if (delivery === undefined) return defaultDeliverResult(payload);
       if (delivery.message.ts === delivery.message.threadTs) {
-        if (typeof config.threadParticipation === "object") {
-          adapterCtx.state.participationState = structuredClone(
-            config.threadParticipation.initialState,
-          );
+        if (typeof config.threadReplies === "object") {
+          adapterCtx.state.threadReplyState = structuredClone(config.threadReplies.initialState);
         }
         return defaultDeliverResult(payload);
       }
 
       const sessionCtx = buildCallbackContext();
       const slackCtx = adapterCtx as typeof adapterCtx & SlackChannelContext;
-      const participation =
-        typeof config.threadParticipation === "object"
-          ? await config.threadParticipation.handle(delivery.message, {
+      const reply =
+        typeof config.threadReplies === "object"
+          ? await config.threadReplies.onReply(delivery.message, {
               ...sessionCtx,
               isBotMentioned: delivery.isBotMentioned,
               slack: slackCtx.slack,
-              state: adapterCtx.state.participationState as TParticipationState,
+              state: adapterCtx.state.threadReplyState as TThreadReplyState,
               thread: slackCtx.thread,
             })
-          : defaultThreadParticipation();
-      if (typeof participation?.respond !== "boolean" || !("state" in participation)) {
+          : defaultThreadReplies();
+      if (typeof reply?.respond !== "boolean" || !("state" in reply)) {
         throw new Error(
-          "slackChannel().threadParticipation.handle must return `respond` and `state` fields.",
+          "slackChannel().threadReplies.onReply must return `respond` and `state` fields.",
         );
       }
-      adapterCtx.state.participationState = participation.state;
-      if (!participation.respond) {
-        log.info("Slack thread message skipped by thread participation", {
+      adapterCtx.state.threadReplyState = reply.state;
+      if (!reply.respond) {
+        log.info("Slack thread message skipped by thread reply policy", {
           channelId: delivery.message.channelId,
           messageTs: delivery.message.ts,
-          reason: participation.reason,
+          reason: reply.reason,
           sessionId: sessionCtx.session.id,
           threadTs: delivery.message.threadTs,
         });
       }
-      return participation.respond ? defaultDeliverResult(payload) : undefined;
+      return reply.respond ? defaultDeliverResult(payload) : undefined;
     },
     fetchFile: slackFetchFile,
     metadata(state): SlackInstrumentationMetadata {
@@ -1066,10 +1051,7 @@ async function handleEventPost(input: {
     }
   }
 
-  if (
-    dispatch === null &&
-    (config.onMessage !== undefined || config.threadParticipation !== undefined)
-  ) {
+  if (dispatch === null && (config.onMessage !== undefined || config.threadReplies !== undefined)) {
     const message = parseMessageEvent(envelope);
     if (message !== null && !isSelfAuthoredSlackMessage({ appId, botUserId }, message)) {
       // Slack also emits message.channels for an app mention. The app_mention
@@ -1081,7 +1063,7 @@ async function handleEventPost(input: {
             botUserId,
             cancel: input.cancel,
             credentials: config.credentials,
-            handler: config.onMessage ?? defaultSubscribedThreadMessage,
+            handler: config.onMessage,
             kind: "channel_message",
             message,
             resolveActiveSession: input.resolveActiveSession,
@@ -1149,7 +1131,7 @@ async function dispatchSlackMessage(input: {
   readonly botUserId: string | undefined;
   readonly cancel: CancelFn;
   readonly credentials: SlackChannelCredentials | undefined;
-  readonly handler: NonNullable<SlackChannelConfig<unknown>["onMessage"]>;
+  readonly handler?: SlackChannelConfig<unknown>["onMessage"];
   readonly kind: "app_mention" | "channel_message" | "direct_message";
   readonly message: SlackMessage;
   readonly resolveActiveSession: (options: {
@@ -1179,8 +1161,6 @@ async function dispatchSlackMessage(input: {
         turnId: options.turnId,
       }),
     isBotMentioned: () => isBotMentioned,
-    isSubscribed: async () =>
-      (await input.resolveActiveSession({ continuationToken })) !== undefined,
     reset: (options = {}) =>
       input.reset({
         continuationToken,
@@ -1190,14 +1170,24 @@ async function dispatchSlackMessage(input: {
     thread,
   };
 
-  let result;
-  try {
-    result = await input.handler(ctx, input.message);
-  } catch (error) {
-    logError(log, `${input.kind} handler failed`, error, {
-      channelId: input.message.channelId,
-    });
-    return;
+  let result: SlackInboundResult | undefined;
+  if (input.handler === undefined) {
+    if (
+      input.message.author?.isBot ||
+      (await input.resolveActiveSession({ continuationToken })) === undefined
+    ) {
+      return;
+    }
+    result = { auth: defaultSlackAuth(input.message, ctx) };
+  } else {
+    try {
+      result = await input.handler(ctx, input.message);
+    } catch (error) {
+      logError(log, `${input.kind} handler failed`, error, {
+        channelId: input.message.channelId,
+      });
+      return;
+    }
   }
   if (result === null || result === undefined) return;
 
