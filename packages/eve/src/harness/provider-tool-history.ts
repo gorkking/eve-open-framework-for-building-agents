@@ -83,6 +83,63 @@ export function normalizeProviderToolHistory(input: {
   };
 }
 
+/**
+ * Enforces the provider invariant that each `tool_use` id carries at most one
+ * `tool_result`.
+ *
+ * Provider SDKs can emit two results for one provider-executed call whose
+ * arguments failed to parse: the provider's own outcome inline in the
+ * assistant message, plus a separately synthesized tool-error message. Both
+ * reference the same id, and replaying them fails the next model call
+ * ("each tool_use must have a single result"). This keeps the first result
+ * for each id — the provider's authoritative inline outcome, which appears
+ * before any synthesized follow-up — and drops later duplicates, pruning any
+ * message left empty.
+ */
+export function dedupeToolResultsByCallId(messages: readonly ModelMessage[]): {
+  readonly messages: ModelMessage[];
+  readonly droppedCallIds: readonly string[];
+} {
+  const seen = new Set<string>();
+  const droppedCallIds: string[] = [];
+  const deduped: ModelMessage[] = [];
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      deduped.push(message);
+      continue;
+    }
+
+    let dropped = false;
+    const content = (message.content as { type: string; toolCallId?: string }[]).filter((part) => {
+      if (
+        (part.type !== "tool-result" && part.type !== "tool-error") ||
+        part.toolCallId === undefined
+      ) {
+        return true;
+      }
+      if (seen.has(part.toolCallId)) {
+        droppedCallIds.push(part.toolCallId);
+        dropped = true;
+        return false;
+      }
+      seen.add(part.toolCallId);
+      return true;
+    });
+
+    if (!dropped) {
+      deduped.push(message);
+      continue;
+    }
+    if (content.length === 0) {
+      continue;
+    }
+    deduped.push({ ...message, content } as ModelMessage);
+  }
+
+  return { messages: deduped, droppedCallIds };
+}
+
 function findUnmarkedProviderToolCalls(input: {
   readonly messages: readonly ModelMessage[];
   readonly providerExecutedOutcomeIds: ReadonlySet<string>;

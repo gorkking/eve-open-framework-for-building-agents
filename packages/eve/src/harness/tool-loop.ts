@@ -117,7 +117,10 @@ import {
 } from "#harness/stale-input-responses.js";
 import { getInstrumentationConfig } from "#harness/instrumentation-config.js";
 import { normalizeUserContent, resolveAssistantStepText } from "#harness/messages.js";
-import { normalizeProviderToolHistory } from "#harness/provider-tool-history.js";
+import {
+  dedupeToolResultsByCallId,
+  normalizeProviderToolHistory,
+} from "#harness/provider-tool-history.js";
 import {
   type AuthorizationSignal,
   isAuthorizationSignal,
@@ -1834,7 +1837,13 @@ async function handleStepResult(input: {
     messages: rawResponseMessages,
     providerExecutedOutcomeIds,
   });
-  const responseMessages = normalizedProviderHistory.messages;
+  const deduped = dedupeToolResultsByCallId(normalizedProviderHistory.messages);
+  if (deduped.droppedCallIds.length > 0) {
+    log.warn("dropped duplicate tool results before persisting history", {
+      callIds: deduped.droppedCallIds,
+    });
+  }
+  const responseMessages = deduped.messages;
 
   const baseSession: HarnessSession = {
     ...session,
