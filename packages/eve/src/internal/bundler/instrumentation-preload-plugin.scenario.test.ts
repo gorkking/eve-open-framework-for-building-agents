@@ -1,15 +1,12 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
 import { buildWithNitroRolldown } from "#internal/bundler/nitro-rolldown.js";
-import {
-  createInstrumentationPreloadPlugin,
-  INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME,
-} from "#internal/bundler/instrumentation-preload-plugin.js";
+import { createInstrumentationPreloadPlugin } from "#internal/bundler/instrumentation-preload-plugin.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 
 const execFileAsync = promisify(execFile);
@@ -86,19 +83,5 @@ describe("instrumentation preload (bundled)", () => {
     );
 
     expect(JSON.parse(stdout.trim())).toEqual(["instrumentation", "external:true", "entry-body"]);
-  });
-
-  it("imports the preload chunk on the entry's first line", async () => {
-    const directory = await createScratchDirectory("eve-instrumentation-preload-entry-");
-    const outDir = await bundleWithPreload(directory);
-
-    const { stdout } = await execFileAsync(process.execPath, [
-      "-e",
-      `process.stdout.write(require("node:fs").readFileSync(${JSON.stringify(
-        join(outDir, "index.mjs"),
-      )}, "utf8"))`,
-    ]);
-
-    expect(stdout.split("\n")[0]).toBe(`import "./${INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME}";`);
   });
 });

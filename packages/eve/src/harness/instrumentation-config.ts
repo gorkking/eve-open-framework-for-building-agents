@@ -6,17 +6,17 @@ import type {
 /**
  * Process-global store for the authored instrumentation config.
  *
- * Populated at server startup by the generated Nitro instrumentation plugin
- * when the user's `agent/instrumentation.ts` has a default export produced
- * by `defineInstrumentation()`. The harness reads from this at turn time
- * to decide whether telemetry is enabled and which settings to pass to the
+ * Populated at server startup by the generated instrumentation module when
+ * the user's `agent/instrumentation.ts` has a default export produced by
+ * `defineInstrumentation()`. The harness reads from this at turn time to
+ * decide whether telemetry is enabled and which settings to pass to the
  * AI SDK.
  *
- * Rooted on `globalThis` so the generated Nitro instrumentation plugin
- * (which Nitro keeps external by `file://` URL) and the bundled harness
- * chunk (which Nitro inlines via the package's `#harness/*` import alias)
- * share one source of truth, even though they resolve to two distinct ESM
- * module instances. See `context/key.ts` and
+ * Rooted on `globalThis` so every copy of that module shares one source of
+ * truth: the bundler emits it as the entry's instrumentation preload chunk
+ * and as a Nitro plugin (which Nitro keeps external by `file://` URL), and
+ * the bundled harness chunk (which Nitro inlines via the package's
+ * `#harness/*` import alias) is a third instance. See `context/key.ts` and
  * `runtime/sessions/runtime-session.ts` for the established pattern.
  */
 const INSTRUMENTATION_CONFIG_GLOBAL_KEY = Symbol.for("eve.harness-instrumentation-config");

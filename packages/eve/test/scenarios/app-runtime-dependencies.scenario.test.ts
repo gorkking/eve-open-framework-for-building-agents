@@ -895,8 +895,10 @@ describe("app runtime dependency tracing", () => {
           .map(async (entry) => {
             const source = await readFile(join(serverFunctionDirectory, entry), "utf8");
 
-            return source.includes("__fixtureInstrumentationDep") ||
-              source.includes("fixture-instrumentation-dep")
+            // Match the global the authored module assigns, not the bare
+            // package name: that also appears in the traced dependency's
+            // own chunk, which does not run the authored module.
+            return source.includes("__fixtureInstrumentationDep")
               ? join(serverFunctionDirectory, entry)
               : null;
           }),

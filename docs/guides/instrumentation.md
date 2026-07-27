@@ -46,23 +46,6 @@ Use the `setup` callback to register your OTel provider (for example `registerOT
 
 Any OTel-compatible backend works (Braintrust, Raindrop, Arize, Honeycomb, Datadog, Jaeger). Install the exporter package you need and configure it in the callback.
 
-### Auto-instrumenting a dependency
-
-Auto-instrumentations such as `@opentelemetry/auto-instrumentations-node` patch a package as the module loader hands it over, so the package has to reach the loader at runtime. eve runs `setup` before the rest of the server bundle, which covers the timing half of that requirement; the remaining half is yours: a package that eve bundles never passes through the loader at all and cannot be patched.
-
-Keep any package you want auto-instrumented external so it ships to `server/node_modules` and is imported at runtime:
-
-```ts title="agent/agent.ts"
-export default defineAgent({
-  model: "anthropic/claude-sonnet-5",
-  build: {
-    externalDependencies: ["pg"],
-  },
-});
-```
-
-Without this, an instrumentation registers cleanly and simply never reports spans for that package.
-
 Three more fields control what the AI SDK records inside those spans (see the AI SDK's [telemetry reference](https://ai-sdk.dev/docs/ai-sdk-core/telemetry)):
 
 - `recordInputs` records full message history on each step span (defaults to `true`). Set it to `false` if inputs contain sensitive content or you want to reduce span payload size.
@@ -74,6 +57,23 @@ For sensitive, regulated, or production data, set `recordInputs` and `recordOutp
 You are responsible for ensuring any observability or eval provider is approved for the data exported to it.
 
 The third configurable surface, [runtime context events](#runtime-context), attaches per-model-call values to these spans.
+
+### Auto-instrumenting a dependency
+
+Auto-instrumentations such as `@opentelemetry/auto-instrumentations-node` patch a package as the module loader hands it over, so the package has to reach the loader at runtime. eve runs `setup` before the rest of the server bundle, which covers the timing half of that requirement; the remaining half is yours: a package that eve bundles never passes through the loader at all and cannot be patched.
+
+Keep any package you want auto-instrumented external, so eve traces it into the hosted output and imports it at runtime:
+
+```ts title="agent/agent.ts"
+export default defineAgent({
+  model: "anthropic/claude-sonnet-5",
+  build: {
+    externalDependencies: ["pg"],
+  },
+});
+```
+
+Without this, an instrumentation registers cleanly and simply never reports spans for that package.
 
 ## Runtime context
 

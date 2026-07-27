@@ -13,10 +13,7 @@ interface EmittedChunk {
   readonly fileName: string;
 }
 
-/**
- * Minimal stand-in for the Rollup/Rolldown plugin context, recording the
- * emitted chunk so assertions can read it back the way the bundler would.
- */
+/** Minimal stand-in for the Rollup/Rolldown plugin context. */
 function createBundlerContext() {
   const emitted: EmittedChunk[] = [];
 
@@ -25,14 +22,6 @@ function createBundlerContext() {
     emitFile(file: EmittedChunk): string {
       emitted.push(file);
       return `ref-${emitted.length}`;
-    },
-    getFileName(referenceId: string): string {
-      const index = Number(referenceId.replace("ref-", "")) - 1;
-      const file = emitted[index];
-      if (file === undefined) {
-        throw new Error(`Unknown reference id ${referenceId}`);
-      }
-      return file.fileName;
     },
   };
 }
@@ -46,13 +35,10 @@ function renderEntry(input: {
   const context = createBundlerContext();
   plugin.buildStart.call(context);
 
-  return {
-    context,
-    result: plugin.renderChunk.call(context, input.code ?? "console.log('entry');", {
-      fileName: input.fileName,
-      isEntry: input.isEntry ?? true,
-    }),
-  };
+  return plugin.renderChunk.call(context, input.code ?? "console.log('entry');", {
+    fileName: input.fileName,
+    isEntry: input.isEntry ?? true,
+  });
 }
 
 describe("createInstrumentationPreloadPlugin", () => {
@@ -72,7 +58,7 @@ describe("createInstrumentationPreloadPlugin", () => {
   });
 
   it("imports the preload on the entry's first line, ahead of hoisted imports", () => {
-    const { result } = renderEntry({
+    const result = renderEntry({
       code: 'import { Pool } from "pg";\nconsole.log(Pool);',
       fileName: "index.mjs",
     });
@@ -84,14 +70,14 @@ describe("createInstrumentationPreloadPlugin", () => {
   });
 
   it("maps the shifted chunk back to its original line", () => {
-    const { result } = renderEntry({ fileName: "index.mjs" });
+    const result = renderEntry({ fileName: "index.mjs" });
 
     expect(result?.map.mappings.startsWith(";")).toBe(true);
     expect(result?.map.sources).toEqual(["index.mjs"]);
   });
 
   it("resolves the preload relative to a nested entry chunk", () => {
-    const { result } = renderEntry({ fileName: "functions/__server.func/index.mjs" });
+    const result = renderEntry({ fileName: "functions/__server.func/index.mjs" });
 
     expect(result?.code.split("\n")[0]).toBe(
       `import "../../${INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME}";`,
@@ -111,13 +97,13 @@ describe("createInstrumentationPreloadPlugin", () => {
   });
 
   it("leaves shared chunks alone", () => {
-    const { result } = renderEntry({ fileName: "_libs/drizzle-orm.mjs", isEntry: false });
+    const result = renderEntry({ fileName: "_libs/drizzle-orm.mjs", isEntry: false });
 
     expect(result).toBeNull();
   });
 
   it("does not make the preload chunk import itself", () => {
-    const { result } = renderEntry({ fileName: INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME });
+    const result = renderEntry({ fileName: INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME });
 
     expect(result).toBeNull();
   });

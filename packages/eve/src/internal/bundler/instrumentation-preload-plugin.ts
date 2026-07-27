@@ -15,7 +15,6 @@ export const INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME = "_eve-instrumentation.mjs
 /** Bundler hook context this plugin needs from Rollup and Rolldown. */
 interface InstrumentationPreloadPluginContext {
   emitFile(file: { type: "chunk"; id: string; fileName: string }): string;
-  getFileName(referenceId: string): string;
 }
 
 interface RenderedChunk {
@@ -66,36 +65,38 @@ function resolvePreloadSpecifier(chunkFileName: string, preloadFileName: string)
 export function createInstrumentationPreloadPlugin(
   instrumentationModulePath: string,
 ): InstrumentationPreloadBundlerPlugin {
-  let preloadReferenceId: string | undefined;
-
   return {
     name: "eve-instrumentation-preload",
     buildStart() {
-      preloadReferenceId = this.emitFile({
+      // An explicit `fileName` is emitted verbatim, so the chunk's name is
+      // the constant rather than something to read back with `getFileName`.
+      this.emitFile({
         type: "chunk",
         id: instrumentationModulePath,
         fileName: INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME,
       });
     },
     renderChunk(code, chunk) {
-      if (preloadReferenceId === undefined || chunk?.isEntry !== true) {
-        return null;
-      }
-
       // The preload is emitted as an entry chunk of its own; it must not
       // import itself.
-      const preloadFileName = this.getFileName(preloadReferenceId);
-      if (chunk.fileName === undefined || chunk.fileName === preloadFileName) {
+      if (
+        chunk?.isEntry !== true ||
+        chunk.fileName === undefined ||
+        chunk.fileName === INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME
+      ) {
         return null;
       }
 
-      const specifier = resolvePreloadSpecifier(chunk.fileName, preloadFileName);
+      const specifier = resolvePreloadSpecifier(
+        chunk.fileName,
+        INSTRUMENTATION_PRELOAD_CHUNK_FILE_NAME,
+      );
       const importLine = `import ${JSON.stringify(specifier)};`;
 
-      // eve hands the same plugin instance to both the Rollup and the
-      // Rolldown Nitro config, so `renderChunk` can run more than once for
-      // one chunk. Prepending twice would be harmless at runtime but noisy
-      // in the output, and it would offset the source map twice.
+      // eve registers one plugin instance under both the Rolldown and the
+      // Rollup Nitro config, so every hook here runs twice per build.
+      // Without this guard the entry is rendered with the import already on
+      // it and gets a second copy, offsetting the source map twice.
       if (code.startsWith(importLine)) {
         return null;
       }

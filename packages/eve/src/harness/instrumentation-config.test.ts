@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Regression coverage for the instrumentation-config chunk-isolation failure.
@@ -21,6 +21,14 @@ import { describe, expect, it, vi } from "vitest";
  * module loaders holding their own copies of the file.
  */
 describe("instrumentation-config chunk-isolation regression", () => {
+  // The setup-invoked latch lives on `globalThis`, so it outlives
+  // `vi.resetModules()` and would otherwise leak between tests.
+  beforeEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[
+      Symbol.for("eve.harness-instrumentation-setup-invoked")
+    ];
+  });
+
   it("a config registered in one module evaluation is visible from another", async () => {
     vi.resetModules();
     const moduleA = await import("#harness/instrumentation-config.js");
@@ -69,5 +77,22 @@ describe("instrumentation-config chunk-isolation regression", () => {
     registerInstrumentationConfig({ setup }, { agentName: "weather-agent" });
 
     expect(setup).toHaveBeenCalledExactlyOnceWith({ agentName: "weather-agent" });
+  });
+
+  it("invokes the setup callback once across separate module evaluations", async () => {
+    // The bundler reaches this module from both the entry's instrumentation
+    // preload chunk and the Nitro plugin, so registration can run twice.
+    // Registering OTel providers twice would double-instrument the process.
+    const setup = vi.fn();
+
+    vi.resetModules();
+    const moduleA = await import("#harness/instrumentation-config.js");
+    moduleA.registerInstrumentationConfig({ setup }, { agentName: "weather-agent" });
+
+    vi.resetModules();
+    const moduleB = await import("#harness/instrumentation-config.js");
+    moduleB.registerInstrumentationConfig({ setup }, { agentName: "weather-agent" });
+
+    expect(setup).toHaveBeenCalledOnce();
   });
 });
