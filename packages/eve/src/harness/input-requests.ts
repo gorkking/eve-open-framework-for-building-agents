@@ -4,8 +4,8 @@ import type {
   RuntimeToolCallActionRequest,
   RuntimeToolResultActionResult,
 } from "#runtime/actions/types.js";
+import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
-import { resolveTextToResponses } from "#channel/resolve-text.js";
 import { coalesceTurnInputs } from "#harness/messages.js";
 import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
 import {
@@ -146,40 +146,16 @@ export function resolvePendingInput(input: {
     return { outcome: "continue", messages: baseHistory, session };
   }
 
-  // Pending batch exists -- only resolve if we have actual responses.
-  const resolvedStepInput = resolveTextMessageInput(pendingBatch, stepInput);
-  const responses = resolvedStepInput?.inputResponses ?? [];
+  const responses = synthesizeFollowUpResponses(pendingBatch.requests, stepInput);
   const resolvesApprovalBatch = pendingBatch.requests.some((request) => isApprovalRequest(request));
 
-  if (responses.length === 0 && resolvedStepInput?.message === undefined) {
+  if (responses.length === 0 && stepInput?.message === undefined) {
     return { outcome: "unresolved", messages: baseHistory, session };
   }
 
   if (resolvesApprovalBatch && hasUnansweredApproval({ pendingBatch, responses })) {
-    session = queueDeferredStepInput(session, compactStepInput(resolvedStepInput));
+    session = queueDeferredStepInput(session, compactStepInput(stepInput));
     return { deferredMessage: true, outcome: "unresolved", messages: baseHistory, session };
-  }
-
-  if (responses.length === 0 && resolvedStepInput?.message !== undefined) {
-    // A follow-up message arrived for question-only input with no explicit
-    // responses. Keep the existing question semantics: mark unanswered
-    // question requests ignored so the model can continue with the message.
-    const toolParts = buildToolResponseParts(pendingBatch, []);
-    const messages: ModelMessage[] = [...baseHistory, ...pendingBatch.responseMessages];
-    if (toolParts.length > 0) {
-      messages.push({ content: toolParts, role: "tool" });
-    }
-
-    const rejectedActions = buildRejectedActionBatch(pendingBatch, []);
-    session = clearPendingInputBatch(session);
-
-    return {
-      consumedMessage: resolvedStepInput?.messageConsumed,
-      outcome: "resolved",
-      messages,
-      rejectedActions,
-      session,
-    };
   }
 
   const limitContinuation = resolveSessionLimitContinuation({
@@ -214,18 +190,17 @@ export function resolvePendingInput(input: {
       context?: StepInput["context"];
       message?: StepInput["message"];
     } = {};
-    if ((resolvedStepInput?.context?.length ?? 0) > 0) {
-      deferredInput.context = resolvedStepInput?.context;
+    if ((stepInput?.context?.length ?? 0) > 0) {
+      deferredInput.context = stepInput?.context;
     }
-    if (resolvedStepInput?.message !== undefined) {
-      deferredInput.message = resolvedStepInput.message;
+    if (stepInput?.message !== undefined) {
+      deferredInput.message = stepInput.message;
     }
 
     if (deferredInput.context !== undefined || deferredInput.message !== undefined) {
       session = queueDeferredStepInput(session, deferredInput);
 
       return {
-        consumedMessage: resolvedStepInput?.messageConsumed,
         deferredContext: deferredInput.context === undefined ? undefined : true,
         deferredMessage: deferredInput.message === undefined ? undefined : true,
         limitContinuation,
@@ -238,7 +213,6 @@ export function resolvePendingInput(input: {
   }
 
   return {
-    consumedMessage: resolvedStepInput?.messageConsumed,
     limitContinuation,
     outcome: "resolved",
     messages,
@@ -247,30 +221,7 @@ export function resolvePendingInput(input: {
   };
 }
 
-function resolveTextMessageInput(
-  pendingBatch: PendingInputBatch,
-  stepInput: StepInput | undefined,
-): (StepInput & { readonly messageConsumed?: boolean }) | undefined {
-  if (typeof stepInput?.message !== "string" || (stepInput.inputResponses?.length ?? 0) > 0) {
-    return stepInput;
-  }
-
-  const responses = resolveTextToResponses(stepInput.message, pendingBatch.requests);
-  if (responses.length === 0) {
-    return stepInput;
-  }
-
-  return compactStepInput({
-    ...stepInput,
-    inputResponses: responses,
-    messageConsumed: true,
-    message: undefined,
-  });
-}
-
-function compactStepInput(
-  input: (StepInput & { readonly messageConsumed?: boolean }) | undefined,
-): StepInput & { readonly messageConsumed?: boolean } {
+function compactStepInput(input: StepInput | undefined): StepInput {
   if (input === undefined) {
     return {};
   }
@@ -279,7 +230,6 @@ function compactStepInput(
     context?: StepInput["context"];
     inputResponses?: StepInput["inputResponses"];
     message?: StepInput["message"];
-    messageConsumed?: boolean;
     outputSchema?: StepInput["outputSchema"];
   } = {};
 
@@ -291,9 +241,6 @@ function compactStepInput(
   }
   if (input.message !== undefined) {
     result.message = input.message;
-  }
-  if (input.messageConsumed === true) {
-    result.messageConsumed = true;
   }
   if (input.outputSchema !== undefined) {
     result.outputSchema = input.outputSchema;
@@ -313,7 +260,6 @@ function hasUnansweredApproval(input: {
 }
 
 type ResolvePendingInputResult = {
-  readonly consumedMessage?: boolean;
   readonly deferredContext?: boolean;
   readonly deferredMessage?: boolean;
   /**
@@ -579,6 +525,35 @@ function buildToolResponseParts(
   return parts;
 }
 
+/**
+ * Resolves every unanswered request when a user message supersedes the pending
+ * batch. Tool approvals are denied, questions are dismissed, and explicit
+ * responses always win.
+ */
+function synthesizeFollowUpResponses(
+  requests: readonly InputRequest[],
+  stepInput: StepInput | undefined,
+): InputResponse[] {
+  const explicitResponses = stepInput?.inputResponses ?? [];
+  if (stepInput?.message === undefined) {
+    return [...explicitResponses];
+  }
+
+  const explicitResponseIds = new Set(explicitResponses.map((response) => response.requestId));
+  return [
+    ...explicitResponses,
+    ...requests.flatMap((request) => {
+      if (explicitResponseIds.has(request.requestId)) {
+        return [];
+      }
+      if (isApprovalRequest(request)) {
+        return [{ optionId: "deny", requestId: request.requestId }];
+      }
+      return [{ requestId: request.requestId }];
+    }),
+  ];
+}
+
 function buildToolResponsePartsForRequest(
   request: InputRequest,
   response: InputResponse | undefined,
@@ -632,7 +607,7 @@ function buildToolResponsePartsForRequest(
       output: {
         type: "json",
         value:
-          response !== undefined
+          response?.optionId !== undefined || response?.text !== undefined
             ? { optionId: response.optionId, text: response.text, status: "answered" }
             : { status: "ignored" },
       },
@@ -643,9 +618,10 @@ function buildToolResponsePartsForRequest(
   ];
 }
 
-/** Shared approval predicate: a request whose options are exactly `approve` / `deny`. */
+/** Shared approval predicate for non-question requests with the approval option pair. */
 export function isApprovalRequest(request: InputRequest): boolean {
   return (
+    request.action.toolName !== ASK_QUESTION_TOOL_NAME &&
     request.options?.length === 2 &&
     request.options[0]?.id === "approve" &&
     request.options[1]?.id === "deny"

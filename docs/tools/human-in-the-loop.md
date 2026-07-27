@@ -100,11 +100,11 @@ Approvals and questions share one protocol:
 1. The model requests input (an approval, or an `ask_question`).
 2. eve emits an `input.requested` stream event carrying the pending requests.
 3. The turn parks at `session.waiting`, durably, for as long as it takes.
-4. The client answers with `inputResponses` (structured, keyed by `requestId`) or a normal follow-up `message`. A follow-up whose text matches an option ID, option label, or numeric option index resolves automatically, including approval options such as `approve` and `deny`.
+4. The client answers with `inputResponses`, structured and keyed by `requestId`. A normal follow-up `message` supersedes the pending batch instead: unanswered approvals are denied and unanswered questions are dismissed before the message continues the conversation.
 
 The run picks back up exactly where it parked. Because the pause is durable, nothing is held in memory while it waits — the process can restart and the parked turn survives.
 
-For approval requests, unrelated follow-up text does not deny the tool call. eve keeps the approval pending and holds that text until the approval is answered, then replays it as the next message in the session.
+A follow-up message never remains queued behind pending input. eve resolves unanswered approvals as denied and unanswered questions as ignored, then continues with the message. To answer a pending request, send an explicit `inputResponses` entry.
 
 See [Sessions, runs & streaming](/docs/concepts/sessions-runs-and-streaming) for the full event and resume contract that this builds on.
 

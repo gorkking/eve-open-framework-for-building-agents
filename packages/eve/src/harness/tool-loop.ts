@@ -646,7 +646,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     }
 
     const userContent = normalizeUserContent(effectiveStepInput?.message);
-    if (userContent !== undefined && !pending.deferredMessage && !pending.consumedMessage) {
+    if (userContent !== undefined && !pending.deferredMessage) {
       // Staging writes FilePart bytes into the sandbox and replaces
       // each part's `data` with a compact `eve-sandbox:` URL. The
       // `messages` array — and everything that flows into
