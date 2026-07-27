@@ -18,6 +18,7 @@ import {
 import { createProductionNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
 import { createCompiledSandboxBackendPrunePlugin } from "#internal/nitro/host/compiled-sandbox-backend-prune-plugin.js";
 import { createExtensionScopePlugin } from "#internal/bundler/extension-scope-plugin.js";
+import { createInstrumentationPreloadPlugin } from "#internal/bundler/instrumentation-preload-plugin.js";
 import {
   configureDevelopmentNitroRoutes,
   configureProductionNitroRoutes,
@@ -640,10 +641,16 @@ function createApplicationNitroBundlerConfiguration(
       packageNamespace: mount.packageNamespace,
     })),
   );
+  const instrumentationPluginPath = preparedHost.compiledArtifacts.instrumentationPluginPath;
+  const instrumentationPreloadPlugin =
+    instrumentationPluginPath === undefined
+      ? null
+      : createInstrumentationPreloadPlugin(instrumentationPluginPath);
   const nitroBundlerPlugins = [
     compiledSandboxBackendPrunePlugin,
     createOptionalEngineDependencyPlugin(unconfiguredOptionalEnginePackages),
     extensionScopePlugin,
+    instrumentationPreloadPlugin,
   ].filter((plugin) => plugin !== null);
   const nitroRolldownConfig = createNitroBundlerConfig(nitroBundlerPlugins);
   const nitroRollupConfig = createNitroBundlerConfig(nitroBundlerPlugins);

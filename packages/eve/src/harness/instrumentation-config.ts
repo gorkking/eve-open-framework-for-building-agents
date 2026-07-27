@@ -21,8 +21,19 @@ import type {
  */
 const INSTRUMENTATION_CONFIG_GLOBAL_KEY = Symbol.for("eve.harness-instrumentation-config");
 
+/**
+ * Tracks whether `setup` already ran in this process. Rooted on
+ * `globalThis` for the same reason as the config itself: the instrumentation
+ * preload chunk and the Nitro plugin can resolve to two distinct module
+ * instances, and `setup` must still run only once.
+ */
+const INSTRUMENTATION_SETUP_INVOKED_GLOBAL_KEY = Symbol.for(
+  "eve.harness-instrumentation-setup-invoked",
+);
+
 interface InstrumentationConfigGlobal {
   [INSTRUMENTATION_CONFIG_GLOBAL_KEY]?: InstrumentationDefinition;
+  [INSTRUMENTATION_SETUP_INVOKED_GLOBAL_KEY]?: boolean;
 }
 
 const globalContainer = globalThis as typeof globalThis & InstrumentationConfigGlobal;
@@ -31,8 +42,10 @@ const globalContainer = globalThis as typeof globalThis & InstrumentationConfigG
  * Registers the authored instrumentation config and invokes its `setup`
  * callback with the resolved agent name.
  *
- * Called once by the generated instrumentation Nitro plugin at server
- * startup. Subsequent calls overwrite the previous value.
+ * Called at server startup by the generated instrumentation module, which
+ * the bundler emits both as the entry's preload chunk and as a Nitro
+ * plugin. Subsequent calls overwrite the stored config, but `setup` runs
+ * only on the first.
  *
  * @internal — not part of the public API.
  */
@@ -40,7 +53,11 @@ export function registerInstrumentationConfig(
   config: InstrumentationDefinition,
   context: InstrumentationSetupContext,
 ): void {
-  if (config.setup !== undefined) {
+  if (
+    config.setup !== undefined &&
+    globalContainer[INSTRUMENTATION_SETUP_INVOKED_GLOBAL_KEY] !== true
+  ) {
+    globalContainer[INSTRUMENTATION_SETUP_INVOKED_GLOBAL_KEY] = true;
     config.setup(context);
   }
   globalContainer[INSTRUMENTATION_CONFIG_GLOBAL_KEY] = config;
