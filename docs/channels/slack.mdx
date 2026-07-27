@@ -73,6 +73,8 @@ Only the first available handler runs. A message hook returning `null` drops the
 
 #### Participate in active threads
 
+> **Vercel Connect:** Open **Advanced** when creating the connector and add `message.channels` under **Trigger Event Types** and `channels:history` under **Bot Scopes**. Private channels additionally need `message.groups` and `groups:history`.
+
 The API grows from mention-only behavior to automatic or stateful participation.
 
 **1. Respond only to explicit mentions.** This is the default:
@@ -91,8 +93,6 @@ export default slackChannel({
   threadParticipation: true,
 });
 ```
-
-For Vercel Connect, open **Advanced** when creating the connector and add `message.channels` under **Trigger Event Types** and `channels:history` under **Bot Scopes**. Private channels additionally need `message.groups` and `groups:history`.
 
 **3. Track your own participation state.** Provide an `initialState` and return the next state from `handle`. This example treats mentioning another person as a handoff:
 
@@ -118,41 +118,32 @@ export default slackChannel({
 
 The handler runs for replies in a thread, including explicit mentions, but not for the top-level message that starts the thread. It runs inside the durable session after Slack channel state and `defineState` are hydrated. `state` must be JSON-serializable.
 
-**4. Classify ambiguous replies.** The same state can distinguish a permanent handoff from one ignored message:
+**4. Classify ambiguous replies.** A handler can use a model to decide whether the current message needs a response:
 
 ```ts title="agent/channels/slack.ts"
 import { generateText, Output } from "ai";
 import { z } from "zod";
 
-type ParticipationState = "followingThread" | "ignoringThread";
-
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
   threadParticipation: {
-    initialState: "followingThread" as ParticipationState,
+    initialState: null,
     async handle(message, ctx) {
-      if (ctx.isBotMentioned) return { respond: true, state: "followingThread" };
-      if (ctx.state === "ignoringThread") return { respond: false, state: ctx.state };
+      if (ctx.isBotMentioned) return { respond: true, state: null };
 
-      await ctx.thread.refresh();
-      const conversation = ctx.thread.recentMessages
-        .map((entry) => `${entry.isMe ? "agent" : (entry.user ?? "unknown")}: ${entry.text}`)
-        .join("\n");
       const { output } = await generateText({
         model: "google/gemini-3.1-flash-lite",
-        system: "Decide whether the final Slack message expects the agent to answer.",
-        prompt: conversation,
+        system: "Decide whether this Slack message expects the agent to answer.",
+        prompt: message.text,
         output: Output.object({ schema: z.object({ respond: z.boolean() }) }),
         timeout: 1_500,
         maxRetries: 0,
       });
-      return { respond: output.respond, state: ctx.state };
+      return { respond: output.respond, state: null };
     },
   },
 });
 ```
-
-`ctx.thread.refresh()` loads up to 50 Slack messages into `ctx.thread.recentMessages`. AI SDK string model ids use AI Gateway and the same ambient `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` credentials as string models in `defineAgent`; the standalone call does not add classifier input to agent history.
 
 Use `onMessage` only when you need lower-level webhook-side admission, custom auth, or pre-dispatch behavior. `ctx.isBotMentioned()` identifies explicit mentions, while `ctx.isSubscribed()` is a point-in-time check for an active eve session; it does not inspect `threadParticipation` state.
 

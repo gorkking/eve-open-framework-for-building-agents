@@ -1572,7 +1572,12 @@ describe("slackChannel() onMessage", () => {
   });
 
   it("resolves thread participation inside the hydrated session", async () => {
-    const participate = vi.fn(() => ({ respond: false, state: "ignoringThread" }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const participate = vi.fn(() => ({
+      reason: "human-handoff",
+      respond: false,
+      state: "ignoringThread",
+    }));
     const channel = slackChannel({
       threadParticipation: { initialState: "followingThread", handle: participate },
     });
@@ -1608,6 +1613,16 @@ describe("slackChannel() onMessage", () => {
 
     expect(result).toBeUndefined();
     expect(adapterCtx.state.participationState).toBe("ignoringThread");
+    expect(log).toHaveBeenCalledWith(
+      "[eve:slack.channel] Slack thread message skipped by thread participation",
+      {
+        channelId: "C01",
+        messageTs: "1700000000.000002",
+        reason: "human-handoff",
+        sessionId: "test-session",
+        threadTs: "1700000000.000001",
+      },
+    );
     expect(participate).toHaveBeenCalledWith(
       message,
       expect.objectContaining({

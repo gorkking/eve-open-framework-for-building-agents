@@ -213,6 +213,8 @@ export interface SlackThreadParticipationContext<TState> extends SessionContext 
 export interface SlackThreadParticipationResult<TState> {
   /** Whether this message should dispatch an agent turn. */
   readonly respond: boolean;
+  /** Optional short observability label. Do not include message content or secrets. */
+  readonly reason?: string;
   /** JSON-serializable state made available to the next thread reply. */
   readonly state: TState;
 }
@@ -817,6 +819,15 @@ export function slackChannel<TParticipationState = never>(
         );
       }
       adapterCtx.state.participationState = participation.state;
+      if (!participation.respond) {
+        log.info("Slack thread message skipped by thread participation", {
+          channelId: delivery.message.channelId,
+          messageTs: delivery.message.ts,
+          reason: participation.reason,
+          sessionId: sessionCtx.session.id,
+          threadTs: delivery.message.threadTs,
+        });
+      }
       return participation.respond ? defaultDeliverResult(payload) : undefined;
     },
     fetchFile: slackFetchFile,
