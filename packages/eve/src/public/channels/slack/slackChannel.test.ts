@@ -1627,6 +1627,44 @@ describe("slackChannel() onMessage", () => {
     );
   });
 
+  it("runs a stateless thread reply policy", async () => {
+    const onReply = vi.fn(() => ({ respond: false }));
+    const channel = slackChannel({ threadReplies: { onReply } });
+    const adapter = withState(getAdapter(channel), THREAD_STATE);
+    const adapterCtx = buildAdapterContext(adapter, stubAccessor());
+    const message = {
+      attachments: [],
+      channelId: "C01",
+      markdown: "thanks",
+      raw: {},
+      teamId: "T01",
+      text: "thanks",
+      threadTs: "1700000000.000001",
+      ts: "1700000000.000002",
+    };
+
+    const result = await contextStorage.run(stubAlsContext, () =>
+      adapter.deliver!(
+        {
+          channelData: {
+            isBotMentioned: false,
+            kind: "slack-message",
+            message,
+          },
+          message: "attributed message",
+        },
+        adapterCtx,
+      ),
+    );
+
+    expect(result).toBeUndefined();
+    expect(adapterCtx.state.threadReplyState).toBeUndefined();
+    expect(onReply).toHaveBeenCalledWith(
+      message,
+      expect.not.objectContaining({ state: expect.anything() }),
+    );
+  });
+
   it("can ignore one message without changing reply state", async () => {
     const channel = slackChannel({
       threadReplies: {

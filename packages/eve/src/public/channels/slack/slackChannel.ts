@@ -166,7 +166,7 @@ type SlackSessionFailedHandler = (
   channel: SlackEventContext,
 ) => void | Promise<void>;
 
-function defaultThreadReplies(): SlackThreadReplyResult<boolean> {
+function defaultThreadReplies(): SlackStatefulThreadReplyResult<boolean> {
   return { respond: true, state: true };
 }
 
@@ -189,10 +189,8 @@ function readSlackMessageDeliveryData(value: unknown): SlackMessageDeliveryData 
  * step boundaries. Anything written here must round-trip through
  * `JSON.stringify` / `JSON.parse`.
  */
-/** Context for a durable Slack thread reply policy. */
-export interface SlackThreadReplyContext<TState> extends SessionContext {
-  /** Durable user-defined state returned after the previous thread reply. */
-  readonly state: TState;
+/** Context for a Slack thread reply policy. */
+export interface SlackThreadReplyContext extends SessionContext {
   /** Whether this message explicitly mentions the installed bot. */
   readonly isBotMentioned: boolean;
   /** Thread-bound Slack operations, including lazy history refresh. */
@@ -201,26 +199,50 @@ export interface SlackThreadReplyContext<TState> extends SessionContext {
   readonly slack: SlackHandle;
 }
 
-/** Response decision and durable user-defined state after one thread reply. */
-export interface SlackThreadReplyResult<TState> {
+/** Response decision after one thread reply. */
+export interface SlackThreadReplyResult {
   /** Whether this message should dispatch an agent turn. */
   readonly respond: boolean;
   /** Optional short observability label. Do not include message content or secrets. */
   readonly reason?: string;
+}
+
+/** Context for a thread reply policy with durable user-defined state. */
+export interface SlackStatefulThreadReplyContext<TState> extends SlackThreadReplyContext {
+  /** Durable user-defined state returned after the previous thread reply. */
+  readonly state: TState;
+}
+
+/** Response decision and next durable state after one thread reply. */
+export interface SlackStatefulThreadReplyResult<TState> extends SlackThreadReplyResult {
   /** JSON-serializable state made available to the next thread reply. */
   readonly state: TState;
 }
 
-/** Custom durable policy for deciding whether to respond to thread replies. */
-export interface SlackThreadReplies<TState> {
+/** Stateless policy for deciding whether to respond to thread replies. */
+export interface SlackStatelessThreadReplies {
+  /** Runs for each admitted reply after the session is hydrated. */
+  onReply(
+    message: SlackMessage,
+    ctx: SlackThreadReplyContext,
+  ): SlackThreadReplyResult | Promise<SlackThreadReplyResult>;
+}
+
+/** Stateful policy for deciding whether to respond to thread replies. */
+export interface SlackStatefulThreadReplies<TState> {
   /** JSON-serializable state assigned when a top-level message starts the thread. */
   readonly initialState: TState;
   /** Runs for each admitted reply after durable state is hydrated. */
   onReply(
     message: SlackMessage,
-    ctx: SlackThreadReplyContext<TState>,
-  ): SlackThreadReplyResult<TState> | Promise<SlackThreadReplyResult<TState>>;
+    ctx: SlackStatefulThreadReplyContext<TState>,
+  ): SlackStatefulThreadReplyResult<TState> | Promise<SlackStatefulThreadReplyResult<TState>>;
 }
+
+/** Policy for deciding whether to respond to thread replies. */
+export type SlackThreadReplies<TState = never> =
+  | SlackStatelessThreadReplies
+  | SlackStatefulThreadReplies<TState>;
 
 interface SlackMessageDeliveryData {
   readonly isBotMentioned: boolean;
@@ -769,18 +791,16 @@ export function slackChannel<TThreadReplyState = never>(
       lastReasoningTypingAtMs: null,
       lastReasoningTypingStatus: null,
       threadReplyState:
-        typeof config.threadReplies === "object"
+        typeof config.threadReplies === "object" && "initialState" in config.threadReplies
           ? structuredClone(config.threadReplies.initialState)
-          : config.threadReplies === true
-            ? true
-            : undefined,
+          : undefined,
       pendingAuthMessageTs: {},
     },
     deliver: async (payload, adapterCtx) => {
       const delivery = readSlackMessageDeliveryData(payload.channelData);
       if (delivery === undefined) return defaultDeliverResult(payload);
       if (delivery.message.ts === delivery.message.threadTs) {
-        if (typeof config.threadReplies === "object") {
+        if (typeof config.threadReplies === "object" && "initialState" in config.threadReplies) {
           adapterCtx.state.threadReplyState = structuredClone(config.threadReplies.initialState);
         }
         return defaultDeliverResult(payload);
@@ -788,22 +808,33 @@ export function slackChannel<TThreadReplyState = never>(
 
       const sessionCtx = buildCallbackContext();
       const slackCtx = adapterCtx as typeof adapterCtx & SlackChannelContext;
+      const stateful =
+        typeof config.threadReplies === "object" && "initialState" in config.threadReplies;
       const reply =
         typeof config.threadReplies === "object"
-          ? await config.threadReplies.onReply(delivery.message, {
-              ...sessionCtx,
-              isBotMentioned: delivery.isBotMentioned,
-              slack: slackCtx.slack,
-              state: adapterCtx.state.threadReplyState as TThreadReplyState,
-              thread: slackCtx.thread,
-            })
+          ? stateful
+            ? await config.threadReplies.onReply(delivery.message, {
+                ...sessionCtx,
+                isBotMentioned: delivery.isBotMentioned,
+                slack: slackCtx.slack,
+                state: adapterCtx.state.threadReplyState as TThreadReplyState,
+                thread: slackCtx.thread,
+              })
+            : await config.threadReplies.onReply(delivery.message, {
+                ...sessionCtx,
+                isBotMentioned: delivery.isBotMentioned,
+                slack: slackCtx.slack,
+                thread: slackCtx.thread,
+              })
           : defaultThreadReplies();
-      if (typeof reply?.respond !== "boolean" || !("state" in reply)) {
+      if (typeof reply?.respond !== "boolean" || (stateful && !("state" in reply))) {
         throw new Error(
-          "slackChannel().threadReplies.onReply must return `respond` and `state` fields.",
+          stateful
+            ? "slackChannel().threadReplies.onReply must return `respond` and `state` fields."
+            : "slackChannel().threadReplies.onReply must return a `respond` field.",
         );
       }
-      adapterCtx.state.threadReplyState = reply.state;
+      if (stateful && "state" in reply) adapterCtx.state.threadReplyState = reply.state;
       if (!reply.respond) {
         log.info("Slack thread message skipped by thread reply policy", {
           channelId: delivery.message.channelId,

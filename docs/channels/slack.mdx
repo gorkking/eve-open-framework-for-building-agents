@@ -116,9 +116,9 @@ export default slackChannel({
 });
 ```
 
-Thread replies pass through two phases. First, the webhook admits only human replies that belong to an active eve session; `onMessage`, when configured, replaces that default admission policy and can apply custom auth or pre-dispatch work. Second, `threadReplies.onReply` runs inside the hydrated durable session and decides whether the admitted reply dispatches an agent turn. It receives thread replies, including explicit mentions, but not the top-level message that starts the thread; that message initializes `initialState`. `state` must be JSON-serializable. Returning `respond: false` skips this reply but leaves the session active, so the policy runs again for a later reply.
+Thread replies pass through two phases. First, the webhook admits only human replies that belong to an active eve session; `onMessage`, when configured, replaces that default admission policy and can apply custom auth or pre-dispatch work. Second, `threadReplies.onReply` runs inside the hydrated durable session and decides whether the admitted reply dispatches an agent turn. It receives thread replies, including explicit mentions, but not the top-level message that starts the thread; that message initializes `initialState` when the policy uses state. Stateful `state` values must be JSON-serializable. Returning `respond: false` skips this reply but leaves the session active, so the policy runs again for a later reply.
 
-**4. Classify ambiguous replies.** A handler can use a model to decide whether the current message needs a response:
+**4. Classify ambiguous replies without state.** Omit `initialState` when the policy does not need durable state. `onReply` then returns only its response decision:
 
 ```ts title="agent/channels/slack.ts"
 import { generateText, Output } from "ai";
@@ -127,9 +127,8 @@ import { z } from "zod";
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
   threadReplies: {
-    initialState: null,
     async onReply(message, ctx) {
-      if (ctx.isBotMentioned) return { respond: true, state: null };
+      if (ctx.isBotMentioned) return { respond: true };
 
       const { output } = await generateText({
         model: "google/gemini-3.1-flash-lite",
@@ -139,7 +138,7 @@ export default slackChannel({
         timeout: 1_500,
         maxRetries: 0,
       });
-      return { respond: output.respond, state: null };
+      return { respond: output.respond };
     },
   },
 });
