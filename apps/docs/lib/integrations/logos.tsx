@@ -16,6 +16,7 @@ import {
   SiMixpanel,
   SiNetlify,
   SiNotion,
+  SiNuxt,
   SiOreilly,
   SiPlanetscale,
   SiPosthog,
@@ -219,6 +220,8 @@ export const miroLogo = (props: LogoProps) => <SiMiro {...props} />;
 export const mixpanelLogo = (props: LogoProps) => <SiMixpanel color="default" {...props} />;
 
 export const netlifyLogo = (props: LogoProps) => <SiNetlify color="default" {...props} />;
+
+export const nuxtLogo = (props: LogoProps) => <SiNuxt {...props} />;
 
 export const oreillyLogo = (props: LogoProps) => <SiOreilly color="default" {...props} />;
 
