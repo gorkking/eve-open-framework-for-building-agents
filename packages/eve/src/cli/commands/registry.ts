@@ -7,7 +7,9 @@ import {
 import semver from "#compiled/semver/index.js";
 import { z } from "#compiled/zod/index.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { detectPackageManager } from "#setup/package-manager.js";
 import { isEveProject } from "#setup/scaffold/index.js";
+import { applyPackageManagerWorkspaceConfiguration } from "#setup/scaffold/workspace-root.js";
 
 import { NOT_AN_AGENT_MESSAGE } from "./preconditions.js";
 import type { runRegistrySetupCommand } from "./registry-setup-command.js";
@@ -51,7 +53,12 @@ export async function installOfficialRegistryItem(
   options: AddCommandOptions = {},
 ): Promise<void> {
   const config = await readRegistryConfig(appRoot);
-  await addRegistryItems([itemAddress(item)], { ...options, config, cwd: appRoot });
+  const address = itemAddress(item);
+  const [registryItem] = await getRegistryItems([address], { config });
+  const eveMetadata = eveMetadataFromRegistryItem(registryItem);
+  assertCompatibleEveVersion(eveMetadata?.requires);
+  await applyRegistryPackageManagerPolicy(appRoot, eveMetadata?.packageManager);
+  await addRegistryItems([address], { ...options, config, cwd: appRoot });
 }
 
 const EveRegistryItemMetadataSchema = z.object({
@@ -59,6 +66,11 @@ const EveRegistryItemMetadataSchema = z.object({
     .object({
       eve: z
         .object({
+          packageManager: z
+            .object({
+              allowBuilds: z.object({ sharp: z.literal(false) }),
+            })
+            .optional(),
           requires: z.string().optional(),
           setup: z
             .object({
@@ -74,6 +86,18 @@ const EveRegistryItemMetadataSchema = z.object({
 
 function eveMetadataFromRegistryItem(item: unknown) {
   return EveRegistryItemMetadataSchema.parse(item).meta?.eve;
+}
+
+async function applyRegistryPackageManagerPolicy(
+  appRoot: string,
+  policy: { allowBuilds: { sharp: false } } | undefined,
+): Promise<void> {
+  if (policy === undefined) return;
+  const packageManager = await detectPackageManager(appRoot);
+  await applyPackageManagerWorkspaceConfiguration({
+    packageManager: packageManager.kind,
+    projectRoot: appRoot,
+  });
 }
 
 function assertCompatibleEveVersion(requiredVersion: string | undefined): void {
@@ -189,6 +213,7 @@ export async function runAddCommand(
       ? eveMetadataFromRegistryItem(registryItem)
       : undefined;
     assertCompatibleEveVersion(eveMetadata?.requires);
+    await applyRegistryPackageManagerPolicy(appRoot, eveMetadata?.packageManager);
 
     const installOptions = { config, cwd: appRoot, overwrite: options.overwrite };
     await addRegistryItems([address], installOptions);

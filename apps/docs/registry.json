@@ -778,6 +778,11 @@
       "description": "Add the built-in Next.js Web Chat channel to an eve agent.",
       "meta": {
         "eve": {
+          "packageManager": {
+            "allowBuilds": {
+              "sharp": false
+            }
+          },
           "setup": {
             "command": "eve",
             "args": ["integration", "setup", "web"]
