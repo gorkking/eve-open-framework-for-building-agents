@@ -129,7 +129,7 @@ export default defineSandbox({
     NavIcon: IconMessage,
     description: "Add channel files to use the same agent in Slack, Discord, Teams, or the web.",
     code: `import { slackChannel } from
-  "eve/channels/slack";
+  "@vercel/eve-slack";
 
 export default slackChannel({
   botName: "my-agent",

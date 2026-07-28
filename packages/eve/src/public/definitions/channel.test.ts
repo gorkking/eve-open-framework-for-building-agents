@@ -7,7 +7,6 @@ import type { InferReceiveTarget } from "#channel/receive-target.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import type { ContextAccessor } from "#context/key.js";
 import { SessionKey, type Session } from "#context/keys.js";
-import type { slackChannel, SlackInstrumentationMetadata } from "#public/channels/slack/index.js";
 import type {
   twilioChannel,
   TwilioInstrumentationMetadata,
@@ -238,14 +237,12 @@ describe("defineChannel", () => {
     void metadata;
   });
 
-  it("preserves wrapper metadata on Slack and Twilio channel return types", () => {
-    type SlackMetadata = InferChannelMetadata<ReturnType<typeof slackChannel>>;
+  it("preserves wrapper metadata on the Twilio channel return type", () => {
     type TwilioMetadata = InferChannelMetadata<ReturnType<typeof twilioChannel>>;
-    type SlackAssertion = Assert<IsEqual<SlackMetadata, SlackInstrumentationMetadata>>;
     type TwilioAssertion = Assert<IsEqual<TwilioMetadata, TwilioInstrumentationMetadata>>;
 
-    const assertions: [SlackAssertion, TwilioAssertion] = [true, true];
-    void assertions;
+    const assertion: TwilioAssertion = true;
+    void assertion;
   });
 
   it("type-checks channel metadata projections against the declared shape", () => {

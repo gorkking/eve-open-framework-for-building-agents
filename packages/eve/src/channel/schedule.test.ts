@@ -11,7 +11,7 @@ import {
 } from "#channel/schedule.js";
 import type { RunHandle, Runtime } from "#channel/types.js";
 import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
-import { slackChannel } from "#public/channels/slack/slackChannel.js";
+import type { Channel } from "#public/definitions/channel.js";
 import type { ResolvedChannelDefinition } from "#runtime/types.js";
 
 function createMockRunHandle(): RunHandle {
@@ -38,7 +38,7 @@ function makeSlackChannelEntry(): {
   definition: CompiledChannel;
   resolved: ResolvedChannelDefinition;
 } {
-  const channel = slackChannel();
+  const channel = {} as Channel;
   if (!isCompiledChannel(channel)) {
     throw new Error("expected a compiled slack channel for this test");
   }

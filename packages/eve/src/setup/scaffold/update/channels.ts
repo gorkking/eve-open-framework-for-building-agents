@@ -408,14 +408,14 @@ export async function deriveSlackConnectorSlug(
 function buildPhotonTemplate(connectorUid?: string): string {
   if (connectorUid) {
     return `import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonChannel } from "eve/channels/photon";
+import { photonChannel } from "@vercel/eve-photon";
 
 export default photonChannel({
   credentials: connectPhotonCredentials(${JSON.stringify(connectorUid)}),
 });
 `;
   }
-  return `import { photonChannel } from "eve/channels/photon";
+  return `import { photonChannel } from "@vercel/eve-photon";
 
 async function photonCredentials() {
   const projectId = process.env.IMESSAGE_PROJECT_ID;
@@ -436,7 +436,7 @@ function buildSlackConnectTemplate(connectorUid: string): string {
     throw new Error(`Invalid Slack connector UID "${connectorUid}".`);
   }
   return `import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials(${JSON.stringify(connectorUid)}),
@@ -444,7 +444,7 @@ export default slackChannel({
 `;
 }
 
-const SLACK_ENV_TEMPLATE = `import { slackChannel } from "eve/channels/slack";
+const SLACK_ENV_TEMPLATE = `import { slackChannel } from "@vercel/eve-slack";
 
 export default slackChannel();
 `;

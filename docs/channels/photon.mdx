@@ -9,7 +9,7 @@ first initializes:
 
 ```ts title="agent/channels/photon.ts"
 import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonChannel } from "eve/channels/photon";
+import { photonChannel } from "@vercel/eve-photon";
 
 export default photonChannel({
   credentials: connectPhotonCredentials(process.env.PHOTON_CONNECTOR_ID!),

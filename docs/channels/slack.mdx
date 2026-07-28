@@ -29,7 +29,7 @@ npm install @vercel/connect
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
@@ -150,7 +150,7 @@ Use `onEvent` for subscribed events such as `reaction_added`, `team_join`, or `c
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 
 const onboardingChannels = ["C0123ABC", "C0456DEF"];
 
@@ -183,7 +183,7 @@ Because a generic event is not necessarily tied to one thread, its session helpe
 You get the triggering mention by default, but not the earlier replies in the thread. Enable `threadContext` to fetch and inject them with every message attributed by stable Slack user id. Use `since: "last-agent-reply"` so repeated mentions inject only what is new:
 
 ```ts
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
@@ -209,7 +209,7 @@ messages, for example, has no inbound Slack request. For that, call the
 same primitive the handle uses directly:
 
 ```ts
-import { callSlackApi, resolveSlackBotToken } from "eve/channels/slack";
+import { callSlackApi, resolveSlackBotToken } from "@vercel/eve-slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 const { botToken } = connectSlackCredentials("slack/my-agent");
@@ -238,7 +238,7 @@ When a session starts without a `threadTs` (say, from a schedule or `receive(sla
 The example below overrides `onAppMention` to gate on an authored message and posts the completed reply to the thread. Event handlers receive `(eventData, channel, ctx)`, with Slack platform handles on `channel.thread` and `channel.slack`:
 
 ```ts
-import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
+import { defaultSlackAuth, slackChannel } from "@vercel/eve-slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({

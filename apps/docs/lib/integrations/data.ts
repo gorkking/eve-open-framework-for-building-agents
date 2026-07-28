@@ -140,7 +140,7 @@ npm install eve@latest @vercel/connect
 
 \`\`\`ts
 // agent/channels/slack.ts
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
@@ -856,7 +856,7 @@ eve add channel/photon
 
 \`\`\`ts
 import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonChannel } from "eve/channels/photon";
+import { photonChannel } from "@vercel/eve-photon";
 
 export default photonChannel({
   credentials: connectPhotonCredentials(process.env.PHOTON_CONNECTOR_ID!),

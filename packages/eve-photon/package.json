@@ -1,0 +1,46 @@
+{
+  "name": "@vercel/eve-photon",
+  "version": "0.27.10",
+  "description": "First-class Photon iMessage channel for eve",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "README.md",
+    "NOTICE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build && node ../../scripts/copy-package-license.mjs .",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@chat-adapter/state-memory": "4.34.0",
+    "@photon-ai/chat-adapter-imessage": "3.2.0",
+    "chat": "4.34.0",
+    "eve": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

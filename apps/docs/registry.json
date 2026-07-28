@@ -666,7 +666,10 @@
           "requires": ">=0.27.8"
         }
       },
-      "dependencies": ["@vercel/connect@0.4.2"]
+      "dependencies": [
+        "@vercel/connect@0.4.3",
+        "@vercel/eve-slack@__EVE_VERSION__"
+      ]
     },
     {
       "name": "channel/discord",
@@ -1209,7 +1212,10 @@
       "type": "registry:item",
       "title": "Photon",
       "description": "Connect an eve agent to iMessage through Photon with guided project and phone setup.",
-      "dependencies": ["@vercel/connect@0.4.3"],
+      "dependencies": [
+        "@vercel/connect@0.4.3",
+        "@vercel/eve-photon@__EVE_VERSION__"
+      ],
       "meta": {
         "eve": {
           "setup": {

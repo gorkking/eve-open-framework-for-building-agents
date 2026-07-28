@@ -86,7 +86,7 @@ Configure Slack normally:
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),

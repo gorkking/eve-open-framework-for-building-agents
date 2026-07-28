@@ -35,7 +35,7 @@ export default eveChannel({
       "agent/channels/slack.ts",
       "typescript",
       `import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 
 // SLACK_CONNECTOR is the UID returned by \`vercel connect create slack\`.
 // For local setup, create a connector with:
@@ -173,7 +173,7 @@ export default defineAgent({
       "agent/channels/slack.ts",
       "typescript",
       `import { connectSlackCredentials } from '@vercel/connect/eve';
-import { slackChannel } from 'eve/channels/slack';
+import { slackChannel } from '@vercel/eve-slack';
 import { designAgentConfig } from '../../generated/config.js';
 
 const setupIncompleteMessage =
@@ -405,7 +405,7 @@ export default defineAgent({
       "agent/channels/slack.ts",
       "typescript",
       `import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "eve/channels/slack";
+import { slackChannel } from "@vercel/eve-slack";
 
 // SLACK_CONNECTOR is provisioned by the "Deploy with Vercel" button. To set it
 // up yourself, create a connector with \`vercel connect create slack --triggers\`

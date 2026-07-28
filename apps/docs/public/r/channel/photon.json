@@ -4,7 +4,7 @@
   "type": "registry:item",
   "title": "Photon",
   "description": "Connect an eve agent to iMessage through Photon with guided project and phone setup.",
-  "dependencies": ["@vercel/connect@0.4.3"],
+  "dependencies": ["@vercel/connect@0.4.3", "@vercel/eve-photon@__EVE_VERSION__"],
   "meta": {
     "eve": {
       "setup": {

@@ -2,7 +2,7 @@ import type { ScenarioAppDescriptor } from "#internal/testing/scenario-app.js";
 
 export const SLACK_CUSTOM_CHANNEL_PORTABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/channels/slack.ts": `import { Actions, Button, Card, CardText, slackChannel } from "eve/channels/slack";
+    "agent/channels/slack.ts": `import { Actions, Button, Card, CardText, slackChannel } from "@vercel/eve-slack";
 
 const ALLOWED = new Set(["C0123ABC"]);
 

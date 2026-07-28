@@ -106,7 +106,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(join(projectRoot, "agent/channels/slack.ts"), "utf8")).resolves.toBe(
-      'import { slackChannel } from "eve/channels/slack";\n\nexport default slackChannel();\n',
+      'import { slackChannel } from "@vercel/eve-slack";\n\nexport default slackChannel();\n',
     );
     await expect(readFile(join(projectRoot, ".env.example"), "utf8")).resolves.toBe(
       "EXISTING=value\nSLACK_BOT_TOKEN=old\n\nSLACK_SIGNING_SECRET=\n",
@@ -171,7 +171,7 @@ describe("ensureChannel", () => {
     expect(result.action).toBe("created");
     const source = await readFile(join(projectRoot, "agent/channels/photon.ts"), "utf8");
     expect(source).toContain('connectPhotonCredentials("photon/imessage0")');
-    expect(source).toContain('from "eve/channels/photon"');
+    expect(source).toContain('from "@vercel/eve-photon"');
     const packageJson = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
     };

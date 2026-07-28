@@ -221,20 +221,10 @@
       "import": "./dist/src/public/channels/auth.js",
       "default": "./dist/src/public/channels/auth.js"
     },
-    "./channels/slack": {
-      "types": "./dist/src/public/channels/slack/index.d.ts",
-      "import": "./dist/src/public/channels/slack/index.js",
-      "default": "./dist/src/public/channels/slack/index.js"
-    },
     "./channels/chat-sdk": {
       "types": "./dist/src/public/channels/chat-sdk/index.d.ts",
       "import": "./dist/src/public/channels/chat-sdk/index.js",
       "default": "./dist/src/public/channels/chat-sdk/index.js"
-    },
-    "./channels/photon": {
-      "types": "./dist/src/public/channels/photon/index.d.ts",
-      "import": "./dist/src/public/channels/photon/index.js",
-      "default": "./dist/src/public/channels/photon/index.js"
     },
     "./channels/github": {
       "types": "./dist/src/public/channels/github/index.d.ts",
@@ -278,6 +268,96 @@
       "types": "./dist/src/setup/index.d.ts",
       "import": "./dist/src/setup/index.js",
       "default": "./dist/src/setup/index.js"
+    },
+    "./internal/channel/adapter": {
+      "types": "./dist/src/channel/adapter.d.ts",
+      "import": "./dist/src/channel/adapter.js",
+      "default": "./dist/src/channel/adapter.js"
+    },
+    "./internal/channel/cross-channel-receive": {
+      "types": "./dist/src/channel/cross-channel-receive.d.ts",
+      "import": "./dist/src/channel/cross-channel-receive.js",
+      "default": "./dist/src/channel/cross-channel-receive.js"
+    },
+    "./internal/channel/session": {
+      "types": "./dist/src/channel/session.d.ts",
+      "import": "./dist/src/channel/session.js",
+      "default": "./dist/src/channel/session.js"
+    },
+    "./internal/channel/types": {
+      "types": "./dist/src/channel/types.d.ts",
+      "import": "./dist/src/channel/types.js",
+      "default": "./dist/src/channel/types.js"
+    },
+    "./internal/internal/logging": {
+      "types": "./dist/src/internal/logging.d.ts",
+      "import": "./dist/src/internal/logging.js",
+      "default": "./dist/src/internal/logging.js"
+    },
+    "./internal/protocol/message": {
+      "types": "./dist/src/protocol/message.d.ts",
+      "import": "./dist/src/protocol/message.js",
+      "default": "./dist/src/protocol/message.js"
+    },
+    "./internal/public/channels/upload-policy": {
+      "types": "./dist/src/public/channels/upload-policy.d.ts",
+      "import": "./dist/src/public/channels/upload-policy.js",
+      "default": "./dist/src/public/channels/upload-policy.js"
+    },
+    "./internal/public/definitions/callback-context": {
+      "types": "./dist/src/public/definitions/callback-context.d.ts",
+      "import": "./dist/src/public/definitions/callback-context.js",
+      "default": "./dist/src/public/definitions/callback-context.js"
+    },
+    "./internal/public/definitions/channel": {
+      "types": "./dist/src/public/definitions/channel.d.ts",
+      "import": "./dist/src/public/definitions/channel.js",
+      "default": "./dist/src/public/definitions/channel.js"
+    },
+    "./internal/runtime/actions/types": {
+      "types": "./dist/src/runtime/actions/types.d.ts",
+      "import": "./dist/src/runtime/actions/types.js",
+      "default": "./dist/src/runtime/actions/types.js"
+    },
+    "./internal/runtime/input/types": {
+      "types": "./dist/src/runtime/input/types.d.ts",
+      "import": "./dist/src/runtime/input/types.js",
+      "default": "./dist/src/runtime/input/types.js"
+    },
+    "./internal/shared/guards": {
+      "types": "./dist/src/shared/guards.d.ts",
+      "import": "./dist/src/shared/guards.js",
+      "default": "./dist/src/shared/guards.js"
+    },
+    "./internal/channel/compiled-channel": {
+      "types": "./dist/src/channel/compiled-channel.d.ts",
+      "import": "./dist/src/channel/compiled-channel.js",
+      "default": "./dist/src/channel/compiled-channel.js"
+    },
+    "./internal/context/container": {
+      "types": "./dist/src/context/container.d.ts",
+      "import": "./dist/src/context/container.js",
+      "default": "./dist/src/context/container.js"
+    },
+    "./internal/context/keys": {
+      "types": "./dist/src/context/keys.d.ts",
+      "import": "./dist/src/context/keys.js",
+      "default": "./dist/src/context/keys.js"
+    },
+    "./internal/channel/adapter-context": {
+      "types": "./dist/src/channel/adapter-context.d.ts",
+      "import": "./dist/src/channel/adapter-context.js",
+      "default": "./dist/src/channel/adapter-context.js"
+    },
+    "./internal/channel/routes": {
+      "types": "./dist/src/channel/routes.d.ts",
+      "import": "./dist/src/channel/routes.js",
+      "default": "./dist/src/channel/routes.js"
+    },
+    "./internal/shared/json": {
+      "types": "./dist/src/shared/json.d.ts",
+      "import": "./dist/src/shared/json.js",
+      "default": "./dist/src/shared/json.js"
     }
   },
   "publishConfig": {
@@ -315,14 +395,12 @@
     "@ai-sdk/otel": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@ai-sdk/provider-utils": "catalog:",
-    "@chat-adapter/slack": "4.34.0",
     "@chat-adapter/state-memory": "4.34.0",
     "@chat-adapter/twilio": "4.34.0",
     "@clack/core": "1.3.1",
     "@nuxt/kit": "^4.0.0",
     "@opentelemetry/otlp-transformer": "0.214.0",
     "@opentelemetry/sdk-trace-base": "catalog:",
-    "@photon-ai/chat-adapter-imessage": "3.2.0",
     "@standard-schema/spec": "1.1.0",
     "@sveltejs/kit": "^2.0.0",
     "@types/json-schema": "7.0.15",

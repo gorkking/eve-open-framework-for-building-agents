@@ -269,7 +269,7 @@ When a parent agent dispatches a subagent, the framework forwards the parent's c
 Each call to `send(message, { auth, continuationToken, state?, title? })` from a channel route addresses a session by its channel-local raw token. The framework prepends the channel name, derived from the file stem under `agent/channels/`, before handing the token to the runtime.
 
 ```ts
-import { slackContinuationToken } from "eve/channels/slack";
+import { slackContinuationToken } from "@vercel/eve-slack";
 import { twilioContinuationToken } from "eve/channels/twilio";
 
 slackContinuationToken("C0123ABC", "1800000000.001234"); // "C0123ABC:1800000000.001234"
