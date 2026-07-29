@@ -11,6 +11,7 @@ import {
   type ConnectionAuthorizationOutcome,
 } from "#public/channels/slack/connections.js";
 import {
+  buildAnsweredBlocks,
   formatInputRequestFallbackText,
   renderInputRequestBlocks,
 } from "#public/channels/slack/hitl.js";
@@ -31,6 +32,21 @@ import type { InputRequest } from "#runtime/input/types.js";
 const log = createLogger("slack.defaults");
 const REASONING_TYPING_REFRESH_INTERVAL_MS = 5_000;
 const REASONING_TYPING_MIN_PROGRESS_CHARS = 4;
+
+function blockContainsAction(block: unknown, actionId: string): boolean {
+  if (typeof block !== "object" || block === null) return false;
+  const candidate = block as { actions?: unknown; elements?: unknown };
+  return [candidate.actions, candidate.elements].some(
+    (entries) =>
+      Array.isArray(entries) &&
+      entries.some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          (entry as { action_id?: unknown }).action_id === actionId,
+      ),
+  );
+}
 
 /**
  * Workspace-scoped projection of the Slack actor that produced
@@ -146,6 +162,51 @@ function buildInputRequestPosts(
  * which user overrides cannot express.
  */
 export const defaultEvents: SlackChannelInternalEvents = {
+  async "approval.candidate"(event, channel, ctx) {
+    const userId = slackUserIdFromAuthContext(ctx.session.auth.current);
+    if (userId === undefined) return;
+    if (event.outcome === "pending") {
+      await channel.thread.postEphemeral(userId, "Checking whether you can approve this action…");
+      return;
+    }
+    if (event.outcome === "rejected" || event.outcome === "failed") {
+      await channel.thread.postEphemeral(
+        userId,
+        event.safeReason ?? "We couldn’t verify your approval. Please try again.",
+      );
+    }
+  },
+
+  async "approval.settled"(event, channel, _ctx) {
+    const cards = channel.state.pendingApprovalCards ?? {};
+    const card = cards[event.requestId];
+    if (card === undefined || channel.state.channelId === null) return;
+    const answerLabel = event.outcome === "approved" ? "Approve" : "Cancel";
+    const blocks = card.messageBlocks.flatMap((block) => {
+      if (!blockContainsAction(block, card.actionId)) return [block];
+      if (typeof block !== "object" || block === null) return [];
+      const candidate = block as Record<string, unknown>;
+      if (candidate.type !== "card") {
+        return buildAnsweredBlocks({ answerLabel, promptBlocks: [], userId: card.userId });
+      }
+      const { actions: _actions, ...withoutActions } = candidate;
+      return buildAnsweredBlocks({
+        answerLabel,
+        promptBlocks: [withoutActions],
+        userId: card.userId,
+      });
+    });
+    await channel.slack.request("chat.update", {
+      blocks,
+      channel: channel.state.channelId,
+      text: `Answered: ${answerLabel}`,
+      ts: card.messageTs,
+    });
+    const next = { ...cards };
+    delete next[event.requestId];
+    channel.state.pendingApprovalCards = next;
+  },
+
   async "turn.started"(_event, channel, _ctx) {
     channel.state.pendingToolCallMessage = null;
     channel.state.lastReasoningTypingAtMs = null;

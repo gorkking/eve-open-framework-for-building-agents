@@ -433,8 +433,8 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
       };
     },
 
-    deliver(payload: DeliverPayload) {
-      return defaultDeliverResult(payload);
+    deliver(payload: DeliverPayload, ctx) {
+      return definition.deliver?.(payload, ctx) ?? defaultDeliverResult(payload);
     },
 
     ...eventHandlers,

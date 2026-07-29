@@ -1,5 +1,6 @@
 import { parseSlackWebhookBody } from "#compiled/@chat-adapter/slack/webhook.js";
 
+import { defaultDeliverResult } from "#channel/adapter.js";
 import type { CrossChannelReceiveOptions } from "#channel/cross-channel-receive.js";
 import type { Session, SessionHandle } from "#channel/session.js";
 import type { CancelTurnResult, SessionAuthContext } from "#channel/types.js";
@@ -167,6 +168,13 @@ type SlackSessionFailedHandler = (
  * step boundaries. Anything written here must round-trip through
  * `JSON.stringify` / `JSON.parse`.
  */
+export interface SlackPendingApprovalCard {
+  readonly actionId: string;
+  readonly messageBlocks: readonly unknown[];
+  readonly messageTs: string;
+  readonly userId: string;
+}
+
 export interface SlackChannelState {
   /** Slack channel id seeded by the inbound mention. */
   channelId: string | null;
@@ -204,6 +212,7 @@ export interface SlackChannelState {
    * resolution outcome.
    */
   pendingAuthMessageTs?: Record<string, string>;
+  pendingApprovalCards?: Record<string, SlackPendingApprovalCard>;
 }
 
 /**
@@ -448,6 +457,8 @@ export type SlackInboundResultOrPromise = SlackMentionResultOrPromise;
  * {@link SessionContext}; `session.failed` receives only data and context.
  */
 export interface SlackChannelEvents {
+  readonly "approval.candidate"?: SlackEventHandler<"approval.candidate">;
+  readonly "approval.settled"?: SlackEventHandler<"approval.settled">;
   readonly "turn.started"?: SlackEventHandler<"turn.started">;
   readonly "actions.requested"?: SlackEventHandler<"actions.requested">;
   readonly "action.result"?: SlackEventHandler<"action.result">;
@@ -686,6 +697,7 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
       lastReasoningTypingAtMs: null,
       lastReasoningTypingStatus: null,
       pendingAuthMessageTs: {},
+      pendingApprovalCards: {},
     },
     fetchFile: slackFetchFile,
     metadata(state): SlackInstrumentationMetadata {
@@ -699,6 +711,17 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
 
     context(state, session) {
       return rebuildSlackContext(state, session, config.credentials);
+    },
+
+    deliver(payload, channel) {
+      const incoming = payload["pendingApprovalCards"];
+      if (typeof incoming === "object" && incoming !== null) {
+        channel.state.pendingApprovalCards = {
+          ...channel.state.pendingApprovalCards,
+          ...(incoming as SlackChannelState["pendingApprovalCards"]),
+        };
+      }
+      return defaultDeliverResult(payload);
     },
 
     routes: [

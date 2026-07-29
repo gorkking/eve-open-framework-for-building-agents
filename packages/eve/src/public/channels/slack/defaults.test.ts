@@ -51,6 +51,74 @@ function authRequiredEvent(
   };
 }
 
+describe("defaultEvents approval lifecycle", () => {
+  it("sends candidate progress privately", async () => {
+    const { channel, postEphemeral } = buildChannelStub();
+    const ctx = sessionContext({
+      attributes: { user_id: "U777" },
+      authenticator: "slack-webhook",
+      principalId: "slack:T1:U777",
+      principalType: "user",
+    });
+
+    await defaultEvents["approval.candidate"]!(
+      {
+        candidateId: "candidate-1",
+        outcome: "pending",
+        requestId: "approval-1",
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      channel,
+      ctx,
+    );
+
+    expect(postEphemeral).toHaveBeenCalledWith(
+      "U777",
+      "Checking whether you can approve this action…",
+    );
+  });
+
+  it("updates the shared card only after settlement", async () => {
+    const { channel, request } = buildChannelStub({
+      pendingApprovalCards: {
+        "approval-1": {
+          actionId: "eve_input:approval-1:button:1",
+          messageBlocks: [
+            {
+              actions: [{ action_id: "eve_input:approval-1:button:1" }],
+              body: { text: "Approve?", type: "mrkdwn" },
+              type: "card",
+            },
+          ],
+          messageTs: "123.456",
+          userId: "U777",
+        },
+      },
+    });
+
+    await defaultEvents["approval.settled"]!(
+      {
+        outcome: "approved",
+        requestId: "approval-1",
+        responderPrincipalId: "slack:T1:U777",
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      channel,
+      sessionCtx,
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      "chat.update",
+      expect.objectContaining({ channel: "C123", text: "Answered: Approve", ts: "123.456" }),
+    );
+    expect(channel.state.pendingApprovalCards).toEqual({});
+  });
+});
+
 describe("defaultEvents authorization.required", () => {
   it("posts a public status and delivers the challenge ephemerally to the triggering user", async () => {
     const { channel, post, postEphemeral } = buildChannelStub({ triggeringUserId: "U777" });
