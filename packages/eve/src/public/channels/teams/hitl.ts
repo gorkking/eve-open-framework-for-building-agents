@@ -281,7 +281,7 @@ function formatApprovalInput(request: InputRequest): string | null {
     request.display !== "confirmation" ||
     request.options?.length !== 2 ||
     request.options[0]?.id !== "approve" ||
-    request.options[1]?.id !== "deny"
+    request.options[1]?.id !== "cancel"
   ) {
     return null;
   }

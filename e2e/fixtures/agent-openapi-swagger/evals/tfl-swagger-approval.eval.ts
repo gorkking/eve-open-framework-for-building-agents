@@ -20,7 +20,7 @@ export default defineEval({
 
     t.requireInputRequest({
       display: "confirmation",
-      optionIds: ["approve", "deny"],
+      optionIds: ["approve", "cancel"],
       toolName: TFL_APPROVAL_JOURNEY_MODES_TOOL,
     });
     parked.calledTool(TFL_APPROVAL_JOURNEY_MODES_TOOL, { status: "pending", count: 1 });

@@ -8,7 +8,7 @@ const APPROVAL_REQUEST: InputRequest = {
   display: "confirmation",
   options: [
     { id: "approve", label: "Approve", style: "primary" },
-    { id: "deny", label: "Deny", style: "danger" },
+    { id: "cancel", label: "Cancel", style: "danger" },
   ],
   prompt: 'Approve tool "bash"?',
   requestId: "req-1",

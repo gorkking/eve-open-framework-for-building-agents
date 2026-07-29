@@ -926,7 +926,7 @@ describe("EveTUIRunner native continuation state", () => {
                 display: "confirmation",
                 options: [
                   { id: "approve", label: "Approve" },
-                  { id: "deny", label: "Deny" },
+                  { id: "cancel", label: "Cancel" },
                 ],
                 prompt: "Approve get_weather?",
                 requestId: "request-1",

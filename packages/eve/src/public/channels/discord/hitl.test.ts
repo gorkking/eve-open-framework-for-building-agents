@@ -42,7 +42,7 @@ describe("renderInputRequestComponents", () => {
         display: "confirmation",
         options: [
           { id: "approve", label: "Approve", style: "primary" },
-          { id: "deny", label: "Deny", style: "danger" },
+          { id: "cancel", label: "Cancel", style: "danger" },
         ],
       }),
     );

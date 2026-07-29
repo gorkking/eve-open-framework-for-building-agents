@@ -89,7 +89,7 @@ describe("renderInputRequestBlocks", () => {
       makeRequest({
         options: [
           { id: "approve", label: "Approve", style: "primary" },
-          { id: "deny", label: "Deny", style: "danger" },
+          { id: "cancel", label: "Cancel", style: "danger" },
         ],
       }),
     );
@@ -117,9 +117,9 @@ describe("renderInputRequestBlocks", () => {
     expect(card.actions[1]).toMatchObject({
       type: "button",
       action_id: `${HITL_ACTION_PREFIX}call_abc123:button:1`,
-      value: "deny",
+      value: "cancel",
       style: "danger",
-      text: { type: "plain_text", text: "Deny", emoji: false },
+      text: { type: "plain_text", text: "Cancel", emoji: false },
     });
   });
 
@@ -139,8 +139,8 @@ describe("renderInputRequestBlocks", () => {
       prompt: "Approve tool call: mongodb-mutate",
       requestId: "approval_1",
       options: [
-        { id: "approve", label: "Yes" },
-        { id: "deny", label: "No" },
+        { id: "approve", label: "Approve" },
+        { id: "cancel", label: "Cancel" },
       ],
     });
 
@@ -157,8 +157,8 @@ describe("renderInputRequestBlocks", () => {
       body: { type: "mrkdwn", text: "*Approve tool call: mongodb-mutate*" },
     });
     expect(card.actions).toMatchObject([
-      { text: { text: "Deny" }, value: "deny" },
-      { style: "primary", text: { text: "Allow" }, value: "approve" },
+      { text: { text: "Cancel" }, value: "cancel" },
+      { style: "primary", text: { text: "Approve" }, value: "approve" },
     ]);
 
     const details = blocks[1] as {
@@ -191,8 +191,8 @@ describe("renderInputRequestBlocks", () => {
         },
         display: "confirmation",
         options: [
-          { id: "approve", label: "Yes" },
-          { id: "deny", label: "No" },
+          { id: "approve", label: "Approve" },
+          { id: "cancel", label: "Cancel" },
         ],
       }),
     );
@@ -284,7 +284,7 @@ describe("renderInputRequestBlocks", () => {
     const blocks = renderInputRequestBlocks(
       makeRequest({
         allowFreeform: true,
-        options: [{ id: "yes", label: "Yes" }],
+        options: [{ id: "yes", label: "Approve" }],
       }),
     );
     // current behavior: options take precedence; freeform button is the
@@ -376,8 +376,8 @@ describe("formatInputRequestFallbackText", () => {
         display: "confirmation",
         prompt: "Approve tool call: mongodb-mutate",
         options: [
-          { id: "approve", label: "Yes" },
-          { id: "deny", label: "No" },
+          { id: "approve", label: "Approve" },
+          { id: "cancel", label: "Cancel" },
         ],
       }),
     );
@@ -500,10 +500,10 @@ describe("buildAnsweredBlocks", () => {
   });
 
   it("omits the attribution block when no userId is supplied", () => {
-    const blocks = buildAnsweredBlocks({ promptBlocks: [], answerLabel: "Deny" });
+    const blocks = buildAnsweredBlocks({ promptBlocks: [], answerLabel: "Cancel" });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({
-      text: { text: ":white_check_mark: *Deny*" },
+      text: { text: ":white_check_mark: *Cancel*" },
     });
   });
 
