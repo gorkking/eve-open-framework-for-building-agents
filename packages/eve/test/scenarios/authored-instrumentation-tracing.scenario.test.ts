@@ -11,7 +11,12 @@ import {
 } from "../../src/internal/testing/scenario-app.js";
 import { sendDevelopmentMessage } from "../dev-client-harness/send-message.js";
 import { createDevelopmentSessionState } from "../dev-client-harness/session.js";
-import { hasKnownDevServerFailure, startEveDev, waitForCondition } from "./dev-server-harness.js";
+import {
+  fetchText,
+  hasKnownDevServerFailure,
+  startEveDev,
+  waitForCondition,
+} from "./dev-server-harness.js";
 
 const scenarioApp = useScenarioApp();
 const SCENARIO_TIMEOUT_MS = 360_000;
@@ -52,15 +57,67 @@ export default defineInstrumentation({
 });
 `;
 
+/**
+ * A span of the author's own, created inside a turn from a tracer the author
+ * asks the global API for. It should nest into the agent's trace and reach both
+ * sinks — eve's writer accepts a whole agent-owned trace, not only the spans it
+ * created itself.
+ */
+const AUTHORED_SPAN_TOOL_SOURCE = `import { defineTool } from "eve/tools";
+import { trace } from "@opentelemetry/api";
+import { z } from "zod";
+import { createForecast } from "../lib/weather/client.ts";
+
+export default defineTool({
+  description: "Get the current weather for a city.",
+  inputSchema: z.object({
+    city: z.string(),
+  }),
+  async execute(input) {
+    return trace.getTracer("weather-agent").startActiveSpan("authored.forecast", (span) => {
+      try {
+        return createForecast(input.city);
+      } finally {
+        span.end();
+      }
+    });
+  },
+});
+`;
+
+/**
+ * The same thing outside any session. It belongs to no agent trace, so the
+ * author's exporter is the only place it can appear: `eve trace` shows sessions,
+ * and spooling unrelated request traffic to `.eve/traces/v1` would fill the
+ * store with traces no session ever claims.
+ */
+const AUTHORED_SPAN_CHANNEL_SOURCE = `import { defineChannel, GET } from "eve/channels";
+import { trace } from "@opentelemetry/api";
+
+export default defineChannel({
+  routes: [
+    GET("/authored-span", () =>
+      trace.getTracer("weather-agent").startActiveSpan("authored.channel", (span) => {
+        span.end();
+        return new Response("ok");
+      }),
+    ),
+  ],
+});
+`;
+
 const AUTHORED_INSTRUMENTATION_DESCRIPTOR: ScenarioAppDescriptor = {
   ...WEATHER_AGENT_DESCRIPTOR,
   dependencies: {
     ...WEATHER_AGENT_DESCRIPTOR.dependencies,
+    "@opentelemetry/api": "1.9.1",
     "@vercel/otel": "2.1.3",
   },
   files: {
     ...WEATHER_AGENT_DESCRIPTOR.files,
+    "agent/channels/authored-span.ts": AUTHORED_SPAN_CHANNEL_SOURCE,
     "agent/instrumentation.ts": AUTHORED_INSTRUMENTATION_SOURCE,
+    "agent/tools/get_weather.ts": AUTHORED_SPAN_TOOL_SOURCE,
   },
   name: "authored-instrumentation-agent",
 };
@@ -104,19 +161,65 @@ describe("authored instrumentation in eve dev", () => {
             )}\n\n${output()}`,
         );
 
-        // ...and eve spooled the same span to the local store, so `eve trace`
+        // The author's own span, created from the global API inside the turn,
+        // arrives there too.
+        expect(
+          authoredSpans,
+          `Authored span processor never received the tool's own span.\n\nspans: ${JSON.stringify(
+            authoredSpans,
+          )}\n\n${output()}`,
+        ).toContain("authored.forecast");
+
+        // ...and eve spooled the same spans to the local store, so `eve trace`
         // keeps working for an agent that authored instrumentation.
-        let localSpans: string[] = [];
+        let localTraces: LocalTrace[] = [];
         await waitForCondition(
           async () => {
-            localSpans = await readLocalTraceSpanNames(app.appRoot);
-            return localSpans.includes("agent.turn");
+            localTraces = await readLocalTraces(app.appRoot);
+            return localTraces.some((trace) => trace.spanNames.includes("agent.turn"));
           },
           () =>
-            `Local trace store never received eve's agent spans.\n\nspans: ${JSON.stringify(
-              localSpans,
+            `Local trace store never received eve's agent spans.\n\ntraces: ${JSON.stringify(
+              localTraces,
             )}\n\n${output()}`,
         );
+
+        // One trace, not two: the author's span nests into the agent's trace
+        // rather than starting a root of its own, which is what makes it show up
+        // under `agent.step` in `eve trace`.
+        const agentTrace = localTraces.find((trace) => trace.spanNames.includes("agent.turn"));
+        await waitForCondition(
+          async () => {
+            localTraces = await readLocalTraces(app.appRoot);
+            return (
+              localTraces
+                .find((trace) => trace.traceId === agentTrace?.traceId)
+                ?.spanNames.includes("authored.forecast") === true
+            );
+          },
+          () =>
+            `Local trace store never received the tool's own span in the agent trace.\n\ntraces: ${JSON.stringify(
+              localTraces,
+            )}\n\n${output()}`,
+        );
+
+        // A span outside any session belongs to no agent trace, so it reaches
+        // the author's exporter and nothing else. Asserted only once the author
+        // has it: eve's accept decision is made when the span ends, so by then
+        // the local store has already declined it.
+        await fetchText(server.url, "/authored-span");
+        await waitForCondition(
+          async () => {
+            authoredSpans = await readAuthoredSpanNames(spanLogPath);
+            return authoredSpans.includes("authored.channel");
+          },
+          () =>
+            `Authored span processor never received the channel's span.\n\nspans: ${JSON.stringify(
+              authoredSpans,
+            )}\n\n${output()}`,
+        );
+        localTraces = await readLocalTraces(app.appRoot);
+        expect(localTraces.flatMap((trace) => trace.spanNames)).not.toContain("authored.channel");
 
         expect(output()).not.toContain("could not register an OpenTelemetry tracer provider");
         expect(hasKnownDevServerFailure(output())).toBe(false);
@@ -144,26 +247,32 @@ interface OtlpSegment {
   }[];
 }
 
-async function readLocalTraceSpanNames(appRoot: string): Promise<string[]> {
-  const schemaDirectory = resolveLocalTraceSchemaDirectory(appRoot);
-  const traceIds = await listDirectory(schemaDirectory);
-  const names: string[] = [];
+interface LocalTrace {
+  readonly spanNames: readonly string[];
+  readonly traceId: string;
+}
 
-  for (const traceId of traceIds) {
+async function readLocalTraces(appRoot: string): Promise<LocalTrace[]> {
+  const schemaDirectory = resolveLocalTraceSchemaDirectory(appRoot);
+  const traces: LocalTrace[] = [];
+
+  for (const traceId of await listDirectory(schemaDirectory)) {
     const segmentsDirectory = join(schemaDirectory, traceId, "segments");
+    const spanNames: string[] = [];
     for (const segment of await listDirectory(segmentsDirectory)) {
       const payload = await readSegment(join(segmentsDirectory, segment));
       for (const resourceSpan of payload?.resourceSpans ?? []) {
         for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
           for (const span of scopeSpan.spans ?? []) {
-            if (span.name !== undefined) names.push(span.name);
+            if (span.name !== undefined) spanNames.push(span.name);
           }
         }
       }
     }
+    traces.push({ spanNames, traceId });
   }
 
-  return names;
+  return traces;
 }
 
 async function listDirectory(directory: string): Promise<string[]> {

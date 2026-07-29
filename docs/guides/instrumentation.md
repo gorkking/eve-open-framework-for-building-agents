@@ -9,7 +9,7 @@ If you intend to export telemetry, review the exporter destination, data categor
 
 ## Zero-config local traces
 
-`eve dev` records agent, AI SDK, and user-created OpenTelemetry spans under `.eve/traces/v1`. Each session has one trace, rooted independently from Workflow telemetry, with turns, model steps, and tool actions represented explicitly. Spans created by application code while a model or tool is executing inherit that active agent context.
+`eve dev` records agent, AI SDK, and user-created OpenTelemetry spans under `.eve/traces/v1`. Each session has one trace, rooted independently from Workflow telemetry, with turns, model steps, and tool actions represented explicitly. Spans created by application code while a model or tool is executing inherit that active agent context. A span your code creates outside a session — in a channel route, say — belongs to no session trace, so it is not written to `.eve/traces/v1`; an exporter you configured yourself still receives it.
 
 The directory is an immutable OTLP/JSON spool and remains available after `eve dev` exits, subject to the [retention policy](#local-trace-retention) below. Inspection tools may build a query index from these segments, but the index is derived and can be rebuilt without changing the captured trace data.
 
