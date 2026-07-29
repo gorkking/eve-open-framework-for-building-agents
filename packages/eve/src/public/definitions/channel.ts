@@ -16,7 +16,7 @@ import type {
   RunInput,
 } from "#channel/types.js";
 import { buildCallbackContext } from "#context/build-callback-context.js";
-import type { UnstampedMessageStreamEvent, MessageStreamEvent } from "#protocol/message.js";
+import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { GenericChannelDefinition, GenericReceiveInput } from "#shared/channel-definition.js";
 
@@ -160,7 +160,7 @@ export interface Agent {
   getEventStream(
     sessionId: string,
     options?: GetEventStreamOptions,
-  ): Promise<ReadableStream<MessageStreamEvent>>;
+  ): Promise<ReadableStream<HandleMessageStreamEvent>>;
 }
 
 /**
@@ -201,8 +201,8 @@ export function isDisabledRouteSentinel(value: unknown): value is DisabledRouteS
   );
 }
 
-type EventData<T extends UnstampedMessageStreamEvent["type"]> =
-  Extract<UnstampedMessageStreamEvent, { type: T }> extends { data: infer D } ? D : undefined;
+type EventData<T extends HandleMessageStreamEvent["type"]> =
+  Extract<HandleMessageStreamEvent, { type: T }> extends { data: infer D } ? D : undefined;
 
 /**
  * Session operations on the `channel` argument of every channel event handler.
@@ -218,7 +218,7 @@ export interface ChannelSessionOps {
  */
 export type ChannelContext<TCtx> = TCtx & ChannelSessionOps;
 
-type ChannelEventHandler<T extends UnstampedMessageStreamEvent["type"], TCtx> = (
+type ChannelEventHandler<T extends HandleMessageStreamEvent["type"], TCtx> = (
   data: EventData<T>,
   channel: ChannelContext<TCtx>,
   ctx: SessionContext,
@@ -236,6 +236,8 @@ type ChannelSessionFailedHandler<TCtx> = (
  * and the channel context, with no `ctx`.
  */
 export interface ChannelEvents<TCtx = void> {
+  readonly "approval.candidate"?: ChannelEventHandler<"approval.candidate", TCtx>;
+  readonly "approval.settled"?: ChannelEventHandler<"approval.settled", TCtx>;
   readonly "turn.started"?: ChannelEventHandler<"turn.started", TCtx>;
   readonly "actions.requested"?: ChannelEventHandler<"actions.requested", TCtx>;
   readonly "action.result"?: ChannelEventHandler<"action.result", TCtx>;
@@ -339,6 +341,8 @@ export function defineChannel<
 // The Record type fails to compile if this map drifts from the ChannelEvents
 // keys in either direction.
 const channelEventTypes: Record<keyof ChannelEvents, null> = {
+  "approval.candidate": null,
+  "approval.settled": null,
   "turn.started": null,
   "actions.requested": null,
   "action.result": null,
@@ -429,8 +433,8 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
       };
     },
 
-    deliver(payload: DeliverPayload) {
-      return defaultDeliverResult(payload);
+    deliver(payload: DeliverPayload, ctx) {
+      return definition.deliver?.(payload, ctx) ?? defaultDeliverResult(payload);
     },
 
     ...eventHandlers,

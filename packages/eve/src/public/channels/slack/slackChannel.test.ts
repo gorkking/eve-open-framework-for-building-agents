@@ -8,7 +8,7 @@ import { isCompiledChannel, type CompiledChannel } from "#channel/compiled-chann
 import { isHttpRouteDefinition } from "#channel/routes.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { SessionKey } from "#context/keys.js";
-import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
+import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import { decodeSlackApiBody } from "#public/channels/slack/api-encoding.js";
 import {
   HITL_ACTION_PREFIX,
@@ -18,7 +18,6 @@ import {
 } from "#public/channels/slack/hitl.js";
 import {
   SLACK_CARD_BODY_TEXT_MAX_LENGTH,
-  SLACK_CARD_SUBTEXT_MAX_LENGTH,
   SLACK_MAX_BLOCKS_PER_MESSAGE,
   SLACK_MESSAGE_TEXT_MAX_LENGTH,
   SLACK_SECTION_TEXT_MAX_LENGTH,
@@ -78,9 +77,9 @@ const stubAlsContext = (() => {
 
 function callEvent(
   adapter: ChannelAdapter,
-  event: UnstampedMessageStreamEvent,
+  event: HandleMessageStreamEvent,
   ctx: any,
-): Promise<UnstampedMessageStreamEvent> {
+): Promise<HandleMessageStreamEvent> {
   return contextStorage.run(stubAlsContext, () => callAdapterEventHandler(adapter, event, ctx));
 }
 
@@ -115,11 +114,11 @@ function captureAccessor(initialContinuationToken: string): {
   };
 }
 
-function makeEvent<T extends UnstampedMessageStreamEvent["type"]>(
+function makeEvent<T extends HandleMessageStreamEvent["type"]>(
   type: T,
   data: unknown,
-): UnstampedMessageStreamEvent {
-  return { type, data } as UnstampedMessageStreamEvent;
+): HandleMessageStreamEvent {
+  return { type, data } as HandleMessageStreamEvent;
 }
 
 const THREAD_STATE = {
@@ -2177,8 +2176,9 @@ describe("slackChannel() HITL interaction pipeline", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const [payload, options] = send.mock.calls[0]!;
-    expect(payload).toEqual({
+    expect(payload).toMatchObject({
       inputResponses: [{ optionId: "approve", requestId: "approval_abc123" }],
+      pendingApprovalCards: { approval_abc123: expect.objectContaining({ userId: "U_APPROVER" }) },
     });
     expect(options).toMatchObject({
       auth: {
@@ -2304,47 +2304,14 @@ describe("slackChannel() HITL interaction pipeline", () => {
     );
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]?.[0]).toEqual({
+    expect(send.mock.calls[0]?.[0]).toMatchObject({
       inputResponses: [{ optionId: "approve", requestId: "approval_451" }],
+      pendingApprovalCards: { approval_451: expect.any(Object) },
     });
 
-    const updateCall = fetchMock.mock.calls.find(
-      ([url]) => String(url) === "https://slack.com/api/chat.update",
-    );
-    expect(updateCall).toBeDefined();
-    const body = parseSlackRequestBody(updateCall?.[1] as RequestInit) as {
-      blocks: Array<{
-        actions?: Array<{ action_id?: string }>;
-        elements?: Array<{ action_id?: string }>;
-        subtext?: { text?: string };
-        text?: { text?: string };
-      }>;
-      channel: string;
-      text: string;
-      ts: string;
-    };
-
-    expect(body).toMatchObject({
-      channel: "C01",
-      text: "Answered: Approve",
-      ts: "1700000000.000010",
-    });
-    expect(JSON.stringify(body.blocks)).toContain("Approve issue 451?");
-    expect(JSON.stringify(body.blocks)).toContain("Approve");
-    expect(JSON.stringify(body.blocks)).toContain("Tool input");
-    expect(JSON.stringify(body.blocks)).toContain("Approve issue 508?");
-    expect(body.blocks[0]?.subtext?.text).toBe(":white_check_mark: *Approve* by <@U_APPROVER>");
-    expect(body.blocks[0]?.subtext?.text?.length).toBeLessThanOrEqual(
-      SLACK_CARD_SUBTEXT_MAX_LENGTH,
-    );
-
-    const remainingActionIds = body.blocks.flatMap(
-      (block) =>
-        (block.actions ?? block.elements)
-          ?.map((element) => element.action_id)
-          .filter((actionId): actionId is string => typeof actionId === "string") ?? [],
-    );
-    expect(remainingActionIds).toEqual([secondDenyActionId, secondApproveActionId]);
+    expect(
+      fetchMock.mock.calls.find(([url]) => String(url) === "https://slack.com/api/chat.update"),
+    ).toBeUndefined();
   });
 
   it("covers the observed e0 batched escalation approval run", async () => {
@@ -2448,36 +2415,14 @@ describe("slackChannel() HITL interaction pipeline", () => {
     );
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]?.[0]).toEqual({
+    expect(send.mock.calls[0]?.[0]).toMatchObject({
       inputResponses: [{ optionId: "cancel", requestId: "approval_451" }],
+      pendingApprovalCards: { approval_451: expect.any(Object) },
     });
 
-    const updateCall = fetchMock.mock.calls.find(
-      ([url]) => String(url) === "https://slack.com/api/chat.update",
-    );
-    expect(updateCall).toBeDefined();
-    const body = parseSlackRequestBody(updateCall?.[1] as RequestInit) as {
-      blocks: Array<{
-        actions?: Array<{ action_id?: string }>;
-        child_blocks?: Array<{ text?: { text?: string } }>;
-        elements?: Array<{ action_id?: string }>;
-        subtext?: { text?: string };
-      }>;
-    };
-
-    expect(body.blocks[0]?.subtext?.text).toBe(":white_check_mark: *Cancel* by <@U0AT7H56S90>");
-    expect(body.blocks[1]?.child_blocks?.[0]?.text?.text).toContain('"issueNumber": 451');
-    expect(body.blocks[3]?.child_blocks?.[0]?.text?.text).toContain('"issueNumber": 508');
-    const remainingActionIds = body.blocks.flatMap(
-      (block) =>
-        (block.actions ?? block.elements)
-          ?.map((element) => element.action_id)
-          .filter((actionId): actionId is string => typeof actionId === "string") ?? [],
-    );
-    expect(remainingActionIds).toEqual([
-      `${HITL_ACTION_PREFIX}approval_508:button:0`,
-      `${HITL_ACTION_PREFIX}approval_508:button:1`,
-    ]);
+    expect(
+      fetchMock.mock.calls.find(([url]) => String(url) === "https://slack.com/api/chat.update"),
+    ).toBeUndefined();
   });
 
   it("resumes freeform modal answers with the submitting Slack user auth", async () => {

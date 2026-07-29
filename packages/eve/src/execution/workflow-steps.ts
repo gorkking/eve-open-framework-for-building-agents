@@ -19,7 +19,6 @@ import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js
 import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
-import { preserveSerializedAgentTraceState } from "#harness/agent-trace-context-store.js";
 import {
   isSessionLimitDecline,
   isTurnCancellation,
@@ -44,9 +43,8 @@ import {
   createAuthorizationCompletedEvent,
   createSessionStartedEvent,
   encodeMessageStreamEvent,
-  type UnstampedMessageStreamEvent,
-  stampMessageStreamEvent,
-  type MessageStreamEvent,
+  type HandleMessageStreamEvent,
+  timestampHandleMessageStreamEvent,
 } from "#protocol/message.js";
 import {
   CallbackBaseUrlKey,
@@ -163,11 +161,19 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   // the `emit` function is created below.
   const pendingAuth = getPendingAuthorization(durableSession.state);
   let completedAuths:
-    | Array<{ name: string; authorization: ConnectionAuthorizationChallenge }>
+    | Array<{
+        candidateId?: string;
+        name: string;
+        authorization: ConnectionAuthorizationChallenge;
+      }>
     | undefined;
   if (pendingAuth && input.input?.kind === "deliver") {
     const authResults: Array<{ name: string } & AuthorizationResult> = [];
-    const completed: Array<{ name: string; authorization: ConnectionAuthorizationChallenge }> = [];
+    const completed: Array<{
+      candidateId?: string;
+      name: string;
+      authorization: ConnectionAuthorizationChallenge;
+    }> = [];
     const remainingPayloads: DeliverPayload[] = [];
     for (const payload of input.input.payloads) {
       const cb = payload["authorizationCallback"] as
@@ -182,7 +188,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             callback: cb.callback,
             hookUrl: challenge.hookUrl,
           });
-          completed.push({ name: challenge.name, authorization: challenge.challenge });
+          completed.push({
+            candidateId: challenge.candidateId,
+            name: challenge.name,
+            authorization: challenge.challenge,
+          });
         }
       } else {
         remainingPayloads.push(payload);
@@ -292,17 +302,15 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   const writer = input.parentWritable.getWriter();
 
-  // Stamp once: the persisted chunk and the hooks below must agree on the id.
-  const emit = async (event: UnstampedMessageStreamEvent): Promise<MessageStreamEvent> => {
+  const emit = async (event: HandleMessageStreamEvent): Promise<HandleMessageStreamEvent> => {
     const toEmit = await callAdapterEventHandler(adapter, event, adapterCtx);
     setChannelContext(ctx, { ...adapter, state: { ...adapterCtx.state } });
-    const stamped = stampMessageStreamEvent(toEmit);
-    await writer.write(encodeMessageStreamEvent(stamped));
-    return stamped;
+    await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(toEmit)));
+    return toEmit;
   };
 
   const handleEvent = async (
-    event: UnstampedMessageStreamEvent,
+    event: HandleMessageStreamEvent,
     messages?: readonly import("ai").ModelMessage[],
   ): Promise<void> => {
     const emitted = await emit(event);
@@ -357,10 +365,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       });
       if (completedAuths) {
         const emissionState = getHarnessEmissionState(schemaSession.state);
-        for (const { name, authorization } of completedAuths) {
+        for (const { candidateId, name, authorization } of completedAuths) {
           await handleEvent(
             createAuthorizationCompletedEvent({
               authorization,
+              candidateId,
               name,
               outcome: "authorized",
               sequence: emissionState.sequence,
@@ -421,10 +430,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     }
     return {
       action: "cancelled",
-      serializedContext: preserveSerializedAgentTraceState(
-        input.serializedContext,
-        serializeContext(ctx),
-      ),
+      serializedContext: input.serializedContext,
       sessionState: input.sessionState,
     };
   }

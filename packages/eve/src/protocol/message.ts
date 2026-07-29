@@ -6,7 +6,6 @@ import {
   isSerializedUrlFilePart,
 } from "#internal/attachments/url-refs.js";
 import { decodeSandboxRef, isSandboxRefUrl } from "#internal/attachments/sandbox-refs.js";
-import { createEventId } from "#protocol/event-id.js";
 import type { ConnectionAuthorizationChallenge } from "#public/connections/errors.js";
 import type { RuntimeActionRequest, RuntimeActionResult } from "#runtime/actions/types.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
@@ -19,7 +18,7 @@ export const EVE_STREAM_TAIL_INDEX_HEADER = "x-eve-stream-tail-index";
 export const EVE_STREAM_VERSION_HEADER = "x-eve-stream-version";
 export const EVE_MESSAGE_STREAM_CONTENT_TYPE = "application/x-ndjson; charset=utf-8";
 export const EVE_MESSAGE_STREAM_FORMAT = "ndjson";
-export const EVE_MESSAGE_STREAM_VERSION = "20";
+export const EVE_MESSAGE_STREAM_VERSION = "19";
 
 /**
  * eve-owned finish reason for one completed assistant step.
@@ -48,21 +47,11 @@ export interface StepCompletedProviderMetadata {
 /**
  * Durable metadata attached to one persisted session stream event.
  *
- * Stamped once, immediately before the event is written to the workflow-owned
- * stream, and stored with it. Re-reading the stream — reconnecting, rewinding,
- * or replaying a finished session — yields the same values every time.
+ * Runtime code stamps this immediately before writing the event to the
+ * workflow-owned stream so replay preserves the original timing.
  */
-export interface MessageStreamEventMeta {
-  /** ISO-8601 emission time. */
+export interface HandleMessageStreamEventMeta {
   readonly at: string;
-  /**
-   * Unique, lexicographically sortable identifier for this event.
-   *
-   * Stamped from stream version 20 on: rewinding into a session that started
-   * before the upgrade yields events whose `id` is absent despite this type,
-   * and those cannot be deduplicated.
-   */
-  readonly id: string;
 }
 
 /**
@@ -224,6 +213,36 @@ export interface ActionsRequestedStreamEvent {
   type: "actions.requested";
 }
 
+export type ApprovalCandidateOutcome = "pending" | "rejected" | "failed" | "timed-out" | "stale";
+
+/** Safe lifecycle event for one responder-bound approval candidate. */
+export interface ApprovalCandidateStreamEvent {
+  data: {
+    candidateId: string;
+    outcome: ApprovalCandidateOutcome;
+    requestId: string;
+    responderPrincipalId: string;
+    safeReason?: string;
+    sequence: number;
+    stepIndex: number;
+    turnId: string;
+  };
+  type: "approval.candidate";
+}
+
+/** Terminal durable settlement for one approval request. */
+export interface ApprovalSettledStreamEvent {
+  data: {
+    outcome: "approved" | "cancelled";
+    requestId: string;
+    responderPrincipalId: string;
+    sequence: number;
+    stepIndex: number;
+    turnId: string;
+  };
+  type: "approval.settled";
+}
+
 /**
  * Stream event emitted when the harness needs human input before it can
  * continue the run.
@@ -293,7 +312,7 @@ export interface SubagentStartedStreamEvent {
 export interface SubagentChildEventStreamEvent {
   data: {
     callId: string;
-    event: UnstampedMessageStreamEvent;
+    event: HandleMessageStreamEvent;
     subagentName: string;
   };
   type: "subagent.event";
@@ -511,6 +530,7 @@ export interface CompactionCompletedStreamEvent {
 export interface AuthorizationRequiredStreamEvent {
   data: {
     authorization?: ConnectionAuthorizationChallenge;
+    candidateId?: string;
     description: string;
     name: string;
     sequence: number;
@@ -542,6 +562,7 @@ export type ConnectionAuthorizationOutcome = AuthorizationOutcome;
  */
 export interface AuthorizationCompletedStreamEvent {
   data: {
+    candidateId?: string;
     /**
      * The challenge from the matching `authorization.required` event,
      * journaled across the park. Lets channels keep rendering the
@@ -592,12 +613,11 @@ export interface SessionCompletedStreamEvent {
 }
 
 /**
- * Serializable event before eve stamps the durable stream envelope.
- *
- * Internal emitters use this type while constructing events. Public stream
- * consumers receive {@link MessageStreamEvent}.
+ * Serializable stream event union for the durable message session flow.
  */
-export type UnstampedMessageStreamEvent =
+export type HandleMessageStreamEvent = (
+  | ApprovalCandidateStreamEvent
+  | ApprovalSettledStreamEvent
   | CompactionCompletedStreamEvent
   | CompactionRequestedStreamEvent
   | AuthorizationCompletedStreamEvent
@@ -625,7 +645,10 @@ export type UnstampedMessageStreamEvent =
   | TurnCancelledStreamEvent
   | TurnCompletedStreamEvent
   | TurnFailedStreamEvent
-  | TurnStartedStreamEvent;
+  | TurnStartedStreamEvent
+) & {
+  readonly meta?: HandleMessageStreamEventMeta;
+};
 
 /**
  * Stream events that represent an unrecovered turn/session failure.
@@ -636,18 +659,14 @@ export type TurnFailureStreamEvent =
   | TurnFailedStreamEvent;
 
 /**
- * One event read from an eve session stream.
+ * One public session stream event after runtime metadata has been stamped.
  *
- * eve stamps the durable identity and emission time before writing the event.
+ * Runtime/execution code owns this stamping boundary. Replays must preserve the
+ * original `meta.at` value instead of recomputing it.
  */
-export type MessageStreamEvent = UnstampedMessageStreamEvent & {
-  readonly meta: MessageStreamEventMeta;
+export type TimedHandleMessageStreamEvent = HandleMessageStreamEvent & {
+  readonly meta: HandleMessageStreamEventMeta;
 };
-
-/**
- * @deprecated Use {@link MessageStreamEvent}.
- */
-export type HandleMessageStreamEvent = MessageStreamEvent;
 
 const textEncoder = new TextEncoder();
 
@@ -655,7 +674,7 @@ const textEncoder = new TextEncoder();
  * Returns true when the current stream has reached a turn boundary or terminal
  * session outcome.
  */
-export function isCurrentTurnBoundaryEvent(event: UnstampedMessageStreamEvent): boolean {
+export function isCurrentTurnBoundaryEvent(event: HandleMessageStreamEvent): boolean {
   return (
     event.type === "session.completed" ||
     event.type === "session.failed" ||
@@ -665,13 +684,10 @@ export function isCurrentTurnBoundaryEvent(event: UnstampedMessageStreamEvent): 
 
 /**
  * Narrows a stream event to the failure events that terminate or poison a turn.
- *
- * Generic so narrowing keeps the input's stamping: a
- * {@link MessageStreamEvent} narrows to a stamped failure event.
  */
-export function isTurnFailureEvent<TEvent extends UnstampedMessageStreamEvent>(
-  event: TEvent,
-): event is TEvent & TurnFailureStreamEvent {
+export function isTurnFailureEvent(
+  event: HandleMessageStreamEvent,
+): event is TurnFailureStreamEvent {
   return (
     event.type === "session.failed" || event.type === "step.failed" || event.type === "turn.failed"
   );
@@ -957,6 +973,7 @@ export function createActionsRequestedEvent(input: {
  */
 export function createAuthorizationRequiredEvent(input: {
   readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly candidateId?: string;
   readonly description: string;
   readonly name: string;
   readonly sequence: number;
@@ -974,6 +991,9 @@ export function createAuthorizationRequiredEvent(input: {
   if (input.authorization !== undefined) {
     data.authorization = input.authorization;
   }
+  if (input.candidateId !== undefined) {
+    data.candidateId = input.candidateId;
+  }
   if (input.webhookUrl !== undefined) {
     data.webhookUrl = input.webhookUrl;
   }
@@ -990,6 +1010,7 @@ export function createAuthorizationRequiredEvent(input: {
  */
 export function createAuthorizationCompletedEvent(input: {
   readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly candidateId?: string;
   readonly name: string;
   readonly outcome: AuthorizationOutcome;
   readonly reason?: string;
@@ -1007,6 +1028,9 @@ export function createAuthorizationCompletedEvent(input: {
   if (input.authorization !== undefined) {
     data.authorization = input.authorization;
   }
+  if (input.candidateId !== undefined) {
+    data.candidateId = input.candidateId;
+  }
   if (input.reason !== undefined) {
     data.reason = input.reason;
   }
@@ -1014,6 +1038,20 @@ export function createAuthorizationCompletedEvent(input: {
     data,
     type: "authorization.completed",
   };
+}
+
+/** Creates a safe candidate lifecycle event. */
+export function createApprovalCandidateEvent(
+  input: ApprovalCandidateStreamEvent["data"],
+): ApprovalCandidateStreamEvent {
+  return { data: input, type: "approval.candidate" };
+}
+
+/** Creates a terminal approval settlement event. */
+export function createApprovalSettledEvent(
+  input: ApprovalSettledStreamEvent["data"],
+): ApprovalSettledStreamEvent {
+  return { data: input, type: "approval.settled" };
 }
 
 /**
@@ -1423,18 +1461,21 @@ export function createSessionCompletedEvent(): SessionCompletedStreamEvent {
 }
 
 /**
- * Stamps one session event with its durable identity and emission time.
+ * Stamps one session event with durable timing metadata immediately before it
+ * is written to the workflow-owned stream.
  *
- * Runtime/execution code only, once per event, immediately before the write.
- * One stamping seam is what makes the persisted stream and authored hooks
- * observe the same `meta.id`.
+ * Only runtime/execution code should call this. Keeping one stamping seam
+ * ensures every persisted event shares the same clock contract and replay never
+ * invents new timestamps.
  */
-export function stampMessageStreamEvent(event: UnstampedMessageStreamEvent): MessageStreamEvent {
+export function timestampHandleMessageStreamEvent(
+  event: HandleMessageStreamEvent,
+  at = new Date().toISOString(),
+): TimedHandleMessageStreamEvent {
   return {
     ...event,
     meta: {
-      at: new Date().toISOString(),
-      id: createEventId(),
+      at,
     },
   };
 }
@@ -1442,7 +1483,7 @@ export function stampMessageStreamEvent(event: UnstampedMessageStreamEvent): Mes
 /**
  * Encodes one message stream event as newline-delimited JSON.
  */
-export function encodeMessageStreamEvent(event: MessageStreamEvent): Uint8Array {
+export function encodeMessageStreamEvent(event: TimedHandleMessageStreamEvent): Uint8Array {
   return textEncoder.encode(`${JSON.stringify(event)}\n`);
 }
 
