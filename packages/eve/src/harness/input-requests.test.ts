@@ -1113,6 +1113,67 @@ describe("authorizePendingApprovalResponse", () => {
     ).toBe("unresolved");
   });
 
+  it("starts a second responder candidate instead of resuming another user's pending candidate", async () => {
+    const base = pendingSession();
+    const session = {
+      ...base,
+      state: {
+        ...base.state,
+        "eve.runtime.hitl.approvalState": {
+          activeCandidates: {
+            "candidate-original": {
+              candidateId: "candidate-original",
+              createdAt: 100,
+              expiresAt: 700,
+              pendingEventEmitted: true,
+              requestId: "approval-1",
+              responder: {
+                authenticator: "slack-webhook",
+                issuer: "slack:T1",
+                principalId: "U_ORIGINAL",
+                principalType: "user",
+              },
+              status: "pending",
+            },
+          },
+          candidateHistory: [],
+          settlements: {},
+        },
+      },
+    };
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: { authorizeResponse: () => "allowed", policy: () => "user-approval" },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+    ]);
+
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 200,
+        session,
+        stepInput: { inputResponses: [{ optionId: "approve", requestId: "approval-1" }] },
+        tools,
+      }),
+    );
+
+    expect(result).toMatchObject({ kind: "candidate-created" });
+    const active = (
+      result.session.state?.["eve.runtime.hitl.approvalState"] as {
+        activeCandidates: Record<string, { responder: { principalId: string } }>;
+      }
+    ).activeCandidates;
+    expect(Object.values(active).map((candidate) => candidate.responder.principalId)).toEqual([
+      "U_ORIGINAL",
+      "U1",
+    ]);
+  });
+
   it("restores the persisted candidate responder before resumed policy runs", async () => {
     const candidateState = {
       "eve.runtime.hitl.approvalState": {

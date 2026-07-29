@@ -72,14 +72,22 @@ export async function authorizePendingApprovalResponse(input: {
     },
   };
   const batch = getPendingInputBatch(input.session.state);
+  const explicitResponse = input.stepInput?.inputResponses?.find((entry) =>
+    batch?.requests.some(
+      (request) => request.requestId === entry.requestId && isApprovalRequest(request),
+    ),
+  );
   const activeCandidate = getApprovalAuditState(input.session.state).activeCandidates.find(
     (candidate) =>
-      (candidate.status === "pending" && candidate.pendingEventEmitted === true) ||
+      (explicitResponse === undefined &&
+        candidate.status === "pending" &&
+        candidate.pendingEventEmitted === true) ||
       (candidate.status === "authorization-required" &&
         candidate.authorizationName !== undefined &&
         getAuthorizationResult(candidate.authorizationName) !== undefined),
   );
   const response =
+    explicitResponse ??
     input.stepInput?.inputResponses?.find((entry) =>
       batch?.requests.some(
         (request) => request.requestId === entry.requestId && isApprovalRequest(request),
