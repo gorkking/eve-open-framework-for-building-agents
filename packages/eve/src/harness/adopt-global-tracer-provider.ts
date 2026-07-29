@@ -1,5 +1,6 @@
 import {
   context,
+  ProxyTracerProvider,
   trace,
   type Context,
   type Span,
@@ -33,21 +34,38 @@ interface AdoptableTracerProvider extends TracerProvider {
  * author's exporter keeps every span it receives today, and eve additionally
  * sees agent, AI SDK, and user spans.
  *
- * Returns `false` when no provider is registered — the global is a proxy only
- * once `setGlobalTracerProvider` has been called — and the caller should
- * register its own provider instead.
+ * Returns `false` when no provider is registered, and the caller should
+ * register its own instead.
  */
 export function adoptGlobalTracerProvider(processor: SpanProcessor): boolean {
   const globalProvider = trace.getTracerProvider();
   if (!isAdoptable(globalProvider)) return false;
 
-  globalProvider.setDelegate(observeTracerProvider(globalProvider.getDelegate(), processor));
+  const delegate = globalProvider.getDelegate();
+  if (delegate === unregisteredDelegate()) return false;
+
+  globalProvider.setDelegate(observeTracerProvider(delegate, processor));
   return true;
 }
 
 function isAdoptable(provider: TracerProvider): provider is AdoptableTracerProvider {
   const candidate = provider as Partial<AdoptableTracerProvider>;
   return typeof candidate.getDelegate === "function" && typeof candidate.setDelegate === "function";
+}
+
+/**
+ * What a proxy delegates to before anyone registers: the API's shared no-op
+ * provider.
+ *
+ * The proxy shape alone cannot answer "did an author register a provider?".
+ * `trace.getTracerProvider()` returns a proxy either way — with nothing
+ * registered it hands back the API's own standby instance rather than a no-op
+ * — so eve compares delegates instead. A fresh proxy's delegate is that
+ * singleton, and any delegate that differs from it came from a real
+ * registration.
+ */
+function unregisteredDelegate(): TracerProvider {
+  return new ProxyTracerProvider().getDelegate();
 }
 
 function observeTracerProvider(delegate: TracerProvider, processor: SpanProcessor): TracerProvider {

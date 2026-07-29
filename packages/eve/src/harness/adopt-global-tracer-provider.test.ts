@@ -13,8 +13,18 @@ import type { SpanProcessor } from "#compiled/@vercel/otel/index.js";
 import { adoptGlobalTracerProvider } from "#harness/adopt-global-tracer-provider.js";
 
 describe("adoptGlobalTracerProvider", () => {
-  it("declines when no provider has been registered", () => {
+  it("declines when the global is not a proxy", () => {
     withGlobalProvider(createInnerProvider([]), () => {
+      expect(adoptGlobalTracerProvider(createRecordingProcessor().processor)).toBe(false);
+    });
+  });
+
+  // What an unclaimed process actually looks like: `getTracerProvider` returns
+  // a proxy even when nobody registered, so the proxy shape says nothing on its
+  // own. Adopting here would leave eve wrapping the no-op provider and never
+  // registering one of its own.
+  it("declines a proxy that still delegates to the no-op provider", () => {
+    withGlobalProvider(new ProxyTracerProvider(), () => {
       expect(adoptGlobalTracerProvider(createRecordingProcessor().processor)).toBe(false);
     });
   });
