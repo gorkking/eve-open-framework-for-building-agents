@@ -1,5 +1,7 @@
 import type { SessionAuthContext } from "#channel/types.js";
 import { buildCallbackContext } from "#context/build-callback-context.js";
+import { contextStorage } from "#context/container.js";
+import { AuthKey } from "#context/keys.js";
 import {
   buildApprovalResponseAuth,
   handleApprovalResponseAuthorizationError,
@@ -119,7 +121,10 @@ export async function authorizePendingApprovalResponse(input: {
     return { kind: "continue", session: input.session, stepInput: input.stepInput };
   }
 
-  const responder = buildCallbackContext().session.auth.current;
+  const responder =
+    activeCandidate === undefined
+      ? buildCallbackContext().session.auth.current
+      : responderFromCandidate(activeCandidate.responder);
   if (responder === null) {
     return rejectWithoutCandidate(
       input,
@@ -129,6 +134,9 @@ export async function authorizePendingApprovalResponse(input: {
   }
   const candidateId =
     activeCandidate?.candidateId ?? approvalCandidateId(request.requestId, responder);
+  if (activeCandidate !== undefined) {
+    contextStorage.getStore()?.setVirtualContext(AuthKey, responder);
+  }
   const created = createApprovalCandidate({
     candidateId,
     createdAt: now,
@@ -315,6 +323,12 @@ function removeInputResponse(
     ...stepInput,
     inputResponses: stepInput.inputResponses.filter((response) => response.requestId !== requestId),
   };
+}
+
+function responderFromCandidate(
+  responder: Pick<SessionAuthContext, "authenticator" | "issuer" | "principalId" | "principalType">,
+): SessionAuthContext {
+  return { ...responder, attributes: {} };
 }
 
 function approvalCandidateId(requestId: string, responder: SessionAuthContext): string {
