@@ -28,20 +28,26 @@ interface InstrumentationConfigGlobal {
 const globalContainer = globalThis as typeof globalThis & InstrumentationConfigGlobal;
 
 /**
- * Registers the authored instrumentation config and invokes its `setup`
+ * Registers the authored instrumentation config and awaits its `setup`
  * callback with the resolved agent name.
  *
  * Called once by the generated instrumentation Nitro plugin at server
  * startup. Subsequent calls overwrite the previous value.
  *
+ * `setup` is awaited so that everything it registers — a tracer provider above
+ * all — is in place before the next plugin runs and before the first request
+ * is served. Dropping the promise would let eve's own telemetry setup race an
+ * `async setup`, and whichever provider lost that race would silently export
+ * nothing.
+ *
  * @internal — not part of the public API.
  */
-export function registerInstrumentationConfig(
+export async function registerInstrumentationConfig(
   config: InstrumentationDefinition,
   context: InstrumentationSetupContext,
-): void {
+): Promise<void> {
   if (config.setup !== undefined) {
-    config.setup(context);
+    await config.setup(context);
   }
   globalContainer[INSTRUMENTATION_CONFIG_GLOBAL_KEY] = config;
 }

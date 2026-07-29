@@ -391,7 +391,9 @@ function createInstrumentationPluginSource(input: {
     `import { registerInstrumentationConfig } from ${stringifyEsmImportSpecifier(input.registerConfigPath)};`,
     "",
     "if (instrumentationModule.default != null) {",
-    `  registerInstrumentationConfig(instrumentationModule.default, { agentName: ${JSON.stringify(input.agentName)} });`,
+    // Awaited at module scope: an `async setup` must finish registering before
+    // any later plugin looks for a tracer provider.
+    `  await registerInstrumentationConfig(instrumentationModule.default, { agentName: ${JSON.stringify(input.agentName)} });`,
     "}",
     "",
     "// Default export satisfies the Nitro plugin contract so this file",

@@ -15,7 +15,7 @@ The directory is an immutable OTLP/JSON spool and remains available after `eve d
 
 Use `eve trace ls` to list captured traces and `eve trace <trace>` to inspect a session's span tree.
 
-The writer is always installed in `eve dev`, including when you author an `instrumentation.ts`. It does not compete with your provider: eve wraps the provider your `setup` registered rather than replacing it, so your exporter keeps receiving everything it received before, and in dev it additionally sees eve's `agent.*` spans. Production is unaffected — outside `eve dev`, authored instrumentation is the only provider and nothing is written to disk. Set `EVE_TRACES=off` to opt out of the local writer.
+The writer is always installed in `eve dev`, including when you author an `instrumentation.ts`. It does not compete with your provider: eve wraps the provider your `setup` registered rather than replacing it, so your exporter keeps receiving everything it received before, and in dev it additionally sees eve's `agent.*` spans. Because it observes your provider rather than running beside it, the local writer sees the spans your provider records: a sampler that drops a span drops it for `.eve/traces/v1` too. Production is unaffected — outside `eve dev`, authored instrumentation is the only provider and nothing is written to disk. Set `EVE_TRACES=off` to opt out of the local writer.
 
 ### Local trace retention
 
@@ -79,6 +79,8 @@ Export the result of `defineInstrumentation` as the default export.
 ## OpenTelemetry
 
 Use the `setup` callback to register your OTel provider (for example `registerOTel` from `@vercel/otel`). The framework invokes it at server startup with the resolved agent name. `context.agentName` is resolved at compile time from your project (the package's `name`, falling back to the app directory name), so you never hard-code a service name.
+
+`setup` may be `async`. eve awaits it before anything else looks for a tracer provider, so a provider you register after an `await` is still in place for the first turn.
 
 Any OTel-compatible backend works (Braintrust, Raindrop, Arize, Honeycomb, Datadog, Jaeger). Install the exporter package you need and configure it in the callback.
 

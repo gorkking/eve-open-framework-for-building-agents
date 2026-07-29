@@ -209,7 +209,10 @@ describe("application Nitro creation", () => {
     );
   });
 
-  it("installs local tracing after authored instrumentation so eve adopts its provider", async () => {
+  // Authored instrumentation is bracketed: eve claims the tracer provider
+  // before it registers one and installs the trace writer after its setup has
+  // resolved.
+  it("brackets authored instrumentation with interception and the trace writer", async () => {
     const nitroStub = createNitroStub();
     createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
     const { createDevelopmentApplicationNitro } =
@@ -220,12 +223,31 @@ describe("application Nitro creation", () => {
     await createDevelopmentApplicationNitro(preparedHost);
 
     const plugins = createNitroMock.mock.calls[0]?.[0].plugins as string[];
+    const interception = plugins.findIndex((plugin) =>
+      plugin.includes("local-tracing-interception-plugin.ts"),
+    );
     const localTracing = plugins.findIndex((plugin) =>
       plugin.includes("local-tracing-runtime-plugin.ts"),
     );
+    const authored = plugins.indexOf("/app/instrumentation.mjs");
 
-    expect(plugins).toContain("/app/instrumentation.mjs");
-    expect(plugins.indexOf("/app/instrumentation.mjs")).toBeLessThan(localTracing);
+    expect(interception).toBeGreaterThanOrEqual(0);
+    expect(interception).toBeLessThan(authored);
+    expect(authored).toBeLessThan(localTracing);
+  });
+
+  it("installs no interception plugin when the agent authors no instrumentation", async () => {
+    const nitroStub = createNitroStub();
+    createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
+    const { createDevelopmentApplicationNitro } =
+      await import("#internal/nitro/host/create-application-nitro.js");
+
+    await createDevelopmentApplicationNitro(createPreparedHost());
+
+    const plugins = createNitroMock.mock.calls[0]?.[0].plugins as string[];
+    expect(plugins.some((plugin) => plugin.includes("local-tracing-interception-plugin.ts"))).toBe(
+      false,
+    );
   });
 
   it("preserves workflow bundle side effects and skips workflow transform for cached bundles", async () => {

@@ -3,6 +3,10 @@ import { registerOTel } from "#compiled/@vercel/otel/index.js";
 
 import { adoptGlobalTracerProvider } from "#harness/adopt-global-tracer-provider.js";
 import { ContextAgentTraceStateStore } from "#harness/agent-trace-context-store.js";
+import {
+  attachInterceptedSpanProcessor,
+  releaseGlobalTracerProviderInterception,
+} from "#harness/intercept-global-tracer-provider.js";
 import { createAgentOtelInstrumentation } from "#harness/agent-otel-provider.js";
 import { AgentTraceSpanProcessor } from "#harness/agent-trace-span-processor.js";
 import {
@@ -45,10 +49,11 @@ export function installLocalInstrumentationRuntime(input: {
   const processor = new AgentTraceSpanProcessor(
     retention.enabled ? [new LocalTraceSpanProcessor(input.appRoot)] : [],
   );
-  // Authored `instrumentation.ts` runs first in dev, so a provider it
-  // registered is adopted rather than displaced; only an unclaimed process
-  // gets eve's own.
-  if (!adoptGlobalTracerProvider(processor)) {
+  // A provider an authored `instrumentation.ts` registered is observed rather
+  // than displaced, so its exporter keeps everything it had. Only an unclaimed
+  // process gets a provider of eve's own.
+  if (!attachInterceptedSpanProcessor(processor) && !adoptGlobalTracerProvider(processor)) {
+    releaseGlobalTracerProviderInterception();
     registerOTel({
       autoDetectResources: false,
       instrumentations: [],
@@ -57,13 +62,14 @@ export function installLocalInstrumentationRuntime(input: {
       spanProcessors: [processor],
     });
   }
-  const probe = trace.getTracer("eve.registration").startSpan("eve.otel.registration");
-  const activeContext = trace.setSpan(context.active(), probe);
-  const contextAttached = context.with(activeContext, () => trace.getActiveSpan() === probe);
-  probe.end();
-  if (!processor.isAttached() || !contextAttached) {
+  // Spans reach the processor by construction, so there is nothing to probe
+  // there — and probing with a real span would make startup depend on the
+  // authored sampler, which is free to drop it. A context manager is the one
+  // thing eve cannot arrange itself: without one, agent context does not
+  // propagate and AI SDK spans would not nest under `agent.step`.
+  if (!hasContextManager()) {
     log.warn(
-      "eve could not observe OpenTelemetry spans, so local traces are not being recorded in this dev worker.",
+      "eve could not propagate OpenTelemetry context, so local traces are not being recorded in this dev worker.",
     );
     return undefined;
   }
@@ -107,4 +113,23 @@ export function installLocalInstrumentationRuntime(input: {
       retainCount: retention.retainCount,
     });
   }
+}
+
+/**
+ * Whether a context manager is registered, tested without creating a real
+ * span.
+ *
+ * `wrapSpanContext` builds a span the API owns outright, so the answer does not
+ * depend on any provider's sampler and no probe span reaches an exporter.
+ */
+function hasContextManager(): boolean {
+  const probe = trace.wrapSpanContext({
+    spanId: "1".repeat(16),
+    traceFlags: 0,
+    traceId: "1".repeat(32),
+  });
+  return context.with(
+    trace.setSpan(context.active(), probe),
+    () => trace.getActiveSpan() === probe,
+  );
 }

@@ -25,7 +25,7 @@ describe("instrumentation-config chunk-isolation regression", () => {
     vi.resetModules();
     const moduleA = await import("#harness/instrumentation-config.js");
     const config = { functionId: "test.instrumentation.cross-module.alice" };
-    moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
+    await moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
 
     vi.resetModules();
     const moduleB = await import("#harness/instrumentation-config.js");
@@ -40,7 +40,7 @@ describe("instrumentation-config chunk-isolation regression", () => {
     const { registerInstrumentationConfig } = await import("#harness/instrumentation-config.js");
 
     const canary = { functionId: "test.instrumentation.global-mount.canary" };
-    registerInstrumentationConfig(canary, { agentName: "test-agent" });
+    await registerInstrumentationConfig(canary, { agentName: "test-agent" });
 
     expect((globalThis as Record<symbol, unknown>)[globalKey]).toBe(canary);
   });
@@ -51,7 +51,7 @@ describe("instrumentation-config chunk-isolation regression", () => {
     vi.resetModules();
     const moduleA = await import("#harness/instrumentation-config.js");
     const config = { functionId: "test.instrumentation.reimport.canary" };
-    moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
+    await moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
     const firstRef = (globalThis as Record<symbol, unknown>)[globalKey];
 
     vi.resetModules();
@@ -66,8 +66,33 @@ describe("instrumentation-config chunk-isolation regression", () => {
     const { registerInstrumentationConfig } = await import("#harness/instrumentation-config.js");
 
     const setup = vi.fn();
-    registerInstrumentationConfig({ setup }, { agentName: "weather-agent" });
+    await registerInstrumentationConfig({ setup }, { agentName: "weather-agent" });
 
     expect(setup).toHaveBeenCalledExactlyOnceWith({ agentName: "weather-agent" });
+  });
+
+  // An `async setup` that registers a tracer provider after an `await` must be
+  // finished before the next Nitro plugin looks for one. Dropping the promise
+  // let eve's own telemetry setup win the race and silently starve the
+  // authored exporter.
+  it("resolves only after an async setup has finished", async () => {
+    vi.resetModules();
+    const { getInstrumentationConfig, registerInstrumentationConfig } =
+      await import("#harness/instrumentation-config.js");
+
+    const registered: string[] = [];
+    const config = {
+      setup: async () => {
+        await Promise.resolve();
+        registered.push("provider");
+      },
+    };
+
+    const pending = registerInstrumentationConfig(config, { agentName: "async-agent" });
+    expect(registered).toEqual([]);
+    await pending;
+
+    expect(registered).toEqual(["provider"]);
+    expect(getInstrumentationConfig()).toBe(config);
   });
 });

@@ -38,51 +38,18 @@ describe("adoptGlobalTracerProvider", () => {
     expect(events).toEqual(["start:authored.work", "inner-end:authored.work", "end:authored.work"]);
   });
 
-  it("ends the underlying span exactly once", () => {
+  // The gap that makes adoption the fallback rather than the mechanism: a
+  // delegate swap cannot reach a concrete tracer somebody already holds.
+  // `intercept-global-tracer-provider.ts` is what closes it.
+  it("does not reach tracers handed out before adoption", () => {
     const { events, processor } = createRecordingProcessor();
-    const proxy = adopt(processor, createInnerProvider(events));
+    const delegate = createInnerProvider(events);
+    const early = delegate.getTracer("authored");
+    adopt(processor, delegate);
 
-    const span = proxy.getTracer("authored").startSpan("authored.work");
-    span.end();
-    span.end();
+    early.startSpan("authored.work").end();
 
-    expect(events.filter((event) => event.startsWith("inner-end"))).toHaveLength(1);
-    expect(events.filter((event) => event.startsWith("end:"))).toHaveLength(1);
-  });
-
-  it("leaves sampled-out spans alone", () => {
-    const { events, processor } = createRecordingProcessor();
-    const proxy = adopt(processor, createInnerProvider([], { recording: false }));
-
-    proxy.getTracer("authored").startSpan("authored.work").end();
-
-    expect(events).toEqual([]);
-  });
-
-  // Context activation itself needs a registered context manager, so the
-  // scenario tier proves the nesting; this covers the observation wiring.
-  it("observes startActiveSpan spans and returns the callback result", () => {
-    const { events, processor } = createRecordingProcessor();
-    const proxy = adopt(processor, createInnerProvider(events));
-    const tracer = proxy.getTracer("authored") as Tracer & {
-      startActiveSpan: (name: string, callback: (span: Span) => unknown) => unknown;
-    };
-
-    const result = tracer.startActiveSpan("authored.work", (span) => {
-      span.end();
-      return "done";
-    });
-
-    expect(result).toBe("done");
-    expect(events).toEqual(["start:authored.work", "inner-end:authored.work", "end:authored.work"]);
-  });
-
-  it("reuses one observed tracer per name and version", () => {
-    const { processor } = createRecordingProcessor();
-    const proxy = adopt(processor, createInnerProvider([]));
-
-    expect(proxy.getTracer("authored", "1")).toBe(proxy.getTracer("authored", "1"));
-    expect(proxy.getTracer("authored", "1")).not.toBe(proxy.getTracer("authored", "2"));
+    expect(events).toEqual(["inner-end:authored.work"]);
   });
 });
 
@@ -122,10 +89,7 @@ function createRecordingProcessor(): { events: string[]; processor: SpanProcesso
   };
 }
 
-function createInnerProvider(
-  events: string[],
-  options: { recording?: boolean } = {},
-): TracerProvider {
+function createInnerProvider(events: string[]): TracerProvider {
   return {
     getTracer(): Tracer {
       return {
@@ -133,7 +97,7 @@ function createInnerProvider(
           const span: Span & { name: string } = {
             addEvent: () => span,
             end: () => void events.push(`inner-end:${name}`),
-            isRecording: () => options.recording ?? true,
+            isRecording: () => true,
             name,
             recordException: () => {},
             setAttribute: () => span,

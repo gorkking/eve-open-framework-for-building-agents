@@ -100,7 +100,9 @@ describe("writeCompiledArtifactsFiles", () => {
     expect(instrumentationPluginSource).toContain(
       `import * as instrumentationModule from ${JSON.stringify(join(agentRoot, "instrumentation.ts").replaceAll("\\", "/"))};`,
     );
-    expect(instrumentationPluginSource).toContain("registerInstrumentationConfig");
+    // Awaited at module scope: an `async setup` has to finish registering its
+    // tracer provider before the next plugin looks for one.
+    expect(instrumentationPluginSource).toContain("await registerInstrumentationConfig(");
 
     const instrumentationPluginModule = (await import(
       pathToFileURL(instrumentationPluginPath).href

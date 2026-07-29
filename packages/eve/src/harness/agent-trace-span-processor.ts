@@ -11,7 +11,6 @@ export class AgentTraceSpanProcessor implements SpanProcessor {
   readonly #children: readonly SpanProcessor[];
   readonly #ownedTraceIds = new Set<string>();
   readonly #sessionTraceIds = new Map<string, string>();
-  #attached = false;
 
   constructor(children: readonly SpanProcessor[]) {
     this.#children = children;
@@ -21,12 +20,7 @@ export class AgentTraceSpanProcessor implements SpanProcessor {
     await Promise.all(this.#children.map((child) => child.forceFlush()));
   }
 
-  isAttached(): boolean {
-    return this.#attached;
-  }
-
   onStart(span: unknown, parentContext: unknown): void {
-    this.#attached = true;
     if (!isSpanLike(span)) return;
     const sessionId = span.attributes["agent.session.id"];
     if (typeof sessionId === "string") {

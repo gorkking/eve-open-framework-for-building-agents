@@ -7,21 +7,31 @@ import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { registerOTel } from "@vercel/otel";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  installGlobalTracerProviderInterception,
+  releaseGlobalTracerProviderInterception,
+} from "#harness/intercept-global-tracer-provider.js";
 import { installLocalInstrumentationRuntime } from "#harness/local-instrumentation-runtime.js";
 
 let appRoot: string | undefined;
 
 afterEach(async () => {
+  releaseGlobalTracerProviderInterception();
   if (appRoot !== undefined) await rm(appRoot, { force: true, recursive: true });
 });
 
 describe("local instrumentation runtime ownership", () => {
   // Stands in for an authored `agent/instrumentation.ts`, which registers
-  // before eve's dev plugin runs and resolves `@vercel/otel` from the agent's
-  // own dependencies rather than eve's vendored copy. Only one test may
-  // install: the runtime is a process global and later calls reuse it.
-  it("adopts an authored tracer provider without displacing it", async () => {
+  // between eve's two dev plugins and resolves `@vercel/otel` and
+  // `@opentelemetry/api` from the agent's own dependencies rather than eve's
+  // vendored copies — the interception has to work across those two module
+  // instances. Only one test may install: the runtime is a process global and
+  // later calls reuse it.
+  it("observes an authored tracer provider without displacing it", async () => {
     appRoot = await mkdtemp(join(tmpdir(), "eve-local-traces-conflict-"));
+
+    expect(installGlobalTracerProviderInterception()).toBe(true);
+
     const authoredSpans: string[] = [];
     registerOTel({
       serviceName: "authored-agent",
@@ -35,6 +45,10 @@ describe("local instrumentation runtime ownership", () => {
       ],
     });
 
+    // Taken while the authored setup is still running, before eve's writer
+    // exists. Adoption could not reach a tracer handed out this early.
+    const earlyTracer = trace.getTracer("test-agent");
+
     const runtime = installLocalInstrumentationRuntime({
       appRoot,
       frameworkVersion: "test",
@@ -42,9 +56,9 @@ describe("local instrumentation runtime ownership", () => {
     });
     expect(runtime).toBeDefined();
 
-    const span = trace
-      .getTracer("test-agent")
-      .startSpan("agent.session", { attributes: { "agent.session.id": "session-1" } });
+    const span = earlyTracer.startSpan("agent.session", {
+      attributes: { "agent.session.id": "session-1" },
+    });
     const traceId = span.spanContext().traceId;
     span.end();
     await runtime!.forceFlush();

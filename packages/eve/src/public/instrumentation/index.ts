@@ -157,8 +157,11 @@ export interface InstrumentationDefinition {
    * Setup callback invoked at server startup with the resolved agent name.
    * Use it to call `registerOTel` or other OTel provider setup;
    * `context.agentName` comes from `defineAgent`.
+   *
+   * May be `async`; eve awaits it before serving any request, so a provider
+   * registered after an `await` is still in place for the first turn.
    */
-  readonly setup?: (context: InstrumentationSetupContext) => void;
+  readonly setup?: (context: InstrumentationSetupContext) => void | Promise<void>;
 }
 
 /**
