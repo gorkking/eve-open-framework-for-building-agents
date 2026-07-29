@@ -1,5 +1,5 @@
 ---
-issue: 1021
+issue: "1021"
 status: proposed
 last_updated: "2026-07-29"
 ---
