@@ -10,7 +10,6 @@ import {
   type ModelMessage,
   type ProviderMetadata,
   type SystemModelMessage,
-  type Telemetry,
   type TelemetryOptions,
   ToolLoopAgent,
   type ToolSet,
@@ -38,6 +37,8 @@ import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js
 import { toErrorMessage } from "#shared/errors.js";
 import {
   createActionResultEvent,
+  createApprovalCandidateEvent,
+  createApprovalSettledEvent,
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
   createInputRequestedEvent,
@@ -102,11 +103,9 @@ import {
   extractToolApprovalInputRequests,
 } from "#harness/input-extraction.js";
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
-import { activeTurnId } from "#harness/active-turn-id.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
-import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
-import { createInstrumentationHandleEvent } from "#harness/instrumentation-native-events.js";
-import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
+import { getApprovalAuditState } from "#harness/approval-candidates.js";
+import { authorizePendingApprovalResponse } from "#harness/authorize-approval-response.js";
 import {
   consumeDeferredStepInput,
   getApprovedTools,
@@ -148,7 +147,7 @@ import {
   hasEmptyDeliverySentinel,
 } from "#shared/empty-delivery.js";
 import { extractWorkflowStreamWriteErrorDetails } from "#harness/workflow-stream-error.js";
-import { createOtelIntegration, ensureOtelIntegration } from "#harness/otel-integration.js";
+import { ensureOtelIntegration } from "#harness/otel-integration.js";
 import { getAdvertisedTools } from "#harness/advertised-tools.js";
 import {
   applyLastToolCacheBreakpoint,
@@ -250,9 +249,8 @@ function enrichTelemetry(
   authored: InstrumentationDefinition | undefined,
   agentName: string | undefined,
   runtimeContext?: Readonly<Record<string, unknown>>,
-  bridgeIntegration?: Telemetry,
 ): TelemetryOptions | undefined {
-  if (authored === undefined && bridgeIntegration === undefined) {
+  if (authored === undefined) {
     return undefined;
   }
 
@@ -264,17 +262,11 @@ function enrichTelemetry(
   }
 
   return {
-    functionId: authored?.functionId ?? agentName,
+    functionId: authored.functionId ?? agentName,
     includeRuntimeContext,
-    integrations:
-      bridgeIntegration === undefined
-        ? undefined
-        : authored === undefined
-          ? [bridgeIntegration]
-          : [bridgeIntegration, createOtelIntegration()],
     isEnabled: true,
-    recordInputs: authored?.recordInputs ?? true,
-    recordOutputs: authored?.recordOutputs ?? true,
+    recordInputs: authored.recordInputs ?? true,
+    recordOutputs: authored.recordOutputs ?? true,
   };
 }
 
@@ -477,7 +469,7 @@ function resolveStepOtelContext(
 }
 
 export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
-  const baseEmit = config.handleEvent;
+  const emit = config.handleEvent;
   const telemetryConfig = getInstrumentationConfig();
   if (telemetryConfig !== undefined) {
     ensureOtelIntegration();
@@ -536,15 +528,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     }
 
     let emissionState = getHarnessEmissionState(session.state);
-    const parent = contextStorage.getStore()?.get(ParentSessionKey);
-    const emit = createInstrumentationHandleEvent({
-      agentName: config.runtimeIdentity?.agentName,
-      handleEvent: baseEmit,
-      hooks: config.instrumentation?.hooks,
-      rootSessionId: parent?.rootSessionId,
-      sessionId: session.sessionId,
-      turnId: activeTurnId(emissionState),
-    });
 
     // Resolve deferred input, runtime actions, then HITL input; each stage
     // may park when its resume payload has not arrived.
@@ -580,11 +563,86 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         ? { ...effectiveStepInput, message: staleConversion.displayMessage }
         : effectiveStepInput;
 
+    const responseAuthorizationTools = new Map(config.tools);
+    const ctx = contextStorage.getStore();
+    if (ctx !== undefined) {
+      for (const tool of buildDynamicTools(ctx)) responseAuthorizationTools.set(tool.name, tool);
+    }
+    const authorized = await authorizePendingApprovalResponse({
+      session,
+      stepInput: effectiveStepInput,
+      tools: responseAuthorizationTools,
+    });
+    session = authorized.session;
+    if (emit && authorized.kind !== "continue" && authorized.kind !== "duplicate") {
+      await emit(
+        createApprovalCandidateEvent({
+          candidateId: authorized.candidateId ?? `stale:${authorized.requestId}`,
+          outcome: authorized.kind === "authorization-required" ? "pending" : authorized.kind,
+          requestId: authorized.requestId,
+          safeReason: "safeReason" in authorized ? authorized.safeReason : undefined,
+          sequence: emissionState.sequence,
+          stepIndex: emissionState.stepIndex,
+          turnId: emissionState.turnId,
+        }),
+      );
+    }
+    if (authorized.kind === "authorization-required") {
+      const { challenges } = authorized.authorization;
+      if (emit) {
+        for (const challenge of challenges) {
+          await emit(
+            createAuthorizationRequiredEvent({
+              authorization: challenge.challenge,
+              candidateId: authorized.candidateId,
+              description:
+                challenge.challenge.instructions ?? `Authorization required for ${challenge.name}`,
+              name: challenge.name,
+              sequence: emissionState.sequence,
+              stepIndex: emissionState.stepIndex,
+              turnId: emissionState.turnId,
+              webhookUrl: challenge.hookUrl,
+            }),
+          );
+        }
+      }
+      return {
+        next: null,
+        session: {
+          ...session,
+          state: setPendingAuthorization(session.state, { challenges }),
+        },
+      };
+    }
+
+    if (emit && authorized.kind === "continue") {
+      const response = authorized.stepInput?.inputResponses?.find(
+        (entry) => entry.optionId === "approve" || entry.optionId === "cancel",
+      );
+      if (response !== undefined) {
+        const settlement = getApprovalAuditState(session.state).settlements.find(
+          (entry) => entry.requestId === response.requestId,
+        );
+        if (settlement !== undefined) {
+          await emit(
+            createApprovalSettledEvent({
+              outcome: settlement.outcome === "allowed" ? "approved" : "cancelled",
+              requestId: settlement.requestId,
+              responderPrincipalId: settlement.actor.principalId,
+              sequence: emissionState.sequence,
+              stepIndex: emissionState.stepIndex,
+              turnId: emissionState.turnId,
+            }),
+          );
+        }
+      }
+    }
+
     const pending = resolvePendingInput({
       history: resolvedRuntimeActions.messages,
       resolveApprovalKey: resolveApprovalKeyFromTools(config.tools),
       session,
-      stepInput: effectiveStepInput,
+      stepInput: authorized.stepInput,
     });
     if (pending.outcome === "unresolved") {
       if (emit && pending.deferredMessage === true && hasStepInput(input)) {
@@ -680,7 +738,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // --- Model + tools ------------------------------------------------------
 
     // Direct harness unit tests may run without an ambient context.
-    const ctx = contextStorage.getStore();
     if (ctx !== undefined && config.dispatchDynamicModelEvent !== undefined) {
       await config.dispatchDynamicModelEvent({
         ctx,
@@ -822,9 +879,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       trailingUserNote?: string;
     };
 
-    const runSingleModelCall = async (
-      opts: ModelCallOptions & { readonly attemptIndex: number },
-    ): Promise<HarnessStepResult> => {
+    const runSingleModelCall = async (opts: ModelCallOptions): Promise<HarnessStepResult> => {
       const { instructions, telemetryRuntimeContext = {} } =
         opts.preparedInput ?? prepareModelCallInput(opts.extraSystemNote);
       // Label the reissued call's telemetry; without this a retry is only
@@ -898,29 +953,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
       const effectiveTools = marker ? applyLastToolCacheBreakpoint(modelTools, marker) : modelTools;
 
-      const instrumentationHooks = config.instrumentation?.hooks;
-      const instrumentationTurnId = activeTurnId(emissionState);
-      const attemptScope: InstrumentationAttemptScope | undefined =
-        instrumentationHooks === undefined
-          ? undefined
-          : {
-              attemptId: `${session.sessionId}:${instrumentationTurnId}:${emissionState.stepIndex}:${opts.attemptIndex}`,
-              attemptIndex: opts.attemptIndex,
-              functionId: telemetryConfig?.functionId ?? agentName,
-              rootSessionId: parent?.rootSessionId ?? session.sessionId,
-              sessionId: session.sessionId,
-              stepIndex: emissionState.stepIndex,
-              turnId: instrumentationTurnId,
-            };
-      const bridgeIntegration =
-        attemptScope === undefined || instrumentationHooks === undefined
-          ? undefined
-          : createAiSdkHookBridge(
-              attemptScope,
-              instrumentationHooks,
-              config.instrumentation?.runInContext,
-            );
-
       const hooks = buildStepHooks({
         cachePath,
         emit,
@@ -951,12 +983,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         reasoning: session.agent.reasoning,
         runtimeContext: telemetryRuntimeContext,
         stopWhen: isStepCount(1),
-        telemetry: enrichTelemetry(
-          telemetryConfig,
-          agentName,
-          telemetryRuntimeContext,
-          bridgeIntegration,
-        ),
+        telemetry: enrichTelemetry(telemetryConfig, agentName, telemetryRuntimeContext),
         toolApproval: buildToolApproval(modelTools),
         tools: effectiveTools,
       };
@@ -1044,31 +1071,14 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         });
       };
 
-      try {
-        const result = await executeModelCall();
-        if (attemptScope !== undefined) {
-          await instrumentationHooks?.publish({ scope: attemptScope, type: "attempt.completed" });
-        }
-        return result;
-      } catch (error) {
-        if (attemptScope !== undefined) {
-          await instrumentationHooks?.publish({
-            error,
-            scope: attemptScope,
-            type: "attempt.failed",
-          });
-        }
-        return rethrowNoOutputAsEmptyResponse(error);
-      }
+      return executeModelCall().catch(rethrowNoOutputAsEmptyResponse);
     };
 
-    let nextModelAttemptIndex = 0;
     const runOneModelCall = async (opts: ModelCallOptions): Promise<HarnessStepResult> =>
       runModelCallWithRetries(
         (attempt) =>
           runSingleModelCall({
             ...opts,
-            attemptIndex: nextModelAttemptIndex++,
             preparedInput: attempt === 1 ? opts.preparedInput : undefined,
             suppressStepStartedEmission: attempt === 1 ? opts.suppressStepStartedEmission : true,
           }),
@@ -1318,7 +1328,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // --- Step-side observability tags ---------------------------------------
     //
     // Tag the **turn workflow run** (the current `"use step"` is hosted by
-    // that workflow, so `setAttributes` writes to its
+    // that workflow, so `experimental_setAttributes` writes to its
     // attributes table) with the model id and per-turn cumulative token
     // counts. Per-turn totals are accumulated on `session.state` because
     // each tool-loop iteration is a fresh `"use step"` and the workflow
@@ -1994,12 +2004,27 @@ async function handleStepResult(input: {
   // --- Park on input requests -----------------------------------------------
 
   if (inputRequests.length > 0) {
+    const responseAuthorizationTools = new Map(config.tools);
+    const ctx = contextStorage.getStore();
+    if (ctx !== undefined) {
+      for (const tool of buildDynamicTools(ctx)) responseAuthorizationTools.set(tool.name, tool);
+    }
     let parkedSession = setPendingInputBatch({
       event: {
         sequence: emissionState.sequence,
         stepIndex: emissionState.stepIndex,
         turnId: emissionState.turnId,
       },
+      responseAuthRequiredRequestIds: approvalRequests
+        .filter((request) => {
+          const approval = responseAuthorizationTools.get(request.action.toolName)?.approval;
+          return (
+            approval !== undefined &&
+            typeof approval !== "function" &&
+            approval.authorizeResponse !== undefined
+          );
+        })
+        .map((request) => request.requestId),
       requests: inputRequests,
       responseMessages,
       session: { ...baseSession, history: [...promptMessages] },

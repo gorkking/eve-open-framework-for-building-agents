@@ -6,6 +6,7 @@ import { SessionKey } from "#context/keys.js";
 import { once } from "#public/tools/approval/approval-helpers.js";
 import type { InputRequest } from "#runtime/input/types.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
+import { authorizePendingApprovalResponse } from "#harness/authorize-approval-response.js";
 import {
   consumeDeferredStepInput,
   createRuntimeToolCallActionFromToolCall,
@@ -863,6 +864,255 @@ describe("resolvePendingInput", () => {
         }),
       ),
     ).resolves.toBe("not-applicable");
+  });
+});
+
+describe("authorizePendingApprovalResponse", () => {
+  function pendingSession(): HarnessSession {
+    return setPendingInputBatch({
+      requests: [
+        {
+          action: {
+            callId: "call-1",
+            input: { owner: "vercel", repo: "eve" },
+            kind: "tool-call",
+            toolName: "create_issue",
+          },
+          options: [
+            { id: "approve", label: "Approve" },
+            { id: "cancel", label: "Cancel" },
+          ],
+          prompt: "Approve tool call: create_issue",
+          requestId: "approval-1",
+        },
+      ],
+      responseAuthRequiredRequestIds: ["approval-1"],
+      responseMessages: [],
+      session: createHarnessSession(),
+    });
+  }
+
+  function approvalContext<T>(run: () => T): T {
+    const ctx = new ContextContainer();
+    ctx.set(SessionKey, {
+      auth: {
+        current: {
+          attributes: {},
+          authenticator: "slack-webhook",
+          issuer: "slack:T1",
+          principalId: "U1",
+          principalType: "user",
+        },
+        initiator: null,
+      },
+      sessionId: "sess-test",
+      turn: { id: "turn-test", sequence: 1 },
+    });
+    return contextStorage.run(ctx, run);
+  }
+
+  it("fails closed when a required authorizer is missing", async () => {
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 100,
+        session: pendingSession(),
+        stepInput: {
+          inputResponses: [{ optionId: "approve", requestId: "approval-1" }],
+        },
+        tools: new Map(),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: "failed",
+      safeReason: "Approval authorization is temporarily unavailable. Please try again.",
+      stepInput: { inputResponses: [] },
+    });
+    expect(resolvePendingInput({ session: result.session }).outcome).toBe("unresolved");
+  });
+
+  it("retains the request after an authored safe rejection", async () => {
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: {
+            authorizeResponse: ({ responder }) => ({
+              safeReason: `${responder.principalId} lacks repository write access.`,
+              status: "rejected",
+            }),
+            policy: () => "user-approval",
+          },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+    ]);
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 100,
+        session: pendingSession(),
+        stepInput: {
+          inputResponses: [{ optionId: "approve", requestId: "approval-1" }],
+        },
+        tools,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: "rejected",
+      safeReason: "U1 lacks repository write access.",
+      stepInput: { inputResponses: [] },
+    });
+    expect(resolvePendingInput({ session: result.session }).outcome).toBe("unresolved");
+  });
+
+  it("durably settles an allowed candidate before ordinary approval resolution", async () => {
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: {
+            authorizeResponse: () => "allowed",
+            policy: () => "user-approval",
+          },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+    ]);
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 100,
+        session: pendingSession(),
+        stepInput: {
+          inputResponses: [{ optionId: "approve", requestId: "approval-1" }],
+        },
+        tools,
+      }),
+    );
+
+    expect(result.kind).toBe("continue");
+    if (result.kind !== "continue") throw new Error("Expected allowed candidate.");
+    expect(result.session.state?.["eve.runtime.hitl.approvalState"]).toMatchObject({
+      settlements: { "approval-1": { outcome: "allowed" } },
+    });
+    expect(
+      resolvePendingInput({ session: result.session, stepInput: result.stepInput }).outcome,
+    ).toBe("resolved");
+  });
+
+  it("does not pass an unvalidated sibling response into batch resolution", async () => {
+    const second = {
+      action: {
+        callId: "call-2",
+        input: { owner: "vercel", repo: "eve" },
+        kind: "tool-call" as const,
+        toolName: "delete_issue",
+      },
+      options: [
+        { id: "approve", label: "Approve" },
+        { id: "cancel", label: "Cancel" },
+      ],
+      prompt: "Approve tool call: delete_issue",
+      requestId: "approval-2",
+    };
+    const session = setPendingInputBatch({
+      requests: [
+        ...(
+          pendingSession().state?.["eve.runtime.pendingInputBatch"] as {
+            requests: readonly InputRequest[];
+          }
+        ).requests,
+        second,
+      ],
+      responseAuthRequiredRequestIds: ["approval-1", "approval-2"],
+      responseMessages: [],
+      session: createHarnessSession(),
+    });
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: { authorizeResponse: () => "allowed", policy: () => "user-approval" },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+      [
+        "delete_issue",
+        {
+          approval: {
+            authorizeResponse: () => {
+              throw new Error("must not run in the same attempt");
+            },
+            policy: () => "user-approval",
+          },
+          description: "Delete issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "delete_issue",
+        },
+      ],
+    ]);
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 100,
+        session,
+        stepInput: {
+          inputResponses: [
+            { optionId: "approve", requestId: "approval-1" },
+            { optionId: "approve", requestId: "approval-2" },
+          ],
+        },
+        tools,
+      }),
+    );
+
+    expect(result.kind).toBe("continue");
+    if (result.kind !== "continue") throw new Error("Expected first candidate to settle.");
+    expect(result.stepInput?.inputResponses).toEqual([
+      { optionId: "approve", requestId: "approval-1" },
+    ]);
+    expect(
+      resolvePendingInput({ session: result.session, stepInput: result.stepInput }).outcome,
+    ).toBe("unresolved");
+  });
+
+  it("cancels without running the response authorizer", async () => {
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: {
+            authorizeResponse: () => {
+              throw new Error("must not run");
+            },
+            policy: () => "user-approval",
+          },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+    ]);
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 100,
+        session: pendingSession(),
+        stepInput: {
+          inputResponses: [{ optionId: "cancel", requestId: "approval-1" }],
+        },
+        tools,
+      }),
+    );
+
+    expect(result.kind).toBe("continue");
+    expect(result.session.state?.["eve.runtime.hitl.approvalState"]).toMatchObject({
+      settlements: { "approval-1": { outcome: "cancelled" } },
+    });
   });
 });
 

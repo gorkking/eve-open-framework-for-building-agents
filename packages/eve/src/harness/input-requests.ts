@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 
+import { getApprovalAuditState } from "#harness/approval-candidates.js";
 import type {
   RuntimeToolCallActionRequest,
   RuntimeToolResultActionResult,
@@ -41,6 +42,7 @@ interface PendingInputBatchEvent {
  */
 interface PendingInputBatch {
   readonly event?: PendingInputBatchEvent;
+  readonly responseAuthRequiredRequestIds?: readonly string[];
   readonly requests: readonly InputRequest[];
   readonly responseMessages: readonly ModelMessage[];
 }
@@ -56,9 +58,7 @@ export interface RejectedActionBatch {
 
 type ApprovalTerminalStatus = "approved" | "denied" | "ignored" | "invalid";
 
-/**
- * Returns true when the step input carries user-facing turn input.
- */
+/** Returns true when the step input carries user-facing turn input. */
 export function hasStepInput(input?: StepInput): boolean {
   if (input === undefined) {
     return false;
@@ -66,10 +66,6 @@ export function hasStepInput(input?: StepInput): boolean {
 
   return input.message !== undefined || (input.inputResponses?.length ?? 0) > 0;
 }
-
-// ---------------------------------------------------------------------------
-// Deferred step input
-// ---------------------------------------------------------------------------
 
 /**
  * Merges any queued follow-up input into the current step input and clears it
@@ -148,7 +144,11 @@ export function resolvePendingInput(input: {
 
   // Pending batch exists -- only resolve if we have actual responses.
   const resolvedStepInput = resolveTextMessageInput(pendingBatch, stepInput);
-  const responses = resolvedStepInput?.inputResponses ?? [];
+  const responses = mergeSettledApprovalResponses({
+    pendingBatch,
+    responses: resolvedStepInput?.inputResponses ?? [],
+    session,
+  });
   const resolvesApprovalBatch = pendingBatch.requests.some((request) => isApprovalRequest(request));
 
   if (responses.length === 0 && resolvedStepInput?.message === undefined) {
@@ -245,6 +245,23 @@ export function resolvePendingInput(input: {
     rejectedActions,
     session,
   };
+}
+
+function mergeSettledApprovalResponses(input: {
+  readonly pendingBatch: PendingInputBatch;
+  readonly responses: readonly InputResponse[];
+  readonly session: HarnessSession;
+}): readonly InputResponse[] {
+  const responses = new Map(input.responses.map((response) => [response.requestId, response]));
+  const requestIds = new Set(input.pendingBatch.requests.map((request) => request.requestId));
+  for (const settlement of getApprovalAuditState(input.session.state).settlements) {
+    if (!requestIds.has(settlement.requestId)) continue;
+    responses.set(settlement.requestId, {
+      optionId: settlement.outcome === "allowed" ? "approve" : "cancel",
+      requestId: settlement.requestId,
+    });
+  }
+  return [...responses.values()];
 }
 
 function resolveTextMessageInput(
@@ -347,7 +364,15 @@ export function getPendingInputRequestIds(state: SessionStateMap | undefined): R
   return new Set(getPendingInputBatch(state)?.requests.map((request) => request.requestId));
 }
 
-function getPendingInputBatch(state: SessionStateMap | undefined): PendingInputBatch | undefined {
+export function getResponseAuthRequiredRequestIds(
+  state: SessionStateMap | undefined,
+): ReadonlySet<string> {
+  return new Set(getPendingInputBatch(state)?.responseAuthRequiredRequestIds ?? []);
+}
+
+export function getPendingInputBatch(
+  state: SessionStateMap | undefined,
+): PendingInputBatch | undefined {
   const value = state?.[PENDING_INPUT_BATCH_KEY];
 
   if (typeof value !== "object" || value === null) {
@@ -368,6 +393,7 @@ function getPendingInputBatch(state: SessionStateMap | undefined): PendingInputB
  */
 export function setPendingInputBatch(input: {
   readonly event?: PendingInputBatchEvent;
+  readonly responseAuthRequiredRequestIds?: readonly string[];
   readonly requests: readonly InputRequest[];
   readonly responseMessages: readonly ModelMessage[];
   readonly session: HarnessSession;
@@ -375,6 +401,7 @@ export function setPendingInputBatch(input: {
   const state = { ...input.session.state };
   state[PENDING_INPUT_BATCH_KEY] = {
     event: input.event,
+    responseAuthRequiredRequestIds: input.responseAuthRequiredRequestIds,
     requests: [...input.requests],
     responseMessages: [...input.responseMessages],
   } satisfies PendingInputBatch;
@@ -392,10 +419,6 @@ function clearPendingInputBatch(session: HarnessSession): HarnessSession {
 
   return { ...session, state: Object.keys(state).length > 0 ? state : undefined };
 }
-
-// ---------------------------------------------------------------------------
-// Deferred step input state
-// ---------------------------------------------------------------------------
 
 function getDeferredStepInput(session: HarnessSession): StepInput | undefined {
   return session.state?.[DEFERRED_STEP_INPUT_KEY] as StepInput | undefined;
@@ -643,7 +666,6 @@ function buildToolResponsePartsForRequest(
   ];
 }
 
-/** Shared approval predicate: a request whose options are exactly `allow` / `cancel`. */
 export function isApprovalRequest(request: InputRequest): boolean {
   return (
     request.options?.length === 2 &&
@@ -651,10 +673,6 @@ export function isApprovalRequest(request: InputRequest): boolean {
     request.options[1]?.id === "cancel"
   );
 }
-
-// ---------------------------------------------------------------------------
-// Tool call helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Creates a runtime tool-call action shape from an AI SDK tool call.
