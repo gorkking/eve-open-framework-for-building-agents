@@ -45,6 +45,7 @@ interface ActiveApprovalCandidate {
   readonly requestId: string;
   readonly responder: ApprovalResponderIdentity;
   readonly status: "pending" | "authorization-required";
+  readonly authorizationName?: string;
   readonly createdAt: number;
   readonly expiresAt: number;
   readonly provider?: string;
@@ -117,6 +118,7 @@ export function createApprovalCandidate(input: {
 
 /** Marks a candidate as waiting on a private authorization challenge. */
 export function markApprovalCandidateAuthorizationRequired(input: {
+  readonly authorizationName: string;
   readonly candidateId: string;
   readonly expiresAt?: number;
   readonly provider?: string;
@@ -127,6 +129,7 @@ export function markApprovalCandidateAuthorizationRequired(input: {
   if (candidate === undefined) return input.state;
   const nextCandidate: ActiveApprovalCandidate = {
     ...candidate,
+    authorizationName: input.authorizationName,
     expiresAt: input.expiresAt ?? candidate.expiresAt,
     provider: input.provider,
     status: "authorization-required",

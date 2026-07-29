@@ -7,6 +7,7 @@ import {
 import {
   cancelApprovalRequest,
   createApprovalCandidate,
+  expireApprovalCandidates,
   finishApprovalCandidate,
   getApprovalAuditState,
   markApprovalCandidateAuthorizationRequired,
@@ -54,11 +55,20 @@ export async function authorizePendingApprovalResponse(input: {
   readonly stepInput?: StepInput;
   readonly tools: HarnessToolMap;
 }): Promise<PendingApprovalAuthorizationResult> {
+  const now = input.now ?? Date.now();
+  input = {
+    ...input,
+    session: {
+      ...input.session,
+      state: expireApprovalCandidates({ now, state: input.session.state }),
+    },
+  };
   const batch = getPendingInputBatch(input.session.state);
   const activeCandidate = getApprovalAuditState(input.session.state).activeCandidates.find(
     (candidate) =>
       candidate.status === "authorization-required" &&
-      getAuthorizationResult(candidate.candidateId) !== undefined,
+      candidate.authorizationName !== undefined &&
+      getAuthorizationResult(candidate.authorizationName) !== undefined,
   );
   const response =
     input.stepInput?.inputResponses?.find((entry) =>
@@ -87,7 +97,7 @@ export async function authorizePendingApprovalResponse(input: {
     const settled = cancelApprovalRequest({
       actor: responder,
       requestId: response.requestId,
-      settledAt: input.now ?? Date.now(),
+      settledAt: now,
       state: input.session.state,
     });
     return {
@@ -117,7 +127,6 @@ export async function authorizePendingApprovalResponse(input: {
       "An authenticated responder is required.",
     );
   }
-  const now = input.now ?? Date.now();
   const candidateId =
     activeCandidate?.candidateId ?? approvalCandidateId(request.requestId, responder);
   const created = createApprovalCandidate({
@@ -221,6 +230,7 @@ export async function authorizePendingApprovalResponse(input: {
       session = {
         ...session,
         state: markApprovalCandidateAuthorizationRequired({
+          authorizationName: authorization.challenges[0]?.name ?? candidateId,
           candidateId,
           expiresAt: providerExpiresAt,
           provider: authorization.challenges[0]?.challenge.displayName,
