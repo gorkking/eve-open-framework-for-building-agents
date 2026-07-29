@@ -105,8 +105,8 @@ import {
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
 import { getApprovalAuditState } from "#harness/approval-candidates.js";
+import { authorizePendingApprovalResponse } from "#harness/authorize-approval-response.js";
 import {
-  authorizePendingApprovalResponse,
   consumeDeferredStepInput,
   getApprovedTools,
   getPendingInputRequestIds,

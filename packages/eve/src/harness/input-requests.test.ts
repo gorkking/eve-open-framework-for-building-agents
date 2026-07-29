@@ -6,8 +6,8 @@ import { SessionKey } from "#context/keys.js";
 import { once } from "#public/tools/approval/approval-helpers.js";
 import type { InputRequest } from "#runtime/input/types.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
+import { authorizePendingApprovalResponse } from "#harness/authorize-approval-response.js";
 import {
-  authorizePendingApprovalResponse,
   consumeDeferredStepInput,
   createRuntimeToolCallActionFromToolCall,
   getApprovedTools,
