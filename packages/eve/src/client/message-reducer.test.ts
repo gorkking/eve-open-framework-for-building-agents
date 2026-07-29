@@ -6,6 +6,7 @@ import {
   createActionsRequestedEvent,
   createAuthorizationCompletedEvent,
   createAuthorizationRequiredEvent,
+  createApprovalSettledEvent,
   createInputRequestedEvent,
   createMessageAppendedEvent,
   createMessageCompletedEvent,
@@ -425,6 +426,50 @@ describe("defaultMessageReducer", () => {
         role: "assistant",
       },
     ]);
+  });
+
+  it("marks shared approval UI only after durable settlement", () => {
+    const reducer = defaultMessageReducer();
+    let data = reducer.reduce(
+      reducer.initial(),
+      createInputRequestedEvent({
+        requests: [
+          {
+            action: { callId: "call_1", input: {}, kind: "tool-call", toolName: "bash" },
+            options: [
+              { id: "approve", label: "Approve" },
+              { id: "cancel", label: "Cancel" },
+            ],
+            prompt: "Approve?",
+            requestId: "approval_1",
+          },
+        ],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+    );
+
+    data = reducer.reduce(
+      data,
+      createApprovalSettledEvent({
+        outcome: "approved",
+        requestId: "approval_1",
+        responderPrincipalId: "slack:T1:U1",
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+    );
+
+    expect(data.messages[0]?.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          approval: { approved: true, id: "approval_1", reason: undefined },
+          state: "approval-responded",
+        }),
+      ]),
+    );
   });
 
   it("marks input requests as responded when the client submits a response", () => {
