@@ -1,5 +1,83 @@
 # eve
 
+## 0.27.12
+
+### Patch Changes
+
+- 9df880e: Upgrade the runtime HTTP client to undici 8 while preserving Node fetch compatibility for SSRF-safe web requests.
+- 9ddb890: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
+- c27b44a: Invoke an agent without a TUI using `eve invoke`, which returns pretty JSON at terminal or blocking events. Durable session coordinates support follow-up turns, human input, authorization, interrupted waits, and machine discovery through `--json-schema`.
+
+## 0.27.11
+
+### Patch Changes
+
+- 1e35a26: Bound the zero-config local trace store so `.eve/traces` no longer grows without limit. `eve dev` now sweeps it when a session finishes and at startup, keeping open sessions, the twenty newest traces, and anything from the last seven days before evicting oldest-first above 512 MB. Tune it with `EVE_TRACES_MAX_AGE_MS`, `EVE_TRACES_MAX_TOTAL_BYTES`, and `EVE_TRACES_RETAIN_COUNT`, or set `EVE_TRACES=off` to turn local tracing off entirely.
+- 1c0347f: Expose schedules from generated `withEve` services to Vercel's project-level Cron Jobs. Single and named agents now register routable jobs without requiring duplicate `vercel.json` entries.
+- 0755e97: Resolve package-owned runtime files from the installed eve package when generated host bundles execute outside its package root, including on Windows.
+- 4deab71: Keep traced external dependencies resolvable from queue-triggered Vercel workflow functions, including dependency graphs that contain multiple versions of the same package.
+- cf40283: Development runtime snapshots no longer copy legacy root-level `.workflow-data` directories. Projects with large local workflow histories avoid redundant multi-gigabyte snapshot copies and related disk-space failures.
+- 0f5fcdb: Allow `eve add channel/web` and `eve add channel/slack` to install their package dependencies and run the existing channel setup flows. The official registry now lists Web Chat and Slack channel items with trusted built-in setup metadata.
+- 41cc919: Retry model calls when undici terminates a response stream after a headers or body timeout, so transient provider stalls no longer immediately fail task runs.
+- a45e4cb: Keep `t.judge.autoevals.*` assertions working when Braintrust reporting is active by preserving the judge client's OpenAI-compatible interface during autoevals wrapping checks.
+
+## 0.27.10
+
+### Patch Changes
+
+- 15478d2: Show result counts and concise kind-and-slug addresses for official items in `eve registry list` and `eve registry search` instead of their full registry URLs.
+
+## 0.27.9
+
+### Patch Changes
+
+- f736533: Update the bundled AI SDK to 7.0.38.
+- 0d2d0cd: Persist zero-config agent, AI SDK, and user-created OpenTelemetry spans under `.eve/traces` during `eve dev` when authored instrumentation is absent.
+- 71bb2c6: Compaction no longer reproduces base64 file payloads from `content` tool outputs. In the summarizer transcript and in capped kept-history results alike, file parts are replaced with a text stub naming the file and media type (matching how message attachments are summarized); sibling text parts survive instead of being truncated away behind the serialized payload.
+- ebeedd6: Add `eve trace ls` and `eve trace [trace]` commands for inspecting locally persisted agent traces after or during `eve dev`.
+- 5e4b70f: Allow `eve add channel/web` and `eve add channel/slack` to use the existing channel setup flows. The official registry now lists Web Chat and Slack channel items.
+- 83c753e: Harden `web_fetch` against SSRF by requiring HTTPS, rejecting non-public destinations during DNS resolution, and returning redirect targets without following them automatically.
+- c804141: `toModelOutput` can now return `{ type: "content", value }` with text and file parts, so a tool can send images (screenshots, rendered charts) to vision-capable models as actual pixels instead of descriptions. Build outputs with the new `toolOutput.text` / `toolOutput.json` / `toolOutput.content` helpers and parts with `toolOutputPart.text` / `toolOutputPart.file`, all from `eve/tools`; file payloads must be base64 strings.
+
+## 0.27.8
+
+### Patch Changes
+
+- a69faae: Add `eve add` and `eve registry` commands for installing and discovering official or configured shadcn registry items.
+
+## 0.27.7
+
+### Patch Changes
+
+- 3c53306: Vercel builds now run a single Nitro build. The workflow flow function is emitted through Nitro's per-route `functionRules` (queue trigger, `maxDuration: "max"`, precondition guard) instead of a second standalone Nitro build that was copied and retargeted into the output, making `eve build` on Vercel roughly twice as fast.
+- e368fcd: The client's `session.stream()` accepts `follow: false` for bounded catch-up reads (`follow` defaults to `true`, following the live stream): it consumes events from the cursor to the durable tail observed when the stream opens — surviving reconnects and still advancing the stored `streamIndex` — then returns instead of following the live stream. The HTTP stream route reports the durable tail as the `x-eve-stream-tail-index` response header when a request opts in with `includeTailIndex=1`, and channel-authoring `Session` objects gain `getStreamTailIndex()` for serving bounded reads from custom routes.
+- 7e4f7ef: Tool calls whose arguments arrive as a raw JSON string (e.g. provider-executed server tools) are now parsed, and arguments that cannot be parsed at all — such as malformed JSON emitted by the model — surface as a failed tool result the model can react to instead of failing the whole turn.
+
+## 0.27.6
+
+### Patch Changes
+
+- 0a8b63c: `eve channels add` now scaffolds portable channel variants when Vercel is unavailable and asks before deploying Vercel-integrated channels. Portable Slack setup uses environment credentials and records the required variables in `.env.example`.
+- ad0dfa7: Remote agents can now forward the end user's identity across deployments. `defineRemoteAgent({ forwardPrincipal: true })` sends the dispatching turn's session principal (metadata only — never tokens) on the create-session request, and the receiving deployment opts in with `eveChannel({ trustedForwarders })`, a predicate over the verified transport forwarder. Accepted forwarding replaces the session principal so per-user connections, local subagents, and chained remote hops see the original user; a receiver that refuses the forwarder (or accepts no forwarded principal) rejects with 403 and the dispatch fails instead of silently downgrading to the calling service's identity.
+- ad0dfa7: Remote agent dispatch now ignores an empty `outputSchema` (`{}`) passed by the model on the lowered subagent tool call, matching local subagent dispatch. An empty schema constrains nothing, but forwarding it flipped the remote child into structured-output mode and replaced its text reply with `{}`.
+- 5cf8ae0: Make `eve dev` return the terminal after one Ctrl+C or termination signal. The local server gets a bounded cleanup window before process-group termination, and interrupted sandbox cleanup resumes on the next start. A forced exit (second Ctrl+C or the shutdown backstop) now restores the terminal — raw mode, cursor, bracketed paste — before the process ends.
+- c2079a4: Preserve remote agent base paths when creating sessions and cancelling turns, so same-origin agents mounted below a route prefix no longer receive requests at the wrong endpoint.
+
+## 0.27.5
+
+### Patch Changes
+
+- 1987e12: Add thread-bound session reset helpers to Slack message and interaction contexts, plus targeted reset support for generic Slack event handlers.
+
+## 0.27.4
+
+### Patch Changes
+
+- 5d961f3: Request Vercel CLI's maximum 100-team page instead of following its broken default pagination path.
+- 04d5814: `eve dev` no longer fails at boot with `UNRESOLVED_IMPORT` when a mounted extension (or any dependency) resolves through a `node_modules` above the app root — npm/yarn workspace hoisting, intermediate monorepo levels, and bare `withEve` agent directories whose host app owns the install now materialize in the dev-runtime snapshot.
+- bbba073: The dev TUI supports queueing, steering, and cooperative turn cancellation. Pressing Enter while a turn is running queues the message (up to 5) in a pinned panel directly above the input — one line per message — and the queue coalesces into the next turn's message when the turn ends. Esc steers: it pops the oldest queued message, cancels the running turn cooperatively (`turn.cancelled` → `session.waiting`, keeping the session's context), and submits the popped message as the replacement turn. With nothing queued, Esc twice cancels the turn. Cancellation requests retry while the turn is live, so an Esc that lands in the turn-dispatch window (before the server has armed the turn's cancel hook) is no longer silently lost. Cancelling a turn mid-delegation settles its subagent sections and stops their child streams, so stale subagent output cannot paint into the steered turn. Messages still queued when a turn is interrupted or fails restore into the next prompt's input, and a turn cancelled from outside the prompt (a stale cancel or another client's `/cancel`) restores its submitted message the same way. On exit, the parting line names the server session id (`☰eve  v0.27.0 · session ses_…`) so the conversation can be found again.
+- dfd360f: Custom channel routes can now call `reset()` and `ClientSession` can reset the session that owns a stable continuation token. The next `send()` starts a fresh workflow session and lazily initializes a new session-scoped sandbox instead of reusing prior history or workspace state, and the `eve dev` TUI's `/new` performs that durable reset before clearing its transcript.
+
 ## 0.27.3
 
 ### Patch Changes

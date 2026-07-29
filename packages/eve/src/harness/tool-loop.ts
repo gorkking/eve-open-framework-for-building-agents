@@ -10,6 +10,7 @@ import {
   type ModelMessage,
   type ProviderMetadata,
   type SystemModelMessage,
+  type Telemetry,
   type TelemetryOptions,
   ToolLoopAgent,
   type ToolSet,
@@ -105,7 +106,11 @@ import {
   extractToolApprovalInputRequests,
 } from "#harness/input-extraction.js";
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
+import { activeTurnId } from "#harness/active-turn-id.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
+import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
+import { createInstrumentationHandleEvent } from "#harness/instrumentation-native-events.js";
+import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
 import {
   consumeDeferredStepInput,
   getApprovedTools,
@@ -147,7 +152,7 @@ import {
   hasEmptyDeliverySentinel,
 } from "#shared/empty-delivery.js";
 import { extractWorkflowStreamWriteErrorDetails } from "#harness/workflow-stream-error.js";
-import { ensureOtelIntegration } from "#harness/otel-integration.js";
+import { createOtelIntegration, ensureOtelIntegration } from "#harness/otel-integration.js";
 import { getAdvertisedTools } from "#harness/advertised-tools.js";
 import {
   applyLastToolCacheBreakpoint,
@@ -249,8 +254,9 @@ function enrichTelemetry(
   authored: InstrumentationDefinition | undefined,
   agentName: string | undefined,
   runtimeContext?: Readonly<Record<string, unknown>>,
+  bridgeIntegration?: Telemetry,
 ): TelemetryOptions | undefined {
-  if (authored === undefined) {
+  if (authored === undefined && bridgeIntegration === undefined) {
     return undefined;
   }
 
@@ -262,11 +268,17 @@ function enrichTelemetry(
   }
 
   return {
-    functionId: authored.functionId ?? agentName,
+    functionId: authored?.functionId ?? agentName,
     includeRuntimeContext,
+    integrations:
+      bridgeIntegration === undefined
+        ? undefined
+        : authored === undefined
+          ? [bridgeIntegration]
+          : [bridgeIntegration, createOtelIntegration()],
     isEnabled: true,
-    recordInputs: authored.recordInputs ?? true,
-    recordOutputs: authored.recordOutputs ?? true,
+    recordInputs: authored?.recordInputs ?? true,
+    recordOutputs: authored?.recordOutputs ?? true,
   };
 }
 
@@ -469,7 +481,7 @@ function resolveStepOtelContext(
 }
 
 export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
-  const emit = config.handleEvent;
+  const baseEmit = config.handleEvent;
   const telemetryConfig = getInstrumentationConfig();
   if (telemetryConfig !== undefined) {
     ensureOtelIntegration();
@@ -528,6 +540,15 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     }
 
     let emissionState = getHarnessEmissionState(session.state);
+    const parent = contextStorage.getStore()?.get(ParentSessionKey);
+    const emit = createInstrumentationHandleEvent({
+      agentName: config.runtimeIdentity?.agentName,
+      handleEvent: baseEmit,
+      hooks: config.instrumentation?.hooks,
+      rootSessionId: parent?.rootSessionId,
+      sessionId: session.sessionId,
+      turnId: activeTurnId(emissionState),
+    });
 
     // Resolve deferred input, runtime actions, then HITL input; each stage
     // may park when its resume payload has not arrived.
@@ -805,7 +826,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       trailingUserNote?: string;
     };
 
-    const runSingleModelCall = async (opts: ModelCallOptions): Promise<HarnessStepResult> => {
+    const runSingleModelCall = async (
+      opts: ModelCallOptions & { readonly attemptIndex: number },
+    ): Promise<HarnessStepResult> => {
       const { instructions, telemetryRuntimeContext = {} } =
         opts.preparedInput ?? prepareModelCallInput(opts.extraSystemNote);
       // Label the reissued call's telemetry; without this a retry is only
@@ -879,6 +902,29 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
       const effectiveTools = marker ? applyLastToolCacheBreakpoint(modelTools, marker) : modelTools;
 
+      const instrumentationHooks = config.instrumentation?.hooks;
+      const instrumentationTurnId = activeTurnId(emissionState);
+      const attemptScope: InstrumentationAttemptScope | undefined =
+        instrumentationHooks === undefined
+          ? undefined
+          : {
+              attemptId: `${session.sessionId}:${instrumentationTurnId}:${emissionState.stepIndex}:${opts.attemptIndex}`,
+              attemptIndex: opts.attemptIndex,
+              functionId: telemetryConfig?.functionId ?? agentName,
+              rootSessionId: parent?.rootSessionId ?? session.sessionId,
+              sessionId: session.sessionId,
+              stepIndex: emissionState.stepIndex,
+              turnId: instrumentationTurnId,
+            };
+      const bridgeIntegration =
+        attemptScope === undefined || instrumentationHooks === undefined
+          ? undefined
+          : createAiSdkHookBridge(
+              attemptScope,
+              instrumentationHooks,
+              config.instrumentation?.runInContext,
+            );
+
       const hooks = buildStepHooks({
         cachePath,
         emit,
@@ -909,7 +955,12 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         reasoning: session.agent.reasoning,
         runtimeContext: telemetryRuntimeContext,
         stopWhen: isStepCount(1),
-        telemetry: enrichTelemetry(telemetryConfig, agentName, telemetryRuntimeContext),
+        telemetry: enrichTelemetry(
+          telemetryConfig,
+          agentName,
+          telemetryRuntimeContext,
+          bridgeIntegration,
+        ),
         toolApproval: buildToolApproval(modelTools),
         tools: effectiveTools,
       };
@@ -997,14 +1048,31 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         });
       };
 
-      return executeModelCall().catch(rethrowNoOutputAsEmptyResponse);
+      try {
+        const result = await executeModelCall();
+        if (attemptScope !== undefined) {
+          await instrumentationHooks?.publish({ scope: attemptScope, type: "attempt.completed" });
+        }
+        return result;
+      } catch (error) {
+        if (attemptScope !== undefined) {
+          await instrumentationHooks?.publish({
+            error,
+            scope: attemptScope,
+            type: "attempt.failed",
+          });
+        }
+        return rethrowNoOutputAsEmptyResponse(error);
+      }
     };
 
+    let nextModelAttemptIndex = 0;
     const runOneModelCall = async (opts: ModelCallOptions): Promise<HarnessStepResult> =>
       runModelCallWithRetries(
         (attempt) =>
           runSingleModelCall({
             ...opts,
+            attemptIndex: nextModelAttemptIndex++,
             preparedInput: attempt === 1 ? opts.preparedInput : undefined,
             suppressStepStartedEmission: attempt === 1 ? opts.suppressStepStartedEmission : true,
           }),
@@ -1264,7 +1332,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // --- Step-side observability tags ---------------------------------------
     //
     // Tag the **turn workflow run** (the current `"use step"` is hosted by
-    // that workflow, so `experimental_setAttributes` writes to its
+    // that workflow, so `setAttributes` writes to its
     // attributes table) with the model id and per-turn cumulative token
     // counts. Per-turn totals are accumulated on `session.state` because
     // each tool-loop iteration is a fresh `"use step"` and the workflow

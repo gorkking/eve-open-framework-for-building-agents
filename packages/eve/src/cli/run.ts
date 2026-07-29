@@ -5,14 +5,27 @@ import { resolveApplicationRoot } from "#internal/application/paths.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { isCodingAgentLaunch } from "#cli/agent-detection.js";
 import { eveCliBanner } from "#cli/banner.js";
+import { registerIntegrationCommands } from "#cli/commands/register-integration-commands.js";
 import { registerProjectCommands } from "#cli/commands/register-project-commands.js";
+import { registerRegistryCommands } from "#cli/commands/register-registry-commands.js";
 import { resolveDevUiMode, resolveTuiDisplayOptions } from "#cli/dev/ui-options.js";
+import {
+  FORCED_EXIT_BACKSTOP_MS,
+  installShutdownSignal,
+  type CommandLifecycle,
+  waitForShutdownSignal,
+} from "#cli/shutdown.js";
+import { waitForServerOrStop, waitForUiOrServer } from "#cli/dev/wait-for-ui.js";
 import {
   parseDevelopmentHeaderOption,
   resolveDevelopmentUrlTarget,
   type DevelopmentRequestHeaders,
 } from "#cli/dev/url-target.js";
 import type { RunDevelopmentTuiInput } from "#cli/dev/tui/tui.js";
+import {
+  registerRuntimeInvokeCommand,
+  type InvokeCliRuntimeDependencies,
+} from "#cli/invoke/command.js";
 import { LOG_DISPLAY_MODES, parseLogDisplayMode } from "#cli/dev/tui/log-display-mode.js";
 import { resolveTuiTitle, type DevelopmentTuiTarget } from "#cli/dev/tui/target.js";
 import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
@@ -72,6 +85,7 @@ interface CliRuntimeDependencies {
     options?: { json?: boolean },
   ): Promise<void>;
   runDevelopmentTui(input: RunDevelopmentTuiInput): Promise<void>;
+  runInvoke: InvokeCliRuntimeDependencies["runInvoke"];
   runEvalCommand(
     evalIds: readonly string[],
     options: EvalCliOptions,
@@ -140,7 +154,7 @@ async function loadRunEvalCommand(): Promise<CliRuntimeDependencies["runEvalComm
 }
 
 async function loadStartHost(): Promise<CliRuntimeDependencies["startHost"]> {
-  return (await import("#internal/nitro/host.js")).createDevelopmentServer;
+  return (await import("#cli/dev/local-server-process.js")).createDevelopmentServer;
 }
 
 const loadIsActiveDevelopmentServerForApp = async () =>
@@ -148,47 +162,6 @@ const loadIsActiveDevelopmentServerForApp = async () =>
 
 async function loadStartProductionHost(): Promise<CliRuntimeDependencies["startProductionHost"]> {
   return (await import("#internal/nitro/host.js")).startProductionServer;
-}
-
-function shouldPrintCliBootBanner(actionCommand: Command): boolean {
-  return (
-    actionCommand.name() === "info" ||
-    actionCommand.name() === "dev" ||
-    actionCommand.name() === "init"
-  );
-}
-
-async function waitForShutdownSignal(input: { close(): Promise<void> }): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-
-    const cleanup = () => {
-      process.off("SIGINT", handleSignal);
-      process.off("SIGTERM", handleSignal);
-    };
-
-    const handleSignal = () => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      cleanup();
-      void input.close().then(resolve, reject);
-    };
-
-    process.once("SIGINT", handleSignal);
-    process.once("SIGTERM", handleSignal);
-  });
-}
-
-async function waitForProductionServer(input: ProductionServerHandle): Promise<void> {
-  await Promise.race([
-    input.wait(),
-    waitForShutdownSignal({
-      close: () => input.close(),
-    }),
-  ]);
 }
 
 function parsePortOption(value: string): number {
@@ -266,7 +239,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
     .showHelpAfterError()
     .exitOverride()
     .hook("preAction", (_program, actionCommand) => {
-      if (shouldPrintCliBootBanner(actionCommand)) {
+      if (["info", "dev", "init"].includes(actionCommand.name())) {
         logger.log(eveCliBanner());
       }
     })
@@ -289,8 +262,8 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
     .option("-f, --force", "Overwrite existing channel files")
     .option("-y, --yes", "Assume yes for confirmations; requires an explicit channel kind")
     .action(async (kind: string | undefined, options: { force?: boolean; yes?: boolean }) => {
-      const { runChannelsAddCommand } = await import("#cli/commands/channels.js");
-      await runChannelsAddCommand(logger, appRoot, { kind, options });
+      const { runChannelsAddCompatibilityCommand } = await import("#cli/commands/channels.js");
+      await runChannelsAddCompatibilityCommand(logger, appRoot, { kind, options });
     });
 
   channels
@@ -301,6 +274,8 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
       const { runChannelsListCommand } = await import("#cli/commands/channels.js");
       await runChannelsListCommand(logger, appRoot, options);
     });
+
+  registerIntegrationCommands({ program, logger, appRoot });
 
   const extension = program
     .command("extension")
@@ -331,6 +306,8 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
       const { runExtensionBuildCommand } = await import("#cli/commands/extension-build.js");
       await runExtensionBuildCommand(logger, appRoot);
     });
+
+  registerRegistryCommands({ program, logger, appRoot });
 
   program
     // Optional: a missing target scaffolds or updates the current directory,
@@ -388,8 +365,10 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
         }),
       );
 
-      await waitForProductionServer(server);
+      await waitForShutdownSignal({ close: () => server.close(), wait: () => server.wait() });
     });
+
+  registerRuntimeInvokeCommand({ appRoot, logger, program, runtime });
 
   program
     .command("dev")
@@ -465,6 +444,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
           readonly serverUrl: string;
         },
         report?: DevBootProgressReporter,
+        lifecycle?: CommandLifecycle,
       ): Promise<void> => {
         const runDevelopmentTui = await devBootPhase(
           "loading interactive UI",
@@ -486,6 +466,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
           target,
           initialInput: options.input,
           onBootProgress: report,
+          lifecycle,
           ...display,
         } satisfies RunDevelopmentTuiInput;
         if (remoteTarget?.headers !== undefined) {
@@ -514,27 +495,34 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
         }
 
         logger.log("");
-        await runInteractiveUi({ serverUrl: remoteServerUrl });
+        const lifecycle = installShutdownSignal({ exitAfterMs: FORCED_EXIT_BACKSTOP_MS });
+        try {
+          await runInteractiveUi({ serverUrl: remoteServerUrl }, undefined, lifecycle);
+        } finally {
+          lifecycle.dispose();
+        }
         return;
       }
 
-      // Print spacing before the live row; a later write would strand the row.
       if (mode === "tui") logger.log("");
       const buildProgress = mode === "tui" ? startCliLiveRow(logger) : undefined;
       const onBootProgress = createDevBootProgressReporter(buildProgress);
       buildProgress?.update("Building your agent");
 
-      let closed = false;
       let server: DevelopmentServer | undefined;
-      const closeServer = async () => {
-        if (closed || server === undefined) {
-          return;
-        }
-
-        closed = true;
-        // No-op when this instance attached to a server another process owns.
-        await server.close();
+      let closePromise: Promise<void> | undefined;
+      const closeServer = () => {
+        if (server === undefined) return Promise.resolve();
+        closePromise ??= server.close();
+        void closePromise.catch(() => undefined);
+        return closePromise;
       };
+      const lifecycle = installShutdownSignal({
+        exitAfterMs: FORCED_EXIT_BACKSTOP_MS,
+        onStop: () => {
+          void closeServer();
+        },
+      });
 
       try {
         const startHost = runtime.startHost ?? (await loadStartHost());
@@ -544,11 +532,13 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
           onBootProgress,
           port: options.port,
         });
-        const handle = await server.start();
+        const outcome = await Promise.race([
+          server.start().then((handle) => ({ handle })),
+          lifecycle.stopped.then(() => ({ handle: undefined })),
+        ]);
+        const handle = outcome.handle;
+        if (handle === undefined) return;
 
-        // The terminal UI's header already shows the server URL, and startup
-        // no longer clears the screen, so the line would linger as noise.
-        // Headless consumers (scripts, scenario tests) still parse it.
         if (mode !== "tui") {
           logger.log(
             renderCliTaggedLine(theme, {
@@ -560,9 +550,6 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
         }
 
         if (mode === "headless") {
-          // An explicit `--no-ui` is intentional and silent; a non-TTY
-          // terminal that did not ask for headless gets a hint so the
-          // missing UI is not mistaken for a hang.
           if (options.ui !== false && !interactive) {
             logger.log(
               renderCliTaggedLine(theme, {
@@ -573,15 +560,25 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
             );
           }
 
-          return await waitForShutdownSignal({
-            close: closeServer,
-          });
+          await waitForServerOrStop(server, lifecycle);
+          return;
         }
 
-        await runInteractiveUi({ appRoot: handle.appRoot, serverUrl: handle.url }, onBootProgress);
+        await waitForUiOrServer({
+          handle,
+          lifecycle,
+          server,
+          runUi: async () =>
+            await runInteractiveUi(
+              { appRoot: handle.appRoot, serverUrl: handle.url },
+              onBootProgress,
+              lifecycle,
+            ),
+        });
       } finally {
         buildProgress?.stop();
         await closeServer();
+        lifecycle.dispose();
       }
     });
 
@@ -606,6 +603,24 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
     .action(async (options: { json?: boolean }) => {
       const { runLogsListCommand } = await import("#cli/commands/logs.js");
       await runLogsListCommand(logger, appRoot, options);
+    });
+
+  const traces = program
+    .command("trace [trace]")
+    .usage("[options] [trace]\n       eve trace ls [options]")
+    .description("Show a local `eve dev` trace (the most recent when trace is omitted).")
+    .action(async (reference: string | undefined) => {
+      const { runTraceShowCommand } = await import("#cli/commands/trace.js");
+      await runTraceShowCommand(logger, appRoot, reference);
+    });
+
+  traces
+    .command("ls")
+    .description("List local traces, most recent first.")
+    .option("--json", "Output as JSON")
+    .action(async (options: { json?: boolean }) => {
+      const { runTraceListCommand } = await import("#cli/commands/trace.js");
+      await runTraceListCommand(logger, appRoot, options);
     });
 
   program
