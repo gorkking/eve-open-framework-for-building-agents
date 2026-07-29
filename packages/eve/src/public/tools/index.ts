@@ -18,7 +18,19 @@ export {
   type ToolContext,
   type ToolModelOutput,
 } from "#public/definitions/tool.js";
-export type { Approval, ApprovalContext, ApprovalStatus } from "#public/definitions/approval.js";
+export type {
+  Approval,
+  ApprovalConfiguration,
+  ApprovalContext,
+  ApprovalPolicy,
+  ApprovalResponseAuth,
+  ApprovalResponseAuthorization,
+  ApprovalResponseAuthorizer,
+  ApprovalResponseContext,
+  ApprovalResponseRequest,
+  ApprovalResponseSession,
+  ApprovalStatus,
+} from "#public/definitions/approval.js";
 export type {
   DynamicToolEntry,
   DynamicEvents,
