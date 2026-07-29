@@ -729,7 +729,7 @@ describe("eveChannel — onMessage", () => {
     const response = await handler.fetch(
       createJsonMessageRequest({
         continuationToken: "http:existing",
-        inputResponses: [{ requestId: "req-1", optionId: "deny" }],
+        inputResponses: [{ requestId: "req-1", optionId: "cancel" }],
       }),
     );
 
@@ -1457,7 +1457,7 @@ describe("eveChannel — continue session HITL (inputResponses)", () => {
     const response = await handler.fetch(
       createJsonMessageRequest({
         continuationToken: "http:existing",
-        inputResponses: [{ requestId: "req-1", optionId: "deny" }],
+        inputResponses: [{ requestId: "req-1", optionId: "cancel" }],
       }),
     );
 
@@ -1465,7 +1465,7 @@ describe("eveChannel — continue session HITL (inputResponses)", () => {
     expect(handler.send).toHaveBeenCalledTimes(1);
     const payload = handler.send.mock.calls[0]?.[0] as SendPayload;
     expect(payload.message).toBeUndefined();
-    expect(payload.inputResponses).toEqual([{ requestId: "req-1", optionId: "deny" }]);
+    expect(payload.inputResponses).toEqual([{ requestId: "req-1", optionId: "cancel" }]);
   });
 });
 
