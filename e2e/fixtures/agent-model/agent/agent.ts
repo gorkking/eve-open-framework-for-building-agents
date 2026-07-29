@@ -1,15 +1,14 @@
+import { e2eAgentConfig } from "@eve-e2e/config";
 import { defineAgent, defineDynamic, type DynamicResolveContext } from "eve";
 
 const model = process.env.EVE_E2E_MODEL ?? "openai/gpt-5.6-sol";
-const workflowWorld = process.env.EVE_E2E_WORKFLOW_WORLD;
-
 /**
  * Dynamic-model e2e fixture. Resolves at `turn.started` (not the usual
  * `session.started`) so one session can exercise selection, null fallback,
  * and resolver-failure degradation.
  */
 export default defineAgent({
-  experimental: workflowWorld === undefined ? undefined : { workflow: { world: workflowWorld } },
+  ...e2eAgentConfig(),
   model: defineDynamic({
     fallback: model,
     events: {

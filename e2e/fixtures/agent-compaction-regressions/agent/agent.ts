@@ -1,3 +1,4 @@
+import { e2eAgentConfig } from "@eve-e2e/config";
 import { defineAgent } from "eve";
 import { mockModel, type MockModelRequest } from "eve/evals";
 
@@ -13,7 +14,6 @@ import {
   TASK_TAIL_SENTINEL,
 } from "../constants";
 
-const workflowWorld = process.env.EVE_E2E_WORKFLOW_WORLD;
 const TEST_CONTEXT_WINDOW_TOKENS = 32_000;
 const MAX_TOOL_CALLS = 10;
 
@@ -224,7 +224,7 @@ const taskModel = mockModel({
 });
 
 export default defineAgent({
-  experimental: workflowWorld === undefined ? undefined : { workflow: { world: workflowWorld } },
+  ...e2eAgentConfig(),
   model: taskModel,
   modelContextWindowTokens: TEST_CONTEXT_WINDOW_TOKENS,
   compaction: {
