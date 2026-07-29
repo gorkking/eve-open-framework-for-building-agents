@@ -1,3 +1,9 @@
+---
+issue: TBD
+status: proposed
+last_updated: "2026-07-29"
+---
+
 # MCP channel plan
 
 ## Summary
