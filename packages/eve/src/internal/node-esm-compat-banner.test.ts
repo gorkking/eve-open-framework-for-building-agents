@@ -10,7 +10,9 @@ describe("buildNodeEsmCompatBanner", () => {
     const banner = buildNodeEsmCompatBanner('console.log("noop");');
 
     expect(banner).toContain("const __filename = __eveFileURLToPath(import.meta.url);");
-    expect(banner).toContain("const __dirname = __eveDirname(__filename);");
+    expect(banner).toContain(
+      "const __dirname = __eveDirname(__eveFileURLToPath(import.meta.url));",
+    );
     expect(banner).not.toContain("__eveCreateRequire");
   });
 
@@ -52,6 +54,21 @@ describe("buildNodeEsmCompatBanner", () => {
     expect(banner).not.toContain('from "node:path"');
   });
 
+  it("does not initialize __dirname through a chunk-owned __filename", () => {
+    const chunk = [
+      "console.log(__dirname);",
+      "const __filename = '/x/file.js';",
+      'export const value = "noop";',
+    ].join("\n");
+
+    const banner = buildNodeEsmCompatBanner(chunk);
+
+    expect(banner).not.toContain("const __filename =");
+    expect(banner).toContain(
+      "const __dirname = __eveDirname(__eveFileURLToPath(import.meta.url));",
+    );
+  });
+
   it("omits the require shim when the chunk binds require", () => {
     const chunk = [
       'import { createRequire } from "node:module";',
@@ -76,7 +93,9 @@ describe("buildNodeEsmCompatBanner", () => {
     const banner = buildNodeEsmCompatBanner(chunk, { includeRequire: true });
 
     expect(banner).toContain("const __filename = __eveFileURLToPath(import.meta.url);");
-    expect(banner).toContain("const __dirname = __eveDirname(__filename);");
+    expect(banner).toContain(
+      "const __dirname = __eveDirname(__eveFileURLToPath(import.meta.url));",
+    );
     expect(banner).toContain("const require = __eveCreateRequire(import.meta.url);");
   });
 
@@ -93,7 +112,9 @@ describe("buildNodeEsmCompatBanner", () => {
 
     // The chunk has not bound `__dirname` at the top level, so the
     // banner must still provide it.
-    expect(banner).toContain("const __dirname = __eveDirname(__filename);");
+    expect(banner).toContain(
+      "const __dirname = __eveDirname(__eveFileURLToPath(import.meta.url));",
+    );
     expect(banner).toContain("const __filename = __eveFileURLToPath(import.meta.url);");
   });
 });

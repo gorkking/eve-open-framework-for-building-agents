@@ -14,7 +14,7 @@ interface NodeEsmCompatBannerOptions {
 }
 
 interface BannerLine {
-  readonly importLine: string;
+  readonly importLines: readonly string[];
   readonly declarationLine: string;
   readonly bindingPattern: RegExp;
 }
@@ -25,19 +25,22 @@ interface BannerLine {
 // not collide with the banner.
 const BANNER_LINES: readonly BannerLine[] = [
   {
-    importLine: 'import { fileURLToPath as __eveFileURLToPath } from "node:url";',
+    importLines: ['import { fileURLToPath as __eveFileURLToPath } from "node:url";'],
     declarationLine: "const __filename = __eveFileURLToPath(import.meta.url);",
     bindingPattern: /^(?:const|let|var)\s+__filename(?![\w$])/m,
   },
   {
-    importLine: 'import { dirname as __eveDirname } from "node:path";',
-    declarationLine: "const __dirname = __eveDirname(__filename);",
+    importLines: [
+      'import { fileURLToPath as __eveFileURLToPath } from "node:url";',
+      'import { dirname as __eveDirname } from "node:path";',
+    ],
+    declarationLine: "const __dirname = __eveDirname(__eveFileURLToPath(import.meta.url));",
     bindingPattern: /^(?:const|let|var)\s+__dirname(?![\w$])/m,
   },
 ];
 
 const REQUIRE_LINE: BannerLine = {
-  importLine: 'import { createRequire as __eveCreateRequire } from "node:module";',
+  importLines: ['import { createRequire as __eveCreateRequire } from "node:module";'],
   declarationLine: "const require = __eveCreateRequire(import.meta.url);",
   bindingPattern: /^(?:const|let|var)\s+require(?![\w$])/m,
 };
@@ -60,7 +63,7 @@ export function buildNodeEsmCompatBanner(
     lines.push(REQUIRE_LINE);
   }
 
-  const imports: string[] = [];
+  const imports = new Set<string>();
   const declarations: string[] = [];
 
   for (const line of lines) {
@@ -68,7 +71,9 @@ export function buildNodeEsmCompatBanner(
       continue;
     }
 
-    imports.push(line.importLine);
+    for (const importLine of line.importLines) {
+      imports.add(importLine);
+    }
     declarations.push(line.declarationLine);
   }
 
