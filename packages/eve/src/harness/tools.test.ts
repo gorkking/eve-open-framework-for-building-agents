@@ -1,5 +1,5 @@
 import { type JSONSchema7, jsonSchema } from "ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { SessionKey, type Session } from "#context/keys.js";
@@ -636,29 +636,31 @@ describe("buildToolSet", () => {
     );
   });
 
-  it("passes valid content toModelOutput values through in the AI SDK shape", async () => {
+  it("projects file content without exposing raw tool output to the model", async () => {
     const pixel =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+    const rawOutput = { answerKey: ["red", "blue"], pixel };
+    const toModelOutput = vi.fn(() => ({
+      type: "content" as const,
+      value: [
+        { type: "text" as const, text: "Screenshot:" },
+        {
+          type: "file" as const,
+          data: { type: "data" as const, data: pixel },
+          mediaType: "image/png",
+          filename: "pixel.png",
+        },
+      ],
+    }));
     const tools: HarnessToolMap = new Map<string, HarnessToolDefinition>([
       [
         "screenshot",
         {
           description: "Capture a screenshot.",
-          execute: async () => ({ ok: true }),
+          execute: async () => rawOutput,
           inputSchema: jsonSchema({}),
           name: "screenshot",
-          toModelOutput: () => ({
-            type: "content" as const,
-            value: [
-              { type: "text" as const, text: "Screenshot:" },
-              {
-                type: "file" as const,
-                data: { type: "data" as const, data: pixel },
-                mediaType: "image/png",
-                filename: "pixel.png",
-              },
-            ],
-          }),
+          toModelOutput,
         },
       ],
     ]);
@@ -666,7 +668,7 @@ describe("buildToolSet", () => {
     const result = buildToolSet({ tools });
 
     await expect(
-      projectSdkToolOutput({ output: { ok: true }, tool: result.screenshot }),
+      projectSdkToolOutput({ output: rawOutput, tool: result.screenshot }),
     ).resolves.toEqual({
       type: "content",
       value: [
@@ -679,6 +681,7 @@ describe("buildToolSet", () => {
         },
       ],
     });
+    expect(toModelOutput).toHaveBeenCalledWith(rawOutput);
   });
 
   it("passes valid text toModelOutput values through", async () => {
