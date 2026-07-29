@@ -9,13 +9,13 @@ If you intend to export telemetry, review the exporter destination, data categor
 
 ## Zero-config local traces
 
-When no authored `instrumentation.ts` exists, `eve dev` records agent, AI SDK, and user-created OpenTelemetry spans under `.eve/traces/v1`. Each session has one trace, rooted independently from Workflow telemetry, with turns, model steps, and tool actions represented explicitly. Spans created by application code while a model or tool is executing inherit that active agent context.
+`eve dev` records agent, AI SDK, and user-created OpenTelemetry spans under `.eve/traces/v1`. Each session has one trace, rooted independently from Workflow telemetry, with turns, model steps, and tool actions represented explicitly. Spans created by application code while a model or tool is executing inherit that active agent context.
 
 The directory is an immutable OTLP/JSON spool and remains available after `eve dev` exits, subject to the [retention policy](#local-trace-retention) below. Inspection tools may build a query index from these segments, but the index is derived and can be rebuilt without changing the captured trace data.
 
 Use `eve trace ls` to list captured traces and `eve trace <trace>` to inspect a session's span tree.
 
-The local writer is an internal development default, not a second provider layered over authored instrumentation. When `instrumentation.ts` exists, its setup retains control and the zero-config writer is not installed.
+The writer is always installed in `eve dev`, including when you author an `instrumentation.ts`. It does not compete with your provider: eve wraps the provider your `setup` registered rather than replacing it, so your exporter keeps receiving everything it received before, and in dev it additionally sees eve's `agent.*` spans. Production is unaffected — outside `eve dev`, authored instrumentation is the only provider and nothing is written to disk. Set `EVE_TRACES=off` to opt out of the local writer.
 
 ### Local trace retention
 
@@ -136,7 +136,7 @@ Channel metadata is channel-owned. Built-in channels expose only the fields they
 
 ## Authored trace hierarchy
 
-The existing authored `instrumentation.ts` path remains separate from zero-config local traces. When authored telemetry is enabled, each turn currently produces a trace like:
+Your exporter receives the hierarchy the AI SDK produces. When authored telemetry is enabled, each turn currently produces a trace like:
 
 ```text
 ai.eve.turn  {eve.session.id}

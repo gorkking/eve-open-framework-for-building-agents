@@ -29,7 +29,8 @@ describe("local instrumentation runtime", () => {
       appRoot,
       frameworkVersion: "test",
       serviceName: "test-agent",
-    });
+    })!;
+    expect(runtime).toBeDefined();
     const scope: InstrumentationAttemptScope = {
       attemptId: "session-1:turn-1:0:0",
       attemptIndex: 0,

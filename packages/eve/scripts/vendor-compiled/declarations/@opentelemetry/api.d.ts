@@ -8,7 +8,8 @@ export interface SpanContext {
 
 export interface Span {
   addEvent(name: string, attributes?: Attributes): this;
-  end(): void;
+  end(endTime?: number): void;
+  isRecording?(): boolean;
   recordException(
     exception: Error | string | { message?: string; name?: string; stack?: string },
   ): void;
@@ -17,12 +18,23 @@ export interface Span {
   spanContext(): SpanContext;
 }
 
+export interface SpanOptions {
+  attributes?: Attributes | undefined;
+  root?: boolean | undefined;
+}
+
 export interface Tracer {
-  startSpan(
-    name: string,
-    options?: { attributes?: Attributes | undefined; root?: boolean | undefined },
-    context?: Context,
-  ): Span;
+  startSpan(name: string, options?: SpanOptions, context?: Context): Span;
+}
+
+export interface TracerProvider {
+  getTracer(name: string, version?: string, options?: unknown): Tracer;
+}
+
+export declare class ProxyTracerProvider implements TracerProvider {
+  getDelegate(): TracerProvider;
+  getTracer(name: string, version?: string, options?: unknown): Tracer;
+  setDelegate(delegate: TracerProvider): void;
 }
 
 export interface Context {}
@@ -43,6 +55,7 @@ export declare const context: {
 export declare const trace: {
   getActiveSpan(): Span | undefined;
   getTracer(name: string, version?: string): Tracer;
+  getTracerProvider(): TracerProvider;
   setSpan(context: Context, span: Span): Context;
   wrapSpanContext(spanContext: SpanContext): Span;
 };

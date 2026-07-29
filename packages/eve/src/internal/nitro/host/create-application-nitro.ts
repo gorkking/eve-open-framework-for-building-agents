@@ -739,10 +739,16 @@ export async function createDevelopmentApplicationNitro(
   const nitroBuildDir = preparedHost.workspace.nitroBuildDir;
   const bundler = createApplicationNitroBundlerConfiguration(preparedHost, undefined);
   const plugins = createApplicationNitroPlugins(preparedHost);
+  const localTracingPlugin = resolvePackageSourceFilePath(
+    "src/internal/nitro/host/local-tracing-runtime-plugin.ts",
+  );
+  // Local tracing is always on in dev. When the agent authors its own
+  // instrumentation it must register first, so eve adopts its tracer provider
+  // rather than losing the race to become the global one.
   if (preparedHost.compiledArtifacts.instrumentationPluginPath === undefined) {
-    plugins.unshift(
-      resolvePackageSourceFilePath("src/internal/nitro/host/local-tracing-runtime-plugin.ts"),
-    );
+    plugins.unshift(localTracingPlugin);
+  } else {
+    plugins.push(localTracingPlugin);
   }
 
   await prepareEveVersionedCacheDirectory(nitroBuildDir);

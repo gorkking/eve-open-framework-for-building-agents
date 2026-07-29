@@ -209,7 +209,7 @@ describe("application Nitro creation", () => {
     );
   });
 
-  it("preserves authored instrumentation instead of installing local tracing", async () => {
+  it("installs local tracing after authored instrumentation so eve adopts its provider", async () => {
     const nitroStub = createNitroStub();
     createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
     const { createDevelopmentApplicationNitro } =
@@ -220,10 +220,12 @@ describe("application Nitro creation", () => {
     await createDevelopmentApplicationNitro(preparedHost);
 
     const plugins = createNitroMock.mock.calls[0]?.[0].plugins as string[];
-    expect(plugins).toContain("/app/instrumentation.mjs");
-    expect(plugins).not.toEqual(
-      expect.arrayContaining([expect.stringContaining("local-tracing-runtime-plugin.ts")]),
+    const localTracing = plugins.findIndex((plugin) =>
+      plugin.includes("local-tracing-runtime-plugin.ts"),
     );
+
+    expect(plugins).toContain("/app/instrumentation.mjs");
+    expect(plugins.indexOf("/app/instrumentation.mjs")).toBeLessThan(localTracing);
   });
 
   it("preserves workflow bundle side effects and skips workflow transform for cached bundles", async () => {
