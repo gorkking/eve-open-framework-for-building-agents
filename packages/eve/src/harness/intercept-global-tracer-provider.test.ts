@@ -63,6 +63,25 @@ describe("installGlobalTracerProviderInterception", () => {
     expect(events).toEqual(["inner-end:authored.work"]);
   });
 
+  // Interception is also where a run's internal spans stop existing: the
+  // author's provider never gets asked for them, so their exporter never sees
+  // them.
+  it("suppresses the Workflow SDK's tracer on the provider it hands back", () => {
+    installGlobalTracerProviderInterception();
+    const registry = registerApiRegistry("1.9.0");
+    const events: string[] = [];
+
+    registry.trace = createInnerProvider(events);
+    const { processor, started } = createRecordingProcessor();
+    attachInterceptedSpanProcessor(processor);
+
+    registry.trace.getTracer("workflow").startSpan("step.execute").end();
+    registry.trace.getTracer("authored").startSpan("authored.work").end();
+
+    expect(events).toEqual(["inner-end:authored.work"]);
+    expect(started).toEqual(["authored.work"]);
+  });
+
   // `setGlobalTracerProvider` registers its proxy first and sets the real
   // provider as the delegate only after, so a tracer taken in between is a
   // `ProxyTracer` that resolves lazily. Hooking the delegate is what reaches it;

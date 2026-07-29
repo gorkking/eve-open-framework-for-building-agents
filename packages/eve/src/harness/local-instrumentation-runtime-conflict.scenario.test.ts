@@ -63,13 +63,12 @@ describe("local instrumentation runtime ownership", () => {
     });
     const traceId = span.spanContext().traceId;
 
-    // The Workflow SDK asks the global API for a `workflow` tracer, so its spans
-    // arrive by the same route as everything else — and when a tool starts a run
-    // they are children of the agent's span, inside a trace eve owns. Scope name
-    // is what keeps them out of the local store: `eve trace` shows a session's
-    // own work, and a run's spans belong to the run's trace. The author's
-    // exporter still receives them; eve observes their provider, it does not
-    // filter it.
+    // The Workflow SDK asks the global API for a `workflow` tracer, so a run's
+    // internal spans arrive by the same route as everything else — and when a
+    // tool starts a run they are children of the agent's span, inside a trace eve
+    // owns. Interception declines to create them at all, so neither the local
+    // store nor the authored exporter receives them, and a span the SDK starts
+    // underneath one still lands on the agent's span.
     const workflowSpan = trace
       .getTracer("workflow")
       .startSpan("step.execute", {}, trace.setSpan(context.active(), span));
@@ -77,11 +76,11 @@ describe("local instrumentation runtime ownership", () => {
     span.end();
     await runtime!.forceFlush();
 
-    // The authored exporter keeps every span it received before, and eve
-    // additionally spools the agent-owned trace to disk.
+    // The authored exporter keeps the agent's spans and no longer receives the
+    // run's, and eve additionally spools the agent-owned trace to disk.
     expect(authoredSpans).toContain("agent.session");
-    expect(authoredSpans).toContain("step.execute");
-    expect(workflowSpan.spanContext().traceId).toBe(traceId);
+    expect(authoredSpans).not.toContain("step.execute");
+    expect(workflowSpan.spanContext()).toEqual(span.spanContext());
 
     const stored = await readStoredTrace(appRoot, traceId);
     expect(stored.spanNames).toEqual(["agent.session"]);

@@ -56,11 +56,15 @@ export declare const context: {
 
 export declare const trace: {
   getActiveSpan(): Span | undefined;
+  getSpanContext(context: Context): SpanContext | undefined;
   getTracer(name: string, version?: string): Tracer;
   getTracerProvider(): TracerProvider;
   setSpan(context: Context, span: Span): Context;
   wrapSpanContext(spanContext: SpanContext): Span;
 };
+
+/** All-zero ids: what the API hands out when there is no span to refer to. */
+export declare const INVALID_SPAN_CONTEXT: SpanContext;
 
 export declare enum SpanKind {
   INTERNAL = 0,

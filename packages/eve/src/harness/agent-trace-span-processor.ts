@@ -1,13 +1,13 @@
 import type { SpanProcessor } from "#compiled/@vercel/otel/index.js";
 
+import { WORKFLOW_INSTRUMENTATION_SCOPE } from "#harness/workflow-instrumentation-scope.js";
+
 interface SpanLike {
   readonly attributes: Readonly<Record<string, unknown>>;
   readonly instrumentationLibrary?: { readonly name?: string };
   readonly instrumentationScope?: { readonly name?: string };
   readonly spanContext: () => { readonly traceId: string };
 }
-
-const WORKFLOW_INSTRUMENTATION_SCOPE = "workflow";
 
 /**
  * The name of the instrumentation that created `span`.
@@ -71,6 +71,14 @@ export class AgentTraceSpanProcessor implements SpanProcessor {
     await Promise.all(this.#children.map((child) => child.shutdown()));
   }
 
+  /**
+   * A run's internal spans are declined even inside a trace eve owns, so
+   * `eve trace` shows the session's own work.
+   *
+   * Still needed with `suppressWorkflowInstrumentation` in place: that only
+   * covers a provider eve intercepts, and on the zero-config path eve registers
+   * the provider itself, so the Workflow SDK's spans are real and arrive here.
+   */
   #accepts(span: SpanLike): boolean {
     return (
       instrumentationName(span) !== WORKFLOW_INSTRUMENTATION_SCOPE &&

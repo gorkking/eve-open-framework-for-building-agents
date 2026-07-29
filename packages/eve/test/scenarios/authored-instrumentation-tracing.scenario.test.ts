@@ -45,8 +45,11 @@ export default defineInstrumentation({
       spanProcessors: [
         {
           forceFlush: async () => {},
-          onEnd: (span: { readonly name: string }) => {
-            appendFileSync(spanLogPath, \`\${span.name}\\n\`);
+          onEnd: (span: {
+            readonly instrumentationScope?: { readonly name?: string };
+            readonly name: string;
+          }) => {
+            appendFileSync(spanLogPath, \`\${span.instrumentationScope?.name ?? "unknown"}\\t\${span.name}\\n\`);
           },
           onStart: () => {},
           shutdown: async () => {},
@@ -239,15 +242,33 @@ describe("authored instrumentation in eve dev", () => {
           )}\n\n${output()}`,
         ).toContain("ai.streamText");
 
-        // Workflow SDK spans are the one thing eve declines even inside a trace
-        // it owns, so `eve trace` shows the session's own work rather than a
-        // run's internals. The scope name is the discriminator, so assert on it
-        // rather than on any particular span name.
+        // A run's internal spans are the one thing eve declines even inside a
+        // trace it owns, so `eve trace` shows the session's own work rather than
+        // how the turn was executed. The scope name is the discriminator, so
+        // assert on it rather than on any particular span name.
         expect(
           localTraces.flatMap((trace) => trace.scopeNames),
           `Expected no Workflow SDK spans in the local store.\n\ntraces: ${JSON.stringify(
             localTraces.map((trace) => trace.scopeNames),
           )}`,
+        ).not.toContain("workflow");
+
+        // Nor does the author's exporter receive them: in `eve dev` eve declines
+        // to create them at all, so a run's internals exist in neither sink. The
+        // agent scope is asserted alongside so a scope column that stopped being
+        // read could not pass this by reporting nothing.
+        const authoredScopes = (await readAuthoredSpans(spanLogPath)).map((span) => span.scope);
+        expect(
+          authoredScopes,
+          `Authored span processor never reported the agent's instrumentation scope.\n\nscopes: ${JSON.stringify(
+            authoredScopes,
+          )}\n\n${output()}`,
+        ).toContain("eve.agent");
+        expect(
+          authoredScopes,
+          `Authored span processor received Workflow SDK spans.\n\nscopes: ${JSON.stringify(
+            authoredScopes,
+          )}\n\n${output()}`,
         ).not.toContain("workflow");
 
         // A span outside any session belongs to no agent trace, so it reaches
@@ -278,12 +299,30 @@ describe("authored instrumentation in eve dev", () => {
   );
 });
 
-async function readAuthoredSpanNames(spanLogPath: string): Promise<string[]> {
+interface AuthoredSpan {
+  readonly name: string;
+  readonly scope: string;
+}
+
+/** One `<scope>\t<name>` line per span the authored processor received. */
+async function readAuthoredSpans(spanLogPath: string): Promise<AuthoredSpan[]> {
+  let contents = "";
   try {
-    return (await readFile(spanLogPath, "utf8")).split("\n").filter((line) => line.length > 0);
+    contents = await readFile(spanLogPath, "utf8");
   } catch {
     return [];
   }
+  return contents
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [scope = "", name = ""] = line.split("\t");
+      return { name, scope };
+    });
+}
+
+async function readAuthoredSpanNames(spanLogPath: string): Promise<string[]> {
+  return (await readAuthoredSpans(spanLogPath)).map((span) => span.name);
 }
 
 interface OtlpSpan {

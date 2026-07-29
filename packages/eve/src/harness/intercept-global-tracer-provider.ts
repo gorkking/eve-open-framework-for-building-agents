@@ -7,6 +7,7 @@ import {
   type DelegatingTracerProvider,
 } from "#harness/delegating-tracer-provider.js";
 import { observeTracerProvider } from "#harness/observe-tracer-provider.js";
+import { suppressWorkflowInstrumentation } from "#harness/workflow-instrumentation.js";
 
 // Reaching into another library's global registry is the price of leaving the
 // authored API alone: `instrumentation.ts` calls `registerOTel` itself, and a
@@ -223,7 +224,16 @@ function intercept(
     return provider;
   }
   current.provider = provider;
-  return observeTracerProvider(provider, processorSource);
+  return wrapProvider(provider);
+}
+
+/**
+ * eve's view of a registered provider: the Workflow SDK's tracer is suppressed
+ * outermost so a run's spans are never created at all, and every other tracer is
+ * observed on its way past.
+ */
+function wrapProvider(provider: TracerProvider): TracerProvider {
+  return suppressWorkflowInstrumentation(observeTracerProvider(provider, processorSource));
 }
 
 function hookDelegate(current: InterceptionState, proxy: DelegatingTracerProvider): void {
@@ -239,7 +249,7 @@ function hookDelegate(current: InterceptionState, proxy: DelegatingTracerProvide
   const observe = (delegate: TracerProvider): void => {
     current.provider = delegate;
     delegated = delegate;
-    original.call(proxy, observeTracerProvider(delegate, processorSource));
+    original.call(proxy, wrapProvider(delegate));
   };
   Object.defineProperty(proxy, "setDelegate", {
     configurable: true,
