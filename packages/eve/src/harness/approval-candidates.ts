@@ -19,6 +19,7 @@ export interface ApprovalCandidateAuditRecord {
   readonly status: ApprovalCandidateStatus;
   readonly createdAt: number;
   readonly completedAt?: number;
+  readonly eventEmitted?: boolean;
   readonly expiresAt?: number;
   readonly provider?: string;
   readonly runtimeRevision?: string;
@@ -38,6 +39,7 @@ export interface ApprovalSettlementAuditRecord {
   readonly requestId: string;
   readonly settledAt: number;
   readonly candidateId?: string;
+  readonly eventEmitted?: boolean;
 }
 
 interface ActiveApprovalCandidate {
@@ -45,7 +47,9 @@ interface ActiveApprovalCandidate {
   readonly requestId: string;
   readonly responder: ApprovalResponderIdentity;
   readonly status: "pending" | "authorization-required";
+  readonly authorizationName?: string;
   readonly createdAt: number;
+  readonly pendingEventEmitted?: boolean;
   readonly expiresAt: number;
   readonly provider?: string;
   readonly runtimeRevision?: string;
@@ -115,8 +119,62 @@ export function createApprovalCandidate(input: {
   };
 }
 
+/** Marks the pending candidate event as emitted. */
+export function markApprovalCandidatePendingEventEmitted(input: {
+  readonly candidateId: string;
+  readonly state: SessionStateMap | undefined;
+}): SessionStateMap | undefined {
+  const approvalState = readApprovalState(input.state);
+  const candidate = approvalState.activeCandidates[input.candidateId];
+  if (candidate === undefined || candidate.pendingEventEmitted === true) return input.state;
+  return writeApprovalState(input.state, {
+    ...approvalState,
+    activeCandidates: {
+      ...approvalState.activeCandidates,
+      [input.candidateId]: { ...candidate, pendingEventEmitted: true },
+    },
+  });
+}
+
+/** Marks a terminal candidate history event as emitted. */
+export function markApprovalCandidateHistoryEventEmitted(input: {
+  readonly candidateId: string;
+  readonly state: SessionStateMap | undefined;
+}): SessionStateMap | undefined {
+  const approvalState = readApprovalState(input.state);
+  let changed = false;
+  const candidateHistory = approvalState.candidateHistory.map((candidate) => {
+    if (candidate.candidateId !== input.candidateId || candidate.eventEmitted === true) {
+      return candidate;
+    }
+    changed = true;
+    return { ...candidate, eventEmitted: true };
+  });
+  return changed
+    ? writeApprovalState(input.state, { ...approvalState, candidateHistory })
+    : input.state;
+}
+
+/** Marks a terminal settlement event as emitted. */
+export function markApprovalSettlementEventEmitted(input: {
+  readonly requestId: string;
+  readonly state: SessionStateMap | undefined;
+}): SessionStateMap | undefined {
+  const approvalState = readApprovalState(input.state);
+  const settlement = approvalState.settlements[input.requestId];
+  if (settlement === undefined || settlement.eventEmitted === true) return input.state;
+  return writeApprovalState(input.state, {
+    ...approvalState,
+    settlements: {
+      ...approvalState.settlements,
+      [input.requestId]: { ...settlement, eventEmitted: true },
+    },
+  });
+}
+
 /** Marks a candidate as waiting on a private authorization challenge. */
 export function markApprovalCandidateAuthorizationRequired(input: {
+  readonly authorizationName: string;
   readonly candidateId: string;
   readonly expiresAt?: number;
   readonly provider?: string;
@@ -127,6 +185,7 @@ export function markApprovalCandidateAuthorizationRequired(input: {
   if (candidate === undefined) return input.state;
   const nextCandidate: ActiveApprovalCandidate = {
     ...candidate,
+    authorizationName: input.authorizationName,
     expiresAt: input.expiresAt ?? candidate.expiresAt,
     provider: input.provider,
     status: "authorization-required",

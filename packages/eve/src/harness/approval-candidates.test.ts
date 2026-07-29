@@ -92,6 +92,7 @@ describe("approval candidate state", () => {
   it("tracks authorization-required state and provider expiry", () => {
     const first = create({ candidateId: "candidate-1", principalId: "U1" });
     const state = markApprovalCandidateAuthorizationRequired({
+      authorizationName: "candidate-1:github",
       candidateId: "candidate-1",
       expiresAt: 500,
       provider: "GitHub",
@@ -99,6 +100,7 @@ describe("approval candidate state", () => {
     });
 
     expect(getApprovalAuditState(state).activeCandidates[0]).toMatchObject({
+      authorizationName: "candidate-1:github",
       expiresAt: 500,
       provider: "GitHub",
       status: "authorization-required",

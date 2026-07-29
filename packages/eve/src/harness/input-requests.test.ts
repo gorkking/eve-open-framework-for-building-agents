@@ -2,7 +2,8 @@ import { jsonSchema, type ModelMessage } from "ai";
 import { describe, expect, it } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
-import { SessionKey } from "#context/keys.js";
+import { AuthKey, SessionKey } from "#context/keys.js";
+import { PendingAuthorizationResultKey } from "#harness/authorization.js";
 import { once } from "#public/tools/approval/approval-helpers.js";
 import type { InputRequest } from "#runtime/input/types.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -911,8 +912,37 @@ describe("authorizePendingApprovalResponse", () => {
     return contextStorage.run(ctx, run);
   }
 
+  async function continueCreatedCandidate(
+    result: Awaited<ReturnType<typeof authorizePendingApprovalResponse>>,
+    tools: HarnessToolMap,
+  ) {
+    if (result.kind !== "candidate-created") return result;
+    const state = result.session.state?.["eve.runtime.hitl.approvalState"] as {
+      activeCandidates: Record<string, Record<string, unknown>>;
+    };
+    const activeCandidates = Object.fromEntries(
+      Object.entries(state.activeCandidates).map(([id, candidate]) => [
+        id,
+        { ...candidate, pendingEventEmitted: true },
+      ]),
+    );
+    return await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 101,
+        session: {
+          ...result.session,
+          state: {
+            ...result.session.state,
+            "eve.runtime.hitl.approvalState": { ...state, activeCandidates },
+          },
+        },
+        tools,
+      }),
+    );
+  }
+
   it("fails closed when a required authorizer is missing", async () => {
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session: pendingSession(),
@@ -922,11 +952,11 @@ describe("authorizePendingApprovalResponse", () => {
         tools: new Map(),
       }),
     );
+    result = await continueCreatedCandidate(result, new Map());
 
     expect(result).toMatchObject({
       kind: "failed",
       safeReason: "Approval authorization is temporarily unavailable. Please try again.",
-      stepInput: { inputResponses: [] },
     });
     expect(resolvePendingInput({ session: result.session }).outcome).toBe("unresolved");
   });
@@ -949,7 +979,7 @@ describe("authorizePendingApprovalResponse", () => {
         },
       ],
     ]);
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session: pendingSession(),
@@ -959,11 +989,11 @@ describe("authorizePendingApprovalResponse", () => {
         tools,
       }),
     );
+    result = await continueCreatedCandidate(result, tools);
 
     expect(result).toMatchObject({
       kind: "rejected",
       safeReason: "U1 lacks repository write access.",
-      stepInput: { inputResponses: [] },
     });
     expect(resolvePendingInput({ session: result.session }).outcome).toBe("unresolved");
   });
@@ -983,7 +1013,7 @@ describe("authorizePendingApprovalResponse", () => {
         },
       ],
     ]);
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session: pendingSession(),
@@ -993,6 +1023,7 @@ describe("authorizePendingApprovalResponse", () => {
         tools,
       }),
     );
+    result = await continueCreatedCandidate(result, tools);
 
     expect(result.kind).toBe("continue");
     if (result.kind !== "continue") throw new Error("Expected allowed candidate.");
@@ -1057,7 +1088,7 @@ describe("authorizePendingApprovalResponse", () => {
         },
       ],
     ]);
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session,
@@ -1070,6 +1101,7 @@ describe("authorizePendingApprovalResponse", () => {
         tools,
       }),
     );
+    result = await continueCreatedCandidate(result, tools);
 
     expect(result.kind).toBe("continue");
     if (result.kind !== "continue") throw new Error("Expected first candidate to settle.");
@@ -1079,6 +1111,145 @@ describe("authorizePendingApprovalResponse", () => {
     expect(
       resolvePendingInput({ session: result.session, stepInput: result.stepInput }).outcome,
     ).toBe("unresolved");
+  });
+
+  it("starts a second responder candidate instead of resuming another user's pending candidate", async () => {
+    const base = pendingSession();
+    const session = {
+      ...base,
+      state: {
+        ...base.state,
+        "eve.runtime.hitl.approvalState": {
+          activeCandidates: {
+            "candidate-original": {
+              candidateId: "candidate-original",
+              createdAt: 100,
+              expiresAt: 700,
+              pendingEventEmitted: true,
+              requestId: "approval-1",
+              responder: {
+                authenticator: "slack-webhook",
+                issuer: "slack:T1",
+                principalId: "U_ORIGINAL",
+                principalType: "user",
+              },
+              status: "pending",
+            },
+          },
+          candidateHistory: [],
+          settlements: {},
+        },
+      },
+    };
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: { authorizeResponse: () => "allowed", policy: () => "user-approval" },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+    ]);
+
+    const result = await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 200,
+        session,
+        stepInput: { inputResponses: [{ optionId: "approve", requestId: "approval-1" }] },
+        tools,
+      }),
+    );
+
+    expect(result).toMatchObject({ kind: "candidate-created" });
+    const active = (
+      result.session.state?.["eve.runtime.hitl.approvalState"] as {
+        activeCandidates: Record<string, { responder: { principalId: string } }>;
+      }
+    ).activeCandidates;
+    expect(Object.values(active).map((candidate) => candidate.responder.principalId)).toEqual([
+      "U_ORIGINAL",
+      "U1",
+    ]);
+  });
+
+  it("restores the persisted candidate responder before resumed policy runs", async () => {
+    const candidateState = {
+      "eve.runtime.hitl.approvalState": {
+        activeCandidates: {
+          "candidate-1": {
+            authorizationName: "candidate-1:github",
+            candidateId: "candidate-1",
+            createdAt: 100,
+            expiresAt: 700,
+            requestId: "approval-1",
+            responder: {
+              authenticator: "slack-webhook",
+              issuer: "slack:T1",
+              principalId: "U_ORIGINAL",
+              principalType: "user",
+            },
+            status: "authorization-required",
+          },
+        },
+        candidateHistory: [],
+        settlements: {},
+      },
+    };
+    const session = {
+      ...pendingSession(),
+      state: { ...pendingSession().state, ...candidateState },
+    };
+    const tools: HarnessToolMap = new Map([
+      [
+        "create_issue",
+        {
+          approval: {
+            authorizeResponse: ({ responder }) =>
+              responder.principalId === "U_ORIGINAL"
+                ? "allowed"
+                : { safeReason: "wrong responder", status: "rejected" },
+            policy: () => "user-approval",
+          },
+          description: "Create issue",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "create_issue",
+        },
+      ],
+    ]);
+    const ctx = new ContextContainer();
+    ctx.set(AuthKey, {
+      attributes: {},
+      authenticator: "slack-webhook",
+      issuer: "slack:T1",
+      principalId: "U_LATEST",
+      principalType: "user",
+    });
+    ctx.set(PendingAuthorizationResultKey, [
+      {
+        callback: { method: "GET", params: { code: "test" } },
+        hookUrl: "https://eve.example/callback",
+        name: "candidate-1:github",
+      },
+    ]);
+    ctx.set(SessionKey, {
+      auth: { current: ctx.require(AuthKey), initiator: null },
+      sessionId: "sess-test",
+      turn: { id: "turn-test", sequence: 1 },
+    });
+
+    const result = await contextStorage.run(ctx, () =>
+      authorizePendingApprovalResponse({
+        now: 200,
+        session,
+        stepInput: { inputResponses: [{ optionId: "approve", requestId: "approval-1" }] },
+        tools,
+      }),
+    );
+
+    expect(result.kind).toBe("continue");
+    expect(ctx.get(AuthKey)?.principalId).toBe("U_ORIGINAL");
   });
 
   it("cancels without running the response authorizer", async () => {

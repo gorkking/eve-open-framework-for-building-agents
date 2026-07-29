@@ -1,5 +1,7 @@
 import type { SessionAuthContext } from "#channel/types.js";
 import { buildCallbackContext } from "#context/build-callback-context.js";
+import { contextStorage } from "#context/container.js";
+import { AuthKey } from "#context/keys.js";
 import {
   buildApprovalResponseAuth,
   handleApprovalResponseAuthorizationError,
@@ -7,6 +9,7 @@ import {
 import {
   cancelApprovalRequest,
   createApprovalCandidate,
+  expireApprovalCandidates,
   finishApprovalCandidate,
   getApprovalAuditState,
   markApprovalCandidateAuthorizationRequired,
@@ -31,6 +34,12 @@ const APPROVAL_CANDIDATE_TTL_MS = 10 * 60_000;
 export type PendingApprovalAuthorizationResult =
   | { readonly kind: "continue"; readonly session: HarnessSession; readonly stepInput?: StepInput }
   | {
+      readonly candidateId: string;
+      readonly kind: "candidate-created";
+      readonly requestId: string;
+      readonly session: HarnessSession;
+    }
+  | {
       readonly authorization: AuthorizationSignal;
       readonly candidateId: string;
       readonly kind: "authorization-required";
@@ -54,13 +63,31 @@ export async function authorizePendingApprovalResponse(input: {
   readonly stepInput?: StepInput;
   readonly tools: HarnessToolMap;
 }): Promise<PendingApprovalAuthorizationResult> {
+  const now = input.now ?? Date.now();
+  input = {
+    ...input,
+    session: {
+      ...input.session,
+      state: expireApprovalCandidates({ now, state: input.session.state }),
+    },
+  };
   const batch = getPendingInputBatch(input.session.state);
+  const explicitResponse = input.stepInput?.inputResponses?.find((entry) =>
+    batch?.requests.some(
+      (request) => request.requestId === entry.requestId && isApprovalRequest(request),
+    ),
+  );
   const activeCandidate = getApprovalAuditState(input.session.state).activeCandidates.find(
     (candidate) =>
-      candidate.status === "authorization-required" &&
-      getAuthorizationResult(candidate.candidateId) !== undefined,
+      (explicitResponse === undefined &&
+        candidate.status === "pending" &&
+        candidate.pendingEventEmitted === true) ||
+      (candidate.status === "authorization-required" &&
+        candidate.authorizationName !== undefined &&
+        getAuthorizationResult(candidate.authorizationName) !== undefined),
   );
   const response =
+    explicitResponse ??
     input.stepInput?.inputResponses?.find((entry) =>
       batch?.requests.some(
         (request) => request.requestId === entry.requestId && isApprovalRequest(request),
@@ -87,7 +114,7 @@ export async function authorizePendingApprovalResponse(input: {
     const settled = cancelApprovalRequest({
       actor: responder,
       requestId: response.requestId,
-      settledAt: input.now ?? Date.now(),
+      settledAt: now,
       state: input.session.state,
     });
     return {
@@ -109,7 +136,10 @@ export async function authorizePendingApprovalResponse(input: {
     return { kind: "continue", session: input.session, stepInput: input.stepInput };
   }
 
-  const responder = buildCallbackContext().session.auth.current;
+  const responder =
+    activeCandidate === undefined
+      ? buildCallbackContext().session.auth.current
+      : responderFromCandidate(activeCandidate.responder);
   if (responder === null) {
     return rejectWithoutCandidate(
       input,
@@ -117,9 +147,11 @@ export async function authorizePendingApprovalResponse(input: {
       "An authenticated responder is required.",
     );
   }
-  const now = input.now ?? Date.now();
   const candidateId =
     activeCandidate?.candidateId ?? approvalCandidateId(request.requestId, responder);
+  if (activeCandidate !== undefined) {
+    contextStorage.getStore()?.setVirtualContext(AuthKey, responder);
+  }
   const created = createApprovalCandidate({
     candidateId,
     createdAt: now,
@@ -130,6 +162,14 @@ export async function authorizePendingApprovalResponse(input: {
     state: input.session.state,
   });
   let session = { ...input.session, state: created.state };
+  if (created.result.kind === "created") {
+    return {
+      candidateId,
+      kind: "candidate-created",
+      requestId: response.requestId,
+      session,
+    };
+  }
   if (
     activeCandidate === undefined &&
     (created.result.kind === "duplicate" || created.result.kind === "stale")
@@ -221,6 +261,7 @@ export async function authorizePendingApprovalResponse(input: {
       session = {
         ...session,
         state: markApprovalCandidateAuthorizationRequired({
+          authorizationName: authorization.challenges[0]?.name ?? candidateId,
           candidateId,
           expiresAt: providerExpiresAt,
           provider: authorization.challenges[0]?.challenge.displayName,
@@ -305,6 +346,12 @@ function removeInputResponse(
     ...stepInput,
     inputResponses: stepInput.inputResponses.filter((response) => response.requestId !== requestId),
   };
+}
+
+function responderFromCandidate(
+  responder: Pick<SessionAuthContext, "authenticator" | "issuer" | "principalId" | "principalType">,
+): SessionAuthContext {
+  return { ...responder, attributes: {} };
 }
 
 function approvalCandidateId(requestId: string, responder: SessionAuthContext): string {
