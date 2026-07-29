@@ -28,6 +28,11 @@ export type SpanProcessorSource = () => SpanProcessor | undefined;
  * `(name, version, options)` including `options.schemaUrl`, and a cache keyed
  * on anything less hands back a wrapper over the wrong delegate tracer.
  * Callers that care about tracer identity hold onto the tracer themselves.
+ *
+ * Forwarding only `getTracer` loses nothing a caller could reach: the API hands
+ * out `ProxyTracerProvider`, whose own surface is `getTracer` and its delegate
+ * accessors, so `forceFlush` and `shutdown` were never reachable through the
+ * global. Whoever built the provider still holds it and can flush it directly.
  */
 export function observeTracerProvider(
   delegate: TracerProvider,

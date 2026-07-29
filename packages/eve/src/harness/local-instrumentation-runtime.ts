@@ -1,7 +1,6 @@
 import { context, trace } from "#compiled/@opentelemetry/api/index.js";
 import { registerOTel } from "#compiled/@vercel/otel/index.js";
 
-import { adoptGlobalTracerProvider } from "#harness/adopt-global-tracer-provider.js";
 import { createAgentOtelInstrumentation } from "#harness/agent-otel-provider.js";
 import { ContextAgentTraceStateStore } from "#harness/agent-trace-context-store.js";
 import { AgentTraceSpanProcessor } from "#harness/agent-trace-span-processor.js";
@@ -9,10 +8,7 @@ import {
   hasTracerProviderDelegate,
   isDelegatingTracerProvider,
 } from "#harness/delegating-tracer-provider.js";
-import {
-  attachInterceptedSpanProcessor,
-  releaseGlobalTracerProviderInterception,
-} from "#harness/intercept-global-tracer-provider.js";
+import { attachInterceptedSpanProcessor } from "#harness/intercept-global-tracer-provider.js";
 import {
   createInstrumentationHooks,
   type InstrumentationProviderDefinition,
@@ -34,10 +30,10 @@ const log = createLogger("harness.local-instrumentation-runtime");
 /**
  * Installs the zero-config local OTel runtime once in an `eve dev` worker.
  *
- * Returns `undefined` when eve cannot observe spans — a provider registered in
- * a way eve cannot adopt. Local tracing is a development convenience, so it
- * declines rather than taking down a dev server whose authored instrumentation
- * is otherwise working.
+ * Returns `undefined` when eve cannot observe spans — no provider it can reach,
+ * or no context manager to propagate agent context. Local tracing is a
+ * development convenience, so it declines rather than taking down a dev server
+ * whose authored instrumentation is otherwise working.
  */
 export function installLocalInstrumentationRuntime(input: {
   readonly appRoot: string;
@@ -55,9 +51,9 @@ export function installLocalInstrumentationRuntime(input: {
   );
   // A provider an authored `instrumentation.ts` registered is observed rather
   // than displaced, so its exporter keeps everything it had. Only an unclaimed
-  // process gets a provider of eve's own.
-  if (!attachInterceptedSpanProcessor(processor) && !adoptGlobalTracerProvider(processor)) {
-    releaseGlobalTracerProviderInterception();
+  // process gets a provider of eve's own; declining hands the global slot back
+  // first, so eve's own provider is registered unobserved and reports once.
+  if (!attachInterceptedSpanProcessor(processor)) {
     registerOTel({
       autoDetectResources: false,
       instrumentations: [],

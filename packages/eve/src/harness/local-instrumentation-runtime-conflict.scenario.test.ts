@@ -34,8 +34,8 @@ describe("local instrumentation runtime ownership", () => {
 
     // Taken before anything registers a provider, which is what an authored
     // module that acquires a tracer at import time does. The API hands back a
-    // proxy tracer bound to its own standby provider, so neither adoption nor
-    // wrapping the global proxy could reach it — only hooking the delegate.
+    // proxy tracer bound to its own standby provider, so swapping the global
+    // provider after the fact could not reach it — only hooking the delegate.
     const earlyTracer = trace.getTracer("test-agent");
 
     const authoredSpans: string[] = [];

@@ -8,6 +8,12 @@ import {
 } from "#harness/delegating-tracer-provider.js";
 import { observeTracerProvider } from "#harness/observe-tracer-provider.js";
 
+// Reaching into another library's global registry is the price of leaving the
+// authored API alone: `instrumentation.ts` calls `registerOTel` itself, and a
+// single-owner global is the only thing eve can hook. `eve dev` only. When
+// `research/provider-neutral-local-observability.md` hands `setup` an eve-owned
+// registration instead, this module and its two plugins go away.
+
 /**
  * The slot `@opentelemetry/api` stores its global registry in.
  *
@@ -82,7 +88,8 @@ function processorSource(): SpanProcessor | undefined {
  * decorated when it arrives.
  *
  * Returns `false` when the slot cannot be claimed, leaving global state
- * untouched; the caller falls back to adopting whatever registers.
+ * untouched. There is no second way in: a provider already handed out concrete
+ * tracers, and swapping it after the fact would miss them.
  *
  * @internal — not part of the public API.
  */
