@@ -157,8 +157,8 @@ function extractApprovalRequests(input: {
       allowFreeform: false,
       display: "confirmation",
       options: [
-        { id: "approve", label: "Yes" },
-        { id: "deny", label: "No" },
+        { id: "approve", label: "Approve" },
+        { id: "cancel", label: "Cancel" },
       ],
       prompt: `Approve tool call: ${toolCall.toolName}`,
       requestId: approval.approvalId,

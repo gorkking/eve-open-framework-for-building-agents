@@ -21,14 +21,14 @@ describe("Linear HITL helpers", () => {
       makeRequest({
         options: [
           { id: "approve", label: "Approve" },
-          { id: "deny", label: "Deny", description: "Stop the deployment" },
+          { id: "cancel", label: "Cancel", description: "Stop the deployment" },
         ],
       }),
     ]);
 
     expect(rendered).toContain("Approve deployment?");
     expect(rendered).toContain("1. Approve");
-    expect(rendered).toContain("2. Deny - Stop the deployment");
+    expect(rendered).toContain("2. Cancel - Stop the deployment");
     expect(rendered).not.toContain("eve-input");
     expect(rendered).not.toContain("<!--");
   });
@@ -40,7 +40,7 @@ describe("Linear HITL helpers", () => {
           allowFreeform: true,
           options: [
             { id: "approve", label: "Approve" },
-            { id: "deny", label: "Deny" },
+            { id: "cancel", label: "Cancel" },
           ],
         }),
       ]),
@@ -49,7 +49,7 @@ describe("Linear HITL helpers", () => {
       signalMetadata: {
         options: [
           { label: "Approve", value: "approve" },
-          { label: "Deny", value: "deny" },
+          { label: "Cancel", value: "cancel" },
         ],
       },
     });

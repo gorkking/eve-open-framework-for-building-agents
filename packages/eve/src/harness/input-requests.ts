@@ -505,7 +505,7 @@ function resolveApprovalOutcome(response: InputResponse | undefined): {
     };
   }
 
-  if (response.optionId === "deny") {
+  if (response.optionId === "cancel") {
     return {
       approved: false,
       reason: TOOL_EXECUTION_DENIED_MESSAGE,
@@ -604,7 +604,7 @@ function buildToolResponsePartsForRequest(
       },
     ];
     /*
-     * On denial (explicit "deny" or auto-deny when the user continues
+     * On denial (explicit "cancel" or auto-deny when the user continues
      * without responding), splice in the matching `execution-denied`
      * tool-result. AI SDK's `streamText` synthesizes this for the
      * current turn's `initialResponseMessages`, but that synthesis is
@@ -643,12 +643,12 @@ function buildToolResponsePartsForRequest(
   ];
 }
 
-/** Shared approval predicate: a request whose options are exactly `approve` / `deny`. */
+/** Shared approval predicate: a request whose options are exactly `allow` / `cancel`. */
 export function isApprovalRequest(request: InputRequest): boolean {
   return (
     request.options?.length === 2 &&
     request.options[0]?.id === "approve" &&
-    request.options[1]?.id === "deny"
+    request.options[1]?.id === "cancel"
   );
 }
 

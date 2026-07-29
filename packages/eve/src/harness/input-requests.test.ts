@@ -142,7 +142,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -266,7 +266,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -296,7 +296,7 @@ describe("resolvePendingInput", () => {
     // Deliver an approval response AND a message simultaneously.
     const result = resolvePendingInput({
       stepInput: {
-        inputResponses: [{ requestId: "approval-1", optionId: "deny" }],
+        inputResponses: [{ requestId: "approval-1", optionId: "cancel" }],
         message: "Ignore that and say hi instead.",
       },
       session,
@@ -333,7 +333,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -392,7 +392,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -456,7 +456,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: vercel__list_projects",
           requestId: "approval-1",
@@ -522,7 +522,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -551,7 +551,7 @@ describe("resolvePendingInput", () => {
 
     const result = resolvePendingInput({
       stepInput: {
-        inputResponses: [{ requestId: "approval-1", optionId: "deny" }],
+        inputResponses: [{ requestId: "approval-1", optionId: "cancel" }],
       },
       session,
     });
@@ -591,7 +591,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -603,7 +603,7 @@ describe("resolvePendingInput", () => {
 
     const result = resolvePendingInput({
       stepInput: {
-        inputResponses: [{ requestId: "approval-1", optionId: "deny" }],
+        inputResponses: [{ requestId: "approval-1", optionId: "cancel" }],
       },
       session,
     });
@@ -648,7 +648,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -684,7 +684,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -724,7 +724,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: bash",
           requestId: "approval-1",
@@ -783,7 +783,7 @@ describe("resolvePendingInput", () => {
           display: "confirmation",
           options: [
             { id: "approve", label: "Yes" },
-            { id: "deny", label: "No" },
+            { id: "cancel", label: "No" },
           ],
           prompt: "Approve tool call: linear_whoami",
           requestId: "approval-1",
