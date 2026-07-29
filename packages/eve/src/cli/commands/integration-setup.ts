@@ -51,7 +51,7 @@ export async function runIntegrationSetupCommand(
   }
 
   try {
-    if (kind !== "slack" && kind !== "web") {
+    if (kind !== "photon" && kind !== "slack" && kind !== "web") {
       throw new Error(
         `Integration setup "${kind}" is not available in this version of eve. Upgrade eve and try again.`,
       );
@@ -86,7 +86,8 @@ export async function runIntegrationSetupCommand(
     let finalState = result.state;
     const addedVercelChannel =
       finalState.slackbotAttached ||
-      (environment.vercel.kind === "available" && finalState.channels.includes("web"));
+      (environment.vercel.kind === "available" &&
+        (finalState.channels.includes("photon") || finalState.channels.includes("web")));
     if (addedVercelChannel) {
       finalState = await deployChannelSetup({
         state: finalState,

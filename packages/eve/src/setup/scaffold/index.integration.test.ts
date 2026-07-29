@@ -155,6 +155,65 @@ describe("ensureChannel", () => {
     );
   });
 
+  test("writes a Connect-backed Photon iMessage channel", async () => {
+    const projectRoot = await createTempDir();
+    await mkdir(join(projectRoot, "agent"), { recursive: true });
+    await writeFile(join(projectRoot, "package.json"), "{}\n", "utf8");
+
+    const result = await ensureChannel({
+      projectRoot,
+      kind: "photon",
+      photonConnectorUid: "photon/imessage0",
+      connectPackageVersion: "0.0.0-connect",
+    });
+
+    expect(result.kind).toBe("photon");
+    expect(result.action).toBe("created");
+    const source = await readFile(join(projectRoot, "agent/channels/photon.ts"), "utf8");
+    expect(source).toContain('connectPhotonCredentials("photon/imessage0")');
+    expect(source).toContain('from "eve/channels/photon"');
+    const packageJson = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    expect(packageJson.dependencies).toMatchObject({
+      "@vercel/connect": "0.0.0-connect",
+    });
+  });
+
+  test("writes a portable Photon iMessage channel and local secrets", async () => {
+    const projectRoot = await createTempDir();
+    await mkdir(join(projectRoot, "agent"), { recursive: true });
+    await writeFile(join(projectRoot, "package.json"), "{}\n", "utf8");
+
+    await ensureChannel({
+      projectRoot,
+      kind: "photon",
+      photonCredentials: "environment",
+      photonEnvironment: {
+        projectId: "photon-project",
+        projectSecret: "photon-secret",
+        webhookSecret: "webhook-secret",
+      },
+    });
+
+    const source = await readFile(join(projectRoot, "agent/channels/photon.ts"), "utf8");
+    expect(source).toContain("process.env.IMESSAGE_PROJECT_ID");
+    expect(source).not.toContain("@vercel/connect");
+    expect(source).toContain("webhookSecret: process.env.IMESSAGE_WEBHOOK_SECRET");
+    await expect(readFile(join(projectRoot, ".env.local"), "utf8")).resolves.toContain(
+      "IMESSAGE_PROJECT_SECRET=photon-secret",
+    );
+  });
+
+  test("requires a Photon connector UID for iMessage", async () => {
+    const projectRoot = await createTempDir();
+    await writeFile(join(projectRoot, "package.json"), "{}\n", "utf8");
+
+    await expect(ensureChannel({ projectRoot, kind: "photon" })).rejects.toThrow(
+      "Photon connector UID is required",
+    );
+  });
+
   test("skips an existing Slack channel unless force is set", async () => {
     const projectRoot = await createTempDir();
     const channelPath = join(projectRoot, "agent/channels/slack.ts");
@@ -511,7 +570,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      `packages:\n  - packages/*\nallowBuilds:\n  esbuild: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - packages/*\nallowBuilds:\n  esbuild: true\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -534,7 +593,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      `${existingPolicy}\n${RELEASE_AGE_POLICY}`,
+      `allowBuilds:\n  sharp: true\n  protobufjs: true\n\n${RELEASE_AGE_POLICY}`,
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -549,7 +608,7 @@ describe("ensureChannel", () => {
     );
     await writeFile(
       pnpmWorkspacePath,
-      "minimumReleaseAgeExclude:\n  - react\nallowBuilds:\n  sharp: false\n",
+      "minimumReleaseAgeExclude:\n  - react\nallowBuilds:\n  protobufjs: true\n  sharp: false\n",
       "utf8",
     );
 
@@ -560,7 +619,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\nallowBuilds:\n  sharp: false\n',
+      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\nallowBuilds:\n  protobufjs: true\n  sharp: false\n',
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -594,7 +653,7 @@ describe("ensureChannel", () => {
     expect(result.filesWritten).not.toContain(join(projectRoot, "pnpm-workspace.yaml"));
     await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(false);
     await expect(readFile(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
-      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
@@ -991,7 +1050,7 @@ describe("scaffoldBaseProject", () => {
 
     await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(false);
     await expect(readFile(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
-      `packages:\n  - apps/*\n\nallowBuilds:\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - apps/*\n\nallowBuilds:\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
@@ -1034,7 +1093,7 @@ describe("scaffoldBaseProject", () => {
 
     await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(false);
     await expect(readFile(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
-      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
+      `packages:\n  - apps/*\n  - agents/*\n\nallowBuilds:\n  protobufjs: true\n  sharp: false\n\n${RELEASE_AGE_POLICY}`,
     );
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),

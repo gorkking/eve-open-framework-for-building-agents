@@ -56,7 +56,7 @@ const WEB_COMPETING_NEXT_CONFIG_PATHS = SUPPORTED_NEXT_CONFIG_PATHS.filter(
 
 declare const slackConnectorSlugBrand: unique symbol;
 
-export type ChannelKind = "slack" | "web";
+export type ChannelKind = "photon" | "slack" | "web";
 export type SlackConnectorSlug = string & { readonly [slackConnectorSlugBrand]: true };
 
 export interface PackageJsonMutation {
@@ -68,7 +68,10 @@ export interface PackageJsonMutation {
 
 export type ChannelMutationAction = "created" | "overwritten" | "skipped";
 
-export type ChannelMutationResult = SlackChannelMutationResult | WebChannelMutationResult;
+export type ChannelMutationResult =
+  | PhotonChannelMutationResult
+  | SlackChannelMutationResult
+  | WebChannelMutationResult;
 
 interface SlackChannelWrittenResult {
   kind: "slack";
@@ -90,6 +93,26 @@ interface SlackChannelSkippedResult {
 }
 
 type SlackChannelMutationResult = SlackChannelWrittenResult | SlackChannelSkippedResult;
+
+interface PhotonChannelWrittenResult {
+  kind: "photon";
+  action: "created" | "overwritten";
+  filesWritten: string[];
+  filesOverwritten?: [string];
+  filesSkipped: [];
+  packageJsonUpdated: PackageJsonMutation[];
+}
+
+interface PhotonChannelSkippedResult {
+  kind: "photon";
+  action: "skipped";
+  filesWritten: [];
+  filesOverwritten?: [];
+  filesSkipped: [string];
+  packageJsonUpdated: [];
+}
+
+type PhotonChannelMutationResult = PhotonChannelWrittenResult | PhotonChannelSkippedResult;
 
 interface WebChannelWrittenResult {
   kind: "web";
@@ -382,6 +405,32 @@ export async function deriveSlackConnectorSlug(
   return normalizeSlackConnectorSlug(dir || DEFAULT_SLACK_CONNECTOR_SLUG);
 }
 
+function buildPhotonTemplate(connectorUid?: string): string {
+  if (connectorUid) {
+    return `import { connectPhotonCredentials } from "@vercel/connect/eve";
+import { photonChannel } from "eve/channels/photon";
+
+export default photonChannel({
+  credentials: connectPhotonCredentials(${JSON.stringify(connectorUid)}),
+});
+`;
+  }
+  return `import { photonChannel } from "eve/channels/photon";
+
+async function photonCredentials() {
+  const projectId = process.env.IMESSAGE_PROJECT_ID;
+  const projectSecret = process.env.IMESSAGE_PROJECT_SECRET;
+  if (!projectId || !projectSecret) throw new Error("Photon project credentials are required.");
+  return { projectId, projectSecret };
+}
+
+export default photonChannel({
+  credentials: photonCredentials,
+  webhookSecret: process.env.IMESSAGE_WEBHOOK_SECRET,
+});
+`;
+}
+
 function buildSlackConnectTemplate(connectorUid: string): string {
   if (!connectorUid.startsWith("slack/") || connectorUid.length === "slack/".length) {
     throw new Error(`Invalid Slack connector UID "${connectorUid}".`);
@@ -465,6 +514,16 @@ export interface EnsureChannelOptions {
   slackConnectorSlug?: SlackConnectorSlug;
   /** Credential source rendered into a Slack channel. Defaults to Vercel Connect. */
   slackCredentials?: "vercel-connect" | "environment";
+  /** Exact Photon connector UID, or environment credentials when omitted. */
+  photonConnectorUid?: string;
+  /** Credential source rendered into an iMessage channel. Defaults to Vercel Connect. */
+  photonCredentials?: "vercel-connect" | "environment";
+  /** Portable Photon values written to .env.local after managed provisioning. */
+  photonEnvironment?: {
+    projectId: string;
+    projectSecret: string;
+    webhookSecret: string;
+  };
   connectPackageVersion?: string;
   webPackageVersions?: WebPackageVersions;
   /** When false, Web Chat leaves Vercel Services config unwritten for preview-only scaffolds. */
@@ -488,6 +547,8 @@ export interface WebPackageVersions {
 
 export async function ensureChannel(options: EnsureChannelOptions): Promise<ChannelMutationResult> {
   switch (options.kind) {
+    case "photon":
+      return ensurePhotonChannel({ ...options, kind: "photon" });
     case "slack":
       return ensureSlackChannel({ ...options, kind: "slack" });
     case "web":
@@ -590,6 +651,71 @@ async function ensureWebChannel(
   if (packageJsonPatch.nodeEngineOverride !== undefined) {
     result.nodeEngineOverride = packageJsonPatch.nodeEngineOverride;
   }
+  return result;
+}
+
+async function ensurePhotonChannel(
+  options: Omit<EnsureChannelOptions, "kind"> & { kind: "photon" },
+): Promise<PhotonChannelMutationResult> {
+  const filePath = join(options.projectRoot, "agent/channels/photon.ts");
+  const fileAlreadyExists = await pathExists(filePath);
+  if (!options.force && fileAlreadyExists) {
+    return {
+      kind: "photon",
+      action: "skipped",
+      filesWritten: [],
+      filesSkipped: [filePath],
+      packageJsonUpdated: [],
+    };
+  }
+  const credentials = options.photonCredentials ?? "vercel-connect";
+  if (credentials === "vercel-connect" && !options.photonConnectorUid) {
+    throw new Error("Photon connector UID is required to scaffold the iMessage channel.");
+  }
+  const packageJsonPath = join(options.projectRoot, "package.json");
+  const packageManagerConfiguration = await applyPackageManagerWorkspaceConfiguration({
+    packageManager: options.packageManager ?? "pnpm",
+    projectRoot: options.projectRoot,
+  });
+  const dependencies =
+    credentials === "vercel-connect"
+      ? ([
+          [
+            CONNECT_PACKAGE_NAME,
+            resolveVersionToken(
+              "connectPackageVersion",
+              options.connectPackageVersion ?? DEFAULT_CONNECT_PACKAGE_VERSION,
+            ),
+          ],
+        ] as const)
+      : [];
+  const packageJsonUpdated: PackageJsonMutation[] = [];
+  for (const [name, version] of dependencies) {
+    packageJsonUpdated.push(...(await ensurePackageDependency(packageJsonPath, name, version)));
+  }
+
+  const filesWritten = [filePath, ...packageManagerConfiguration.filesWritten];
+  if (options.photonEnvironment) {
+    const env = await appendEnv(join(options.projectRoot, ".env.local"), {
+      IMESSAGE_PROJECT_ID: options.photonEnvironment.projectId,
+      IMESSAGE_PROJECT_SECRET: options.photonEnvironment.projectSecret,
+      IMESSAGE_WEBHOOK_SECRET: options.photonEnvironment.webhookSecret,
+    });
+    if (env.written.length > 0) filesWritten.push(join(options.projectRoot, ".env.local"));
+  }
+  await writeTextFile(
+    filePath,
+    buildPhotonTemplate(credentials === "vercel-connect" ? options.photonConnectorUid : undefined),
+    { force: options.force },
+  );
+  const result: PhotonChannelWrittenResult = {
+    kind: "photon",
+    action: fileAlreadyExists ? "overwritten" : "created",
+    filesWritten,
+    filesSkipped: [],
+    packageJsonUpdated,
+  };
+  if (fileAlreadyExists) result.filesOverwritten = [filePath];
   return result;
 }
 

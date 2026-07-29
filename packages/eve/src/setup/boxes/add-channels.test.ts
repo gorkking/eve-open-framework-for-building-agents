@@ -41,41 +41,51 @@ function makeBox(
 /** Default fakes: every effect succeeds and the slackbot attaches cleanly. */
 function createDeps() {
   return {
-    ensureChannel: vi.fn<AddChannelsDeps["ensureChannel"]>(async (options) =>
-      options.kind === "web"
-        ? {
-            kind: "web",
-            action: "created",
-            filesWritten: ["/tmp/project/app/page.tsx"],
-            filesSkipped: [],
-            packageJsonUpdated: [
-              {
-                path: "/tmp/project/package.json",
-                dependencies: ["next"],
-                devDependencies: [],
-                scripts: [],
-              },
-            ],
-          }
-        : {
-            kind: "slack",
-            action: "created",
-            filesWritten: ["/tmp/project/agent/channels/slack.ts"],
-            filesSkipped: [],
-            packageJsonUpdated:
-              options.slackCredentials === "environment"
-                ? []
-                : [
-                    {
-                      path: "/tmp/project/package.json",
-                      dependencies: ["@vercel/connect"],
-                      devDependencies: [],
-                      scripts: [],
-                    },
-                  ],
-            slackConnectorSlug: normalizeSlackConnectorSlug("my-agent"),
-          },
-    ),
+    ensureChannel: vi.fn<AddChannelsDeps["ensureChannel"]>(async (options) => {
+      if (options.kind === "web") {
+        return {
+          kind: "web",
+          action: "created",
+          filesWritten: ["/tmp/project/app/page.tsx"],
+          filesSkipped: [],
+          packageJsonUpdated: [
+            {
+              path: "/tmp/project/package.json",
+              dependencies: ["next"],
+              devDependencies: [],
+              scripts: [],
+            },
+          ],
+        };
+      }
+      if (options.kind === "photon") {
+        return {
+          kind: "photon",
+          action: "created",
+          filesWritten: ["/tmp/project/agent/channels/photon.ts"],
+          filesSkipped: [],
+          packageJsonUpdated: [],
+        };
+      }
+      return {
+        kind: "slack",
+        action: "created",
+        filesWritten: ["/tmp/project/agent/channels/slack.ts"],
+        filesSkipped: [],
+        packageJsonUpdated:
+          options.slackCredentials === "environment"
+            ? []
+            : [
+                {
+                  path: "/tmp/project/package.json",
+                  dependencies: ["@vercel/connect"],
+                  devDependencies: [],
+                  scripts: [],
+                },
+              ],
+        slackConnectorSlug: normalizeSlackConnectorSlug("my-agent"),
+      };
+    }),
     deriveSlackConnectorSlug: vi.fn<AddChannelsDeps["deriveSlackConnectorSlug"]>(
       async (_projectRoot, hint) => normalizeSlackConnectorSlug(hint ?? "my-agent"),
     ),
@@ -86,6 +96,35 @@ function createDeps() {
       workspaceName: "Vercel",
     })),
     reconcileSlackUid: vi.fn<AddChannelsDeps["reconcileSlackUid"]>(async () => true),
+    provisionPhotonConnector: vi.fn<NonNullable<AddChannelsDeps["provisionPhotonConnector"]>>(
+      async () => ({
+        id: "scl_photon",
+        uid: "photon/my-agent",
+        webhookUrl: "https://my-agent.vercel.app/eve/v1/photon",
+      }),
+    ),
+    provisionPhotonProject: vi.fn<NonNullable<AddChannelsDeps["provisionPhotonProject"]>>(
+      async () => ({
+        projectId: "photon-project",
+        projectSecret: "photon-secret",
+        assignedPhoneNumber: "+15550000000",
+        cleanup: vi.fn(async () => {}),
+      }),
+    ),
+    usePhotonProject: vi.fn<NonNullable<AddChannelsDeps["usePhotonProject"]>>(async (input) => ({
+      projectId: input.projectId,
+      projectSecret: input.projectSecret,
+      assignedPhoneNumber: "+15550000000",
+      cleanup: vi.fn(async () => {}),
+    })),
+    registerPhotonWebhook: vi.fn<NonNullable<AddChannelsDeps["registerPhotonWebhook"]>>(
+      async () => "webhook-secret",
+    ),
+    openUrl: vi.fn(),
+    readProjectLink: vi.fn<NonNullable<AddChannelsDeps["readProjectLink"]>>(async () => ({
+      orgId: "team_demo",
+      projectId: "prj_demo",
+    })),
     detectPackageManager: vi.fn<AddChannelsDeps["detectPackageManager"]>(async () => ({
       kind: "pnpm",
       source: "default",
@@ -95,6 +134,16 @@ function createDeps() {
     detectDeployment: vi.fn<AddChannelsDeps["detectDeployment"]>(async () => ({
       state: "linked",
       projectId: "prj_demo",
+    })),
+    pickTeam: vi.fn<NonNullable<AddChannelsDeps["pickTeam"]>>(async () => "team_demo"),
+    pickProject: vi.fn<NonNullable<AddChannelsDeps["pickProject"]>>(async () => ({
+      kind: "existing",
+      project: { projectId: "prj_demo", projectName: "my-agent" },
+      team: "team_demo",
+    })),
+    linkProject: vi.fn<NonNullable<AddChannelsDeps["linkProject"]>>(async () => ({
+      projectId: "prj_demo",
+      projectName: "my-agent",
     })),
   };
 }
@@ -171,6 +220,101 @@ describe("addChannels box", () => {
       force: undefined,
     });
     expect(next.channels).toEqual(["slack"]);
+  });
+
+  it("authorizes Photon and provisions an isolated iMessage project", async () => {
+    const deps = createDeps();
+    const prompter = createFakePrompter({
+      text: () => "+15551234567",
+    }).prompter;
+    const box = makeBox({ prompter, deps });
+
+    const result = await runInteractive([box], resolvedState(["photon"]), silentSink, snapshot);
+
+    expect(result.kind).toBe("done");
+    expect(deps.provisionPhotonProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectName: "eve · my-agent",
+        phoneNumber: "+15551234567",
+      }),
+    );
+    expect(deps.provisionPhotonConnector).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: expect.objectContaining({
+          projectId: "photon-project",
+          projectSecret: "photon-secret",
+          assignedPhoneNumber: "+15550000000",
+        }),
+        project: { orgId: "team_demo", projectId: "prj_demo" },
+        projectRoot: "/tmp/project",
+        slug: "my-agent",
+      }),
+    );
+    expect(deps.ensureChannel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRoot: "/tmp/project",
+        kind: "photon",
+        photonCredentials: "vercel-connect",
+        photonConnectorUid: "photon/my-agent",
+      }),
+    );
+  });
+
+  it("provisions Photon without Vercel using local environment credentials", async () => {
+    const deps = createDeps();
+    const prompter = createFakePrompter({ text: () => "+15551234567" }).prompter;
+    const box = makeBox({
+      prompter,
+      deps,
+      photonCredentials: "environment",
+      photonWebhookBaseUrl: "https://agent.example.com",
+    });
+
+    const result = await runInteractive(
+      [box],
+      { ...noVercelState(), channelSelection: ["photon"] },
+      silentSink,
+      snapshot,
+    );
+
+    expect(result.kind).toBe("done");
+    expect(deps.provisionPhotonConnector).not.toHaveBeenCalled();
+    expect(deps.runVercel).not.toHaveBeenCalled();
+    expect(deps.registerPhotonWebhook).toHaveBeenCalledWith({
+      projectId: "photon-project",
+      projectSecret: "photon-secret",
+      webhookUrl: "https://agent.example.com/eve/v1/photon",
+    });
+    expect(deps.ensureChannel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "photon",
+        photonCredentials: "environment",
+        photonEnvironment: {
+          projectId: "photon-project",
+          projectSecret: "photon-secret",
+          webhookSecret: "webhook-secret",
+        },
+      }),
+    );
+  });
+
+  it("uses supplied Photon project credentials without authorizing a new project", async () => {
+    const deps = createDeps();
+    const prompter = createFakePrompter({ text: () => "+15551234567" }).prompter;
+    const box = makeBox({
+      prompter,
+      deps,
+      photonProject: { projectId: "existing-project", projectSecret: "existing-secret" },
+    });
+
+    await runInteractive([box], resolvedState(["photon"]), silentSink, snapshot);
+
+    expect(deps.provisionPhotonProject).not.toHaveBeenCalled();
+    expect(deps.usePhotonProject).toHaveBeenCalledWith({
+      projectId: "existing-project",
+      projectSecret: "existing-secret",
+      phoneNumber: "+15551234567",
+    });
   });
 
   it("passes the web scaffold options through to ensureChannel", async () => {
@@ -383,10 +527,9 @@ describe("addChannels box", () => {
 
     const result = await runInteractive([box], state, silentSink, snapshot);
 
-    // The engine's exact fallback: a bare interactive `vercel link` with NO
-    // onOutput, then a fresh deployment detection.
-    expect(deps.runVercel).toHaveBeenCalledWith(["link"], { cwd: "/tmp/project" });
-    expect(deps.runVercel.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(deps.pickTeam).toHaveBeenCalled();
+    expect(deps.pickProject).toHaveBeenCalled();
+    expect(deps.linkProject.mock.invocationCallOrder[0]).toBeLessThan(
       deps.provisionSlackbot.mock.invocationCallOrder[0]!,
     );
     expect(deps.detectDeployment).toHaveBeenCalledWith("/tmp/project", { signal: undefined });
@@ -399,7 +542,7 @@ describe("addChannels box", () => {
 
   it("fails the link fallback with the engine's copy when `vercel link` fails", async () => {
     const deps = createDeps();
-    deps.runVercel.mockResolvedValue(false);
+    deps.linkProject.mockResolvedValue(undefined);
     const state = resolvedState(["slack"]);
     state.project = { kind: "unresolved" };
     state.vercelProject = { kind: "none" };
@@ -411,7 +554,7 @@ describe("addChannels box", () => {
     });
 
     await expect(runInteractive([box], state, silentSink, snapshot)).rejects.toThrow(
-      "Vercel project linking failed. Slackbot creation did not start.",
+      "Vercel project linking failed. Channel setup did not start.",
     );
     expect(deps.provisionSlackbot).not.toHaveBeenCalled();
   });

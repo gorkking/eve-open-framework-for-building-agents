@@ -48,6 +48,26 @@ afterEach(() => {
 });
 
 describe("runIntegrationSetupCommand", () => {
+  it("rejects the removed imessage setup kind", async () => {
+    const output = logger();
+
+    await runIntegrationSetupCommand(
+      output,
+      "/project",
+      "imessage",
+      {},
+      {
+        detectDeployment: vi.fn(async () => ({ state: "unlinked" as const })),
+        getVercelAuthStatus: vi.fn(async () => "cli-missing" as const),
+      },
+    );
+
+    expect(output.errors).toEqual([
+      'Integration setup "imessage" is not available in this version of eve. Upgrade eve and try again.',
+    ]);
+    expect(process.exitCode).toBe(1);
+  });
+
   it("runs registry-owned setup without mutating or installing dependencies", async () => {
     const output = logger();
     const deps = addChannelsDeps();

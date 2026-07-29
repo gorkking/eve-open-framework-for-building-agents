@@ -154,6 +154,7 @@ export interface SetupState {
   /** Channels scaffolded so far in this run. */
   channels: ChannelKind[];
   webScaffolded: boolean;
+  photonScaffolded: boolean;
   slackScaffolded: boolean;
   deploymentDependenciesInstalled: boolean;
   /** The linked Vercel project facts, from the link box or the on-disk `.vercel` link. */
@@ -162,6 +163,10 @@ export interface SetupState {
   slackbotCreated: boolean;
   slackbotAttached: boolean;
   slackConnectorUid: string | undefined;
+  photonConnectorUid: string | undefined;
+  photonConnectorId: string | undefined;
+  photonWebhookConfigured: boolean;
+  photonAssignedPhoneNumber: string | undefined;
   /** Deep link that opens a DM compose with the bot ("chat with your agent"). */
   slackChatUrl: string | undefined;
   slackWorkspaceName: string | undefined;
@@ -171,6 +176,7 @@ export function createDefaultSetupState(): SetupState {
   return {
     channels: [],
     webScaffolded: false,
+    photonScaffolded: false,
     slackScaffolded: false,
     deploymentDependenciesInstalled: false,
     project: { kind: "unresolved" },
@@ -178,6 +184,10 @@ export function createDefaultSetupState(): SetupState {
     slackbotCreated: false,
     slackbotAttached: false,
     slackConnectorUid: undefined,
+    photonConnectorUid: undefined,
+    photonConnectorId: undefined,
+    photonWebhookConfigured: false,
+    photonAssignedPhoneNumber: undefined,
     slackChatUrl: undefined,
     slackWorkspaceName: undefined,
     agentName: "",

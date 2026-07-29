@@ -9,6 +9,10 @@ export async function runChannelSetup(
   context: ChannelSetupContext,
   options: {
     configureVercelServices?: boolean;
+    photonCredentials?: "vercel-connect" | "environment";
+    photonWebhookBaseUrl?: string;
+    photonProject?: "create" | { projectId: string; projectSecret: string };
+    photonProjectName?: string;
     slackCredentials?: "vercel-connect" | "environment";
     ensureLinkedProject?: "interactive-vercel-link";
   },
@@ -20,6 +24,10 @@ export async function runChannelSetup(
     presetCreateSlackbot: context.presetCreateSlackbot,
     force: context.force,
     configureVercelServices: options.configureVercelServices,
+    photonCredentials: options.photonCredentials,
+    photonWebhookBaseUrl: options.photonWebhookBaseUrl,
+    photonProject: options.photonProject,
+    photonProjectName: options.photonProjectName,
     slackCredentials: options.slackCredentials,
     ensureLinkedProject: options.ensureLinkedProject,
     skipDependencyMutation: context.skipDependencyMutation,
