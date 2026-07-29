@@ -187,10 +187,16 @@ export interface SubagentInputRequestHookPayload {
   readonly subagentName: string;
 }
 
-/** Authorization lifecycle event forwarded from a delegated child. */
+/** Responder-specific lifecycle event forwarded from a delegated child. */
 export type SubagentAuthorizationEvent = Extract<
   HandleMessageStreamEvent,
-  { type: "authorization.required" | "authorization.completed" }
+  {
+    type:
+      | "approval.candidate"
+      | "approval.settled"
+      | "authorization.required"
+      | "authorization.completed";
+  }
 >;
 
 /**
