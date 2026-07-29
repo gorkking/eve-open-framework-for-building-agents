@@ -203,6 +203,53 @@ describe("authored instrumentation in eve dev", () => {
             )}\n\n${output()}`,
         );
 
+        // The AI SDK bridge reaches both sinks as well. A turn runs several
+        // steps, so this waits for a snapshot where every model-call span nests
+        // under one of the trace's own `agent.step` spans — a step's segment is
+        // written after the model call it contains, so an intermediate snapshot
+        // can hold a child whose parent has not landed yet.
+        await waitForCondition(
+          async () => {
+            localTraces = await readLocalTraces(app.appRoot);
+            const spans =
+              localTraces.find((trace) => trace.traceId === agentTrace?.traceId)?.spans ?? [];
+            const stepSpanIds = new Set(
+              spans.filter((span) => span.name === "agent.step").map((span) => span.spanId),
+            );
+            const modelCalls = spans.filter((span) => span.name === "ai.streamText");
+            return (
+              modelCalls.length > 0 &&
+              modelCalls.every((span) => stepSpanIds.has(span.parentSpanId))
+            );
+          },
+          () =>
+            `Expected every AI SDK model-call span to nest under agent.step.\n\ntraces: ${JSON.stringify(
+              localTraces,
+            )}\n\n${output()}`,
+        );
+
+        // eve reports a span to its own writer only after the observed provider's
+        // processors have run, so a span in the local store is already in the
+        // author's log.
+        authoredSpans = await readAuthoredSpanNames(spanLogPath);
+        expect(
+          authoredSpans,
+          `Authored span processor never received the AI SDK model-call span.\n\nspans: ${JSON.stringify(
+            authoredSpans,
+          )}\n\n${output()}`,
+        ).toContain("ai.streamText");
+
+        // Workflow SDK spans are the one thing eve declines even inside a trace
+        // it owns, so `eve trace` shows the session's own work rather than a
+        // run's internals. The scope name is the discriminator, so assert on it
+        // rather than on any particular span name.
+        expect(
+          localTraces.flatMap((trace) => trace.scopeNames),
+          `Expected no Workflow SDK spans in the local store.\n\ntraces: ${JSON.stringify(
+            localTraces.map((trace) => trace.scopeNames),
+          )}`,
+        ).not.toContain("workflow");
+
         // A span outside any session belongs to no agent trace, so it reaches
         // the author's exporter and nothing else. Asserted only once the author
         // has it: eve's accept decision is made when the span ends, so by then
@@ -239,16 +286,25 @@ async function readAuthoredSpanNames(spanLogPath: string): Promise<string[]> {
   }
 }
 
+interface OtlpSpan {
+  readonly name?: string;
+  readonly parentSpanId?: string;
+  readonly spanId?: string;
+}
+
 interface OtlpSegment {
   readonly resourceSpans?: readonly {
     readonly scopeSpans?: readonly {
-      readonly spans?: readonly { readonly name?: string }[];
+      readonly scope?: { readonly name?: string };
+      readonly spans?: readonly OtlpSpan[];
     }[];
   }[];
 }
 
 interface LocalTrace {
+  readonly scopeNames: readonly string[];
   readonly spanNames: readonly string[];
+  readonly spans: readonly OtlpSpan[];
   readonly traceId: string;
 }
 
@@ -258,18 +314,19 @@ async function readLocalTraces(appRoot: string): Promise<LocalTrace[]> {
 
   for (const traceId of await listDirectory(schemaDirectory)) {
     const segmentsDirectory = join(schemaDirectory, traceId, "segments");
-    const spanNames: string[] = [];
+    const scopeNames: string[] = [];
+    const spans: OtlpSpan[] = [];
     for (const segment of await listDirectory(segmentsDirectory)) {
       const payload = await readSegment(join(segmentsDirectory, segment));
       for (const resourceSpan of payload?.resourceSpans ?? []) {
         for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
-          for (const span of scopeSpan.spans ?? []) {
-            if (span.name !== undefined) spanNames.push(span.name);
-          }
+          if (scopeSpan.scope?.name !== undefined) scopeNames.push(scopeSpan.scope.name);
+          spans.push(...(scopeSpan.spans ?? []));
         }
       }
     }
-    traces.push({ spanNames, traceId });
+    const spanNames = spans.flatMap((span) => (span.name === undefined ? [] : [span.name]));
+    traces.push({ scopeNames, spanNames, spans, traceId });
   }
 
   return traces;

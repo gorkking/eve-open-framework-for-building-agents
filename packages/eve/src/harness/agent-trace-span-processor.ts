@@ -2,8 +2,24 @@ import type { SpanProcessor } from "#compiled/@vercel/otel/index.js";
 
 interface SpanLike {
   readonly attributes: Readonly<Record<string, unknown>>;
+  readonly instrumentationLibrary?: { readonly name?: string };
   readonly instrumentationScope?: { readonly name?: string };
   readonly spanContext: () => { readonly traceId: string };
+}
+
+const WORKFLOW_INSTRUMENTATION_SCOPE = "workflow";
+
+/**
+ * The name of the instrumentation that created `span`.
+ *
+ * `@opentelemetry/sdk-trace-base` 2.x renamed `instrumentationLibrary` to
+ * `instrumentationScope`. eve reads spans from providers it did not build — an
+ * authored `instrumentation.ts` picks its own SDK version — so both shapes
+ * arrive here, and a span whose scope cannot be read is one this processor
+ * cannot decide about.
+ */
+function instrumentationName(span: SpanLike): string | undefined {
+  return span.instrumentationScope?.name ?? span.instrumentationLibrary?.name;
 }
 
 /** Routes spans from agent-owned traces to provider-neutral child processors. */
@@ -57,7 +73,7 @@ export class AgentTraceSpanProcessor implements SpanProcessor {
 
   #accepts(span: SpanLike): boolean {
     return (
-      span.instrumentationScope?.name !== "workflow" &&
+      instrumentationName(span) !== WORKFLOW_INSTRUMENTATION_SCOPE &&
       this.#ownedTraceIds.has(span.spanContext().traceId)
     );
   }

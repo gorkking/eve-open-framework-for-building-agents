@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { trace } from "@opentelemetry/api";
+import { context, trace } from "@opentelemetry/api";
 import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { registerOTel } from "@vercel/otel";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,13 +62,65 @@ describe("local instrumentation runtime ownership", () => {
       attributes: { "agent.session.id": "session-1" },
     });
     const traceId = span.spanContext().traceId;
+
+    // The Workflow SDK asks the global API for a `workflow` tracer, so its spans
+    // arrive by the same route as everything else — and when a tool starts a run
+    // they are children of the agent's span, inside a trace eve owns. Scope name
+    // is what keeps them out of the local store: `eve trace` shows a session's
+    // own work, and a run's spans belong to the run's trace. The author's
+    // exporter still receives them; eve observes their provider, it does not
+    // filter it.
+    const workflowSpan = trace
+      .getTracer("workflow")
+      .startSpan("step.execute", {}, trace.setSpan(context.active(), span));
+    workflowSpan.end();
     span.end();
     await runtime!.forceFlush();
 
     // The authored exporter keeps every span it received before, and eve
     // additionally spools the agent-owned trace to disk.
     expect(authoredSpans).toContain("agent.session");
-    const segments = await readdir(join(appRoot, ".eve", "traces", "v1", traceId, "segments"));
-    expect(segments).toHaveLength(1);
+    expect(authoredSpans).toContain("step.execute");
+    expect(workflowSpan.spanContext().traceId).toBe(traceId);
+
+    const stored = await readStoredTrace(appRoot, traceId);
+    expect(stored.spanNames).toEqual(["agent.session"]);
+    expect(stored.scopeNames).not.toContain("workflow");
   });
 });
+
+interface StoredTrace {
+  readonly scopeNames: readonly string[];
+  readonly spanNames: readonly string[];
+}
+
+async function readStoredTrace(appRoot: string, traceId: string): Promise<StoredTrace> {
+  const segmentsDirectory = join(appRoot, ".eve", "traces", "v1", traceId, "segments");
+  const scopeNames: string[] = [];
+  const spanNames: string[] = [];
+
+  for (const segment of await readdir(segmentsDirectory)) {
+    const payload = JSON.parse(
+      await readFile(join(segmentsDirectory, segment), "utf8"),
+    ) as OtlpSegment;
+    for (const resourceSpan of payload.resourceSpans ?? []) {
+      for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+        if (scopeSpan.scope?.name !== undefined) scopeNames.push(scopeSpan.scope.name);
+        for (const span of scopeSpan.spans ?? []) {
+          if (span.name !== undefined) spanNames.push(span.name);
+        }
+      }
+    }
+  }
+
+  return { scopeNames, spanNames };
+}
+
+interface OtlpSegment {
+  readonly resourceSpans?: readonly {
+    readonly scopeSpans?: readonly {
+      readonly scope?: { readonly name?: string };
+      readonly spans?: readonly { readonly name?: string }[];
+    }[];
+  }[];
+}

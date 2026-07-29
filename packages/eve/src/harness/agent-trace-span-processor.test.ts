@@ -65,6 +65,32 @@ describe("AgentTraceSpanProcessor", () => {
     expect(child.onStart).toHaveBeenCalledTimes(1);
     expect(child.onEnd).not.toHaveBeenCalled();
   });
+
+  // An authored `instrumentation.ts` chooses its own SDK version, and
+  // `@opentelemetry/sdk-trace-base` 1.x names this field `instrumentationLibrary`.
+  // Reading only the 2.x name would let a run's spans into the local store for
+  // anyone still on `@vercel/otel@1`.
+  it("excludes Workflow instrumentation reported under the pre-2.x field name", () => {
+    const child = {
+      forceFlush: vi.fn(async () => {}),
+      onEnd: vi.fn(),
+      onStart: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+    };
+    const processor = new AgentTraceSpanProcessor([child]);
+    processor.onStart(span("trace-1", { "agent.session.id": "session-1" }), {});
+
+    const workflow = {
+      attributes: {},
+      instrumentationLibrary: { name: "workflow" },
+      spanContext: () => ({ traceId: "trace-1" }),
+    };
+    processor.onStart(workflow, {});
+    processor.onEnd(workflow);
+
+    expect(child.onStart).toHaveBeenCalledTimes(1);
+    expect(child.onEnd).not.toHaveBeenCalled();
+  });
 });
 
 function span(
