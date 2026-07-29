@@ -40,12 +40,13 @@ PostgreSQL service, bootstraps its schema, builds the fixture, starts it with
 `eve start`, and targets that server with `eve eval --url`.
 
 Fixture root agents spread `e2eAgentConfig()` from the private
-`@eve-e2e/config` workspace package. The helper reads
-`EVE_E2E_WORKFLOW_WORLD` into `experimental.workflow.world`. The variable is
-unset in the local and Vercel suites, preserving their host defaults; the
-Postgres workflow sets it to `@workflow/world-postgres` while compiling the
-production server. The world package remains a direct fixture dependency,
-pinned through the workspace catalog to the same `@workflow/*` line as eve.
+`@eve-e2e/config` workspace package. The helper selects the root agent model
+from `EVE_E2E_MODEL` and reads `EVE_E2E_WORKFLOW_WORLD` into
+`experimental.workflow.world`. The world variable is unset in the local and
+Vercel suites, preserving their host defaults; the Postgres workflow sets it
+to `@workflow/world-postgres` while compiling the production server. The world
+package remains a direct fixture dependency, pinned through the workspace
+catalog to the same `@workflow/*` line as eve.
 
 The per-fixture lifecycle is:
 
@@ -146,8 +147,7 @@ When adding e2e coverage:
   requirements (beyond model-provider credentials).
 - Spread `e2eAgentConfig()` from `@eve-e2e/config` in the root `agent.ts`.
 - Declare `@eve-e2e/config` and `@workflow/world-postgres` as direct
-  dependencies. Fixture discovery validates this contract before adding the
-  fixture to any matrix.
+  dependencies.
 - If the behavior cannot fit that shape yet, leave it out and rebuild it later
   as a first-class eval story.
 
