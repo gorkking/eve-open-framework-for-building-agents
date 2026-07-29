@@ -1,0 +1,100 @@
+---
+title: MCP
+description: Publish an eve agent as a durable MCP invocation service.
+---
+
+The MCP channel lets hosts such as Claude Code delegate durable work to an eve
+agent. It exposes the agent itself, not the agent's authored tools, skills,
+instructions, connections, or subagents.
+
+## Configure the channel
+
+Create `agent/channels/mcp.ts` and use the same inbound auth strategies as any
+other eve channel:
+
+```ts
+import { localDev, vercelOidc } from "eve/channels/auth";
+import { mcpChannel } from "eve/channels/mcp";
+
+export default mcpChannel({
+  auth: [vercelOidc(), localDev()],
+});
+```
+
+Authentication is required by default. Use `none()` only when you intentionally
+want a public MCP endpoint.
+
+The endpoint serves MCP `2026-07-28` directly and keeps a stateless
+`2025-11-25` compatibility path for existing Streamable HTTP clients. Current
+clients use `server/discover`; older clients can continue to initialize
+normally. eve does not retain an MCP transport session in either mode.
+
+For an interactive OAuth login, decorate your existing verifier with
+`oauthResource()`:
+
+```ts
+import { oauthResource } from "eve/channels/auth";
+import { mcpChannel } from "eve/channels/mcp";
+import { verifyAccessToken } from "../lib/auth";
+
+export default mcpChannel({
+  auth: oauthResource(verifyAccessToken, {
+    issuer: process.env.AUTH_ISSUER!,
+    scopes: ["agent:invoke"],
+  }),
+});
+```
+
+`verifyAccessToken` is an ordinary `AuthFn<Request>`. It verifies the access
+token and returns a `SessionAuthContext`; it may use an eve strategy such as
+`jwtEcdsa()` or your identity provider's verifier. `oauthResource()` does not
+issue tokens or run an authorization server. It adds portable resource-server
+metadata to the policy so `mcpChannel()` can mount
+`/.well-known/oauth-protected-resource` and include its URL in authentication
+challenges.
+
+The `scopes` option advertises the scopes clients should request. Your
+underlying verifier remains responsible for signature or introspection,
+expiry, audience/resource, and scope enforcement.
+
+By default the resource is the request origin plus `/mcp`. Set `resource` when
+a public gateway fronts a private eve origin, or `metadataPath` when the
+well-known route must be mounted elsewhere.
+
+## Invoke the agent
+
+The server name and `agent_start` description come from the compiled root
+agent. Current clients receive four compatibility tools:
+
+- `agent_start({ message, outputSchema? })`
+- `agent_get({ invocationId })`
+- `agent_update({ invocationId, responses })`
+- `agent_cancel({ invocationId })`
+
+`agent_start` creates one task-mode eve session and returns after durable
+acceptance. Keep the returned `invocationId` and call `agent_get` until the
+invocation is terminal, honoring `pollAfterMs` while it is working. A failed
+start whose response is ambiguous should not be retried automatically because
+each call creates a new invocation.
+
+Every operation reruns the configured auth policy. Invocation access is bound
+to the same authenticated principal that started it; knowing an invocation ID
+is not sufficient. Bearer tokens are neither persisted with the invocation nor
+forwarded to the agent's tools.
+
+`agent_get` reconstructs state from the durable eve session event stream and
+does not start work or run another model. When the agent requests input, pass
+the reported responses to `agent_update`. Cancellation is cooperative; poll
+the invocation until it reports `cancelled` or another terminal state.
+
+## Connect Claude Code
+
+```sh
+claude mcp add --transport http eve-agent https://<deployment>/mcp
+claude mcp login eve-agent
+claude mcp get eve-agent
+```
+
+MCP Tasks support and direct capability export are separate follow-ups. The
+compatibility tools already use a protocol-neutral invocation service so Tasks
+can map onto the same durable state machine later.

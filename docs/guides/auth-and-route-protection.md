@@ -197,6 +197,37 @@ export default defineChannel({
 
 `UnauthenticatedError` and `ForbiddenError` wrap this builder (status `401` / `403`). Throw those from an `AuthFn` that `routeAuth` walks. Call `createUnauthorizedResponse` directly only when you're returning a `Response` from a hand-rolled route.
 
+## OAuth protected resources
+
+`oauthResource()` adds portable OAuth resource-server metadata to an existing
+inbound auth policy without changing how it authenticates:
+
+```ts
+import { jwtEcdsa, oauthResource } from "eve/channels/auth";
+
+const auth = oauthResource(
+  jwtEcdsa({
+    algorithm: "ES256",
+    issuer: process.env.AUTH_ISSUER!,
+    audiences: [process.env.RESOURCE_URL!],
+    publicKey: process.env.AUTH_PUBLIC_KEY!,
+  }),
+  {
+    issuer: process.env.AUTH_ISSUER!,
+    scopes: ["agent:invoke"],
+  },
+);
+```
+
+The result is still an `AuthFn<Request>`, so any inbound HTTP channel can use
+it. Protocol-aware channels can read the attached metadata to publish discovery
+and authentication challenges. `mcpChannel()` does this automatically.
+
+`oauthResource()` does not verify or issue tokens. The wrapped strategy remains
+responsible for signature or introspection, expiry, audience/resource, claims,
+and scope enforcement. The configured `scopes` are discovery metadata for
+clients, not an authorization check by themselves.
+
 ## Network policy
 
 `eve/channels/auth` exports `createIpAllowList(...)` and `isIpAllowed(...)` for cutting off requests before any model work starts. A request that fails the network policy is dropped ahead of both auth and runtime execution.

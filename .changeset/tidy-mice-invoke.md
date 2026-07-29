@@ -1,0 +1,5 @@
+---
+"eve": patch
+---
+
+Add an MCP channel that reuses eve route auth and lets clients start, inspect, update, and cancel principal-bound durable agent invocations over MCP 2026-07-28 with a stateless 2025 compatibility path.

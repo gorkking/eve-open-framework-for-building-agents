@@ -446,6 +446,14 @@ function escapeChallengeValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    return new URL(value).origin !== "null";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Options accepted by auth error classes. The class chooses the HTTP status.
  */
@@ -495,6 +503,91 @@ export class ForbiddenError extends Error {
 export type AuthFn<TEvent = Request> = (
   event: TEvent,
 ) => SessionAuthContext | null | undefined | Promise<SessionAuthContext | null | undefined>;
+
+/**
+ * OAuth protected-resource metadata attached to an inbound auth policy.
+ * `issuer` is shorthand for a single authorization server.
+ */
+export type OAuthResourceOptions = {
+  readonly metadataPath?: string;
+  readonly resource?: string;
+  readonly scopes?: readonly string[];
+} & (
+  | {
+      readonly authorizationServers?: never;
+      readonly issuer: string;
+    }
+  | {
+      readonly authorizationServers: readonly string[];
+      readonly issuer?: never;
+    }
+);
+
+const OAUTH_RESOURCE_SYMBOL = Symbol.for("eve.channels.auth.oauthResource");
+
+/**
+ * An ordinary route authenticator decorated with OAuth protected-resource
+ * discovery metadata.
+ */
+export type OAuthResourceAuth = AuthFn<Request> & {
+  readonly [OAUTH_RESOURCE_SYMBOL]: OAuthResourceOptions;
+};
+
+/**
+ * Adds OAuth protected-resource metadata to an existing inbound auth policy.
+ *
+ * The returned value remains an {@link AuthFn}: it preserves the ordered auth
+ * walk and can be used by any channel. A protocol-aware channel such as
+ * `mcpChannel` may additionally publish the metadata and discovery challenge.
+ */
+export function oauthResource(
+  auth: AuthFn<Request> | readonly AuthFn<Request>[],
+  options: OAuthResourceOptions,
+): OAuthResourceAuth {
+  const authorizationServers =
+    options.issuer !== undefined ? [options.issuer] : options.authorizationServers;
+  if (
+    authorizationServers.length === 0 ||
+    authorizationServers.some((value) => !isAbsoluteUrl(value))
+  ) {
+    throw new Error("oauthResource requires at least one absolute authorization server URL.");
+  }
+  if (options.resource !== undefined && !isAbsoluteUrl(options.resource)) {
+    throw new Error("oauthResource resource must be an absolute URL.");
+  }
+  if (options.metadataPath !== undefined && !options.metadataPath.startsWith("/")) {
+    throw new Error("oauthResource metadataPath must start with '/'.");
+  }
+
+  const list: readonly AuthFn<Request>[] = Array.isArray(auth)
+    ? (auth as readonly AuthFn<Request>[])
+    : [auth as AuthFn<Request>];
+  const composed: AuthFn<Request> = async (request) => {
+    for (const fn of list) {
+      const result = await fn(request);
+      if (result) return result;
+    }
+    return null;
+  };
+  const declaredChallenges = collectDeclaredChallenges(list);
+  const wrapped = withAuthChallenges(
+    composed,
+    declaredChallenges.length > 0 ? declaredChallenges : [{ scheme: "Bearer" }],
+  ) as OAuthResourceAuth;
+  Object.defineProperty(wrapped, OAUTH_RESOURCE_SYMBOL, {
+    enumerable: false,
+    value: options,
+  });
+  return wrapped;
+}
+
+/** @internal Reads OAuth resource metadata without widening `AuthFn`. */
+export function readOAuthResourceOptions(
+  auth: AuthFn<Request> | readonly AuthFn<Request>[],
+): OAuthResourceOptions | undefined {
+  if (Array.isArray(auth)) return undefined;
+  return (auth as Partial<OAuthResourceAuth>)[OAUTH_RESOURCE_SYMBOL];
+}
 
 /**
  * Symbol-keyed property carrying the `www-authenticate` challenges an

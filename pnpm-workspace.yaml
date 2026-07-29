@@ -54,6 +54,9 @@ catalog:
 minimumReleaseAge: 2880 # 2 days
 
 minimumReleaseAgeExclude:
+  # MCP SDK v2 is required for the 2026-07-28 protocol revision.
+  - "@modelcontextprotocol/core"
+  - "@modelcontextprotocol/server"
   # Registry packages are explicitly reviewed before they are added to the eve registry.
   - "@agent-browser/eve"
   - "@agent-browser/sandbox"
