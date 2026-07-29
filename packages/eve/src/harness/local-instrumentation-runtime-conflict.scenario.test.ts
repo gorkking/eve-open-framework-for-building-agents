@@ -32,6 +32,12 @@ describe("local instrumentation runtime ownership", () => {
 
     expect(installGlobalTracerProviderInterception()).toBe(true);
 
+    // Taken before anything registers a provider, which is what an authored
+    // module that acquires a tracer at import time does. The API hands back a
+    // proxy tracer bound to its own standby provider, so neither adoption nor
+    // wrapping the global proxy could reach it — only hooking the delegate.
+    const earlyTracer = trace.getTracer("test-agent");
+
     const authoredSpans: string[] = [];
     registerOTel({
       serviceName: "authored-agent",
@@ -44,10 +50,6 @@ describe("local instrumentation runtime ownership", () => {
         },
       ],
     });
-
-    // Taken while the authored setup is still running, before eve's writer
-    // exists. Adoption could not reach a tracer handed out this early.
-    const earlyTracer = trace.getTracer("test-agent");
 
     const runtime = installLocalInstrumentationRuntime({
       appRoot,

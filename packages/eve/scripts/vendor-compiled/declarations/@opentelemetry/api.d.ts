@@ -33,6 +33,8 @@ export interface TracerProvider {
 
 export declare class ProxyTracerProvider implements TracerProvider {
   getDelegate(): TracerProvider;
+  /** `undefined` until a delegate is set — how eve tells an unclaimed proxy from a claimed one. */
+  getDelegateTracer(name: string, version?: string, options?: unknown): Tracer | undefined;
   getTracer(name: string, version?: string, options?: unknown): Tracer;
   setDelegate(delegate: TracerProvider): void;
 }

@@ -8,6 +8,7 @@ import type {
   TracerProvider,
 } from "#compiled/@opentelemetry/api/index.js";
 import type { SpanProcessor } from "#compiled/@vercel/otel/index.js";
+import type { DelegatingTracerProvider } from "#harness/delegating-tracer-provider.js";
 import {
   attachInterceptedSpanProcessor,
   installGlobalTracerProviderInterception,
@@ -62,6 +63,70 @@ describe("installGlobalTracerProviderInterception", () => {
     expect(events).toEqual(["inner-end:authored.work"]);
   });
 
+  // `setGlobalTracerProvider` registers its proxy first and sets the real
+  // provider as the delegate only after, so a tracer taken in between is a
+  // `ProxyTracer` that resolves lazily. Hooking the delegate is what reaches it;
+  // wrapping the proxy would not.
+  it("observes tracers taken from a proxy before its delegate is set", () => {
+    installGlobalTracerProviderInterception();
+    const registry = registerApiRegistry("1.9.0");
+    const events: string[] = [];
+    const proxy = createProxyProvider();
+
+    registry.trace = proxy;
+    const early = registry.trace.getTracer("authored");
+    proxy.setDelegate(createInnerProvider(events));
+
+    const { processor, started } = createRecordingProcessor();
+    expect(attachInterceptedSpanProcessor(processor)).toBe(true);
+
+    early.startSpan("authored.work").end();
+
+    expect(started).toEqual(["authored.work"]);
+    expect(events).toEqual(["inner-end:authored.work"]);
+  });
+
+  it("observes a proxy that already had a delegate", () => {
+    const events: string[] = [];
+    const proxy = createProxyProvider();
+    proxy.setDelegate(createInnerProvider(events));
+
+    installGlobalTracerProviderInterception();
+    const registry = registerApiRegistry("1.9.0");
+    registry.trace = proxy;
+
+    const { processor, started } = createRecordingProcessor();
+    expect(attachInterceptedSpanProcessor(processor)).toBe(true);
+
+    proxy.getTracer("authored").startSpan("authored.work").end();
+
+    expect(started).toEqual(["authored.work"]);
+  });
+
+  // `registerGlobal` assigns the registry slot on every registration it makes —
+  // context and propagation as well as trace — always with the same object.
+  // Re-intercepting it would wrap the provider a second time and report every
+  // span twice.
+  it("reports each span once when the registry object is reassigned", () => {
+    installGlobalTracerProviderInterception();
+    const registry = registerApiRegistry("1.9.0");
+    const events: string[] = [];
+
+    registry.trace = createInnerProvider(events);
+    // What `registerGlobal` does when the author also registers a context
+    // manager and a propagator: same object, back into the same slot.
+    container[API_REGISTRY_KEY] = registry;
+    container[API_REGISTRY_KEY] = registry;
+
+    const { processor, started } = createRecordingProcessor();
+    expect(attachInterceptedSpanProcessor(processor)).toBe(true);
+
+    registry.trace.getTracer("authored").startSpan("authored.work").end();
+
+    expect(started).toEqual(["authored.work"]);
+    expect(events).toEqual(["inner-end:authored.work"]);
+  });
+
   it("is idempotent", () => {
     expect(installGlobalTracerProviderInterception()).toBe(true);
     expect(installGlobalTracerProviderInterception()).toBe(true);
@@ -103,10 +168,60 @@ describe("releaseGlobalTracerProviderInterception", () => {
     expect(Object.getOwnPropertyDescriptor(registry, "trace")?.get).toBeUndefined();
   });
 
+  // eve declines rather than degrading the authored path, so a released proxy
+  // has to be left delegating to exactly what the author registered.
+  it("restores a proxy's delegate as the author set it", () => {
+    installGlobalTracerProviderInterception();
+    const registry = registerApiRegistry("1.9.0");
+    const events: string[] = [];
+    const proxy = createProxyProvider();
+    const delegate = createInnerProvider(events);
+
+    registry.trace = proxy;
+    proxy.setDelegate(delegate);
+    expect(proxy.getDelegate()).not.toBe(delegate);
+
+    releaseGlobalTracerProviderInterception();
+
+    expect(proxy.getDelegate()).toBe(delegate);
+    // The proxy itself goes back into the slot, not the delegate eve unwrapped
+    // out of it, so `trace.getTracerProvider()` still answers what it did.
+    expect(registry.trace).toBe(proxy);
+    proxy.getTracer("authored").startSpan("authored.work").end();
+    expect(events).toEqual(["inner-end:authored.work"]);
+  });
+
   it("is safe to call without an installation", () => {
     expect(() => releaseGlobalTracerProviderInterception()).not.toThrow();
   });
 });
+
+/**
+ * `ProxyTracerProvider` as the authored API copy defines it: registered before
+ * its delegate exists, and handing out tracers that resolve through whatever
+ * delegate is set by the time a span is started.
+ */
+function createProxyProvider(): DelegatingTracerProvider {
+  let delegate: TracerProvider | undefined;
+  const noopTracer: Tracer = { startSpan: () => ({}) as Span };
+  const proxy: DelegatingTracerProvider = {
+    getDelegate: () => delegate ?? { getTracer: () => noopTracer },
+    getDelegateTracer: (name: string, version?: string, options?: unknown) =>
+      delegate?.getTracer(name, version, options),
+    getTracer: (name: string, version?: string, options?: unknown) => ({
+      startSpan: (spanName: string, spanOptions?: SpanOptions, parentContext?: Context) =>
+        (delegate?.getTracer(name, version, options) ?? noopTracer).startSpan(
+          spanName,
+          spanOptions,
+          parentContext,
+        ),
+    }),
+    setDelegate: (next: TracerProvider) => {
+      delegate = next;
+    },
+  };
+  return proxy;
+}
 
 /** What `registerGlobal` does on first use: create the registry, or reuse it. */
 function registerApiRegistry(version: string): ApiRegistry {

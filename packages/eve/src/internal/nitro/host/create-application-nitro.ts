@@ -743,16 +743,13 @@ export async function createDevelopmentApplicationNitro(
     "src/internal/nitro/host/local-tracing-runtime-plugin.ts",
   );
   // Local tracing is always on in dev. Authored instrumentation is bracketed:
-  // eve claims the global tracer provider before that plugin registers one, so
-  // no tracer escapes, and installs the trace writer after its `setup` has
-  // resolved, so the two never race to be the global provider.
-  const instrumentationPlugin = preparedHost.compiledArtifacts.instrumentationPluginPath;
-  if (instrumentationPlugin === undefined) {
+  // eve claims the global tracer-provider slot from the first plugin module, so
+  // no tracer the authored `setup` creates escapes, and hands the trace writer
+  // over from the last plugin, so the two never race to be the global provider.
+  if (preparedHost.compiledArtifacts.instrumentationPluginPath === undefined) {
     plugins.unshift(localTracingPlugin);
   } else {
-    plugins.splice(
-      plugins.indexOf(instrumentationPlugin),
-      0,
+    plugins.unshift(
       resolvePackageSourceFilePath("src/internal/nitro/host/local-tracing-interception-plugin.ts"),
     );
     plugins.push(localTracingPlugin);

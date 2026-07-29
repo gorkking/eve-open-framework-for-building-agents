@@ -1,10 +1,15 @@
 import type { TracerProvider } from "#compiled/@opentelemetry/api/index.js";
 import type { SpanProcessor } from "#compiled/@vercel/otel/index.js";
 
+import {
+  hasTracerProviderDelegate,
+  isDelegatingTracerProvider,
+  type DelegatingTracerProvider,
+} from "#harness/delegating-tracer-provider.js";
 import { observeTracerProvider } from "#harness/observe-tracer-provider.js";
 
 /**
- * The slot `@opentelemetry/api` stores its global tracer provider in.
+ * The slot `@opentelemetry/api` stores its global registry in.
  *
  * Every copy of the API in the process shares this one object through
  * `globalThis`, keyed by the API's major version — the only thing an authored
@@ -27,10 +32,14 @@ interface ApiRegistry {
 }
 
 interface InterceptionState {
+  /** Proxy providers already hooked, so a second visit is a no-op. */
+  hooked: Set<DelegatingTracerProvider>;
   installed: boolean;
-  /** The provider as registered, before eve wrapped it. */
-  origin: TracerProvider | undefined;
   processor: SpanProcessor | undefined;
+  /** The provider as registered, before eve wrapped it. */
+  provider: TracerProvider | undefined;
+  /** Undo steps, newest last, run in reverse by the release. */
+  undo: Array<() => void>;
 }
 
 type GlobalSlots = Record<symbol, unknown>;
@@ -40,20 +49,30 @@ const container = globalThis as typeof globalThis & GlobalSlots;
 function state(): InterceptionState {
   const existing = container[INTERCEPTION_STATE_KEY];
   if (existing !== undefined) return existing as InterceptionState;
-  const created: InterceptionState = { installed: false, origin: undefined, processor: undefined };
+  const created: InterceptionState = {
+    hooked: new Set(),
+    installed: false,
+    processor: undefined,
+    provider: undefined,
+    undo: [],
+  };
   container[INTERCEPTION_STATE_KEY] = created;
   return created;
+}
+
+function processorSource(): SpanProcessor | undefined {
+  return state().processor;
 }
 
 /**
  * Claims the global tracer-provider slot so eve observes every tracer, however
  * early it is created.
  *
- * Must run *before* authored `setup()`. Adopting a provider after the fact is
- * not equivalent: `ProxyTracerProvider.getTracer` hands out the delegate's
- * concrete tracer once a delegate exists, so a tracer created during `setup()`
- * — by an auto-instrumentation the author enabled, say — keeps a direct
- * reference and no later delegate swap can reach it.
+ * Must run *before* anything registers a provider. Wrapping one after the fact
+ * is not equivalent: `ProxyTracerProvider.getTracer` hands out the delegate's
+ * concrete tracer once a delegate exists, so a tracer created during authored
+ * `setup()` — by an auto-instrumentation the author enabled, say — keeps a
+ * direct reference that no later swap can reach.
  *
  * eve deliberately does not create the registry object. It carries the version
  * of whichever API instance registers first, and `registerGlobal` refuses a
@@ -71,10 +90,11 @@ export function installGlobalTracerProviderInterception(): boolean {
   const current = state();
   if (current.installed) return true;
   try {
-    current.installed = claimRegistrySlot();
+    current.installed = claimRegistrySlot(current);
   } catch {
     current.installed = false;
   }
+  if (!current.installed) current.undo.length = 0;
   return current.installed;
 }
 
@@ -91,7 +111,7 @@ export function installGlobalTracerProviderInterception(): boolean {
 export function attachInterceptedSpanProcessor(processor: SpanProcessor): boolean {
   const current = state();
   if (!current.installed) return false;
-  if (current.origin === undefined) {
+  if (current.provider === undefined) {
     releaseGlobalTracerProviderInterception();
     return false;
   }
@@ -100,7 +120,7 @@ export function attachInterceptedSpanProcessor(processor: SpanProcessor): boolea
 }
 
 /**
- * Restores the global slot to a plain property holding the provider as
+ * Undoes every intervention, leaving the provider reachable exactly as it was
  * registered.
  *
  * @internal — not part of the public API.
@@ -110,60 +130,124 @@ export function releaseGlobalTracerProviderInterception(): void {
   if (!current.installed) return;
   current.installed = false;
   current.processor = undefined;
-  const registry = container[API_REGISTRY_KEY] as ApiRegistry | undefined;
-  const origin = current.origin;
-  current.origin = undefined;
-  try {
-    delete container[API_REGISTRY_KEY];
-    if (registry === undefined) return;
-    delete registry.trace;
-    if (origin !== undefined) registry.trace = origin;
-    container[API_REGISTRY_KEY] = registry;
-  } catch {
-    // Left uninstalled: the wrappers already handed out report to nothing once
-    // the processor is cleared, so they degrade to pass-through.
+  current.hooked.clear();
+  const undo = current.undo.splice(0, current.undo.length).reverse();
+  for (const step of undo) {
+    try {
+      step();
+    } catch {
+      // Left uninstalled: with the processor cleared, any wrapper still in
+      // place reports to nothing and degrades to a pass-through.
+    }
   }
+  current.provider = undefined;
 }
 
-function claimRegistrySlot(): boolean {
+function claimRegistrySlot(current: InterceptionState): boolean {
   const descriptor = Object.getOwnPropertyDescriptor(container, API_REGISTRY_KEY);
   if (descriptor?.configurable === false) return false;
 
   const existing = container[API_REGISTRY_KEY] as ApiRegistry | undefined;
-  if (existing !== undefined) return interceptTraceSlot(existing);
+  if (existing !== undefined) return interceptTraceSlot(current, existing);
 
   let registry: ApiRegistry | undefined;
   Object.defineProperty(container, API_REGISTRY_KEY, {
     configurable: true,
     get: () => registry,
+    // `registerGlobal` reassigns this slot on every registration it makes —
+    // context, propagation, and metrics as well as trace — always with the
+    // same object once one exists. Only a new object is worth intercepting;
+    // repeating the work on the same one would wrap the provider again and
+    // report every span twice.
     set: (value: ApiRegistry | undefined) => {
+      if (value === registry) return;
       registry = value;
-      if (value !== undefined) interceptTraceSlot(value);
+      if (value !== undefined) interceptTraceSlot(current, value);
     },
+  });
+  current.undo.push(() => {
+    delete container[API_REGISTRY_KEY];
+    if (registry !== undefined) container[API_REGISTRY_KEY] = registry;
   });
   return true;
 }
 
-function interceptTraceSlot(registry: ApiRegistry): boolean {
+function interceptTraceSlot(current: InterceptionState, registry: ApiRegistry): boolean {
   const descriptor = Object.getOwnPropertyDescriptor(registry, "trace");
   if (descriptor?.configurable === false) return false;
 
-  const current = state();
-  let observed = observe(registry.trace);
+  let registered = registry.trace;
+  let stored = intercept(current, registered);
   delete registry.trace;
   Object.defineProperty(registry, "trace", {
     configurable: true,
     enumerable: true,
-    get: () => observed,
+    get: () => stored,
     set: (provider: TracerProvider | undefined) => {
-      observed = observe(provider);
+      registered = provider;
+      stored = intercept(current, provider);
     },
   });
+  current.undo.push(() => {
+    delete registry.trace;
+    // What the author assigned, which is not what eve stored: a proxy goes back
+    // as the proxy, a concrete provider goes back unwrapped.
+    if (registered !== undefined) registry.trace = registered;
+  });
   return true;
+}
 
-  function observe(provider: TracerProvider | undefined): TracerProvider | undefined {
-    current.origin = provider;
-    if (provider === undefined) return undefined;
-    return observeTracerProvider(provider, () => state().processor);
+/**
+ * What the registry holds once eve has had its say.
+ *
+ * A proxy provider is stored untouched and hooked at its delegate instead.
+ * `setGlobalTracerProvider` registers the proxy first and only then sets the
+ * real provider as its delegate, and a tracer taken before registration
+ * resolves through that same delegate — so hooking the delegate catches both,
+ * where wrapping the proxy would catch neither.
+ */
+function intercept(
+  current: InterceptionState,
+  provider: TracerProvider | undefined,
+): TracerProvider | undefined {
+  if (provider === undefined) return undefined;
+  if (isDelegatingTracerProvider(provider)) {
+    hookDelegate(current, provider);
+    return provider;
   }
+  current.provider = provider;
+  return observeTracerProvider(provider, processorSource);
+}
+
+function hookDelegate(current: InterceptionState, proxy: DelegatingTracerProvider): void {
+  if (current.hooked.has(proxy)) return;
+  const descriptor = Object.getOwnPropertyDescriptor(proxy, "setDelegate");
+  if (descriptor !== undefined && descriptor.configurable !== true) return;
+  current.hooked.add(proxy);
+
+  const original = proxy.setDelegate;
+  // Tracked per proxy rather than read back off the shared state, which holds
+  // whichever provider registered last and may belong to another proxy.
+  let delegated: TracerProvider | undefined;
+  const observe = (delegate: TracerProvider): void => {
+    current.provider = delegate;
+    delegated = delegate;
+    original.call(proxy, observeTracerProvider(delegate, processorSource));
+  };
+  Object.defineProperty(proxy, "setDelegate", {
+    configurable: true,
+    value: observe,
+    writable: true,
+  });
+  current.undo.push(() => {
+    // `setDelegate` normally lives on the prototype, where deleting the override
+    // is enough; a proxy carrying it as an own property needs that property put
+    // back, or the release would leave the provider with no way to be set.
+    if (descriptor === undefined) delete (proxy as Partial<DelegatingTracerProvider>).setDelegate;
+    else Object.defineProperty(proxy, "setDelegate", descriptor);
+    if (delegated !== undefined) proxy.setDelegate(delegated);
+  });
+
+  // A proxy that already has a delegate was registered before eve got here.
+  if (hasTracerProviderDelegate(proxy)) observe(proxy.getDelegate());
 }

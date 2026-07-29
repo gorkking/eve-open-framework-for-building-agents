@@ -231,9 +231,13 @@ describe("application Nitro creation", () => {
     );
     const authored = plugins.indexOf("/app/instrumentation.mjs");
 
-    expect(interception).toBeGreaterThanOrEqual(0);
+    // First, not merely before the authored plugin: interception runs at module
+    // scope and has to be in place before any other plugin module body can
+    // register a provider.
+    expect(interception).toBe(0);
     expect(interception).toBeLessThan(authored);
     expect(authored).toBeLessThan(localTracing);
+    expect(localTracing).toBe(plugins.length - 1);
   });
 
   it("installs no interception plugin when the agent authors no instrumentation", async () => {

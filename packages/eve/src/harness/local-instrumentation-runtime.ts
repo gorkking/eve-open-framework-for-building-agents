@@ -2,13 +2,17 @@ import { context, trace } from "#compiled/@opentelemetry/api/index.js";
 import { registerOTel } from "#compiled/@vercel/otel/index.js";
 
 import { adoptGlobalTracerProvider } from "#harness/adopt-global-tracer-provider.js";
+import { createAgentOtelInstrumentation } from "#harness/agent-otel-provider.js";
 import { ContextAgentTraceStateStore } from "#harness/agent-trace-context-store.js";
+import { AgentTraceSpanProcessor } from "#harness/agent-trace-span-processor.js";
+import {
+  hasTracerProviderDelegate,
+  isDelegatingTracerProvider,
+} from "#harness/delegating-tracer-provider.js";
 import {
   attachInterceptedSpanProcessor,
   releaseGlobalTracerProviderInterception,
 } from "#harness/intercept-global-tracer-provider.js";
-import { createAgentOtelInstrumentation } from "#harness/agent-otel-provider.js";
-import { AgentTraceSpanProcessor } from "#harness/agent-trace-span-processor.js";
 import {
   createInstrumentationHooks,
   type InstrumentationProviderDefinition,
@@ -61,6 +65,17 @@ export function installLocalInstrumentationRuntime(input: {
       serviceName: input.serviceName,
       spanProcessors: [processor],
     });
+    // Global registration demands an exact API version match, so an agent
+    // whose own `@opentelemetry/api` is a different patch release than eve's
+    // vendored copy owns the registry outright and refuses eve's provider.
+    // `registerOTel` reports that through the diag logger and returns anyway,
+    // which would leave a runtime here backed by a no-op tracer.
+    if (!hasRegisteredTracerProvider()) {
+      log.warn(
+        "eve could not register an OpenTelemetry tracer provider, so local traces are not being recorded in this dev worker.",
+      );
+      return undefined;
+    }
   }
   // Spans reach the processor by construction, so there is nothing to probe
   // there — and probing with a real span would make startup depend on the
@@ -132,4 +147,16 @@ function hasContextManager(): boolean {
     trace.setSpan(context.active(), probe),
     () => trace.getActiveSpan() === probe,
   );
+}
+
+/**
+ * Whether the global tracer provider resolves to something that can make spans.
+ *
+ * A provider that delegates says so through its delegate, since the API hands
+ * back a standby proxy even when nothing is registered.
+ */
+function hasRegisteredTracerProvider(): boolean {
+  const provider = trace.getTracerProvider();
+  if (!isDelegatingTracerProvider(provider)) return true;
+  return hasTracerProviderDelegate(provider);
 }

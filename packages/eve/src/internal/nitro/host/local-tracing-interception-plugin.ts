@@ -6,6 +6,9 @@ import { installGlobalTracerProviderInterception } from "#harness/intercept-glob
  * created later. `local-tracing-runtime-plugin.ts` runs after that setup and
  * hands the trace writer over.
  *
+ * Deliberately at module scope, and first in the plugin list: this has to be in
+ * place before any other plugin module body can register a provider.
+ *
  * Only added to the dev host when the agent authors an `instrumentation.ts`;
  * with no author to race, the trace-writer plugin registers a provider of its
  * own and needs no interception.
