@@ -19,6 +19,7 @@ export interface ApprovalCandidateAuditRecord {
   readonly status: ApprovalCandidateStatus;
   readonly createdAt: number;
   readonly completedAt?: number;
+  readonly eventEmitted?: boolean;
   readonly expiresAt?: number;
   readonly provider?: string;
   readonly runtimeRevision?: string;
@@ -133,6 +134,25 @@ export function markApprovalCandidatePendingEventEmitted(input: {
       [input.candidateId]: { ...candidate, pendingEventEmitted: true },
     },
   });
+}
+
+/** Marks a terminal candidate history event as emitted. */
+export function markApprovalCandidateHistoryEventEmitted(input: {
+  readonly candidateId: string;
+  readonly state: SessionStateMap | undefined;
+}): SessionStateMap | undefined {
+  const approvalState = readApprovalState(input.state);
+  let changed = false;
+  const candidateHistory = approvalState.candidateHistory.map((candidate) => {
+    if (candidate.candidateId !== input.candidateId || candidate.eventEmitted === true) {
+      return candidate;
+    }
+    changed = true;
+    return { ...candidate, eventEmitted: true };
+  });
+  return changed
+    ? writeApprovalState(input.state, { ...approvalState, candidateHistory })
+    : input.state;
 }
 
 /** Marks a terminal settlement event as emitted. */

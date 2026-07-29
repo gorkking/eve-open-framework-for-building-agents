@@ -106,6 +106,7 @@ import { createToolResultMessagePartFromToolError } from "#harness/action-result
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
 import {
   getApprovalAuditState,
+  markApprovalCandidateHistoryEventEmitted,
   markApprovalCandidatePendingEventEmitted,
   markApprovalSettlementEventEmitted,
 } from "#harness/approval-candidates.js";
@@ -606,29 +607,36 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       };
     }
 
-    if (
-      emit &&
-      authorized.kind !== "continue" &&
-      authorized.kind !== "duplicate" &&
-      authorized.kind !== "authorization-required"
-    ) {
+    const pendingCandidateHistoryEvent = getApprovalAuditState(session.state).candidateHistory.find(
+      (candidate) =>
+        candidate.eventEmitted !== true &&
+        candidate.status !== "allowed" &&
+        candidate.status !== "authorization-required",
+    );
+    if (emit && pendingCandidateHistoryEvent !== undefined) {
       await emit(
         createApprovalCandidateEvent({
-          candidateId: authorized.candidateId ?? `stale:${authorized.requestId}`,
-          outcome: authorized.kind,
-          requestId: authorized.requestId,
-          responderPrincipalId:
-            [
-              ...getApprovalAuditState(session.state).activeCandidates,
-              ...getApprovalAuditState(session.state).candidateHistory,
-            ].find((candidate) => candidate.candidateId === authorized.candidateId)?.responder
-              .principalId ?? "unknown",
-          safeReason: "safeReason" in authorized ? authorized.safeReason : undefined,
+          candidateId: pendingCandidateHistoryEvent.candidateId,
+          outcome: pendingCandidateHistoryEvent.status as Exclude<
+            typeof pendingCandidateHistoryEvent.status,
+            "allowed" | "authorization-required"
+          >,
+          requestId: pendingCandidateHistoryEvent.requestId,
+          responderPrincipalId: pendingCandidateHistoryEvent.responder.principalId,
+          safeReason: pendingCandidateHistoryEvent.safeReason,
           sequence: emissionState.sequence,
           stepIndex: emissionState.stepIndex,
           turnId: emissionState.turnId,
         }),
       );
+      session = {
+        ...session,
+        state: markApprovalCandidateHistoryEventEmitted({
+          candidateId: pendingCandidateHistoryEvent.candidateId,
+          state: session.state,
+        }),
+      };
+      return { next: runStep, session };
     }
     if (authorized.kind === "authorization-required") {
       const { challenges } = authorized.authorization;
