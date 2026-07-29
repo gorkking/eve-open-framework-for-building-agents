@@ -103,6 +103,7 @@ import {
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
 import {
+  authorizePendingApprovalResponse,
   consumeDeferredStepInput,
   getApprovedTools,
   getPendingInputRequestIds,
@@ -559,11 +560,49 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         ? { ...effectiveStepInput, message: staleConversion.displayMessage }
         : effectiveStepInput;
 
+    const responseAuthorizationTools = new Map(config.tools);
+    const ctx = contextStorage.getStore();
+    if (ctx !== undefined) {
+      for (const tool of buildDynamicTools(ctx)) responseAuthorizationTools.set(tool.name, tool);
+    }
+    const authorized = await authorizePendingApprovalResponse({
+      session,
+      stepInput: effectiveStepInput,
+      tools: responseAuthorizationTools,
+    });
+    session = authorized.session;
+    if (authorized.kind === "authorization-required") {
+      const { challenges } = authorized.authorization;
+      if (emit) {
+        for (const challenge of challenges) {
+          await emit(
+            createAuthorizationRequiredEvent({
+              authorization: challenge.challenge,
+              description:
+                challenge.challenge.instructions ?? `Authorization required for ${challenge.name}`,
+              name: challenge.name,
+              sequence: emissionState.sequence,
+              stepIndex: emissionState.stepIndex,
+              turnId: emissionState.turnId,
+              webhookUrl: challenge.hookUrl,
+            }),
+          );
+        }
+      }
+      return {
+        next: null,
+        session: {
+          ...session,
+          state: setPendingAuthorization(session.state, { challenges }),
+        },
+      };
+    }
+
     const pending = resolvePendingInput({
       history: resolvedRuntimeActions.messages,
       resolveApprovalKey: resolveApprovalKeyFromTools(config.tools),
       session,
-      stepInput: effectiveStepInput,
+      stepInput: authorized.stepInput,
     });
     if (pending.outcome === "unresolved") {
       if (emit && pending.deferredMessage === true && hasStepInput(input)) {
@@ -659,7 +698,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // --- Model + tools ------------------------------------------------------
 
     // Direct harness unit tests may run without an ambient context.
-    const ctx = contextStorage.getStore();
     if (ctx !== undefined && config.dispatchDynamicModelEvent !== undefined) {
       await config.dispatchDynamicModelEvent({
         ctx,
@@ -1926,12 +1964,27 @@ async function handleStepResult(input: {
   // --- Park on input requests -----------------------------------------------
 
   if (inputRequests.length > 0) {
+    const responseAuthorizationTools = new Map(config.tools);
+    const ctx = contextStorage.getStore();
+    if (ctx !== undefined) {
+      for (const tool of buildDynamicTools(ctx)) responseAuthorizationTools.set(tool.name, tool);
+    }
     let parkedSession = setPendingInputBatch({
       event: {
         sequence: emissionState.sequence,
         stepIndex: emissionState.stepIndex,
         turnId: emissionState.turnId,
       },
+      responseAuthRequiredRequestIds: approvalRequests
+        .filter((request) => {
+          const approval = responseAuthorizationTools.get(request.action.toolName)?.approval;
+          return (
+            approval !== undefined &&
+            typeof approval !== "function" &&
+            approval.authorizeResponse !== undefined
+          );
+        })
+        .map((request) => request.requestId),
       requests: inputRequests,
       responseMessages,
       session: { ...baseSession, history: [...promptMessages] },

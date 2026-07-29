@@ -19,6 +19,7 @@ import {
   ConnectionAuthorizationRequiredError,
   isConnectionAuthorizationRequiredError,
 } from "#public/connections/errors.js";
+import type { ApprovalResponseAuth } from "#public/definitions/approval.js";
 import type { ToolAuthOptions, ToolAuthProvider, ToolContext } from "#public/definitions/tool.js";
 import { type AuthorizationChallenge, requestAuthorization } from "#harness/authorization.js";
 import {
@@ -78,6 +79,49 @@ export function createToolExecuteWithAuth(input: {
       throw err;
     }
   };
+}
+
+/** Builds the narrow token capability used by approval response authorizers. */
+export function buildApprovalResponseAuth(input: { readonly scope: string }): ApprovalResponseAuth {
+  const inlineAuthState: InlineAuthState = {};
+  const justAuthorizedScopes = new Set<string>();
+  return {
+    async getToken(provider?: ToolAuthProvider, options?: ToolAuthOptions): Promise<TokenResult> {
+      if (provider === undefined) throw missingProviderError("ctx.getToken");
+      return await resolveInlineToken({
+        inlineAuthState,
+        justAuthorizedScopes,
+        options: namespaceApprovalAuthOptions(input.scope, options),
+        provider,
+        toolScope: input.scope,
+      });
+    },
+    requireAuth(provider?: ToolAuthProvider, options?: ToolAuthOptions): never {
+      if (provider === undefined) throw missingProviderError("ctx.requireAuth");
+      const scoped = buildInlineScopedAuthorization({
+        inlineAuthState,
+        options: namespaceApprovalAuthOptions(input.scope, options),
+        provider,
+        toolScope: input.scope,
+      });
+      throw new ToolAuthorizationRequiredError([
+        { justAuthorized: justAuthorizedScopes.has(scoped.scope), scoped },
+      ]);
+    },
+  };
+}
+
+function namespaceApprovalAuthOptions(
+  scope: string,
+  options: ToolAuthOptions | undefined,
+): ToolAuthOptions {
+  return { ...options, authKey: `${scope}:${options?.authKey ?? "inline-auth"}` };
+}
+
+/** Starts authorization requested by an approval response authorizer. */
+export async function handleApprovalResponseAuthorizationError(error: unknown): Promise<unknown> {
+  if (!isToolAuthorizationRequiredError(error)) throw error;
+  return await handleAuthorizationRequests(error.requests);
 }
 
 function buildToolContext(input: {

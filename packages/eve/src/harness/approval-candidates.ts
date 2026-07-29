@@ -228,6 +228,14 @@ export function cancelApprovalRequest(input: {
   });
 }
 
+/** Returns one active candidate by id. */
+export function getActiveApprovalCandidate(
+  state: SessionStateMap | undefined,
+  candidateId: string,
+): ActiveApprovalCandidate | undefined {
+  return readApprovalState(state).activeCandidates[candidateId];
+}
+
 /** Returns a copy of the durable candidate/audit state for inspection and replay. */
 export function getApprovalAuditState(state: SessionStateMap | undefined): {
   readonly activeCandidates: readonly ActiveApprovalCandidate[];
