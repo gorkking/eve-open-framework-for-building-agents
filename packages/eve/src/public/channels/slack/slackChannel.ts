@@ -213,6 +213,7 @@ export interface SlackChannelState {
    */
   pendingAuthMessageTs?: Record<string, string>;
   pendingApprovalCards?: Record<string, SlackPendingApprovalCard>;
+  pendingApprovalCandidateUsers?: Record<string, string>;
 }
 
 /**
@@ -698,6 +699,7 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
       lastReasoningTypingStatus: null,
       pendingAuthMessageTs: {},
       pendingApprovalCards: {},
+      pendingApprovalCandidateUsers: {},
     },
     fetchFile: slackFetchFile,
     metadata(state): SlackInstrumentationMetadata {

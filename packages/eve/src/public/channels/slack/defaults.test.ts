@@ -66,6 +66,7 @@ describe("defaultEvents approval lifecycle", () => {
         candidateId: "candidate-1",
         outcome: "pending",
         requestId: "approval-1",
+        responderPrincipalId: "slack:T1:U777",
         sequence: 1,
         stepIndex: 0,
         turnId: "turn-1",

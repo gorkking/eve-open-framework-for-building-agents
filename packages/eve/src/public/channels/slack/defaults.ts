@@ -163,17 +163,28 @@ function buildInputRequestPosts(
  */
 export const defaultEvents: SlackChannelInternalEvents = {
   async "approval.candidate"(event, channel, ctx) {
-    const userId = slackUserIdFromAuthContext(ctx.session.auth.current);
-    if (userId === undefined) return;
-    if (event.outcome === "pending") {
-      await channel.thread.postEphemeral(userId, "Checking whether you can approve this action…");
+    const currentUserId = slackUserIdFromAuthContext(ctx.session.auth.current);
+    if (event.outcome === "pending" && currentUserId !== undefined) {
+      channel.state.pendingApprovalCandidateUsers = {
+        ...channel.state.pendingApprovalCandidateUsers,
+        [event.candidateId]: currentUserId,
+      };
+      await channel.thread.postEphemeral(
+        currentUserId,
+        "Checking whether you can approve this action…",
+      );
       return;
     }
+    const userId = channel.state.pendingApprovalCandidateUsers?.[event.candidateId];
+    if (userId === undefined) return;
     if (event.outcome === "rejected" || event.outcome === "failed") {
       await channel.thread.postEphemeral(
         userId,
         event.safeReason ?? "We couldn’t verify your approval. Please try again.",
       );
+      const next = { ...channel.state.pendingApprovalCandidateUsers };
+      delete next[event.candidateId];
+      channel.state.pendingApprovalCandidateUsers = next;
     }
   },
 

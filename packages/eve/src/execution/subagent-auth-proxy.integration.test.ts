@@ -147,6 +147,7 @@ describe("subagent authorization proxy", () => {
         candidateId: "candidate-1",
         outcome: "pending",
         requestId: "approval-1",
+        responderPrincipalId: "slack:T1:U1",
         sequence: 0,
         stepIndex: 1,
         turnId: "child-turn",

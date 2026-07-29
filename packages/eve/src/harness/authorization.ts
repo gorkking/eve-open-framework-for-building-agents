@@ -242,7 +242,13 @@ export function setPendingAuthorization(
   sessionState: Record<string, unknown> | undefined,
   value: PendingAuthorizationState,
 ): Record<string, unknown> {
-  return { ...sessionState, [PENDING_AUTHORIZATION_KEY]: value };
+  const existing = getPendingAuthorization(sessionState)?.challenges ?? [];
+  const byName = new Map(existing.map((challenge) => [challenge.name, challenge]));
+  for (const challenge of value.challenges) byName.set(challenge.name, challenge);
+  return {
+    ...sessionState,
+    [PENDING_AUTHORIZATION_KEY]: { challenges: [...byName.values()] },
+  };
 }
 
 export function clearPendingAuthorization(

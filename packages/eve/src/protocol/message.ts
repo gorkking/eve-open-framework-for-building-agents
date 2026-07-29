@@ -221,6 +221,7 @@ export interface ApprovalCandidateStreamEvent {
     candidateId: string;
     outcome: ApprovalCandidateOutcome;
     requestId: string;
+    responderPrincipalId: string;
     safeReason?: string;
     sequence: number;
     stepIndex: number;
