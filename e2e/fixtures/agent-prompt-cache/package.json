@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "catalog:",
+    "@workflow/world-postgres": "catalog:",
     "eve": "workspace:*",
     "zod": "catalog:"
   },

@@ -12,10 +12,12 @@ cd e2e/fixtures/agent-basic-runtime
 EVE_E2E_MODEL="openai/gpt-5.6-sol" pnpm exec eve eval --strict
 ```
 
-Every retained e2e eval is deterministic and self-contained. Coverage that
-needs external services or injected env is intentionally not part of this
-suite. Most fixtures use the shared model-provider credentials; dedicated
-runtime stress fixtures may use an authored deterministic model instead.
+Every retained e2e eval is deterministic and self-contained. Eval files do
+not start external services or require fixture-specific injected env. The CI
+harness may provide world-level infrastructure, such as the ephemeral
+PostgreSQL service used by the Postgres matrix. Most fixtures use the shared
+model-provider credentials; dedicated runtime stress fixtures may use an
+authored deterministic model instead.
 
 Each retained fixture package also exposes the same command as:
 
@@ -29,6 +31,40 @@ script:
 ```sh
 pnpm test:e2e
 ```
+
+## Postgres
+
+Postgres e2e runs the same fixture evals against a self-hosted production
+server backed by `@workflow/world-postgres`. Each matrix leg owns an isolated
+PostgreSQL service, bootstraps its schema, builds the fixture, starts it with
+`eve start`, and targets that server with `eve eval --url`.
+
+Fixture root agents read `EVE_E2E_WORKFLOW_WORLD` into
+`experimental.workflow.world`. The variable is unset in the local and Vercel
+suites, preserving their host defaults; the Postgres workflow sets it to
+`@workflow/world-postgres` while compiling the production server. The world
+package is a direct fixture dependency pinned through the workspace catalog
+to the same `@workflow/*` line as eve.
+
+The per-fixture lifecycle is:
+
+```sh
+export EVE_E2E_WORKFLOW_WORLD="@workflow/world-postgres"
+export WORKFLOW_POSTGRES_URL="postgres://world:world@127.0.0.1:5432/world"
+
+pnpm exec bootstrap
+pnpm exec eve build
+pnpm exec eve start --host 127.0.0.1 --port 3000
+
+# In a second process:
+pnpm exec eve eval --strict --url http://127.0.0.1:3000
+```
+
+After the eval succeeds, CI requires at least one row in
+`workflow.workflow_runs`. This proves the fixture used Postgres rather than
+silently falling back to the local world. Dev-only schedule dispatch evals
+skip against this production target, matching their Vercel behavior; the
+local matrix retains that development-route coverage.
 
 ## Vercel
 
@@ -107,6 +143,9 @@ When adding e2e coverage:
 - Keep it runnable with only `eve eval --strict`.
 - Keep it deterministic: no external service startup or injected env
   requirements (beyond model-provider credentials).
+- Keep the root `agent.ts` selectable through `EVE_E2E_WORKFLOW_WORLD` and
+  declare `@workflow/world-postgres` as a direct dependency so fixture
+  discovery automatically adds it to the Postgres matrix.
 - If the behavior cannot fit that shape yet, leave it out and rebuild it later
   as a first-class eval story.
 
@@ -121,10 +160,10 @@ with these model entries:
 
 The short name is the stable Actions check identifier; the full id selects the
 provider model. Updating a model version does not rename required checks.
-Each workflow also publishes one stable aggregate check, `e2e-local` or
-`e2e-vercel`, which succeeds only when every fixture and model leg succeeds.
-Require those two checks in the repository ruleset so newly added fixtures and
-models become required automatically.
+Each workflow also publishes one stable aggregate check: `e2e-local`,
+`e2e-postgres`, or `e2e-vercel`. Each aggregate succeeds only when every
+fixture and model leg succeeds. Require all three checks in the repository
+ruleset so newly added fixtures and models become required automatically.
 
 Each leg exports the selected id as `EVE_E2E_MODEL` before it runs:
 
@@ -146,6 +185,20 @@ DEPLOYMENT_URL="$(vc deploy --prebuilt --yes --target=preview \
   --env "EVE_E2E_MODEL=$EVE_E2E_MODEL" | tail -n 1)"
 npx eve eval --strict --url "$DEPLOYMENT_URL" --junit "$JUNIT_PATH"
 ```
+
+`.github/workflows/e2e-postgres.yml` starts PostgreSQL as a job service and
+runs a self-hosted production build:
+
+```sh
+pnpm exec bootstrap
+pnpm exec eve build
+pnpm exec eve start --host 127.0.0.1 --port 3000
+pnpm exec eve eval --strict --url http://127.0.0.1:3000 --junit "$JUNIT_PATH"
+```
+
+The Postgres matrix skips at the job level on irrelevant changes so those PRs
+do not start service containers. Its stable aggregate check still reports and
+succeeds on every PR.
 
 TUI smoke scripts are not e2e. They live under
 `packages/eve/test/tui-client` and run through `pnpm test:tui`.

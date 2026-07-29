@@ -11,6 +11,7 @@
     "test:e2e": "eve eval --strict"
   },
   "dependencies": {
+    "@workflow/world-postgres": "catalog:",
     "eve": "workspace:*",
     "zod": "catalog:"
   },

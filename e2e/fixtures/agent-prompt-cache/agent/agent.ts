@@ -2,6 +2,8 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { type AgentDefinition, defineAgent } from "eve";
 import { vercelOidc } from "eve/agents/auth";
 
+const workflowWorld = process.env.EVE_E2E_WORKFLOW_WORLD;
+
 /**
  * Prompt-cache e2e fixture.
  *
@@ -43,6 +45,7 @@ const anthropic = createAnthropic({
 });
 
 const agent: AgentDefinition = defineAgent({
+  experimental: workflowWorld === undefined ? undefined : { workflow: { world: workflowWorld } },
   model: anthropic(promptCacheModel),
   modelContextWindowTokens: 200_000,
 });
