@@ -586,18 +586,20 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const pendingCandidateEvent = getApprovalAuditState(session.state).activeCandidates.find(
       (candidate) => candidate.pendingEventEmitted !== true,
     );
-    if (emit && pendingCandidateEvent !== undefined) {
-      await emit(
-        createApprovalCandidateEvent({
-          candidateId: pendingCandidateEvent.candidateId,
-          outcome: "pending",
-          requestId: pendingCandidateEvent.requestId,
-          responderPrincipalId: pendingCandidateEvent.responder.principalId,
-          sequence: emissionState.sequence,
-          stepIndex: emissionState.stepIndex,
-          turnId: emissionState.turnId,
-        }),
-      );
+    if (pendingCandidateEvent !== undefined) {
+      if (emit) {
+        await emit(
+          createApprovalCandidateEvent({
+            candidateId: pendingCandidateEvent.candidateId,
+            outcome: "pending",
+            requestId: pendingCandidateEvent.requestId,
+            responderPrincipalId: pendingCandidateEvent.responder.principalId,
+            sequence: emissionState.sequence,
+            stepIndex: emissionState.stepIndex,
+            turnId: emissionState.turnId,
+          }),
+        );
+      }
       session = {
         ...session,
         state: markApprovalCandidatePendingEventEmitted({
@@ -605,6 +607,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           state: session.state,
         }),
       };
+      return { next: runStep, session };
     }
 
     const pendingCandidateHistoryEvent = getApprovalAuditState(session.state).candidateHistory.find(
