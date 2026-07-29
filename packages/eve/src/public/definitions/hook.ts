@@ -16,6 +16,8 @@ type ProtocolEvent<TType extends HandleMessageStreamEvent["type"]> = Extract<
  */
 export interface HookEventMap {
   readonly "action.result": ProtocolEvent<"action.result">;
+  readonly "approval.candidate": ProtocolEvent<"approval.candidate">;
+  readonly "approval.settled": ProtocolEvent<"approval.settled">;
   readonly "actions.requested": ProtocolEvent<"actions.requested">;
   readonly "authorization.completed": ProtocolEvent<"authorization.completed">;
   readonly "authorization.required": ProtocolEvent<"authorization.required">;

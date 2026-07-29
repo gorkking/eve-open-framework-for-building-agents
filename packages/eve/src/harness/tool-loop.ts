@@ -37,6 +37,8 @@ import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js
 import { toErrorMessage } from "#shared/errors.js";
 import {
   createActionResultEvent,
+  createApprovalCandidateEvent,
+  createApprovalSettledEvent,
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
   createInputRequestedEvent,
@@ -102,6 +104,7 @@ import {
 } from "#harness/input-extraction.js";
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
+import { getApprovalAuditState } from "#harness/approval-candidates.js";
 import {
   authorizePendingApprovalResponse,
   consumeDeferredStepInput,
@@ -571,6 +574,19 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       tools: responseAuthorizationTools,
     });
     session = authorized.session;
+    if (emit && authorized.kind !== "continue" && authorized.kind !== "duplicate") {
+      await emit(
+        createApprovalCandidateEvent({
+          candidateId: authorized.candidateId ?? `stale:${authorized.requestId}`,
+          outcome: authorized.kind === "authorization-required" ? "pending" : authorized.kind,
+          requestId: authorized.requestId,
+          safeReason: "safeReason" in authorized ? authorized.safeReason : undefined,
+          sequence: emissionState.sequence,
+          stepIndex: emissionState.stepIndex,
+          turnId: emissionState.turnId,
+        }),
+      );
+    }
     if (authorized.kind === "authorization-required") {
       const { challenges } = authorized.authorization;
       if (emit) {
@@ -596,6 +612,29 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           state: setPendingAuthorization(session.state, { challenges }),
         },
       };
+    }
+
+    if (emit && authorized.kind === "continue") {
+      const response = authorized.stepInput?.inputResponses?.find(
+        (entry) => entry.optionId === "approve" || entry.optionId === "cancel",
+      );
+      if (response !== undefined) {
+        const settlement = getApprovalAuditState(session.state).settlements.find(
+          (entry) => entry.requestId === response.requestId,
+        );
+        if (settlement !== undefined) {
+          await emit(
+            createApprovalSettledEvent({
+              outcome: settlement.outcome === "allowed" ? "approved" : "cancelled",
+              requestId: settlement.requestId,
+              responderPrincipalId: settlement.actor.principalId,
+              sequence: emissionState.sequence,
+              stepIndex: emissionState.stepIndex,
+              turnId: emissionState.turnId,
+            }),
+          );
+        }
+      }
     }
 
     const pending = resolvePendingInput({

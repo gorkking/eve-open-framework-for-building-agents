@@ -213,6 +213,35 @@ export interface ActionsRequestedStreamEvent {
   type: "actions.requested";
 }
 
+export type ApprovalCandidateOutcome = "pending" | "rejected" | "failed" | "timed-out" | "stale";
+
+/** Safe lifecycle event for one responder-bound approval candidate. */
+export interface ApprovalCandidateStreamEvent {
+  data: {
+    candidateId: string;
+    outcome: ApprovalCandidateOutcome;
+    requestId: string;
+    safeReason?: string;
+    sequence: number;
+    stepIndex: number;
+    turnId: string;
+  };
+  type: "approval.candidate";
+}
+
+/** Terminal durable settlement for one approval request. */
+export interface ApprovalSettledStreamEvent {
+  data: {
+    outcome: "approved" | "cancelled";
+    requestId: string;
+    responderPrincipalId: string;
+    sequence: number;
+    stepIndex: number;
+    turnId: string;
+  };
+  type: "approval.settled";
+}
+
 /**
  * Stream event emitted when the harness needs human input before it can
  * continue the run.
@@ -584,6 +613,8 @@ export interface SessionCompletedStreamEvent {
  * Serializable stream event union for the durable message session flow.
  */
 export type HandleMessageStreamEvent = (
+  | ApprovalCandidateStreamEvent
+  | ApprovalSettledStreamEvent
   | CompactionCompletedStreamEvent
   | CompactionRequestedStreamEvent
   | AuthorizationCompletedStreamEvent
@@ -996,6 +1027,20 @@ export function createAuthorizationCompletedEvent(input: {
     data,
     type: "authorization.completed",
   };
+}
+
+/** Creates a safe candidate lifecycle event. */
+export function createApprovalCandidateEvent(
+  input: ApprovalCandidateStreamEvent["data"],
+): ApprovalCandidateStreamEvent {
+  return { data: input, type: "approval.candidate" };
+}
+
+/** Creates a terminal approval settlement event. */
+export function createApprovalSettledEvent(
+  input: ApprovalSettledStreamEvent["data"],
+): ApprovalSettledStreamEvent {
+  return { data: input, type: "approval.settled" };
 }
 
 /**

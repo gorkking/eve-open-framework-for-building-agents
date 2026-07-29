@@ -86,11 +86,13 @@ export type PendingApprovalAuthorizationResult =
       readonly authorization: AuthorizationSignal;
       readonly candidateId: string;
       readonly kind: "authorization-required";
+      readonly requestId: string;
       readonly session: HarnessSession;
     }
   | {
       readonly candidateId?: string;
       readonly kind: "rejected" | "duplicate" | "stale" | "failed";
+      readonly requestId: string;
       readonly safeReason?: string;
       readonly session: HarnessSession;
       readonly stepInput?: StepInput;
@@ -152,6 +154,7 @@ async function authorizePendingApprovalResponseInternal(input: {
     });
     return {
       kind: settled.result.kind === "settled" ? "continue" : "stale",
+      requestId: response.requestId,
       session: { ...input.session, state: settled.state },
       stepInput:
         settled.result.kind === "settled"
@@ -196,6 +199,7 @@ async function authorizePendingApprovalResponseInternal(input: {
     return {
       candidateId: created.result.kind === "duplicate" ? candidateId : undefined,
       kind: created.result.kind,
+      requestId: response.requestId,
       session,
       stepInput: removeInputResponse(input.stepInput, response.requestId),
     };
@@ -251,6 +255,7 @@ async function authorizePendingApprovalResponseInternal(input: {
       return {
         candidateId,
         kind: "rejected",
+        requestId: response.requestId,
         safeReason: outcome.safeReason,
         session,
         stepInput: removeInputResponse(input.stepInput, response.requestId),
@@ -259,6 +264,7 @@ async function authorizePendingApprovalResponseInternal(input: {
     const settled = settleAllowedCandidate({ candidateId, settledAt: now, state: session.state });
     return {
       kind: settled.result.kind === "settled" ? "continue" : "stale",
+      requestId: response.requestId,
       session: { ...session, state: settled.state },
       stepInput:
         settled.result.kind === "settled"
@@ -283,7 +289,13 @@ async function authorizePendingApprovalResponseInternal(input: {
           state: session.state,
         }),
       };
-      return { authorization, candidateId, kind: "authorization-required", session };
+      return {
+        authorization,
+        candidateId,
+        kind: "authorization-required",
+        requestId: response.requestId,
+        session,
+      };
     }
     return failCandidate({
       candidateId,
@@ -303,6 +315,7 @@ function rejectWithoutCandidate(
 ): PendingApprovalAuthorizationResult {
   return {
     kind: "rejected",
+    requestId,
     safeReason,
     session: input.session,
     stepInput: removeInputResponse(input.stepInput, requestId),
@@ -320,6 +333,7 @@ function failCandidate(input: {
   return {
     candidateId: input.candidateId,
     kind: "failed",
+    requestId: input.requestId,
     safeReason: input.safeReason,
     session: {
       ...input.session,
