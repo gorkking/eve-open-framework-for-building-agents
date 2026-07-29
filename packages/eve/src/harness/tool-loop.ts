@@ -104,7 +104,11 @@ import {
 } from "#harness/input-extraction.js";
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
-import { getApprovalAuditState } from "#harness/approval-candidates.js";
+import {
+  getApprovalAuditState,
+  markApprovalCandidatePendingEventEmitted,
+  markApprovalSettlementEventEmitted,
+} from "#harness/approval-candidates.js";
 import { authorizePendingApprovalResponse } from "#harness/authorize-approval-response.js";
 import {
   consumeDeferredStepInput,
@@ -574,11 +578,44 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       tools: responseAuthorizationTools,
     });
     session = authorized.session;
-    if (emit && authorized.kind !== "continue" && authorized.kind !== "duplicate") {
+    if (authorized.kind === "candidate-created") {
+      return { next: runStep, session };
+    }
+
+    const pendingCandidateEvent = getApprovalAuditState(session.state).activeCandidates.find(
+      (candidate) => candidate.pendingEventEmitted !== true,
+    );
+    if (emit && pendingCandidateEvent !== undefined) {
+      await emit(
+        createApprovalCandidateEvent({
+          candidateId: pendingCandidateEvent.candidateId,
+          outcome: "pending",
+          requestId: pendingCandidateEvent.requestId,
+          responderPrincipalId: pendingCandidateEvent.responder.principalId,
+          sequence: emissionState.sequence,
+          stepIndex: emissionState.stepIndex,
+          turnId: emissionState.turnId,
+        }),
+      );
+      session = {
+        ...session,
+        state: markApprovalCandidatePendingEventEmitted({
+          candidateId: pendingCandidateEvent.candidateId,
+          state: session.state,
+        }),
+      };
+    }
+
+    if (
+      emit &&
+      authorized.kind !== "continue" &&
+      authorized.kind !== "duplicate" &&
+      authorized.kind !== "authorization-required"
+    ) {
       await emit(
         createApprovalCandidateEvent({
           candidateId: authorized.candidateId ?? `stale:${authorized.requestId}`,
-          outcome: authorized.kind === "authorization-required" ? "pending" : authorized.kind,
+          outcome: authorized.kind,
           requestId: authorized.requestId,
           responderPrincipalId:
             [
@@ -621,27 +658,28 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       };
     }
 
-    if (emit && authorized.kind === "continue") {
-      const response = authorized.stepInput?.inputResponses?.find(
-        (entry) => entry.optionId === "approve" || entry.optionId === "cancel",
+    const pendingSettlementEvent = getApprovalAuditState(session.state).settlements.find(
+      (settlement) => settlement.eventEmitted !== true,
+    );
+    if (emit && pendingSettlementEvent !== undefined) {
+      await emit(
+        createApprovalSettledEvent({
+          outcome: pendingSettlementEvent.outcome === "allowed" ? "approved" : "cancelled",
+          requestId: pendingSettlementEvent.requestId,
+          responderPrincipalId: pendingSettlementEvent.actor.principalId,
+          sequence: emissionState.sequence,
+          stepIndex: emissionState.stepIndex,
+          turnId: emissionState.turnId,
+        }),
       );
-      if (response !== undefined) {
-        const settlement = getApprovalAuditState(session.state).settlements.find(
-          (entry) => entry.requestId === response.requestId,
-        );
-        if (settlement !== undefined) {
-          await emit(
-            createApprovalSettledEvent({
-              outcome: settlement.outcome === "allowed" ? "approved" : "cancelled",
-              requestId: settlement.requestId,
-              responderPrincipalId: settlement.actor.principalId,
-              sequence: emissionState.sequence,
-              stepIndex: emissionState.stepIndex,
-              turnId: emissionState.turnId,
-            }),
-          );
-        }
-      }
+      session = {
+        ...session,
+        state: markApprovalSettlementEventEmitted({
+          requestId: pendingSettlementEvent.requestId,
+          state: session.state,
+        }),
+      };
+      return { next: runStep, session };
     }
 
     const pending = resolvePendingInput({

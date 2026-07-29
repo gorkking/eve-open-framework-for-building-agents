@@ -38,6 +38,7 @@ export interface ApprovalSettlementAuditRecord {
   readonly requestId: string;
   readonly settledAt: number;
   readonly candidateId?: string;
+  readonly eventEmitted?: boolean;
 }
 
 interface ActiveApprovalCandidate {
@@ -47,6 +48,7 @@ interface ActiveApprovalCandidate {
   readonly status: "pending" | "authorization-required";
   readonly authorizationName?: string;
   readonly createdAt: number;
+  readonly pendingEventEmitted?: boolean;
   readonly expiresAt: number;
   readonly provider?: string;
   readonly runtimeRevision?: string;
@@ -114,6 +116,40 @@ export function createApprovalCandidate(input: {
     result: { candidate, kind: "created" },
     state: writeApprovalState(input.state, next),
   };
+}
+
+/** Marks the pending candidate event as emitted. */
+export function markApprovalCandidatePendingEventEmitted(input: {
+  readonly candidateId: string;
+  readonly state: SessionStateMap | undefined;
+}): SessionStateMap | undefined {
+  const approvalState = readApprovalState(input.state);
+  const candidate = approvalState.activeCandidates[input.candidateId];
+  if (candidate === undefined || candidate.pendingEventEmitted === true) return input.state;
+  return writeApprovalState(input.state, {
+    ...approvalState,
+    activeCandidates: {
+      ...approvalState.activeCandidates,
+      [input.candidateId]: { ...candidate, pendingEventEmitted: true },
+    },
+  });
+}
+
+/** Marks a terminal settlement event as emitted. */
+export function markApprovalSettlementEventEmitted(input: {
+  readonly requestId: string;
+  readonly state: SessionStateMap | undefined;
+}): SessionStateMap | undefined {
+  const approvalState = readApprovalState(input.state);
+  const settlement = approvalState.settlements[input.requestId];
+  if (settlement === undefined || settlement.eventEmitted === true) return input.state;
+  return writeApprovalState(input.state, {
+    ...approvalState,
+    settlements: {
+      ...approvalState.settlements,
+      [input.requestId]: { ...settlement, eventEmitted: true },
+    },
+  });
 }
 
 /** Marks a candidate as waiting on a private authorization challenge. */

@@ -34,6 +34,12 @@ const APPROVAL_CANDIDATE_TTL_MS = 10 * 60_000;
 export type PendingApprovalAuthorizationResult =
   | { readonly kind: "continue"; readonly session: HarnessSession; readonly stepInput?: StepInput }
   | {
+      readonly candidateId: string;
+      readonly kind: "candidate-created";
+      readonly requestId: string;
+      readonly session: HarnessSession;
+    }
+  | {
       readonly authorization: AuthorizationSignal;
       readonly candidateId: string;
       readonly kind: "authorization-required";
@@ -68,9 +74,10 @@ export async function authorizePendingApprovalResponse(input: {
   const batch = getPendingInputBatch(input.session.state);
   const activeCandidate = getApprovalAuditState(input.session.state).activeCandidates.find(
     (candidate) =>
-      candidate.status === "authorization-required" &&
-      candidate.authorizationName !== undefined &&
-      getAuthorizationResult(candidate.authorizationName) !== undefined,
+      (candidate.status === "pending" && candidate.pendingEventEmitted === true) ||
+      (candidate.status === "authorization-required" &&
+        candidate.authorizationName !== undefined &&
+        getAuthorizationResult(candidate.authorizationName) !== undefined),
   );
   const response =
     input.stepInput?.inputResponses?.find((entry) =>
@@ -147,6 +154,14 @@ export async function authorizePendingApprovalResponse(input: {
     state: input.session.state,
   });
   let session = { ...input.session, state: created.state };
+  if (created.result.kind === "created") {
+    return {
+      candidateId,
+      kind: "candidate-created",
+      requestId: response.requestId,
+      session,
+    };
+  }
   if (
     activeCandidate === undefined &&
     (created.result.kind === "duplicate" || created.result.kind === "stale")

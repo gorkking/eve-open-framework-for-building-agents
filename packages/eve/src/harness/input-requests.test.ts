@@ -912,8 +912,37 @@ describe("authorizePendingApprovalResponse", () => {
     return contextStorage.run(ctx, run);
   }
 
+  async function continueCreatedCandidate(
+    result: Awaited<ReturnType<typeof authorizePendingApprovalResponse>>,
+    tools: HarnessToolMap,
+  ) {
+    if (result.kind !== "candidate-created") return result;
+    const state = result.session.state?.["eve.runtime.hitl.approvalState"] as {
+      activeCandidates: Record<string, Record<string, unknown>>;
+    };
+    const activeCandidates = Object.fromEntries(
+      Object.entries(state.activeCandidates).map(([id, candidate]) => [
+        id,
+        { ...candidate, pendingEventEmitted: true },
+      ]),
+    );
+    return await approvalContext(() =>
+      authorizePendingApprovalResponse({
+        now: 101,
+        session: {
+          ...result.session,
+          state: {
+            ...result.session.state,
+            "eve.runtime.hitl.approvalState": { ...state, activeCandidates },
+          },
+        },
+        tools,
+      }),
+    );
+  }
+
   it("fails closed when a required authorizer is missing", async () => {
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session: pendingSession(),
@@ -923,11 +952,11 @@ describe("authorizePendingApprovalResponse", () => {
         tools: new Map(),
       }),
     );
+    result = await continueCreatedCandidate(result, new Map());
 
     expect(result).toMatchObject({
       kind: "failed",
       safeReason: "Approval authorization is temporarily unavailable. Please try again.",
-      stepInput: { inputResponses: [] },
     });
     expect(resolvePendingInput({ session: result.session }).outcome).toBe("unresolved");
   });
@@ -950,7 +979,7 @@ describe("authorizePendingApprovalResponse", () => {
         },
       ],
     ]);
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session: pendingSession(),
@@ -960,11 +989,11 @@ describe("authorizePendingApprovalResponse", () => {
         tools,
       }),
     );
+    result = await continueCreatedCandidate(result, tools);
 
     expect(result).toMatchObject({
       kind: "rejected",
       safeReason: "U1 lacks repository write access.",
-      stepInput: { inputResponses: [] },
     });
     expect(resolvePendingInput({ session: result.session }).outcome).toBe("unresolved");
   });
@@ -984,7 +1013,7 @@ describe("authorizePendingApprovalResponse", () => {
         },
       ],
     ]);
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session: pendingSession(),
@@ -994,6 +1023,7 @@ describe("authorizePendingApprovalResponse", () => {
         tools,
       }),
     );
+    result = await continueCreatedCandidate(result, tools);
 
     expect(result.kind).toBe("continue");
     if (result.kind !== "continue") throw new Error("Expected allowed candidate.");
@@ -1058,7 +1088,7 @@ describe("authorizePendingApprovalResponse", () => {
         },
       ],
     ]);
-    const result = await approvalContext(() =>
+    let result = await approvalContext(() =>
       authorizePendingApprovalResponse({
         now: 100,
         session,
@@ -1071,6 +1101,7 @@ describe("authorizePendingApprovalResponse", () => {
         tools,
       }),
     );
+    result = await continueCreatedCandidate(result, tools);
 
     expect(result.kind).toBe("continue");
     if (result.kind !== "continue") throw new Error("Expected first candidate to settle.");
