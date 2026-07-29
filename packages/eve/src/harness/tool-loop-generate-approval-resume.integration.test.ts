@@ -65,7 +65,7 @@ function createPendingApprovalSession(): HarnessSession {
         display: "confirmation",
         options: [
           { id: "approve", label: "Yes" },
-          { id: "deny", label: "No" },
+          { id: "cancel", label: "No" },
         ],
         prompt: "Approve tool call: bash",
         requestId: approvalRequest.approvalId,

@@ -100,7 +100,7 @@ Approvals and questions share one protocol:
 1. The model requests input (an approval, or an `ask_question`).
 2. eve emits an `input.requested` stream event carrying the pending requests.
 3. The turn parks at `session.waiting`, durably, for as long as it takes.
-4. The client answers with `inputResponses` (structured, keyed by `requestId`) or a normal follow-up `message`. A follow-up whose text matches an option ID, option label, or numeric option index resolves automatically, including approval options such as `approve` and `deny`.
+4. The client answers with `inputResponses` (structured, keyed by `requestId`) or a normal follow-up `message`. A follow-up whose text matches an option ID, option label, or numeric option index resolves automatically, including approval options such as `approve` and `cancel`.
 
 The run picks back up exactly where it parked. Because the pause is durable, nothing is held in memory while it waits — the process can restart and the parked turn survives.
 

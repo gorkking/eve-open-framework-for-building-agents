@@ -30,7 +30,7 @@ export const inputOptionSchema = z
  * user input before continuing.
  *
  * Tool approvals and questions share this shape. Approvals are requests
- * with two options (`"approve"` / `"deny"`) and `display: "confirmation"`.
+ * with two options (`"approve"` / `"cancel"`) and `display: "confirmation"`.
  */
 export type InputRequest = z.infer<typeof inputRequestSchema>;
 
