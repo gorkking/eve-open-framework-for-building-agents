@@ -581,9 +581,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           outcome: authorized.kind === "authorization-required" ? "pending" : authorized.kind,
           requestId: authorized.requestId,
           responderPrincipalId:
-            getApprovalAuditState(session.state).activeCandidates.find(
-              (candidate) => candidate.candidateId === authorized.candidateId,
-            )?.responder.principalId ?? "unknown",
+            [
+              ...getApprovalAuditState(session.state).activeCandidates,
+              ...getApprovalAuditState(session.state).candidateHistory,
+            ].find((candidate) => candidate.candidateId === authorized.candidateId)?.responder
+              .principalId ?? "unknown",
           safeReason: "safeReason" in authorized ? authorized.safeReason : undefined,
           sequence: emissionState.sequence,
           stepIndex: emissionState.stepIndex,

@@ -175,7 +175,12 @@ export const defaultEvents: SlackChannelInternalEvents = {
       );
       return;
     }
-    const userId = channel.state.pendingApprovalCandidateUsers?.[event.candidateId];
+    const mappedUserId = channel.state.pendingApprovalCandidateUsers?.[event.candidateId];
+    const userId =
+      mappedUserId ??
+      (ctx.session.auth.current?.principalId === event.responderPrincipalId
+        ? currentUserId
+        : undefined);
     if (userId === undefined) return;
     if (event.outcome === "rejected" || event.outcome === "failed") {
       await channel.thread.postEphemeral(

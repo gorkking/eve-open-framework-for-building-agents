@@ -81,6 +81,33 @@ describe("defaultEvents approval lifecycle", () => {
     );
   });
 
+  it("delivers an immediate rejection to the current responder without prior mapping", async () => {
+    const { channel, postEphemeral } = buildChannelStub();
+    const ctx = sessionContext({
+      attributes: { user_id: "U777" },
+      authenticator: "slack-webhook",
+      principalId: "slack:T1:U777",
+      principalType: "user",
+    });
+
+    await defaultEvents["approval.candidate"]!(
+      {
+        candidateId: "candidate-1",
+        outcome: "rejected",
+        requestId: "approval-1",
+        responderPrincipalId: "slack:T1:U777",
+        safeReason: "GitHub write access is required.",
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      channel,
+      ctx,
+    );
+
+    expect(postEphemeral).toHaveBeenCalledWith("U777", "GitHub write access is required.");
+  });
+
   it("updates the shared card only after settlement", async () => {
     const { channel, request } = buildChannelStub({
       pendingApprovalCards: {
