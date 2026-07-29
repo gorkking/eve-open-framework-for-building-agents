@@ -529,6 +529,7 @@ export interface CompactionCompletedStreamEvent {
 export interface AuthorizationRequiredStreamEvent {
   data: {
     authorization?: ConnectionAuthorizationChallenge;
+    candidateId?: string;
     description: string;
     name: string;
     sequence: number;
@@ -560,6 +561,7 @@ export type ConnectionAuthorizationOutcome = AuthorizationOutcome;
  */
 export interface AuthorizationCompletedStreamEvent {
   data: {
+    candidateId?: string;
     /**
      * The challenge from the matching `authorization.required` event,
      * journaled across the park. Lets channels keep rendering the
@@ -970,6 +972,7 @@ export function createActionsRequestedEvent(input: {
  */
 export function createAuthorizationRequiredEvent(input: {
   readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly candidateId?: string;
   readonly description: string;
   readonly name: string;
   readonly sequence: number;
@@ -987,6 +990,9 @@ export function createAuthorizationRequiredEvent(input: {
   if (input.authorization !== undefined) {
     data.authorization = input.authorization;
   }
+  if (input.candidateId !== undefined) {
+    data.candidateId = input.candidateId;
+  }
   if (input.webhookUrl !== undefined) {
     data.webhookUrl = input.webhookUrl;
   }
@@ -1003,6 +1009,7 @@ export function createAuthorizationRequiredEvent(input: {
  */
 export function createAuthorizationCompletedEvent(input: {
   readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly candidateId?: string;
   readonly name: string;
   readonly outcome: AuthorizationOutcome;
   readonly reason?: string;
@@ -1019,6 +1026,9 @@ export function createAuthorizationCompletedEvent(input: {
   };
   if (input.authorization !== undefined) {
     data.authorization = input.authorization;
+  }
+  if (input.candidateId !== undefined) {
+    data.candidateId = input.candidateId;
   }
   if (input.reason !== undefined) {
     data.reason = input.reason;

@@ -594,6 +594,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           await emit(
             createAuthorizationRequiredEvent({
               authorization: challenge.challenge,
+              candidateId: authorized.candidateId,
               description:
                 challenge.challenge.instructions ?? `Authorization required for ${challenge.name}`,
               name: challenge.name,

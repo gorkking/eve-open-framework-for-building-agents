@@ -46,6 +46,7 @@ const AUTHORIZATION_PENDING_BRAND = "__eveAuthorizationPending" as const;
 // ---------------------------------------------------------------------------
 
 export interface AuthorizationChallenge {
+  readonly candidateId?: string;
   readonly name: string;
   readonly challenge: ConnectionAuthorizationChallenge;
   readonly hookUrl: string;
@@ -104,6 +105,7 @@ export function requestAuthorization(
 export function redactSignalResume(signal: AuthorizationSignal): AuthorizationSignal {
   return requestAuthorization(
     signal.challenges.map((entry) => ({
+      candidateId: entry.candidateId,
       name: entry.name,
       challenge: entry.challenge,
       hookUrl: entry.hookUrl,

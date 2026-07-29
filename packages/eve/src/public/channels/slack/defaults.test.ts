@@ -136,6 +136,19 @@ describe("defaultEvents authorization.required", () => {
     expect(channel.state.pendingAuthMessageTs).toEqual({ notion: "ts1" });
   });
 
+  it("does not post a public status for candidate-scoped authorization", async () => {
+    const { channel, post, postEphemeral } = buildChannelStub({ triggeringUserId: "U777" });
+
+    await defaultEvents["authorization.required"]!(
+      { ...authRequiredEvent(), candidateId: "candidate-1" },
+      channel,
+      sessionCtx,
+    );
+
+    expect(post).not.toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledTimes(1);
+  });
+
   it("targets the current Slack caller instead of stale channel state", async () => {
     const { channel, postEphemeral } = buildChannelStub({ triggeringUserId: "U_FIRST" });
     const currentCaller = sessionContext({

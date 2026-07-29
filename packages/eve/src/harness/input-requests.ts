@@ -290,7 +290,13 @@ async function authorizePendingApprovalResponseInternal(input: {
         }),
       };
       return {
-        authorization,
+        authorization: {
+          ...authorization,
+          challenges: authorization.challenges.map((challenge) => ({
+            ...challenge,
+            candidateId,
+          })),
+        },
         candidateId,
         kind: "authorization-required",
         requestId: response.requestId,

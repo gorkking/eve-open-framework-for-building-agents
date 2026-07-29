@@ -300,7 +300,7 @@ export const defaultEvents: SlackChannelInternalEvents = {
     // the session is blocked and later see it complete. The challenge
     // itself remains private.
     const pending = channel.state.pendingAuthMessageTs ?? {};
-    if (pending[event.name] === undefined) {
+    if (event.candidateId === undefined && pending[event.name] === undefined) {
       const publicText = buildAuthRequiredPublicText({
         displayName,
         hasUser: triggeringUserId !== null,
@@ -350,7 +350,7 @@ export const defaultEvents: SlackChannelInternalEvents = {
 
   async "authorization.completed"(event, channel, _ctx) {
     const displayName = event.authorization?.displayName ?? formatConnectionDisplayName(event.name);
-    if (event.outcome === "authorized") {
+    if (event.outcome === "authorized" && event.candidateId === undefined) {
       await channel.thread.startTyping(`Connected to ${displayName}. Resuming...`);
     }
 
