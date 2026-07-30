@@ -28,6 +28,7 @@ import {
 } from "#internal/mcp/protected-resource.js";
 import { inputRequestSchema, inputResponseSchema } from "#runtime/input/types.js";
 import {
+  escapeAuthChallengeParameter,
   readOAuthResourceOptions,
   routeAuth,
   type AuthFn,
@@ -37,8 +38,6 @@ import {
   readAgentInfoRouteResponse,
   readRouteAgent,
 } from "#internal/nitro/routes/channel-route-context.js";
-import { escapeAuthChallengeParameter } from "#shared/http-auth.js";
-
 export interface McpChannelInput {
   /** Existing eve route-auth policy. Use `none()` for explicit public access. */
   readonly auth: AuthFn<Request> | readonly AuthFn<Request>[];
