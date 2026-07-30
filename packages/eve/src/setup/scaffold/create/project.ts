@@ -5,6 +5,7 @@ import type { PackageManagerKind } from "../../package-manager.js";
 import { pinnedNodeEngineMajor } from "../../node-engine.js";
 import { SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS } from "../update/module-files.js";
 import { pathExists, writeTextFile } from "../files.js";
+import { blockingCreateInPlaceEntries } from "../create-in-place.js";
 import { resolveVersionToken } from "../version-tokens.js";
 import {
   applyPackageManagerWorkspaceConfiguration,
@@ -13,8 +14,6 @@ import {
   type WorkspaceRootMutation,
 } from "../workspace-root.js";
 export const CURRENT_DIRECTORY_PROJECT_NAME = ".";
-
-const ALLOWED_CREATE_IN_PLACE_ENTRIES = new Set([".DS_Store", ".git", ".gitkeep", ".hg"]);
 
 export const DEFAULT_AI_PACKAGE_VERSION = "__AI_SDK_VERSION__";
 export const DEFAULT_CONNECT_PACKAGE_VERSION = "__VERCEL_CONNECT_VERSION__";
@@ -316,7 +315,7 @@ async function assertCanCreateInPlace(
   }
 
   const entries = await readdir(targetRoot);
-  const blocking = entries.filter((entry) => !ALLOWED_CREATE_IN_PLACE_ENTRIES.has(entry));
+  const blocking = blockingCreateInPlaceEntries(entries);
   if (blocking.length > 0 && !overwriteExisting) {
     const visible = blocking.slice(0, 5).join(", ");
     const suffix = blocking.length > 5 ? `, and ${blocking.length - 5} more` : "";
@@ -383,7 +382,7 @@ export async function scaffoldBaseProject(options: ScaffoldBaseProjectOptions): 
       "aiPackageVersion",
       options.aiPackageVersion ?? DEFAULT_AI_PACKAGE_VERSION,
     ),
-    // Channels and connections scaffolded later (`eve channels add slack`,
+    // Channels and connections scaffolded later (`eve add channel/slack`,
     // possibly while `eve dev` is running) import `@vercel/connect`; shipping
     // it from init means adding them never introduces a missing dependency.
     connectPackageVersion: resolveVersionToken(

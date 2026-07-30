@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFakePrompter } from "#internal/testing/fake-prompter.js";
-import type { AddChannelsDeps } from "#setup/boxes/add-channels.js";
+import type { AddChannelsDeps } from "#setup/integrations/channels/setup.js";
 import { deriveSlackConnectorSlug } from "#setup/scaffold/index.js";
 
 import { runIntegrationSetupCommand } from "./integration-setup.js";
@@ -36,10 +36,7 @@ function addChannelsDeps(): AddChannelsDeps {
       source: "default",
     })),
     runPackageManagerInstall: vi.fn(async () => true),
-    runVercel: vi.fn(async () => true),
-    detectDeployment: vi.fn<AddChannelsDeps["detectDeployment"]>(async () => ({
-      state: "unlinked",
-    })),
+    ensureVercelProject: vi.fn(async () => ({ orgId: "team-id", projectId: "project-id" })),
   };
 }
 
