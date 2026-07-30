@@ -212,14 +212,22 @@ function projectNonterminal(
       inputRequests = undefined;
       result = undefined;
     } else if (event.type === "authorization.required") {
-      authorizations.set(event.data.name, {
-        ...(event.data.authorization === undefined
-          ? {}
-          : { authorization: event.data.authorization }),
+      const authorization: {
+        authorization?: AgentInvocationAuthorizationRequest["authorization"];
+        description: string;
+        name: string;
+        webhookUrl?: string;
+      } = {
         description: event.data.description,
         name: event.data.name,
-        ...(event.data.webhookUrl === undefined ? {} : { webhookUrl: event.data.webhookUrl }),
-      });
+      };
+      if (event.data.authorization !== undefined) {
+        authorization.authorization = event.data.authorization;
+      }
+      if (event.data.webhookUrl !== undefined) {
+        authorization.webhookUrl = event.data.webhookUrl;
+      }
+      authorizations.set(event.data.name, authorization);
     } else if (event.type === "authorization.completed") {
       authorizations.delete(event.data.name);
     } else if (event.type === "message.completed" && event.data.message !== null) {

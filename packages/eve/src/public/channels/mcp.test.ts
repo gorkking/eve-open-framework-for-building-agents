@@ -179,6 +179,12 @@ describe("mcpChannel", () => {
 
   it("bounds and rejects external output schemas before starting work", async () => {
     const run = vi.fn();
+    const agent: Agent = {
+      cancelTurn: vi.fn(),
+      deliver: vi.fn(),
+      getEventStream: vi.fn(),
+      run,
+    };
     const channel = mcpChannel({ auth: none() });
     const route = channel.routes[1]!;
     if (route.transport === "websocket") throw new Error("expected HTTP route");
@@ -196,7 +202,7 @@ describe("mcpChannel", () => {
           name: "agent_start",
         },
       }),
-      routeArgs({ run } as unknown as Agent),
+      routeArgs(agent),
     );
 
     await expect(jsonRpcResponse(response)).resolves.toMatchObject({
