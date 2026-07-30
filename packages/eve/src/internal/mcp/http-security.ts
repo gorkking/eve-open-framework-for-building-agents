@@ -3,7 +3,7 @@ import {
   originValidationResponse,
 } from "#compiled/@modelcontextprotocol/server/index.js";
 
-import { isLoopbackHostname } from "#shared/loopback.js";
+import { isLoopbackHostname } from "#shared/network-address.js";
 
 /**
  * Applies the fetch-native HTTP guards required in front of the MCP SDK.

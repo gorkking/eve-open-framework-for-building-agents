@@ -28,7 +28,7 @@ import {
   isRuntimeIpAllowed,
   type RuntimeIpAllowList,
 } from "#runtime/governance/network/ip-allow-list.js";
-import { isLoopbackHostname } from "#shared/loopback.js";
+import { isLoopbackHostname } from "#shared/network-address.js";
 
 // ---------------------------------------------------------------------------
 // Result types
