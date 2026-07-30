@@ -513,6 +513,19 @@
       ]
     },
     {
+      "name": "connection/shopify-storefront",
+      "type": "registry:item",
+      "title": "Shopify",
+      "description": "Manage Shopify storefront carts and answer store policy and FAQ questions.",
+      "files": [
+        {
+          "path": "registry/connections/shopify-storefront.ts",
+          "type": "registry:file",
+          "target": "agent/connections/shopify-storefront.ts"
+        }
+      ]
+    },
+    {
       "name": "connection/similarweb",
       "type": "registry:item",
       "title": "Similarweb",

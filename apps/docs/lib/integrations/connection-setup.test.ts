@@ -28,6 +28,20 @@ describe("Browser Use connection setup", () => {
   });
 });
 
+describe("Shopify storefront connection setup", () => {
+  it("generates an unauthenticated storefront MCP snippet", () => {
+    const integration = getIntegration("shopify-storefront")!;
+    const setup = buildConnectionSetup(integration);
+    const quickStart = setup.variants["mcp:none"];
+
+    expect(quickStart).toContain("https://your-store.myshopify.com/api/mcp");
+    expect(quickStart).not.toContain("@vercel/connect");
+    expect(buildConnectionInstall(integration)).toContain("eve add connection/shopify-storefront");
+    expect(buildConnectionConfigure(integration)).toContain("your-store");
+    expect(buildConnectionConfigure(integration)).not.toContain("vercel connect create");
+  });
+});
+
 describe("Kernel extension setup", () => {
   it("uses Kernel's eve extension with Vercel Connect", () => {
     const integration = getIntegration("kernel")!;

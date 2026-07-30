@@ -24,6 +24,7 @@ import {
   SiPostman,
   SiRazorpay,
   SiSentry,
+  SiShopify,
   SiSimilarweb,
   SiStripe,
   SiSupabase,
@@ -233,6 +234,8 @@ export const postmanLogo = (props: LogoProps) => <SiPostman color="default" {...
 export const razorpayLogo = (props: LogoProps) => <SiRazorpay {...props} />;
 
 export const sentryLogo = (props: LogoProps) => <SiSentry {...props} />;
+
+export const shopifyLogo = (props: LogoProps) => <SiShopify color="default" {...props} />;
 
 export const similarwebLogo = (props: LogoProps) => <SiSimilarweb {...props} />;
 
@@ -621,6 +624,7 @@ export const logos = {
   postman: postmanLogo,
   razorpay: razorpayLogo,
   sentry: sentryLogo,
+  shopify: shopifyLogo,
   similarweb: similarwebLogo,
   stripe: stripeLogo,
   supabase: supabaseLogo,

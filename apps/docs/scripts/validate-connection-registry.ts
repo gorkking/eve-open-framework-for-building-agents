@@ -74,6 +74,12 @@ for (const item of items) {
         'Registry item "connection/browser-use" must declare its API key without Vercel Connect.',
       );
     }
+  } else if (slug === "shopify-storefront") {
+    if (item.dependencies !== undefined || item.envVars !== undefined) {
+      throw new Error(
+        'Registry item "connection/shopify-storefront" must not declare authentication dependencies or environment variables.',
+      );
+    }
   } else if (!item.dependencies?.includes("@vercel/connect")) {
     throw new Error(`Registry item "${item.name}" must depend on @vercel/connect.`);
   }

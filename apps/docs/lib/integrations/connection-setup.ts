@@ -38,7 +38,9 @@ const buildSnippet = (
   const transport = protocol === "mcp" ? spec.mcp : spec.openapi;
 
   const imports = [
-    ...(auth === "apiKey" ? [] : [`import { connect } from "@vercel/connect/eve";`]),
+    ...(auth === "apiKey" || auth === "none"
+      ? []
+      : [`import { connect } from "@vercel/connect/eve";`]),
     `import { ${defineFn} } from "eve/connections";`,
   ];
 
@@ -101,6 +103,9 @@ const authNote = (auth: AuthMode): string => {
   if (auth === "apiKey") {
     return "Keep the API key in a server-side environment variable. eve sends it directly to the MCP server and does not expose it to the model.";
   }
+  if (auth === "none") {
+    return "This MCP server does not require authentication. No credentials are sent with tool calls.";
+  }
   return "Connect exchanges a JWT bearer assertion for a provider token. `principalToSubject` maps each principal to the subject your IdP expects.";
 };
 
@@ -160,7 +165,7 @@ export const buildConnectionConfigure = (integration: Integration): string => {
     return "";
   }
   const sections: string[] = [];
-  if (spec.authModes.some((auth) => auth !== "apiKey")) {
+  if (spec.authModes.some((auth) => auth !== "apiKey" && auth !== "none")) {
     const connector = connectorOf(integration.slug, spec);
     const connectorService = spec.connectorService ?? connector;
     sections.push(

@@ -104,4 +104,10 @@ describe("integration catalog", () => {
       "https://api.browser-use.com/v3/mcp",
     );
   });
+
+  it("uses Shopify's storefront MCP endpoint placeholder", () => {
+    expect(getIntegrationEntry("shopify-storefront")!.connection!.mcp!.url).toBe(
+      "https://your-store.myshopify.com/api/mcp",
+    );
+  });
 });

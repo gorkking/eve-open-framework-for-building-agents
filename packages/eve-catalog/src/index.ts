@@ -634,6 +634,17 @@ export const INTEGRATIONS: readonly IntegrationEntry[] = [
     },
   },
   {
+    slug: "shopify-storefront",
+    name: "Shopify",
+    kind: "connection",
+    tagline: "Manage storefront carts and answer store policy and FAQ questions.",
+    surfaces: { scaffoldable: false, gallery: true },
+    connection: {
+      description: "Shopify storefront: manage carts and answer store policy and FAQ questions.",
+      mcp: { url: "https://your-store.myshopify.com/api/mcp" },
+    },
+  },
+  {
     slug: "similarweb",
     name: "Similarweb",
     kind: "connection",
