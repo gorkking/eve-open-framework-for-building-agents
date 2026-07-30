@@ -1,0 +1,186 @@
+---
+title: "Chat Persistence"
+description: "Relate named chats to eve sessions, persist event history, and restore conversations."
+---
+
+eve already persists the runtime session, model history, and event stream. You do not need to provision a database to make an agent durable or to continue a session across turns.
+
+Your application needs its own storage only when the product should remember UI state outside the current page—for example, named chats in a sidebar, rendered history after a reload, cross-device access, search, analytics, or application-specific retention. Browser storage is enough for a local chat. Use your existing database or storage service when chats belong to users or teams.
+
+A persisted chat has two identities:
+
+- **Your chat ID** owns product concerns such as the title, owner, timestamps, and sidebar identity.
+- **The eve session** owns durable model history and execution.
+
+Do not use an eve session ID as your application's chat ID. Create the chat record first, give it your own stable ID, and associate the eve session after the first send. One application chat normally maps to one eve session.
+
+## What to store
+
+Persist both of these eve values when the UI must restore a chat:
+
+1. The complete `SessionState`: `sessionId`, `continuationToken`, and `streamIndex`.
+2. An ordered prefix of the session's raw `MessageStreamEvent[]`.
+
+`SessionState` is a cursor, not a transcript. The continuation token resumes model history, while the session ID and stream index reconnect the event stream. The events rebuild the rendered messages, tool calls, approvals, and authorization prompts without asking the server to replay the entire session.
+
+Store raw events rather than only the projected `data.messages`. Raw events are the authoritative record. A separate messages collection can still be useful for search or analytics, but treat it as a projection that you can rebuild.
+
+## Suggested data model
+
+The storage technology and exact schema belong to your application. Conceptually, keep product metadata, the eve cursor, and the ordered event log together under your chat ID:
+
+```ts
+import type { MessageStreamEvent, SessionState } from "eve/client";
+
+interface StoredChatEvent {
+  /** Zero-based position in this eve session's stream. */
+  readonly position: number;
+  /** event.meta.id, used to deduplicate overlapping replays. */
+  readonly eventId: string;
+  readonly event: MessageStreamEvent;
+}
+
+interface StoredChat {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly session?: SessionState;
+  readonly events: readonly StoredChatEvent[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+```
+
+This shape can live in `localStorage`, a document store, a relational database, or another durable service. Preserve `position` because `meta.id` is broadly time-ordered, but not a lossless ordering cursor. Deduplicate on `eventId` when a reconnect overlaps events already stored.
+
+If your app can restart an expired or terminal eve session inside the same visible chat, store a list of session-and-event segments. Do not overwrite the old session state and mix events from two eve sessions into one ordered prefix.
+
+## Create the chat before sending
+
+Create the application record before calling `send()`. This gives messages typed before a fast refresh or navigation a durable place to land:
+
+```tsx
+const chat = await createChat({ title: "New chat" });
+
+// Persist the pending composer value if your UX must survive navigation here.
+await agent.send({ message });
+```
+
+After eve accepts the first turn, the hook's `session` contains the assigned session ID. Save the complete session state, not just that ID. A follow-up needs the continuation token; a reconnect needs the session ID and stream index.
+
+## Persist events from `useEveAgent`
+
+`onEvent` receives authoritative server events in stream order. Persist each event with its next position, then advance the saved cursor only after the event writes ahead of it are durable. Both writes should be idempotent.
+
+The callbacks are observe-only and eve does not await them. Queue writes in the browser, or send them to an application endpoint that serializes writes for the chat:
+
+```tsx
+import { useEffect, useRef } from "react";
+import { useEveAgent } from "eve/react";
+import type { MessageStreamEvent, SessionState } from "eve/client";
+
+interface SavedChat {
+  readonly events: readonly MessageStreamEvent[];
+  readonly session: SessionState;
+}
+
+function Chat({ chatId, saved }: { chatId: string; saved: SavedChat }) {
+  const nextPosition = useRef(saved.events.length);
+  const writes = useRef(Promise.resolve());
+
+  const agent = useEveAgent({
+    initialEvents: saved.events,
+    initialSession: saved.session,
+    onEvent(event) {
+      const position = nextPosition.current++;
+      writes.current = writes.current.then(() => appendChatEvent({ chatId, event, position }));
+    },
+    onFinish(snapshot) {
+      writes.current = writes.current.then(() => saveChatCursor(chatId, snapshot.session));
+    },
+  });
+
+  useEffect(() => {
+    if (!agent.session.sessionId) return;
+
+    // This queues behind the event write that advanced the cursor.
+    const session = agent.session;
+    writes.current = writes.current.then(() => saveChatCursor(chatId, session));
+  }, [agent.session.continuationToken, agent.session.sessionId, agent.session.streamIndex, chatId]);
+
+  // Render agent.data.messages and call agent.send(...) as usual.
+}
+```
+
+`appendChatEvent` should upsert on `event.meta.id`. `saveChatCursor` should update all three `SessionState` fields together. In a production UI, report and retry failed persistence requests; do not let one rejected promise silently stop the queue.
+
+Saving only in `onFinish` is enough when you only support reloads between turns. Persist as events arrive when users may reload during long-running turns, tool calls, or authorization pauses. A final snapshot write can reconcile any batched event writes at the turn boundary.
+
+## Restore a chat
+
+Load the chat's cursor and events ordered by `position`, then pass them to the hook:
+
+```tsx
+const initialEvents = chat.events
+  .toSorted((left, right) => left.position - right.position)
+  .map((stored) => stored.event);
+
+const agent = useEveAgent({
+  initialEvents,
+  initialSession: chat.session,
+});
+```
+
+`initialEvents` must be a contiguous, ordered prefix from the same eve session. Its end may be ahead of or behind `initialSession.streamIndex`: eve deduplicates an overlapping replay by `meta.id`, so each event is rendered once and `onEvent` only receives events the UI has not already applied.
+
+If event persistence has a gap, return only the contiguous prefix before that gap and move the reconnect cursor back to the missing position. Starting after a missing event would make the UI unable to reconstruct the full transcript.
+
+Remount the hook when switching sidebar chats because its session-shaping options are read when its store is created:
+
+```tsx
+<Chat key={chat.id} chatId={chat.id} saved={chat.savedEveState} />
+```
+
+The restored session may still be running. The lower-level client can explicitly reattach with `session.stream()` when your application needs to recover work immediately after a reload; see [Client continuations](./client/continuations#reconnect-an-existing-stream).
+
+## Persist with an agent hook
+
+An authored hook is useful when every channel must feed one central event warehouse, even if no browser is connected:
+
+```ts title="agent/hooks/persist.ts"
+import { defineHook } from "eve/hooks";
+
+export default defineHook({
+  events: {
+    async "*"(event, ctx) {
+      await insertEvent({
+        eventId: event.meta.id,
+        sessionId: ctx.session.id,
+        event,
+      });
+    },
+  },
+});
+```
+
+Associate those events with your application chat through the saved eve session ID. The hook can observe the runtime session ID, but it does not own your chat title, owner, or application ID.
+
+A hook archive keyed only by `meta.id` and the session ID is a good audit or analytics source. It is not automatically a valid `initialEvents` source: event IDs do not define exact stream order, and the hook context does not expose the event's absolute stream position. To hydrate `useEveAgent`, also capture stream order from the client or store an ordered snapshot.
+
+Hooks run after the event is durably recorded, and a thrown hook can fail the turn. Catch storage errors when chat archival should not affect agent availability; let them propagate only when successful persistence is a requirement for the turn.
+
+## Operational rules
+
+- Authorize every chat read and write against your own owner or tenant identity. An eve session ID is not an authorization boundary.
+- Treat events as sensitive. They can contain user messages, model output, tool arguments and results, file metadata, reasoning, and authorization instructions.
+- Deduplicate stored events by `meta.id`, but order them by their captured stream position.
+- Advance `streamIndex` only through a contiguous durable event prefix.
+- Keep one `useEveAgent` store or `ClientSession` per active chat. Do not reuse one across sidebar conversations.
+- Create a new application chat for “New conversation” instead of clearing and reusing the old event log.
+
+## What to read next
+
+- [`useEveAgent`](./frontend/overview): render and send chat messages
+- [Client continuations](./client/continuations): the complete `SessionState` contract
+- [Sessions, runs & streaming](../concepts/sessions-runs-and-streaming): event types, IDs, and stream cursors
+- [Hooks](./hooks): server-side event persistence and failure behavior

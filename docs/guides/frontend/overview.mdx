@@ -223,7 +223,9 @@ const agent = useEveAgent({ reducer: toolCounter });
 
 ## Resumable sessions
 
-The browser conversation lives durably on the server. Persist both the rendered event log and the `session` cursor to pick it back up after a reload:
+The browser conversation lives durably on the server. Persist both the rendered event log and the `session` cursor to pick it back up after a reload. For storage options, write ordering, named chat threads, and hook-based archival, see [Chat persistence](../chat-persistence).
+
+A local-storage example uses the same restoration contract:
 
 ```tsx
 import type { SessionState, MessageStreamEvent } from "eve/client";
@@ -291,6 +293,7 @@ const support = useEveAgent({ agent: "support" });
 
 ## What to read next
 
+- [Chat persistence](../chat-persistence): store named chats, session cursors, and ordered events
 - [Sessions, runs & streaming](../../concepts/sessions-runs-and-streaming): the event stream and session cursor
 - [Channels](../../channels/overview): the HTTP routes the hook talks to
 - [TypeScript SDK](../client/overview): the lower-level client underneath the frontend hooks

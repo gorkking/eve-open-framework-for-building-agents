@@ -116,7 +116,7 @@ What to key on instead depends on what you are protecting:
 
 Behind that split is an asymmetry worth knowing: durable history keeps only the attempt that completed, while the event stream keeps every attempt, and no field marks which is which. Hooks are at-least-once, and no key collapses a retry.
 
-See [the event envelope](../concepts/sessions-runs-and-streaming#the-event-envelope) for the full contract.
+See [the event envelope](../concepts/sessions-runs-and-streaming#the-event-envelope) for the full contract. For named chats, storage options, exact stream ordering, and restoration with `initialEvents`, see [Chat persistence](./chat-persistence).
 
 ## Execution order
 
