@@ -24,7 +24,7 @@ import {
 import {
   createSubagentCalledEvent,
   encodeMessageStreamEvent,
-  timestampHandleMessageStreamEvent,
+  stampMessageStreamEvent,
 } from "#protocol/message.js";
 import type {
   RuntimeActionRequest,
@@ -186,8 +186,10 @@ export async function dispatchRuntimeActionsStep(input: {
             });
             childSessionId = await startRemoteAgentSession({
               action,
+              auth,
               callbackBaseUrl: input.callbackBaseUrl,
               callbackToken: input.parentContinuationToken,
+              initiatorAuth,
               remote: resolvedRemote,
               session,
             });
@@ -229,7 +231,7 @@ export async function dispatchRuntimeActionsStep(input: {
         }),
         adapterCtx,
       );
-      await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(parentEvent)));
+      await writer.write(encodeMessageStreamEvent(stampMessageStreamEvent(parentEvent)));
     }
   } finally {
     writer.releaseLock();

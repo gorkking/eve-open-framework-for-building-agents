@@ -6,6 +6,7 @@ import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import {
   createWorkflowRuntime,
   LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
+  sessionTimeoutWorkflowReference,
   turnWorkflowReference,
   workflowEntryReference,
 } from "#execution/workflow-runtime.js";
@@ -15,12 +16,16 @@ import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-
 
 const getHookByTokenMock = vi.fn();
 const getRunMock = vi.fn();
+const getWorldMock = vi.fn();
 const resumeHookMock = vi.fn();
+const cancelRunMock = vi.fn();
 const startMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
+  cancelRun: (...args: unknown[]) => cancelRunMock(...args),
   getHookByToken: (...args: unknown[]) => getHookByTokenMock(...args),
   getRun: (...args: unknown[]) => getRunMock(...args),
+  getWorld: (...args: unknown[]) => getWorldMock(...args),
   resumeHook: (...args: unknown[]) => resumeHookMock(...args),
   start: (...args: unknown[]) => startMock(...args),
 }));
@@ -32,7 +37,9 @@ vi.mock("#runtime/sessions/compiled-agent-cache.js", () => ({
 afterEach(() => {
   getHookByTokenMock.mockReset();
   getRunMock.mockReset();
+  getWorldMock.mockReset();
   resumeHookMock.mockReset();
+  cancelRunMock.mockReset();
   startMock.mockReset();
   vi.mocked(getCompiledRuntimeAgentBundle).mockReset();
   vi.unstubAllEnvs();
@@ -52,6 +59,11 @@ describe("workflowEntryReference", () => {
     expect(turnWorkflowReference.workflowId).toBe(`workflow//${packageInfo.name}//turnWorkflow`);
     expect(turnWorkflowReference.workflowId).not.toContain("/src/execution/");
     expect(turnWorkflowReference.workflowId).not.toContain("@");
+    expect(sessionTimeoutWorkflowReference.workflowId).toBe(
+      `workflow//${packageInfo.name}//sessionTimeoutWorkflow`,
+    );
+    expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("/src/execution/");
+    expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("@");
   });
 });
 
@@ -157,19 +169,23 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     expect(resumeHookMock).toHaveBeenCalledWith("session-1:cancel", {});
   });
 
-  it("maps missing and terminal targets to 'no_active_turn'", async () => {
+  it("maps missing and terminal targets to 'no_active_turn' with a classified reason", async () => {
     const { EntityConflictError, HookNotFoundError, RunExpiredError, WorkflowRunNotFoundError } =
       await import("#compiled/@workflow/errors/index.js");
     const errors = [
-      new HookNotFoundError("session-1:cancel"),
-      new WorkflowRunNotFoundError("turn-run"),
-      new RunExpiredError("turn already completed"),
-      new EntityConflictError("turn completed during cancellation"),
+      { error: new HookNotFoundError("session-1:cancel"), reason: "HookNotFoundError" },
+      { error: new WorkflowRunNotFoundError("turn-run"), reason: "WorkflowRunNotFoundError" },
+      { error: new RunExpiredError("turn already completed"), reason: "RunExpiredError" },
+      {
+        error: new EntityConflictError("turn completed during cancellation"),
+        reason: "EntityConflictError",
+      },
     ];
 
-    for (const error of errors) {
+    for (const { error, reason } of errors) {
       resumeHookMock.mockRejectedValueOnce(error);
       await expect(buildRuntime().cancelTurn({ sessionId: "session-1" })).resolves.toEqual({
+        reason,
         status: "no_active_turn",
       });
     }
@@ -180,6 +196,62 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     resumeHookMock.mockRejectedValue(failure);
 
     await expect(buildRuntime().cancelTurn({ sessionId: "session-1" })).rejects.toBe(failure);
+  });
+});
+
+describe("createWorkflowRuntime#terminateSession", () => {
+  function buildRuntime() {
+    return createWorkflowRuntime({ compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource });
+  }
+
+  it("cancels the whole workflow run with the supplied reason", async () => {
+    const world = {};
+    getWorldMock.mockResolvedValue(world);
+    cancelRunMock.mockResolvedValue(undefined);
+
+    await expect(
+      buildRuntime().terminateSession({ reason: "User requested /new", sessionId: "session-1" }),
+    ).resolves.toEqual({ status: "terminated" });
+    expect(cancelRunMock).toHaveBeenCalledWith(world, "session-1", {
+      cancelReason: "User requested /new",
+    });
+  });
+
+  it("uses a safe default terminal reason", async () => {
+    const world = {};
+    getWorldMock.mockResolvedValue(world);
+    cancelRunMock.mockResolvedValue(undefined);
+
+    await buildRuntime().terminateSession({ sessionId: "session-1" });
+
+    expect(cancelRunMock).toHaveBeenCalledWith(world, "session-1", {
+      cancelReason: "Session reset by channel",
+    });
+  });
+
+  it("normalizes expected terminal races", async () => {
+    const { EntityConflictError, RunExpiredError, WorkflowRunNotFoundError } =
+      await import("#compiled/@workflow/errors/index.js");
+    getWorldMock.mockResolvedValue({});
+
+    for (const cause of [
+      new EntityConflictError("run is terminal"),
+      new RunExpiredError("run is terminal"),
+      new WorkflowRunNotFoundError("session-1"),
+    ]) {
+      cancelRunMock.mockRejectedValueOnce(new Error("Failed to cancel run", { cause }));
+      await expect(buildRuntime().terminateSession({ sessionId: "session-1" })).resolves.toEqual({
+        status: "already_terminal",
+      });
+    }
+  });
+
+  it("propagates unexpected World failures", async () => {
+    const failure = new Error("World unavailable");
+    getWorldMock.mockResolvedValue({});
+    cancelRunMock.mockRejectedValue(failure);
+
+    await expect(buildRuntime().terminateSession({ sessionId: "session-1" })).rejects.toBe(failure);
   });
 });
 
@@ -219,9 +291,17 @@ describe("createWorkflowRuntime#run", () => {
     return createWorkflowRuntime({ compiledArtifactsSource });
   }
 
-  function mockBundleAndRun(compiledArtifactsSource: RuntimeCompiledArtifactsSource): void {
+  function mockBundleAndRun(
+    compiledArtifactsSource: RuntimeCompiledArtifactsSource,
+    sessionTimeoutMs?: number | false,
+  ): void {
     vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
       compiledArtifactsSource,
+      resolvedAgent: {
+        config: {
+          limits: sessionTimeoutMs === undefined ? undefined : { sessionTimeoutMs },
+        },
+      },
     } as never);
     getRunMock.mockReturnValue({
       getReadable: () =>
@@ -289,6 +369,25 @@ describe("createWorkflowRuntime#run", () => {
     expect(startOptions.attributes["$eve.title"]).toBe("ship it");
   });
 
+  it("passes the configured session timeout to the durable workflow", async () => {
+    const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+    mockBundleAndRun(compiledArtifactsSource, 86_400_000);
+    startMock.mockResolvedValue({ runId: "driver-run" });
+
+    await buildRuntime(compiledArtifactsSource).run({
+      adapter,
+      auth: null,
+      input: { message: "hello" },
+      mode: "conversation",
+    });
+
+    const [, [workflowInput]] = startMock.mock.calls[0]!;
+    expect(workflowInput).toMatchObject({
+      input: { message: "hello" },
+      sessionTimeoutMs: 86_400_000,
+    });
+  });
+
   it("serializes the channel request id into workflow context", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
@@ -331,6 +430,7 @@ describe("createWorkflowRuntime#run", () => {
     vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
       compiledArtifactsSource,
       nodeId: "researcher",
+      resolvedAgent: { config: {} },
     } as never);
     startMock.mockResolvedValue({ runId: "subagent-run" });
 
@@ -438,6 +538,7 @@ describe("createWorkflowRuntime#run", () => {
     const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
     vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
       compiledArtifactsSource,
+      resolvedAgent: { config: {} },
     } as never);
     const bytes = new TextEncoder().encode('{"type":"test.event"}\n');
     const getReadable = vi.fn(

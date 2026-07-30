@@ -4,12 +4,12 @@ import type { ChannelAdapter } from "#channel/adapter.js";
 import { createSendFn } from "#channel/send.js";
 import type { RunHandle, Runtime } from "#channel/types.js";
 import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type { MessageStreamEvent } from "#protocol/message.js";
 
 function createMockRunHandle(): RunHandle {
   return {
     continuationToken: "test:token",
-    events: new ReadableStream<HandleMessageStreamEvent>(),
+    events: new ReadableStream<MessageStreamEvent>(),
     sessionId: "mock-session-id",
   };
 }
@@ -20,7 +20,9 @@ function createRuntime(deliverError: unknown): Runtime {
     deliver: vi.fn().mockRejectedValue(deliverError),
     resolveSession: vi.fn(),
     run: vi.fn().mockResolvedValue(createMockRunHandle()),
-    getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+    getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
+    getStreamTailIndex: vi.fn().mockResolvedValue(-1),
+    terminateSession: vi.fn(),
   };
 }
 
@@ -50,22 +52,14 @@ describe("createSendFn", () => {
     warn.mockRestore();
   });
 
-  it("warns and falls back to a new session when delivery fails unexpectedly", async () => {
-    const runtime = createRuntime(new Error("boom"));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("propagates unexpected delivery failures without starting a new session", async () => {
+    const failure = new Error("boom");
+    const runtime = createRuntime(failure);
 
     const send = createSendFn(runtime, ADAPTER, "test");
-    const session = await send("hello", {
-      auth: null,
-      continuationToken: "token",
-    });
+    await expect(send("hello", { auth: null, continuationToken: "token" })).rejects.toBe(failure);
 
-    expect(session.id).toBe("mock-session-id");
-    expect(warn).toHaveBeenCalledTimes(1);
-    const payload = warn.mock.calls[0]?.[0];
-    expect(String(payload)).toContain("deliver failed");
-
-    warn.mockRestore();
+    expect(runtime.run).not.toHaveBeenCalled();
   });
 
   it("rejects inputResponses when no active session exists", async () => {
@@ -90,7 +84,9 @@ describe("createSendFn", () => {
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
-      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
+      getStreamTailIndex: vi.fn().mockResolvedValue(-1),
+      terminateSession: vi.fn(),
     };
 
     const deliverSend = createSendFn(deliverRuntime, ADAPTER, "test");
@@ -123,7 +119,9 @@ describe("createSendFn", () => {
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
-      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
+      getStreamTailIndex: vi.fn().mockResolvedValue(-1),
+      terminateSession: vi.fn(),
     };
 
     const deliverSend = createSendFn(deliverRuntime, ADAPTER, "test", {
@@ -151,7 +149,9 @@ describe("createSendFn", () => {
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
-      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
+      getStreamTailIndex: vi.fn().mockResolvedValue(-1),
+      terminateSession: vi.fn(),
     };
 
     const deliverSend = createSendFn(deliverRuntime, ADAPTER, "test");

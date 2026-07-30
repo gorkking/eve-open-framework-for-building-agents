@@ -6,7 +6,7 @@ import { isCompiledChannel, type CompiledChannel } from "#channel/compiled-chann
 import { isHttpRouteDefinition } from "#channel/routes.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { SessionKey } from "#context/keys.js";
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import { linearChannel, type LinearChannelState } from "#public/channels/linear/linearChannel.js";
 import { signLinearWebhookBody } from "#public/channels/linear/verify.js";
 import type { InputRequest } from "#runtime/input/types.js";
@@ -45,17 +45,17 @@ const stubAlsContext = (() => {
 
 function callEvent(
   adapter: ChannelAdapter,
-  event: HandleMessageStreamEvent,
+  event: UnstampedMessageStreamEvent,
   ctx: any,
-): Promise<HandleMessageStreamEvent> {
+): Promise<UnstampedMessageStreamEvent> {
   return contextStorage.run(stubAlsContext, () => callAdapterEventHandler(adapter, event, ctx));
 }
 
-function makeEvent<T extends HandleMessageStreamEvent["type"]>(
+function makeEvent<T extends UnstampedMessageStreamEvent["type"]>(
   type: T,
   data: unknown,
-): HandleMessageStreamEvent {
-  return { data, type } as HandleMessageStreamEvent;
+): UnstampedMessageStreamEvent {
+  return { data, type } as UnstampedMessageStreamEvent;
 }
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
@@ -127,6 +127,7 @@ async function firePost(
 
   const response = await post.handler(request, {
     cancel: vi.fn(),
+    reset: vi.fn(),
     resolveActiveSession: async () => undefined,
     getSession: vi.fn() as any,
     params: {},
@@ -152,6 +153,7 @@ function makeRequest(overrides: Partial<InputRequest> = {}): InputRequest {
     prompt: "Approve deployment?",
     requestId: "call_1",
     ...overrides,
+    kind: overrides.kind ?? "question",
   };
 }
 
@@ -202,6 +204,44 @@ describe("linearChannel inbound Agent Session events", () => {
     const [payload] = send.mock.calls[0]!;
     expect(payload.inputResponses).toBeUndefined();
     expect(payload.message).toBe("approve");
+  });
+
+  it("attaches authenticated Linear upload images to prompted messages", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), {
+        headers: { "content-type": "image/webp" },
+      }),
+    );
+    const channel = linearChannel({
+      api: { fetch: fetchMock },
+      credentials: { accessToken: "linear-token", webhookSecret: SECRET },
+    });
+    const { send } = await firePost(
+      channel,
+      signedRequest(
+        sessionPayload({
+          action: "prompted",
+          agentActivity: {
+            content: {
+              body: "Inspect ![screenshot](https://uploads.linear.app/acme/image.webp).",
+              type: "prompt",
+            },
+            id: "activity_prompt",
+            user: { id: "user_1" },
+            userId: "user_1",
+          },
+        }),
+      ),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBe(
+      "Bearer linear-token",
+    );
+    const [payload] = send.mock.calls[0]!;
+    expect(payload.message[0]).toEqual({ text: "Inspect screenshot.", type: "text" });
+    expect(payload.message[1]).toMatchObject({ mediaType: "image/webp", type: "file" });
+    expect(payload.message[1].data).toEqual(Buffer.from([1, 2, 3]));
   });
 
   it("acks generic data webhooks without dispatch when no hook is configured", async () => {

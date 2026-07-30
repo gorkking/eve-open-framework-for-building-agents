@@ -117,6 +117,7 @@ describe("runChannelsFlow", () => {
         detectDeployment: vi.fn(async () => UNLINKED),
         inspectExistingChannelRegistrations: inspect,
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -147,6 +148,7 @@ describe("runChannelsFlow", () => {
         detectDeployment: vi.fn(async () => UNLINKED),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -175,6 +177,7 @@ describe("runChannelsFlow", () => {
           slackOwners: ["agent/channels/slack.ts"],
         })),
         addChannels: createAddChannelsDeps(),
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -199,6 +202,7 @@ describe("runChannelsFlow", () => {
         // Web Chat is still addable, so the cursor keeps its first-focusable default.
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: createAddChannelsDeps(),
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -219,6 +223,7 @@ describe("runChannelsFlow", () => {
           disabledChannelReasons: { slack: "already configured" },
         })),
         addChannels: createAddChannelsDeps(),
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -242,52 +247,27 @@ describe("runChannelsFlow", () => {
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         getVercelAuthStatus: vi.fn(async () => input.authStatus),
         addChannels: createAddChannelsDeps(),
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
     expect(result).toEqual({ kind: "done", addedChannels: [] });
     return listPaints[0]?.find((option) => option.value === "slack");
   }
 
-  it("points an unlinked Vercel-dependent channel at /model when logged in", async () => {
-    expect(await slackRowFor({ deployment: UNLINKED, authStatus: "authenticated" })).toMatchObject({
-      disabled: true,
-      disabledReason: "Requires Vercel account, see /model",
-      disabledReasonTone: "warning",
-    });
-  });
-
-  it("points a Vercel-dependent channel at /vc:login when logged out, even if linked", async () => {
-    // Authentication is a separate axis from link: a linked-but-logged-out
-    // directory still cannot provision, so the row routes to /vc:login, not /model.
-    for (const deployment of [UNLINKED, LINKED]) {
-      expect(await slackRowFor({ deployment, authStatus: "logged-out" })).toMatchObject({
-        disabled: true,
-        disabledReason: "Log in to Vercel first, see /vc:login",
-        disabledReasonTone: "warning",
-      });
-    }
-  });
-
-  it("points a Vercel-dependent channel at the CLI install when the CLI is missing", async () => {
-    expect(await slackRowFor({ deployment: UNLINKED, authStatus: "cli-missing" })).toMatchObject({
-      disabled: true,
-      disabledReason: "Vercel CLI not found, see /vc:install",
-      disabledReasonTone: "warning",
-    });
-  });
-
-  it("flags a Vercel-dependent channel as unreachable on a transient fault", async () => {
-    expect(await slackRowFor({ deployment: LINKED, authStatus: "unavailable" })).toMatchObject({
-      disabled: true,
-      disabledReason: "Couldn't reach Vercel, check your connection",
-      disabledReasonTone: "warning",
-    });
-  });
-
-  it("keeps a Vercel-dependent channel addable when authenticated and linked", async () => {
-    const slackRow = await slackRowFor({ deployment: LINKED, authStatus: "authenticated" });
-    expect(slackRow?.disabled).toBeUndefined();
-  });
+  it.each([
+    [UNLINKED, "authenticated"],
+    [UNLINKED, "logged-out"],
+    [LINKED, "logged-out"],
+    [UNLINKED, "cli-missing"],
+    [LINKED, "unavailable"],
+  ] as const)(
+    "keeps Slack addable for deployment %o and Vercel status %s",
+    async (deployment, authStatus) => {
+      const slackRow = await slackRowFor({ deployment, authStatus });
+      expect(slackRow).toMatchObject({ value: "slack", label: "Slack" });
+      expect(slackRow?.disabled).toBeUndefined();
+    },
+  );
 
   it("shows the active Terminal UI as a checked task and keeps Web Chat addable", async () => {
     const { single, listPaints } = scriptList(["web", "done"]);
@@ -304,6 +284,7 @@ describe("runChannelsFlow", () => {
           webRouteOwners: ["channels/eve.ts"],
         })),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -338,6 +319,7 @@ describe("runChannelsFlow", () => {
           webAppPresent: true,
         })),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -367,6 +349,7 @@ describe("runChannelsFlow", () => {
           webAppPresent: true,
         })),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -387,6 +370,7 @@ describe("runChannelsFlow", () => {
         detectDeployment: vi.fn(async () => UNLINKED),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -405,6 +389,7 @@ describe("runChannelsFlow", () => {
         detectDeployment: vi.fn(async () => UNLINKED),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: createAddChannelsDeps(),
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -412,12 +397,10 @@ describe("runChannelsFlow", () => {
   });
 
   it("returns to the list when a channel's sub-flow is cancelled", async () => {
-    const { single, listPaints } = scriptList(["slack", "done"], (opts) => {
-      if (/slackbot/i.test(opts.message)) throw new WizardCancelledError();
-      throw new Error(`Unexpected select: ${opts.message}`);
-    });
+    const { single, listPaints } = scriptList(["slack", "done"]);
     const fake = createFakePrompter({ single });
     const addChannelsDeps = createAddChannelsDeps();
+    addChannelsDeps.provisionSlackbot.mockResolvedValue({ state: "cancelled" });
 
     const result = await runChannelsFlow({
       appRoot: APP_ROOT,
@@ -428,6 +411,7 @@ describe("runChannelsFlow", () => {
         ),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -464,6 +448,7 @@ describe("runChannelsFlow", () => {
         detectDeployment: vi.fn(async () => UNLINKED),
         inspectExistingChannelRegistrations: inspect,
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -502,6 +487,7 @@ describe("runChannelsFlow", () => {
         ),
         inspectExistingChannelRegistrations: inspect,
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -543,6 +529,7 @@ describe("runChannelsFlow", () => {
           inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
           getVercelAuthStatus: vi.fn(async (): Promise<VercelAuthStatus> => "authenticated"),
           addChannels: addChannelsDeps,
+          installRegistryItem: vi.fn(async () => {}),
         },
       }),
     ).rejects.toBeInstanceOf(HumanActionRequiredError);
@@ -566,6 +553,7 @@ describe("runChannelsFlow", () => {
         ),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -600,6 +588,7 @@ describe("runChannelsFlow", () => {
         ),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: addChannelsDeps,
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 
@@ -627,6 +616,7 @@ describe("runChannelsFlow", () => {
         detectDeployment: vi.fn(async () => UNLINKED),
         inspectExistingChannelRegistrations: vi.fn(async () => NO_REGISTRATIONS),
         addChannels: createAddChannelsDeps(),
+        installRegistryItem: vi.fn(async () => {}),
       },
     });
 

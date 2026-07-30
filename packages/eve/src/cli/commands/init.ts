@@ -25,6 +25,7 @@ import {
 } from "#setup/primitives/index.js";
 import type { ProcessOutputLine } from "#setup/primitives/process-output.js";
 import { addAgentToProject } from "#setup/scaffold/create/add-to-project.js";
+import { blockingCreateInPlaceEntries } from "#setup/scaffold/create-in-place.js";
 import { ensureChannel, scaffoldBaseProject } from "#setup/scaffold/index.js";
 import { WizardCancelledError } from "#setup/step.js";
 import type { WorkspaceRootMutation } from "#setup/scaffold/workspace-root.js";
@@ -82,7 +83,6 @@ const defaultDependencies: InitCommandDependencies = {
 };
 
 const CURRENT_DIRECTORY_PROJECT_NAME = ".";
-const ALLOWED_CREATE_IN_PLACE_ENTRIES = new Set([".DS_Store", ".git", ".gitkeep", ".hg"]);
 export const EVE_INIT_PACKAGE_SPEC_ENV = "EVE_INIT_PACKAGE_SPEC";
 
 const initLog = createLogger("init");
@@ -103,13 +103,15 @@ function isCurrentDirectoryTarget(target: string): boolean {
 
 async function assertCanScaffoldInPlace(targetRoot: string): Promise<void> {
   const entries = await readdir(targetRoot);
-  const blocking = entries.filter((entry) => !ALLOWED_CREATE_IN_PLACE_ENTRIES.has(entry));
+  const blocking = blockingCreateInPlaceEntries(entries);
   if (blocking.length === 0) {
     return;
   }
 
+  const visible = blocking.slice(0, 5).join(", ");
+  const suffix = blocking.length > 5 ? `, and ${blocking.length - 5} more` : "";
   throw new Error(
-    "This folder isn't empty. Create an agent in a new folder with `eve init my-agent`, or run `eve init` from an empty folder.",
+    `This folder isn't empty (found: ${visible}${suffix}). Create an agent in a new folder with \`eve init my-agent\`, or run \`eve init\` from an empty folder.`,
   );
 }
 

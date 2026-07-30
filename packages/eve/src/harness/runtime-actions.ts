@@ -1,6 +1,6 @@
 import type { ModelMessage, ToolSet, TypedToolCall } from "ai";
 
-import { createActionResultEvent, type HandleMessageStreamEvent } from "#protocol/message.js";
+import { createActionResultEvent, type UnstampedMessageStreamEvent } from "#protocol/message.js";
 import { getRuntimeActionRequestKey, getRuntimeActionResultKey } from "#runtime/actions/keys.js";
 import type { RuntimeActionRequest, RuntimeActionResult } from "#runtime/actions/types.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
@@ -268,7 +268,7 @@ export async function resolvePendingRuntimeActions(input: {
             subagentName: result.subagentName,
           },
           type: "subagent.completed",
-        } satisfies Extract<HandleMessageStreamEvent, { type: "subagent.completed" }>);
+        } satisfies Extract<UnstampedMessageStreamEvent, { type: "subagent.completed" }>);
       }
 
       await input.emit(
@@ -420,6 +420,10 @@ export function createRuntimeActionRequestFromToolCall(input: {
  * Coerces an AI SDK tool-call `input` into the runtime-action `JsonObject`
  * contract, throwing a `TypeError` (with the original as `cause`) that names
  * the offending tool when the payload is not a JSON object.
+ *
+ * String inputs are parsed as JSON first: the model protocol carries tool
+ * arguments as text, and provider-executed tool calls can surface that raw
+ * string — or an empty string when the model sends no arguments.
  */
 export function resolveToolCallInputObject(
   value: unknown,
@@ -429,8 +433,12 @@ export function resolveToolCallInputObject(
     return {};
   }
 
+  if (typeof value === "string" && value.trim() === "") {
+    return {};
+  }
+
   try {
-    return parseJsonObject(value);
+    return parseJsonObject(typeof value === "string" ? parseJsonStringInput(value) : value);
   } catch (error) {
     // This module is bundled into the workflow driver body, which cannot
     // import the logger, so enrich the error (and keep the original as
@@ -440,6 +448,16 @@ export function resolveToolCallInputObject(
       `Failed to parse tool-call arguments for "${context.toolName}" (${context.callId}): ${detail}`,
       { cause: error },
     );
+  }
+}
+
+function parseJsonStringInput(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    // Not JSON at all — return the raw string so parseJsonObject rejects it
+    // with the canonical "Expected a JSON-serializable object." detail.
+    return value;
   }
 }
 

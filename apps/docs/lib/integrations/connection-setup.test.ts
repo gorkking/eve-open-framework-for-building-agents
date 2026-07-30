@@ -15,8 +15,7 @@ describe("Browser Use connection setup", () => {
 
     expect(quickStart).toContain('"x-browser-use-api-key": process.env.BROWSER_USE_API_KEY!');
     expect(quickStart).not.toContain("@vercel/connect");
-    expect(buildConnectionInstall(integration)).toContain("npm install eve@latest");
-    expect(buildConnectionInstall(integration)).not.toContain("@vercel/connect");
+    expect(buildConnectionInstall(integration)).toContain("eve add connection/browser-use");
     expect(buildConnectionConfigure(integration)).toContain("BROWSER_USE_API_KEY=your_api_key");
   });
 
@@ -25,19 +24,20 @@ describe("Browser Use connection setup", () => {
     const quickStart = buildConnectionSetup(integration).variants["mcp:user"];
 
     expect(quickStart).toContain("@vercel/connect/eve");
-    expect(buildConnectionInstall(integration)).toContain("@vercel/connect");
+    expect(buildConnectionInstall(integration)).toContain("eve add connection/linear");
   });
 });
 
-describe("Kernel connection setup", () => {
-  it("uses the named Connect connector created for Kernel's MCP service", () => {
+describe("Kernel extension setup", () => {
+  it("uses Kernel's eve extension with Vercel Connect", () => {
     const integration = getIntegration("kernel")!;
-    const setup = buildConnectionSetup(integration);
 
-    expect(setup.variants["mcp:user"]).toContain('auth: connect("mcp.onkernel.com/kernel")');
-    expect(buildConnectionConfigure(integration)).toContain(
-      "vercel connect create mcp.onkernel.com --name kernel",
+    expect(integration.type).toBe("extension");
+    expect(integration.install).toContain("eve add extension/kernel");
+    expect(integration.quickStart).toContain(
+      'kernel({ connect: "mcp.onkernel.com/eve-extension" })',
     );
+    expect(integration.configure).toContain("KERNEL_API_KEY");
   });
 });
 

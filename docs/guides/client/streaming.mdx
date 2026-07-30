@@ -60,13 +60,17 @@ for await (const event of response) {
 
 ## Handle event types
 
-Import event types from `eve/client` when you want exhaustiveness or helpers:
+Import event types from `eve/client` when you want exhaustiveness or helpers. Events read from a stream are `MessageStreamEvent`: the same union, with the `meta` envelope guaranteed present.
+
+`HandleMessageStreamEvent` remains available as a deprecated alias, so existing type imports continue to compile.
 
 ```ts
-import type { HandleMessageStreamEvent } from "eve/client";
+import type { MessageStreamEvent } from "eve/client";
 import { isCurrentTurnBoundaryEvent } from "eve/client";
 
-function handleEvent(event: HandleMessageStreamEvent) {
+function handleEvent(event: MessageStreamEvent) {
+  console.log(event.meta.id, event.meta.at);
+
   if (isCurrentTurnBoundaryEvent(event)) {
     console.log("turn settled:", event.type);
   }
@@ -105,6 +109,23 @@ If you support refresh while an authorization prompt is pending, keep the sessio
 
 HTTP connections can end before a run does. The client reconnects from the number of events already consumed, so long turns continue without replaying events. It stops at a turn boundary, when aborted, or when the stream can no longer make progress.
 
+If your consumer persists events, key on `event.meta.id`. It is stable across reconnects and rewinds, so an overlapping replay is safe to ingest twice. See [the event envelope](../../concepts/sessions-runs-and-streaming#the-event-envelope).
+
+Set `streamReconnectPolicy: { reconnect: false }` when a relay or proxy owns the cursor and reconnection policy. This makes a single stream GET attempt and returns when that connection ends; it does not stop the server-side turn:
+
+```ts
+const response = await session.send({
+  message: "Run the long operation.",
+  streamReconnectPolicy: { reconnect: false },
+});
+
+for await (const event of response) {
+  console.log(event.type);
+}
+```
+
+The same option is available on manual attachments as `session.stream({ streamReconnectPolicy: { reconnect: false } })`.
+
 ## Open a stream manually
 
 Use `session.stream()` when you already have a session cursor and only need to attach to the existing stream:
@@ -141,6 +162,21 @@ for await (const event of session.stream({ startIndex: -1 })) {
 ```
 
 Tail-relative attachments do not automatically reconnect or advance the session's stored absolute `streamIndex`. Break after the event you need when using one as a tail lookup.
+
+## Bounded catch-up reads
+
+Pass `follow: false` to read from the cursor to the durable tail and then stop, instead of following the live stream (the default):
+
+```ts
+for await (const event of session.stream({ follow: false })) {
+  console.log(event.type);
+}
+// Returns once every event recorded before the stream opened is consumed.
+```
+
+The first connection pins the bound to the tail the server reports at open time; events recorded afterward are not part of the read. Reconnects during the read keep that original bound, and the session's stored `streamIndex` still advances past the consumed events, so a follow-up `stream()` or `send()` picks up exactly where the bounded read ended. When the cursor is already at or past the tail, the iterator returns immediately without yielding.
+
+Because a tail-relative cursor cannot be bounded, `follow: false` throws when combined with a negative `startIndex`. It also fails if the server does not report the durable tail (an agent running an older eve version).
 
 `stream()` throws if the session has no `sessionId`, because there's no stream to attach to before the first send.
 

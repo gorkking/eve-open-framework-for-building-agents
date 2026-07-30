@@ -52,7 +52,45 @@ describe("CLI command registration", () => {
     expect(help).toContain("init [options] [target]");
     expect(help).toContain("link");
     expect(help).toContain("deploy");
-    expect(help).not.toContain("setup");
+    expect(help).toContain("registry");
+    expect(help).not.toContain("setup [options] <item>");
+  });
+
+  it("lists registry installation and setup options", async () => {
+    const output: string[] = [];
+    const logger = {
+      error: (message: string) => output.push(message),
+      log: (message: string) => output.push(message),
+    };
+
+    await runCli(["add", "--help"], logger).catch(() => {});
+
+    const help = output.join("\n");
+    expect(help).toContain("--overwrite");
+    expect(help).toContain("--skip-install");
+    expect(help).toContain("--skip-setup");
+    expect(help).toContain("--yes");
+    expect(help).not.toContain("--silent");
+    expect(help).not.toContain("--skip-fonts");
+    expect(help).not.toContain("--path");
+  });
+
+  it("registers only supported shadcn registry commands", async () => {
+    const output: string[] = [];
+    const logger = {
+      error: (message: string) => output.push(message),
+      log: (message: string) => output.push(message),
+    };
+
+    await runCli(["registry", "--help"], logger).catch(() => {});
+
+    const help = output.join("\n");
+    expect(help).toContain("add <registries...>");
+    expect(help).toContain("list [options]");
+    expect(help).toContain("search [options] <query>");
+    expect(help).toContain("view <item>");
+    expect(help).not.toContain("remove [arguments...]");
+    expect(help).not.toContain("sources [arguments...]");
   });
 
   it("registers the diagnostic logs commands", async () => {
@@ -66,6 +104,21 @@ describe("CLI command registration", () => {
 
     const help = output.join("\n");
     expect(help).toContain("show [options] [logid]");
+    expect(help).toContain("ls");
+  });
+
+  it("registers the local trace inspection commands", async () => {
+    const output: string[] = [];
+    const logger = {
+      error: (message: string) => output.push(message),
+      log: (message: string) => output.push(message),
+    };
+
+    await runCli(["traces", "--help"], logger).catch(() => {});
+
+    const help = output.join("\n");
+    expect(help).toContain("Usage: eve traces [options] [trace]");
+    expect(help).not.toContain("show <trace>");
     expect(help).toContain("ls");
   });
 });
@@ -150,6 +203,113 @@ describe("eve dev --input", () => {
         log: () => {},
       }),
     ).rejects.toThrow("--input requires the interactive UI");
+  });
+});
+
+describe("eve invoke", () => {
+  it("runs a fresh remote task without starting the TUI", async () => {
+    const runInvoke = vi.fn(async () => ({
+      status: "ready" as const,
+      outcome: { status: "completed" as const, message: "done" },
+      resume: {
+        session: { sessionId: "ses_1", streamIndex: 1 },
+        target: { kind: "remote" as const, serverUrl: "https://example.com/" },
+      },
+    }));
+    const output: string[] = [];
+
+    await runCli(
+      ["invoke", "--url", "https://example.com", "--scope", "target-team", "do foo"],
+      { error: () => {}, log: (message) => output.push(message) },
+      { runInvoke },
+    );
+
+    expect(runInvoke).toHaveBeenCalledWith({
+      operation: { kind: "send", payload: { message: "do foo" } },
+      signal: expect.any(AbortSignal),
+      target: {
+        kind: "remote",
+        serverUrl: "https://example.com/",
+        workspaceRoot: process.cwd(),
+      },
+      vercelScope: "target-team",
+    });
+    expect(JSON.parse(output.at(-1)!)).toMatchObject({
+      status: "ready",
+      outcome: { status: "completed", message: "done" },
+    });
+  });
+
+  it("rejects a Vercel scope without a URL target", async () => {
+    await expect(
+      runCli(["invoke", "--scope", "target-team", "do foo"], {
+        error: () => {},
+        log: () => {},
+      }),
+    ).rejects.toThrow("--scope option requires a URL target");
+  });
+
+  it("accepts an explicitly supplied URL equivalent to the stored resume target", async () => {
+    const runInvoke = vi.fn(async () => ({
+      status: "running" as const,
+      resume: {
+        session: { sessionId: "ses_1", streamIndex: 0 },
+        target: { kind: "remote" as const, serverUrl: "https://example.com/" },
+      },
+    }));
+    const resumeResult = JSON.stringify({
+      status: "ready",
+      outcome: { status: "completed", message: "done" },
+      resume: {
+        session: { sessionId: "ses_1", streamIndex: 0 },
+        target: { kind: "remote", serverUrl: "https://example.com/" },
+      },
+    });
+    const stdin = vi
+      .spyOn(process.stdin, Symbol.asyncIterator)
+      .mockImplementation(async function* () {
+        yield resumeResult;
+        return undefined;
+      });
+
+    try {
+      await runCli(
+        ["invoke", "--resume", "--url", "https://example.com", "follow up"],
+        { error: () => {}, log: () => {} },
+        { runInvoke },
+      );
+    } finally {
+      stdin.mockRestore();
+    }
+
+    expect(runInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ serverUrl: "https://example.com/" }),
+      }),
+    );
+  });
+
+  it("prints the JSON schema without invoking an agent", async () => {
+    const runInvoke = vi.fn();
+    const output: string[] = [];
+
+    await runCli(
+      ["invoke", "--json-schema"],
+      { error: () => {}, log: (message) => output.push(message) },
+      { runInvoke },
+    );
+
+    expect(runInvoke).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({ title: "eve invoke result" });
+  });
+
+  it("requires a prompt for a fresh invocation", async () => {
+    await expect(
+      runCli(["invoke", "--url", "https://example.com"], {
+        error: () => {},
+        log: () => {},
+      }),
+    ).rejects.toThrow("requires a prompt");
   });
 });
 
@@ -419,6 +579,39 @@ describe("eve dev local server ownership", () => {
     }));
 
     await runInteractiveDev(["dev"], { startHost });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("awaits the close already started by a TUI stop request", async () => {
+    let resolveClose: () => void = () => {};
+    const closing = new Promise<void>((resolve) => {
+      resolveClose = resolve;
+    });
+    const close = vi.fn(() => closing);
+    const startHost = vi.fn(() => ({
+      start: async () => ({
+        kind: "started" as const,
+        appRoot: "/canonical/app",
+        url: "http://127.0.0.1:4321/",
+      }),
+      close,
+    }));
+    const runDevelopmentTui = vi.fn(async (input: RunDevelopmentTuiInput) => {
+      input.lifecycle?.requestStop();
+    });
+
+    let settled = false;
+    const run = withInteractiveTerminal(() =>
+      runCli(["dev"], { error: () => {}, log: () => {} }, { runDevelopmentTui, startHost }),
+    ).then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveClose();
+    await run;
     expect(close).toHaveBeenCalledOnce();
   });
 });
