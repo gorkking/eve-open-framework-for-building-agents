@@ -21,10 +21,26 @@ stream, while terminal reads use workflow status and return values directly.
 Run the public channel locally or deploy it, then use:
 
 ```sh
-pnpm --filter eve mcp:inspector-smoke https://<host>/mcp
+npx @modelcontextprotocol/inspector
 ```
 
-In Inspector, select Streamable HTTP, authenticate, connect, list tools, and call each tool. A current client discovers `2026-07-28`; a 2025 client falls back to stateless initialization. Disconnect and reconnect before reading an invocation to verify that no transport session owns invocation state.
+In Inspector, select Streamable HTTP, enter `https://<host>/mcp`, authenticate,
+connect, list tools, and call each tool. A current client discovers `2026-07-28`;
+a 2025 client falls back to stateless initialization. Disconnect and reconnect
+before reading an invocation to verify that no transport session owns invocation
+state.
+
+For a non-interactive `tools/list` check against a remote endpoint, use the
+Inspector's CLI mode:
+
+```sh
+npx @modelcontextprotocol/inspector --cli https://<host>/mcp \
+  --transport http \
+  --method tools/list
+```
+
+Add `--header "Authorization: Bearer <token>"` or another configured
+authorization header when the endpoint does not use interactive OAuth.
 
 ## Claude Code
 
