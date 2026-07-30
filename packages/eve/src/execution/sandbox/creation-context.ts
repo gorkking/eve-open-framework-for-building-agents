@@ -1,12 +1,12 @@
 import { ContextContainer, contextStorage, loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
-import type { SandboxBackendTags } from "#shared/sandbox-backend.js";
+import type { SandboxResourceTags } from "#shared/sandbox-engine.js";
 
 export interface SandboxRuntimeCreationContext {
   readonly appRoot: string;
   readonly sessionKey: string;
   readonly signal: AbortSignal;
-  readonly tags?: SandboxBackendTags;
+  readonly tags?: SandboxResourceTags;
 }
 
 export interface SandboxTemplateBuildContext {

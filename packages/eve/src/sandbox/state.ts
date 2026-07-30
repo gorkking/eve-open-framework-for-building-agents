@@ -1,3 +1,4 @@
+import { parseJsonValue } from "#shared/json.js";
 import type { Sandbox, SerializedSandbox } from "#shared/sandbox-value.js";
 
 /**
@@ -19,6 +20,39 @@ export interface SandboxStateValue {
 
 export interface SandboxState extends SandboxStateValue {
   readonly root?: SandboxStateValue;
+}
+
+/**
+ * Returns whether a workflow value is a complete serialized sandbox state.
+ */
+export function isSandboxStateValue(value: unknown): value is SandboxStateValue {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  const state = value as Partial<SandboxStateValue>;
+  const owner = state.owner;
+  const sandbox = state.value;
+  if (
+    owner === null ||
+    typeof owner !== "object" ||
+    typeof owner.nodeId !== "string" ||
+    typeof owner.sessionId !== "string" ||
+    typeof state.revision !== "string" ||
+    sandbox === null ||
+    typeof sandbox !== "object" ||
+    typeof sandbox.adapterId !== "string" ||
+    typeof sandbox.id !== "string"
+  ) {
+    return false;
+  }
+
+  try {
+    parseJsonValue(sandbox.reference);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

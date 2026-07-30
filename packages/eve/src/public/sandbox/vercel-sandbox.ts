@@ -2,15 +2,19 @@ import type * as Vercel from "#compiled/@vercel/sandbox/index.js";
 
 type VercelCreateOptions = NonNullable<Parameters<typeof Vercel.Sandbox.create>[0]>;
 
-type VercelUpdateOptions = Parameters<Vercel.Sandbox["update"]>[0];
-
-type VercelSandboxInternalCreateOptions = {
-  readonly [key: `__${string}`]: unknown;
-};
-
 type VercelSandboxAuthorCreateOptions<T> = T extends unknown
-  ? Omit<T, "name" | "onResume" | "persistent" | "runtime" | "signal"> &
-      VercelSandboxInternalCreateOptions
+  ? Omit<
+      T,
+      | "fetch"
+      | "name"
+      | "onResume"
+      | "persistent"
+      | "projectId"
+      | "runtime"
+      | "signal"
+      | "teamId"
+      | "token"
+    >
   : never;
 
 /**
@@ -39,13 +43,3 @@ type VercelSandboxAuthorCreateOptions<T> = T extends unknown
  * so `source` is stripped from the session-create path.
  */
 export type VercelSandboxCreateOptions = VercelSandboxAuthorCreateOptions<VercelCreateOptions>;
-
-/**
- * Internal template update options retained by the built-in bridge.
- */
-export type VercelSandboxBootstrapUseOptions = VercelUpdateOptions;
-
-/**
- * Internal live-session update options retained by the built-in bridge.
- */
-export type VercelSandboxSessionUseOptions = VercelUpdateOptions;

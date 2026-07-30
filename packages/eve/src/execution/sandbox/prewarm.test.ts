@@ -5,7 +5,7 @@ import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID, type ResolvedAgentGraphBundle } from "#runtime/graph.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
-import type { SandboxSeedFile } from "#shared/sandbox-backend.js";
+import type { SandboxSeedFile } from "#shared/sandbox-engine.js";
 import { defineSandboxTemplate } from "#shared/sandbox-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 

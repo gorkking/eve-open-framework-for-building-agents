@@ -25,17 +25,21 @@ import {
   touchDockerTemplateMarker,
 } from "#execution/sandbox/bindings/docker-templates.js";
 import { expectDockerSuccess } from "#execution/sandbox/bindings/docker-utils.js";
-import { writeSandboxSeedFiles } from "#execution/sandbox/bindings/local-backend-utils.js";
+import { writeSandboxSeedFiles } from "#execution/sandbox/bindings/local-workspace-utils.js";
 import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
 import type {
-  SandboxBackend,
-  SandboxBackendCreateInput,
-  SandboxBackendHandle,
-  SandboxBackendPrewarmInput,
-  SandboxBackendPrewarmResult,
-} from "#shared/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
+  SandboxEngine,
+  SandboxEngineCreateInput,
+  SandboxEngineHandle,
+  SandboxEnginePrepareInput,
+  SandboxEnginePrepareResult,
+} from "#shared/sandbox-engine.js";
+import {
+  SandboxResourceUnavailableError,
+  SandboxTemplateUnavailableError,
+} from "#shared/sandbox-engine.js";
+import { parseJsonObject } from "#shared/json.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
 
 export {
@@ -44,23 +48,23 @@ export {
 } from "#execution/sandbox/bindings/docker-templates.js";
 
 /**
- * Stable backend name. Participates in template/session key derivation
+ * Stable provider name. Participates in template/session key derivation
  * and persisted reconnect state.
  */
-export const DOCKER_BACKEND_NAME = "docker";
+export const DOCKER_PROVIDER = "docker";
 
 /**
  * Construction input for the internal Docker bridge behind
  * `DockerSandbox`.
  */
-export interface CreateDockerSandboxBackendInput {
+export interface CreateDockerSandboxEngineInput {
   readonly createOptions?: DockerSandboxCreateOptions;
-  /** Injectable Docker driver so backend logic is testable without a daemon. */
+  /** Injectable Docker driver so provider logic is testable without a daemon. */
   readonly dockerCli?: DockerCli;
 }
 
 /**
- * Creates the Docker sandbox backend.
+ * Creates the Docker sandbox provider.
  *
  * Two-phase lifecycle mapped onto Docker primitives:
  *
@@ -72,11 +76,12 @@ export interface CreateDockerSandboxBackendInput {
  *   session state across reconnects, so `shutdown` only stops the
  *   container and the next `create` restarts it with state intact.
  */
-export function createDockerSandboxBackend(
-  input: CreateDockerSandboxBackendInput = {},
-): SandboxBackend {
+export function createDockerSandboxEngine(
+  input: CreateDockerSandboxEngineInput = {},
+): SandboxEngine {
   const cli = input.dockerCli ?? createDockerCli();
   const options = resolveDockerSandboxOptions(input.createOptions);
+  const configuration = parseJsonObject(input.createOptions ?? {});
   const optionsHash = createDockerSandboxOptionsHash(options);
   let daemonCheck: Promise<void> | undefined;
 
@@ -89,8 +94,8 @@ export function createDockerSandboxBackend(
   }
 
   return {
-    name: DOCKER_BACKEND_NAME,
-    async prewarm(prewarmInput: SandboxBackendPrewarmInput): Promise<SandboxBackendPrewarmResult> {
+    provider: DOCKER_PROVIDER,
+    async prepare(prewarmInput: SandboxEnginePrepareInput): Promise<SandboxEnginePrepareResult> {
       prewarmInput.log?.("checking Docker daemon");
       await ensureDaemon();
       const templateReferenceInput = {
@@ -99,12 +104,16 @@ export function createDockerSandboxBackend(
       };
       const imageReference = dockerTemplateImageReference(templateReferenceInput);
       const markerPath = resolveDockerTemplateMarkerPath(
-        prewarmInput.runtimeContext.appRoot,
+        prewarmInput.context.appRoot,
         templateReferenceInput,
       );
 
       prewarmInput.log?.(`checking cached template image "${imageReference}"`);
-      if (await dockerImageExists(cli, imageReference)) {
+      if (
+        options.pullPolicy !== "always" &&
+        isImmutableOciImageReference(options.image) &&
+        (await dockerImageExists(cli, imageReference))
+      ) {
         prewarmInput.log?.("reusing cached template image");
         await touchDockerTemplateMarker(markerPath, imageReference);
         return { reused: true };
@@ -146,15 +155,14 @@ export function createDockerSandboxBackend(
         }
         await writeSandboxSeedFiles(templateSession, prewarmInput.seedFiles);
 
-        if (prewarmInput.bootstrap !== undefined) {
-          prewarmInput.log?.("running sandbox bootstrap");
-          await prewarmInput.bootstrap({
-            use: async () =>
-              createLoggingSandboxSession({
-                log: prewarmInput.log,
-                session: templateSession,
-              }),
-          });
+        if (prewarmInput.prepare !== undefined) {
+          prewarmInput.log?.("running template preparation");
+          await prewarmInput.prepare(
+            createLoggingSandboxSession({
+              log: prewarmInput.log,
+              session: templateSession,
+            }),
+          );
         }
 
         // Quiesce before commit so the captured filesystem is stable.
@@ -185,27 +193,34 @@ export function createDockerSandboxBackend(
 
       return { reused: false };
     },
-    async create(createInput: SandboxBackendCreateInput): Promise<SandboxBackendHandle> {
+    async create(createInput: SandboxEngineCreateInput): Promise<SandboxEngineHandle> {
       await ensureDaemon();
-      const containerName =
-        getDockerContainerName(createInput.existingMetadata) ?? createInput.sessionKey;
+      const persistedIdentity = readPersistedDockerContainerIdentity(createInput.existingMetadata);
+      const containerName = persistedIdentity?.name ?? createInput.sessionKey;
+      const existing = await inspectDockerContainer(cli, containerName);
+      let containerId: string;
 
-      const inspect = await cli.run([
-        "container",
-        "inspect",
-        "--format",
-        "{{.State.Running}}",
-        containerName,
-      ]);
-
-      if (inspect.exitCode === 0) {
-        if (inspect.stdout.trim() !== "true") {
+      if (existing !== null) {
+        if (persistedIdentity !== undefined && existing.id !== persistedIdentity.id) {
+          throw new SandboxResourceUnavailableError({
+            provider: DOCKER_PROVIDER,
+            sessionKey: containerName,
+          });
+        }
+        containerId = existing.id;
+        if (!existing.running) {
           expectDockerSuccess(
             await cli.run(["start", containerName]),
             `restart sandbox session container "${containerName}"`,
           );
         }
       } else {
+        if (createInput.existingMetadata !== undefined) {
+          throw new SandboxResourceUnavailableError({
+            provider: DOCKER_PROVIDER,
+            sessionKey: containerName,
+          });
+        }
         let image: string;
         if (createInput.templateKey === null) {
           await ensureDockerBaseImage(cli, options);
@@ -217,22 +232,19 @@ export function createDockerSandboxBackend(
           };
           image = dockerTemplateImageReference(templateReferenceInput);
           if (!(await dockerImageExists(cli, image))) {
-            throw new SandboxTemplateNotProvisionedError({
-              backendName: DOCKER_BACKEND_NAME,
+            throw new SandboxTemplateUnavailableError({
+              provider: DOCKER_PROVIDER,
               templateKey: createInput.templateKey,
             });
           }
           await touchDockerTemplateMarker(
-            resolveDockerTemplateMarkerPath(
-              createInput.runtimeContext.appRoot,
-              templateReferenceInput,
-            ),
+            resolveDockerTemplateMarkerPath(createInput.context.appRoot, templateReferenceInput),
             image,
           );
         }
 
         try {
-          await startDockerContainer({
+          containerId = await startDockerContainer({
             cli,
             containerName,
             image,
@@ -244,8 +256,8 @@ export function createDockerSandboxBackend(
           });
         } catch (error) {
           if (createInput.templateKey !== null) {
-            throw new SandboxTemplateNotProvisionedError({
-              backendName: DOCKER_BACKEND_NAME,
+            throw new SandboxTemplateUnavailableError({
+              provider: DOCKER_PROVIDER,
               templateKey: createInput.templateKey,
             });
           }
@@ -267,11 +279,11 @@ export function createDockerSandboxBackend(
 
       return {
         session,
-        useSessionFn: async () => session,
         async captureState() {
           return {
-            backendName: DOCKER_BACKEND_NAME,
-            metadata: { containerName },
+            configuration,
+            provider: DOCKER_PROVIDER,
+            metadata: { containerId, containerName },
             sessionKey: createInput.sessionKey,
           };
         },
@@ -285,7 +297,45 @@ export function createDockerSandboxBackend(
   };
 }
 
-function getDockerContainerName(metadata: Record<string, unknown> | undefined): string | undefined {
-  const containerName = metadata?.containerName;
-  return typeof containerName === "string" ? containerName : undefined;
+function readPersistedDockerContainerIdentity(
+  metadata: Record<string, unknown> | undefined,
+): { readonly id: string; readonly name: string } | undefined {
+  if (metadata === undefined) {
+    return undefined;
+  }
+  if (typeof metadata.containerId !== "string" || typeof metadata.containerName !== "string") {
+    throw new TypeError("Invalid persisted Docker sandbox identity.");
+  }
+  return {
+    id: metadata.containerId,
+    name: metadata.containerName,
+  };
+}
+
+async function inspectDockerContainer(
+  cli: DockerCli,
+  containerName: string,
+): Promise<{ readonly id: string; readonly running: boolean } | null> {
+  const result = await cli.run([
+    "container",
+    "inspect",
+    "--format",
+    "{{.Id}} {{.State.Running}}",
+    containerName,
+  ]);
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  const match = /^(\S+) (true|false)$/.exec(result.stdout.trim());
+  if (match === null) {
+    throw new Error(`Docker returned invalid identity for sandbox container "${containerName}".`);
+  }
+  return {
+    id: match[1]!,
+    running: match[2] === "true",
+  };
+}
+
+function isImmutableOciImageReference(image: string): boolean {
+  return /@sha256:[a-f0-9]{64}$/i.test(image);
 }

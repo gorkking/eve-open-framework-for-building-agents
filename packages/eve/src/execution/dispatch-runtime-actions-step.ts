@@ -50,6 +50,7 @@ import { toErrorMessage } from "#shared/errors.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
 import { getActiveRuntimeNode } from "#context/node.js";
+import { readSubagentSandboxAncestorStates } from "#execution/subagent-adapter.js";
 
 const log = createLogger("execution.dispatch-runtime-actions");
 
@@ -99,10 +100,13 @@ export async function dispatchRuntimeActionsStep(input: {
 
   if (fanoutSize > 0) {
     const node = getActiveRuntimeNode(ctx);
+    const { parentState, rootState } = readSubagentSandboxAncestorStates(adapter);
     const sandboxAccess = await ensureSandboxAccess({
       compiledArtifactsSource: bundle.compiledArtifactsSource,
       nodeId: node.nodeId,
+      parentState,
       registry: node.sandboxRegistry,
+      rootState,
       session: {
         auth: {
           current: auth,

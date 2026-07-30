@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
@@ -27,5 +27,19 @@ describe("LocalFilesystemSandbox", () => {
 
     const restored = restoreSandbox(await serializeSandbox(sandbox));
     await expect(restored.readTextFile({ path: "generated.txt" })).resolves.toBe("generated");
+  });
+
+  it("does not accept a replacement directory at a persisted path", async () => {
+    const root = await createScratchDirectory("eve-local-filesystem-sandbox-replaced-");
+    const sandbox = await LocalFilesystemSandbox.open({ root });
+    const serialized = await serializeSandbox(sandbox);
+    await rm(root, { recursive: true });
+    await mkdir(root);
+
+    const restored = restoreSandbox(serialized);
+
+    await expect(restored.readTextFile({ path: "missing.txt" })).rejects.toThrow(
+      `Persisted sandbox "${root}" is unavailable from provider "local-filesystem"`,
+    );
   });
 });

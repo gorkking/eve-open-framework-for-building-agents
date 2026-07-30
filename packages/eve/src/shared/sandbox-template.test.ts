@@ -1,10 +1,15 @@
+import { randomUUID } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import {
   defineSandboxTemplate,
   getSandboxTemplateInternal,
+  hasSandboxTemplateReference,
   isSandboxTemplate,
+  readSandboxTemplateReference,
+  recordSandboxTemplateReference,
 } from "#shared/sandbox-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 
@@ -56,5 +61,15 @@ describe("defineSandboxTemplate", () => {
 
     expect(reordered.implementationId).toBe(first.implementationId);
     expect(changed.implementationId).not.toBe(first.implementationId);
+  });
+
+  it("distinguishes a captured null reference from no captured reference", () => {
+    const templateKey = `nullable-template-${randomUUID()}`;
+
+    expect(hasSandboxTemplateReference(templateKey)).toBe(false);
+    recordSandboxTemplateReference(templateKey, null);
+
+    expect(hasSandboxTemplateReference(templateKey)).toBe(true);
+    expect(readSandboxTemplateReference(templateKey)).toBeNull();
   });
 });

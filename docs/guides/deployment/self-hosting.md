@@ -1,6 +1,6 @@
 ---
 title: "Self-host eve"
-description: "Run an eve agent as a Node service with your own workflow storage, sandbox backend, and routing."
+description: "Run an eve agent as a Node service with your own workflow storage, sandbox provider, and routing."
 ---
 
 Self-host eve when you operate a Node service, container platform, or reverse proxy. You run eve’s Nitro server and choose the infrastructure that stores workflows and executes sandbox sessions.
@@ -85,4 +85,4 @@ Use these guides to secure and observe the deployed agent:
 
 - [Auth and route protection](../auth-and-route-protection): configure the host’s route policy
 - [Observability](../instrumentation): export traces and diagnose runtime failures
-- [Sandbox](../../sandbox): select and secure a sandbox backend
+- [Sandbox](../../sandbox): select and secure a sandbox provider

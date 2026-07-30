@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { createDockerCli, DockerUnavailableError } from "#execution/sandbox/bindings/docker-cli.js";
-import { createDockerSandboxBackend } from "#execution/sandbox/bindings/docker.js";
+import { createDockerSandboxEngine } from "#execution/sandbox/bindings/docker.js";
 import {
   createDockerSandboxOptionsHash,
   DEFAULT_DOCKER_SANDBOX_IMAGE,
@@ -28,10 +28,10 @@ describe("docker CLI resolution", () => {
     vi.stubEnv("EVE_DOCKER_PATH", "/nonexistent/docker-binary");
     try {
       const appRoot = await createScratchDirectory("eve-docker-missing-");
-      const engine = createDockerSandboxBackend();
+      const engine = createDockerSandboxEngine();
 
       await expect(
-        engine.prewarm({ runtimeContext: { appRoot }, seedFiles: [], templateKey: "tpl-x" }),
+        engine.prepare({ context: { appRoot }, seedFiles: [], templateKey: "tpl-x" }),
       ).rejects.toThrow(DockerUnavailableError);
     } finally {
       vi.unstubAllEnvs();
@@ -56,7 +56,7 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
   }
 
   function createEngine() {
-    return createDockerSandboxBackend({ createOptions: { image: TEST_IMAGE } });
+    return createDockerSandboxEngine({ createOptions: { image: TEST_IMAGE } });
   }
 
   afterAll(async () => {
@@ -72,22 +72,22 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
       const appRoot = await createScratchDirectory("eve-docker-scenario-");
       const engine = createEngine();
 
-      const first = await engine.prewarm({
-        runtimeContext: { appRoot },
+      const first = await engine.prepare({
+        context: { appRoot },
         seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
         templateKey,
       });
       expect(first).toEqual({ reused: false });
 
-      const second = await engine.prewarm({
-        runtimeContext: { appRoot },
+      const second = await engine.prepare({
+        context: { appRoot },
         seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
         templateKey,
       });
       expect(second).toEqual({ reused: true });
 
       const handle = await engine.create({
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey: nextSessionKey("seeded"),
         templateKey,
       });
@@ -107,7 +107,7 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
       const appRoot = await createScratchDirectory("eve-docker-scenario-");
       const engine = createEngine();
       const handle = await engine.create({
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey: nextSessionKey("env"),
         templateKey,
       });
@@ -138,7 +138,7 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
       const appRoot = await createScratchDirectory("eve-docker-scenario-");
       const engine = createEngine();
       const handle = await engine.create({
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey: nextSessionKey("kill-tree"),
         templateKey,
       });
@@ -188,7 +188,7 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
       const appRoot = await createScratchDirectory("eve-docker-scenario-");
       const engine = createEngine();
       const handle = await engine.create({
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey: nextSessionKey("files"),
         templateKey,
       });
@@ -219,14 +219,14 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
     "flips a deny-all-created session to allow-all and back",
     async () => {
       const appRoot = await createScratchDirectory("eve-docker-scenario-");
-      const engine = createDockerSandboxBackend({
+      const engine = createDockerSandboxEngine({
         createOptions: { image: TEST_IMAGE, networkPolicy: "deny-all" },
       });
       // Create from the suite's prewarmed template: bash is already
       // baked in there, which a `--network none` container could not
       // install on the fly.
       const handle = await engine.create({
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey: nextSessionKey("network-flip"),
         templateKey,
       });
@@ -254,7 +254,7 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
       const sessionKey = nextSessionKey("reconnect");
 
       const firstHandle = await engine.create({
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey,
         templateKey,
       });
@@ -263,14 +263,17 @@ describe.runIf(runDockerScenarios)("docker sandbox engine against a real daemon"
         path: "persisted.txt",
       });
       const state = await firstHandle.captureState();
-      expect(state.metadata).toEqual({ containerName: sessionKey });
+      expect(state.metadata).toEqual({
+        containerId: expect.any(String),
+        containerName: sessionKey,
+      });
       // Server shutdown stops the container; reattach must restart it
       // transparently.
       await firstHandle.shutdown();
 
       const reconnected = await engine.create({
         existingMetadata: state.metadata,
-        runtimeContext: { appRoot },
+        context: { appRoot },
         sessionKey,
         templateKey,
       });

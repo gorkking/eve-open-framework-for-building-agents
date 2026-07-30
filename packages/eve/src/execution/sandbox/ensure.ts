@@ -1,5 +1,5 @@
 import type { SessionContext } from "#public/definitions/callback-context.js";
-import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
+import { SandboxTemplateUnavailableError } from "#shared/sandbox-engine.js";
 import { isEveDevEnvironment } from "#internal/application/optional-package-install.js";
 import {
   getRuntimeCompiledArtifactsSandboxAppRoot,
@@ -23,6 +23,7 @@ import type {
   SandboxStateValue,
 } from "#sandbox/state.js";
 import {
+  getSandboxAdapterType,
   isSandbox,
   restoreSandbox,
   serializeSandbox,
@@ -31,6 +32,7 @@ import {
 } from "#shared/sandbox-value.js";
 import {
   getSandboxTemplateInternal,
+  hasSandboxTemplateReference,
   readSandboxTemplateReference,
 } from "#shared/sandbox-template.js";
 
@@ -94,9 +96,17 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
     }),
   );
 
-  for (const { internal, reference, templateKey } of templateBindings) {
-    internal.bind(readSandboxTemplateReference(templateKey) ?? reference ?? { templateKey });
+  function bindAvailableTemplateReferences(): void {
+    for (const { internal, reference, templateKey } of templateBindings) {
+      const exactReference = hasSandboxTemplateReference(templateKey)
+        ? readSandboxTemplateReference(templateKey)
+        : reference;
+      if (exactReference !== undefined) {
+        internal.bind(exactReference);
+      }
+    }
   }
+  bindAvailableTemplateReferences();
 
   let persistedState =
     input.state !== null && input.state.revision === revision ? input.state : null;
@@ -131,12 +141,13 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         templateBindings.map(async ({ internal, templateKey }) => {
           await waitForSandboxTemplatePrewarmLock({
             appRoot,
-            backendName: internal.implementationId,
+            provider: internal.implementationId,
             log: logDevelopmentSandbox,
             templateKey,
           });
         }),
       );
+      bindAvailableTemplateReferences();
     }
 
     return await createFromDefinitionWithPrewarmRetry();
@@ -148,7 +159,7 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
     } catch (error) {
       if (
         input.compiledArtifactsSource.kind !== "disk" ||
-        !SandboxTemplateNotProvisionedError.is(error)
+        !SandboxTemplateUnavailableError.is(error)
       ) {
         throw error;
       }
@@ -158,6 +169,7 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         compiledArtifactsSource: input.compiledArtifactsSource,
         log: logDevelopmentSandbox,
       });
+      bindAvailableTemplateReferences();
       return await invokeDefinition();
     }
   }
@@ -207,14 +219,21 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
   }
 
   function trackSandboxForShutdown(sandbox: Sandbox): void {
+    const owner = sandboxOwners.get(sandbox);
+    if (
+      owner !== undefined &&
+      (owner.nodeId !== input.nodeId || owner.sessionId !== input.sessionId)
+    ) {
+      return;
+    }
     trackActiveSandboxHandle({
-      backendName: "sandbox",
+      provider: getSandboxAdapterType(sandbox),
       handle: {
         async shutdown() {
           await shutdownSandbox(sandbox);
         },
       },
-      sessionKey,
+      resourceId: sandbox.id,
     });
   }
 

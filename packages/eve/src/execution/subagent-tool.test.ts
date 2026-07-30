@@ -329,6 +329,36 @@ describe("buildSubagentRunInput", () => {
       rootSandboxState: sandboxState,
     });
   });
+
+  it("preserves the original root sandbox through nested delegation", () => {
+    const rootSandboxState = createSandboxState();
+    const parentSandboxState = {
+      ...createSandboxState(),
+      owner: {
+        nodeId: "reviewer",
+        sessionId: "parent-child-session",
+      },
+      root: rootSandboxState,
+      value: {
+        adapterId: "test-adapter",
+        id: "parent-child-sandbox",
+        reference: { id: "parent-child-sandbox" },
+      },
+    };
+    const session = { ...makeSession(), sandboxState: parentSandboxState };
+    const { runInput } = buildRuntimeSubagentRunInput({
+      action: makeAction(),
+      auth: null,
+      batchEvent: { sequence: 0, turnId: "turn-0" },
+      initiatorAuth: null,
+      session,
+    });
+
+    expect(runInput.adapter.state).toMatchObject({
+      parentSandboxState,
+      rootSandboxState,
+    });
+  });
 });
 
 function createSandboxState() {

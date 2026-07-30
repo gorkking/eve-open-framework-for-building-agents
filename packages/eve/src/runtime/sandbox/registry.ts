@@ -21,7 +21,7 @@ export const DEFAULT_SANDBOX_SOURCE_ID = "eve:default-sandbox";
  * compiled workspace resource tree owned by this graph node. The
  * prewarm orchestrator resolves the descriptor's logical path against
  * the active compiled artifacts source and writes the contents into
- * the sandbox template snapshot. Runtime `backend.create(...)` never
+ * the sandbox template snapshot. Runtime provider creation never
  * reads these files.
  */
 export interface RuntimeRegisteredSandbox {

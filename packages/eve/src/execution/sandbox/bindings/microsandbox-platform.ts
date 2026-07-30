@@ -48,7 +48,7 @@ export async function assertMicrosandboxPlatformCandidate(): Promise<void> {
   if (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) {
     if (!isGlibcLinux()) {
       throw new Error(
-        "The microsandbox sandbox backend requires a glibc-based Linux distribution; musl " +
+        "The microsandbox sandbox provider requires a glibc-based Linux distribution; musl " +
           "hosts are not supported. Use DockerSandbox or VercelSandbox instead.",
       );
     }
@@ -56,14 +56,14 @@ export async function assertMicrosandboxPlatformCandidate(): Promise<void> {
       return;
     }
     throw new Error(
-      "The microsandbox sandbox backend requires Linux with KVM enabled. `/dev/kvm` is not " +
+      "The microsandbox sandbox provider requires Linux with KVM enabled. `/dev/kvm` is not " +
         "available on this host. Enable KVM, set MSB_PATH for a custom runtime, or use " +
         "DockerSandbox / VercelSandbox.",
     );
   }
 
   throw new Error(
-    "The microsandbox sandbox backend supports Linux with KVM or macOS on Apple Silicon. " +
+    "The microsandbox sandbox provider supports Linux with KVM or macOS on Apple Silicon. " +
       `Current host is ${process.platform}/${process.arch}. Use DockerSandbox or ` +
       "VercelSandbox on this host.",
   );

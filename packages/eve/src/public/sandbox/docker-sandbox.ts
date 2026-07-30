@@ -1,5 +1,5 @@
 /**
- * Image pull behavior for the Docker sandbox backend.
+ * Image pull behavior for the Docker sandbox provider.
  *
  * - `"if-not-present"` (default): pull the base image only when it is
  *   missing from the local image store.
@@ -10,7 +10,7 @@
 export type DockerSandboxPullPolicy = "if-not-present" | "always" | "never";
 
 /**
- * Initial network policy for sandboxes created by the Docker backend.
+ * Initial network policy for sandboxes created by the Docker provider.
  * Docker supports coarse-grained egress control only: `"allow-all"`
  * attaches the container to the default bridge network, `"deny-all"`
  * runs it with networking disabled. Domain-level policies and
@@ -31,7 +31,7 @@ export interface DockerSandboxCreateOptions {
    */
   readonly image?: string;
   /**
-   * Environment variables baked into every container the backend
+   * Environment variables baked into every container the provider
    * creates (template builds and sessions).
    */
   readonly env?: Readonly<Record<string, string>>;

@@ -1,31 +1,40 @@
 import {
   createBuiltinSandbox,
-  createBuiltinSandboxBackend,
-  type BuiltinSandboxBackendName,
-} from "#execution/sandbox/backend-sandbox.js";
+  createBuiltinSandboxEngine,
+  type BuiltinSandboxProvider,
+} from "#execution/sandbox/builtin-sandbox.js";
 import { requireSandboxTemplateBuildContext } from "#execution/sandbox/creation-context.js";
 import {
-  createDefaultSandboxBackend,
+  createDefaultSandboxEngine,
   type DefaultSandboxOptions,
-} from "#execution/sandbox/default-backend.js";
-import type { SandboxBackend } from "#shared/sandbox-backend.js";
+} from "#execution/sandbox/default-engine.js";
+import type { SandboxEngine } from "#shared/sandbox-engine.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
 import type { JsonObject } from "#shared/json.js";
 
 export type { DefaultSandboxOptions };
 
+/**
+ * Build-time options for eve's availability-aware default template.
+ */
 export interface DefaultSandboxTemplateOptions {
+  /**
+   * Runs during template prewarm after eve hydrates the managed workspace.
+   */
   readonly prepare?: (sandbox: Sandbox) => Promise<void> | void;
 }
 
+/**
+ * A build-prewarmed base owned by the provider selected during build.
+ */
 export interface DefaultSandboxTemplate extends Omit<SandboxTemplate<undefined>, "create"> {
   create(): Promise<Sandbox>;
 }
 
 interface DefaultTemplateReference extends JsonObject {
-  readonly backendName: BuiltinSandboxBackendName;
-  readonly provider: JsonObject | null;
+  readonly provider: BuiltinSandboxProvider;
+  readonly providerReference: JsonObject | null;
   readonly templateKey: string;
 }
 
@@ -37,10 +46,10 @@ export const DefaultSandbox = {
    * Creates a durable sandbox using the best provider available at runtime.
    */
   async create(options?: DefaultSandboxOptions): Promise<Sandbox> {
-    const backend = createDefaultSandboxBackend(options);
+    const engine = createDefaultSandboxEngine(options);
     return await createBuiltinSandbox({
-      backend,
-      backendName: expectBuiltinBackendName(backend),
+      engine,
+      provider: expectBuiltinProvider(engine),
       templateKey: null,
     });
   },
@@ -53,46 +62,45 @@ export const DefaultSandbox = {
     return defineSandboxTemplate<DefaultTemplateReference, undefined>({
       async prewarm({ hydrate }) {
         const context = requireSandboxTemplateBuildContext();
-        const backend = createDefaultSandboxBackend();
-        const backendName = expectBuiltinBackendName(backend);
-        const result = await backend.prewarm({
-          bootstrap: async ({ use }) => {
-            const sandbox = (await use()) as Sandbox;
+        const engine = createDefaultSandboxEngine();
+        const provider = expectBuiltinProvider(engine);
+        const result = await engine.prepare({
+          prepare: async (sandbox) => {
             await hydrate(sandbox);
             await options.prepare?.(sandbox);
           },
           log: context.log,
-          runtimeContext: { appRoot: context.appRoot },
+          context: { appRoot: context.appRoot },
           seedFiles: [],
           templateKey: context.templateKey,
         });
         return {
-          backendName,
-          provider: result.templateReference ?? null,
+          provider,
+          providerReference: result.reference ?? null,
           templateKey: context.templateKey,
         };
       },
       async create({ reference }) {
-        const backend = createBuiltinSandboxBackend(reference.backendName);
+        const engine = createBuiltinSandboxEngine(reference.provider);
         return await createBuiltinSandbox({
-          backend,
-          backendName: reference.backendName,
+          engine,
+          provider: reference.provider,
           templateKey: reference.templateKey,
-          templateReference: reference.provider ?? undefined,
+          templateReference: reference.providerReference ?? undefined,
         });
       },
     }) as DefaultSandboxTemplate;
   },
 };
 
-function expectBuiltinBackendName(backend: SandboxBackend): BuiltinSandboxBackendName {
+function expectBuiltinProvider(engine: SandboxEngine): BuiltinSandboxProvider {
   if (
-    backend.name === "docker" ||
-    backend.name === "just-bash" ||
-    backend.name === "microsandbox" ||
-    backend.name === "vercel"
+    engine.provider === "docker" ||
+    engine.provider === "just-bash" ||
+    engine.provider === "microsandbox" ||
+    engine.provider === "vercel"
   ) {
-    return backend.name;
+    return engine.provider;
   }
-  throw new Error(`DefaultSandbox selected unsupported backend "${backend.name}".`);
+  throw new Error(`DefaultSandbox selected unsupported provider "${engine.provider}".`);
 }

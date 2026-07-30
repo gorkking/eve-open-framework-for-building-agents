@@ -2,35 +2,21 @@ import {
   applyInitialVercelNetworkPolicy,
   ensureVercelSandboxBaseRuntime,
 } from "#execution/sandbox/bindings/vercel-base-runtime.js";
-import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 import type {
-  InternalSandboxSession,
-  SandboxProcess,
-  SandboxReadFileOptions,
-  SandboxRemovePathOptions,
-  SandboxSpawnOptions,
-  SandboxWriteFileOptions,
-} from "#shared/sandbox-session.js";
-import type {
-  SandboxBackend,
-  SandboxBackendCreateInput,
-  SandboxBackendHandle,
-  SandboxBackendPrewarmInput,
-  SandboxBackendPrewarmResult,
-  SandboxBackendTags,
+  SandboxEngine,
+  SandboxEngineCreateInput,
+  SandboxEngineHandle,
+  SandboxEnginePrepareInput,
+  SandboxEnginePrepareResult,
+  SandboxResourceTags,
   SandboxSeedFile,
-  SandboxBackendPrewarmContext,
-} from "#shared/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
-import type {
-  VercelSandboxBootstrapUseOptions,
-  VercelSandboxSessionUseOptions,
-} from "#public/sandbox/vercel-sandbox.js";
-import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
+} from "#shared/sandbox-engine.js";
+import {
+  SandboxResourceUnavailableError,
+  SandboxTemplateUnavailableError,
+} from "#shared/sandbox-engine.js";
 import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.js";
-import { adaptMultiplexedCommandToSandboxProcess } from "#execution/sandbox/multiplexed-command.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
-import { streamToBuffer } from "#execution/sandbox/stream-utils.js";
 import {
   createVercelEveImageSandbox,
   type CreateVercelSandbox,
@@ -41,8 +27,12 @@ import {
   isVercelSnapshotUnavailableError,
 } from "#execution/sandbox/bindings/vercel-errors.js";
 import { getNamedVercelSandbox } from "#execution/sandbox/bindings/vercel-lookup.js";
-import { normalizeVercelReadStream } from "#execution/sandbox/bindings/vercel-read-stream.js";
-import { writeSandboxSeedFiles } from "#execution/sandbox/bindings/local-backend-utils.js";
+import {
+  createVercelInternalSandboxSession,
+  createVercelNetworkPolicySetter,
+  createVercelSandboxHandle,
+} from "#execution/sandbox/bindings/vercel-session.js";
+import { writeSandboxSeedFiles } from "#execution/sandbox/bindings/local-workspace-utils.js";
 import type {
   VercelCreateOptions,
   VercelModule,
@@ -56,30 +46,27 @@ export interface CreateVercelSandboxInput {
   readonly loadSandboxModule?: () => Promise<VercelModule>;
 }
 /**
- * Creates the Vercel-backed sandbox backend.
+ * Creates the Vercel-backed sandbox provider.
  *
  * Any author-supplied `createOptions` are forwarded to Vercel's sandbox
  * create API for every fresh sandbox the framework creates (template at
  * prewarm time, session at first-time session-create). On resume
  * (`Sandbox.get`) no create happens, so they are not re-applied.
  */
-export function createVercelSandbox(
-  input: CreateVercelSandboxInput = {},
-): SandboxBackend<VercelSandboxBootstrapUseOptions, VercelSandboxSessionUseOptions> {
+export function createVercelSandbox(input: CreateVercelSandboxInput = {}): SandboxEngine {
   const loadSandboxModule =
     input.loadSandboxModule ?? (async () => await import("#compiled/@vercel/sandbox/index.js"));
   const createOptions: VercelCreateOptions = {
     timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
     ...input.createOptions,
   };
+  const configuration: JsonObject = {};
   const createSandbox = input.createSandbox ?? createVercelEveImageSandbox;
   const prewarmedTemplates = new Map<string, VercelSandboxTemplateRecord>();
 
   return {
-    name: "vercel",
-    async create(
-      createInput: SandboxBackendCreateInput,
-    ): Promise<SandboxBackendHandle<VercelSandboxSessionUseOptions>> {
+    provider: "vercel",
+    async create(createInput: SandboxEngineCreateInput): Promise<SandboxEngineHandle> {
       const runtimeCreateOptions =
         createInput.signal === undefined
           ? createOptions
@@ -113,6 +100,9 @@ export function createVercelSandbox(
           tags,
         });
       } catch (error) {
+        if (SandboxResourceUnavailableError.is(error)) {
+          throw error;
+        }
         if (
           template !== null &&
           (isVercelSnapshotUnavailableError(error) || isVercelSandboxMissingError(error))
@@ -124,8 +114,8 @@ export function createVercelSandbox(
             sandboxName: template.sandboxName,
           });
           await staleTemplate?.delete();
-          throw new SandboxTemplateNotProvisionedError({
-            backendName: "vercel",
+          throw new SandboxTemplateUnavailableError({
+            provider: "vercel",
             templateKey: template.templateKey,
           });
         }
@@ -140,15 +130,13 @@ export function createVercelSandbox(
         await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
       }
 
-      return createHandle(session.sandbox, createInput.sessionKey);
+      return createVercelSandboxHandle(session.sandbox, createInput.sessionKey, configuration);
     },
-    async prewarm(
-      prewarmInput: SandboxBackendPrewarmInput<VercelSandboxBootstrapUseOptions>,
-    ): Promise<SandboxBackendPrewarmResult> {
+    async prepare(prewarmInput: SandboxEnginePrepareInput): Promise<SandboxEnginePrepareResult> {
       let outcome: EnsureTemplateOutcome;
       try {
         outcome = await ensureTemplateWithUnavailableRetry({
-          bootstrap: prewarmInput.bootstrap,
+          prepare: prewarmInput.prepare,
           createOptions,
           createSandbox,
           loadSandboxModule,
@@ -165,7 +153,7 @@ export function createVercelSandbox(
       prewarmedTemplates.set(prewarmInput.templateKey, outcome.template);
       return {
         reused: outcome.reused,
-        templateReference: outcome.template,
+        reference: outcome.template,
       };
     },
   };
@@ -201,15 +189,13 @@ interface EnsureTemplateOutcome {
 }
 
 interface EnsureTemplateInput {
-  readonly bootstrap?: (
-    input: SandboxBackendPrewarmContext<VercelSandboxBootstrapUseOptions>,
-  ) => void | Promise<void>;
+  readonly prepare?: SandboxEnginePrepareInput["prepare"];
   readonly createOptions: VercelCreateOptions;
   readonly createSandbox: CreateVercelSandbox;
   readonly loadSandboxModule: () => Promise<VercelModule>;
   readonly log?: (message: string) => void;
   readonly seedFiles: ReadonlyArray<SandboxSeedFile>;
-  readonly tags?: SandboxBackendTags;
+  readonly tags?: SandboxResourceTags;
   readonly templateKey: string;
 }
 
@@ -246,8 +232,8 @@ async function readTemplate(input: {
   });
 
   if (sandbox === null || typeof sandbox.currentSnapshotId !== "string") {
-    throw new SandboxTemplateNotProvisionedError({
-      backendName: "vercel",
+    throw new SandboxTemplateUnavailableError({
+      provider: "vercel",
       templateKey: input.templateKey,
     });
   }
@@ -268,7 +254,7 @@ async function readTemplateForCreate(input: {
   try {
     return await readTemplate(input);
   } catch (error) {
-    if (SandboxTemplateNotProvisionedError.is(error)) {
+    if (SandboxTemplateUnavailableError.is(error)) {
       throw error;
     }
     throw new Error(
@@ -282,7 +268,7 @@ async function readTemplateForCreate(input: {
  * Creates or refreshes one named Vercel sandbox template and returns the
  * resulting snapshot metadata along with whether an existing snapshot
  * was reused. Internal — exposed only to the prewarm pipeline through
- * the backend's `prewarm` method.
+ * the provider engine's `prepare` method.
  */
 async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplateOutcome> {
   const sandboxModule = await input.loadSandboxModule();
@@ -293,6 +279,16 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
   });
   const tags = resolveVercelSandboxTags(input.createOptions.tags, input.tags);
   const authorSnapshotId = extractAuthorSnapshotId(input.createOptions);
+
+  if (
+    sandbox !== null &&
+    hasFrameworkSnapshot(sandbox, authorSnapshotId) &&
+    !hasImmutableTemplateBase(input.createOptions)
+  ) {
+    input.log?.("template base is not immutable; rebuilding sandbox template");
+    await sandbox.delete();
+    sandbox = null;
+  }
 
   if (sandbox !== null && isUnprovisionedTerminalTemplateSandbox(sandbox, authorSnapshotId)) {
     await sandbox.delete();
@@ -321,14 +317,9 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
    * subsequent `getNamedSandbox` reuse until we run our own snapshot.
    * So we ignore that exact value: it's the author's base layer, not a
    * framework snapshot, and we still owe `ensureSandboxWorkingDirectory`,
-   * bootstrap, seed file writes, and `sandbox.snapshot()` on top.
+   * preparation, managed file writes, and `sandbox.snapshot()` on top.
    */
-  const hasFrameworkSnapshot =
-    typeof sandbox.currentSnapshotId === "string" &&
-    sandbox.currentSnapshotId.length > 0 &&
-    sandbox.currentSnapshotId !== authorSnapshotId;
-
-  if (hasFrameworkSnapshot) {
+  if (hasFrameworkSnapshot(sandbox, authorSnapshotId)) {
     return {
       reused: true,
       template: {
@@ -350,19 +341,14 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
 
   await writeSandboxSeedFiles(templateSession, input.seedFiles);
 
-  if (input.bootstrap !== undefined) {
-    input.log?.("running sandbox bootstrap");
-    await input.bootstrap({
-      use: async (options?: VercelSandboxBootstrapUseOptions) => {
-        if (options !== undefined) {
-          await sandbox.update(options);
-        }
-        return createLoggingSandboxSession({
-          log: input.log,
-          session: templateSession,
-        });
-      },
-    });
+  if (input.prepare !== undefined) {
+    input.log?.("running template preparation");
+    await input.prepare(
+      createLoggingSandboxSession({
+        log: input.log,
+        session: templateSession,
+      }),
+    );
   }
 
   const snapshot = await sandbox.snapshot();
@@ -392,7 +378,8 @@ interface VercelSandboxSessionCreateResult {
 }
 
 async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSessionCreateResult> {
-  const sandboxName = getVercelSandboxName(input.existingMetadata) ?? input.sessionKey;
+  const persistedIdentity = readPersistedVercelSandboxIdentity(input.existingMetadata);
+  const sandboxName = persistedIdentity?.name ?? input.sessionKey;
   const existing = await getNamedVercelSandbox({
     createOptions: input.createOptions,
     sandboxModule: input.sandboxModule,
@@ -400,8 +387,23 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
   });
 
   if (existing !== null) {
+    if (
+      persistedIdentity !== undefined &&
+      existing.createdAt.toISOString() !== persistedIdentity.createdAt
+    ) {
+      throw new SandboxResourceUnavailableError({
+        provider: "vercel",
+        sessionKey: sandboxName,
+      });
+    }
     await ensureVercelSandboxTags(existing, input.tags);
     return { created: false, sandbox: existing };
+  }
+  if (input.existingMetadata !== undefined) {
+    throw new SandboxResourceUnavailableError({
+      provider: "vercel",
+      sessionKey: sandboxName,
+    });
   }
 
   const createParams = createSessionCreateParams(input, sandboxName);
@@ -409,13 +411,26 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
     createParams.tags = input.tags;
   }
 
-  return {
-    created: true,
-    sandbox: await input.createSandbox({
+  try {
+    return {
+      created: true,
+      sandbox: await input.createSandbox({
+        createOptions: createParams,
+        sandboxModule: input.sandboxModule,
+      }),
+    };
+  } catch (error) {
+    const raced = await getNamedVercelSandbox({
       createOptions: createParams,
       sandboxModule: input.sandboxModule,
-    }),
-  };
+      sandboxName,
+    });
+    if (raced !== null) {
+      await ensureVercelSandboxTags(raced, input.tags);
+      return { created: false, sandbox: raced };
+    }
+    throw error;
+  }
 }
 
 function createSessionCreateParams(
@@ -458,104 +473,6 @@ function withBaseSetupNetworkPolicy(
   return { ...createOptions, networkPolicy: "allow-all" };
 }
 
-function createHandle(
-  sandbox: VercelSandbox,
-  sessionKey: string,
-): SandboxBackendHandle<VercelSandboxSessionUseOptions> {
-  return {
-    session: buildSandboxSession(
-      createVercelInternalSandboxSession(sandbox, sessionKey),
-      createVercelNetworkPolicySetter(sandbox),
-    ),
-    useSessionFn: async (options?: VercelSandboxSessionUseOptions) => {
-      if (options !== undefined) {
-        await sandbox.update(options);
-      }
-      return buildSandboxSession(
-        createVercelInternalSandboxSession(sandbox, sessionKey),
-        createVercelNetworkPolicySetter(sandbox),
-      );
-    },
-    async captureState() {
-      return {
-        backendName: "vercel",
-        metadata: { sandboxName: sandbox.name },
-        sessionKey,
-      };
-    },
-    // Session sandboxes are persistent, so the SDK resumes a stopped
-    // sandbox on the next command after reattach.
-    async shutdown() {
-      await stopVercelSandbox(sandbox);
-    },
-  };
-}
-
-async function stopVercelSandbox(sandbox: VercelSandbox): Promise<void> {
-  if (sandbox.status !== "running" && sandbox.status !== "pending") {
-    return;
-  }
-  try {
-    await sandbox.stop();
-  } catch {
-    // Best-effort: an unreachable or already-stopped sandbox must not
-    // block server shutdown; the provider-side timeout is the backstop.
-  }
-}
-
-function createVercelNetworkPolicySetter(
-  sandbox: VercelSandbox,
-): (policy: SandboxNetworkPolicy) => Promise<void> {
-  return async (policy) => {
-    await sandbox.update({ networkPolicy: policy });
-  };
-}
-
-function createVercelInternalSandboxSession(
-  sandbox: VercelSandbox,
-  id: string,
-): InternalSandboxSession {
-  return {
-    id,
-    resolvePath: resolveVercelSandboxPath,
-    async spawn(options: SandboxSpawnOptions): Promise<SandboxProcess> {
-      const command = await sandbox.runCommand({
-        args: ["-lc", options.command],
-        cmd: "bash",
-        cwd: options.workingDirectory ?? WORKSPACE_ROOT,
-        detached: true,
-        env: options.env,
-        signal: options.abortSignal,
-      });
-      return adaptMultiplexedCommandToSandboxProcess({
-        command,
-        getOutput: (log) => log.stream,
-      });
-    },
-    async readFile(options: SandboxReadFileOptions) {
-      return normalizeVercelReadStream(await sandbox.readFile({ path: options.path }));
-    },
-    async writeFile(options: SandboxWriteFileOptions) {
-      const bytes = await streamToBuffer(options.content);
-      await sandbox.writeFiles([{ content: bytes, path: options.path }]);
-    },
-    async removePath(options: SandboxRemovePathOptions) {
-      await sandbox.fs.rm(options.path, {
-        force: options.force,
-        recursive: options.recursive,
-        signal: options.abortSignal,
-      });
-    },
-  };
-}
-
-function resolveVercelSandboxPath(path: string): string {
-  if (path.startsWith("/")) {
-    return path;
-  }
-  return `${WORKSPACE_ROOT}/${path}`;
-}
-
 function isUnprovisionedTerminalTemplateSandbox(
   sandbox: VercelSandbox,
   authorSnapshotId: string | undefined,
@@ -588,14 +505,64 @@ function extractAuthorSnapshotId(createOptions: VercelCreateOptions): string | u
   return undefined;
 }
 
-function getVercelSandboxName(metadata: Record<string, unknown> | undefined): string | undefined {
-  const sandboxName = metadata?.sandboxName;
-  return typeof sandboxName === "string" ? sandboxName : undefined;
+function hasFrameworkSnapshot(
+  sandbox: VercelSandbox,
+  authorSnapshotId: string | undefined,
+): boolean {
+  return (
+    typeof sandbox.currentSnapshotId === "string" &&
+    sandbox.currentSnapshotId.length > 0 &&
+    sandbox.currentSnapshotId !== authorSnapshotId
+  );
+}
+
+function hasImmutableTemplateBase(createOptions: VercelCreateOptions): boolean {
+  const source = (
+    createOptions as {
+      readonly image?: string;
+      readonly source?:
+        | { readonly type?: string; readonly revision?: string; readonly snapshotId?: string }
+        | undefined;
+    }
+  ).source;
+  const image = (createOptions as { readonly image?: string }).image;
+
+  if (source === undefined && image === undefined) {
+    return true;
+  }
+
+  if (source?.type === "snapshot" && typeof source.snapshotId === "string") {
+    return true;
+  }
+  if (
+    source?.type === "git" &&
+    typeof source.revision === "string" &&
+    /^[a-f0-9]{40}$/i.test(source.revision)
+  ) {
+    return true;
+  }
+
+  return typeof image === "string" && /@sha256:[a-f0-9]{64}$/i.test(image);
+}
+
+function readPersistedVercelSandboxIdentity(
+  metadata: Record<string, unknown> | undefined,
+): { readonly createdAt: string; readonly name: string } | undefined {
+  if (metadata === undefined) {
+    return undefined;
+  }
+  if (typeof metadata.sandboxCreatedAt !== "string" || typeof metadata.sandboxName !== "string") {
+    throw new TypeError("Invalid persisted Vercel sandbox identity.");
+  }
+  return {
+    createdAt: metadata.sandboxCreatedAt,
+    name: metadata.sandboxName,
+  };
 }
 
 function resolveVercelSandboxTags(
   userTags: VercelCreateOptions["tags"],
-  eveTags: SandboxBackendTags | undefined,
+  eveTags: SandboxResourceTags | undefined,
 ): Record<string, string> | undefined {
   const tags: Record<string, string> = {};
 

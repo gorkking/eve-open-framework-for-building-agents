@@ -1,28 +1,28 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 import {
-  createJustBashSandboxBackend,
+  createJustBashSandboxEngine,
   pruneJustBashSandboxTemplates,
 } from "#execution/sandbox/bindings/just-bash.js";
-import type { SandboxBackend } from "#shared/sandbox-backend.js";
+import type { SandboxEngine } from "#shared/sandbox-engine.js";
 
 const createScratchDirectory = useTemporaryDirectories();
 
-// The whole file exercises the opt-in just-bash backend; the workspace
+// The whole file exercises the opt-in just-bash provider; the workspace
 // devDependency provides the `just-bash` install that applications opt
 // into explicitly.
-function createJustBashBackend(): SandboxBackend {
-  return createJustBashSandboxBackend();
+function createJustBashProvider(): SandboxEngine {
+  return createJustBashSandboxEngine();
 }
 
 async function createTemporaryCacheDirectory(label: string): Promise<string> {
-  // The local backend derives its cache directory from
-  // `runtimeContext.appRoot` via `resolveSandboxCacheDirectory`, so the
+  // The local provider derives its cache directory from
+  // `context.appRoot` via `resolveSandboxCacheDirectory`, so the
   // helper returns a temporary appRoot rather than a cache directory
   // directly.
   return await createScratchDirectory(`eve-local-sandbox-${label}-`);
@@ -33,14 +33,14 @@ async function createPrewarmedLocalHandle(input: {
   readonly sessionKey: string;
   readonly templateKey: string;
 }) {
-  const backend = createJustBashBackend();
-  await backend.prewarm({
-    runtimeContext: { appRoot: input.appRoot },
+  const provider = createJustBashProvider();
+  await provider.prepare({
+    context: { appRoot: input.appRoot },
     seedFiles: [],
     templateKey: input.templateKey,
   });
-  return await backend.create({
-    runtimeContext: { appRoot: input.appRoot },
+  return await provider.create({
+    context: { appRoot: input.appRoot },
     sessionKey: input.sessionKey,
     templateKey: input.templateKey,
   });
@@ -123,7 +123,7 @@ describe("just-bash sandbox file API", () => {
     });
 
     await expect(handle.session.setNetworkPolicy("deny-all")).rejects.toThrow(
-      "not supported on the just-bash sandbox backend",
+      "not supported on the just-bash sandbox provider",
     );
   });
 
@@ -200,16 +200,16 @@ describe("just-bash sandbox file API", () => {
 
   it("preserves files across capture and reconnect", async () => {
     const appRoot = await createTemporaryCacheDirectory("file-api");
-    const backend = createJustBashBackend();
+    const provider = createJustBashProvider();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [],
       templateKey: "tpl-reconnect",
     });
 
-    const firstHandle = await backend.create({
-      runtimeContext: { appRoot },
+    const firstHandle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-reconnect",
       templateKey: "tpl-reconnect",
     });
@@ -221,6 +221,7 @@ describe("just-bash sandbox file API", () => {
     const state = await firstHandle.captureState();
 
     expect(state.metadata).toEqual({
+      resourceId: expect.any(String),
       rootPath: join(
         appRoot,
         ".eve",
@@ -247,15 +248,68 @@ describe("just-bash sandbox file API", () => {
       ),
     ).resolves.toBe("survives reconnect");
 
-    const reconnectedHandle = await backend.create({
+    const reconnectedHandle = await provider.create({
       existingMetadata: state.metadata,
-      runtimeContext: { appRoot },
+      context: { appRoot },
       sessionKey: "session-reconnect",
       templateKey: "tpl-reconnect",
     });
     const content = await reconnectedHandle.session.readTextFile({ path: "persisted.txt" });
 
     expect(content).toBe("survives reconnect");
+  });
+
+  it("does not replace a persisted workspace that no longer exists", async () => {
+    const appRoot = await createTemporaryCacheDirectory("missing-session");
+    const provider = createJustBashProvider();
+    const sessionKey = "session-missing";
+    const handle = await provider.create({
+      context: { appRoot },
+      sessionKey,
+      templateKey: null,
+    });
+    const state = await handle.captureState();
+    await rm(state.metadata.rootPath as string, { recursive: true });
+
+    await expect(
+      provider.create({
+        existingMetadata: state.metadata,
+        context: { appRoot },
+        sessionKey,
+        templateKey: null,
+      }),
+    ).rejects.toThrow(`Persisted sandbox "${sessionKey}" is unavailable from provider "just-bash"`);
+  });
+
+  it("does not accept a replacement workspace at a persisted path", async () => {
+    const appRoot = await createTemporaryCacheDirectory("replaced-session");
+    const provider = createJustBashProvider();
+    const sessionKey = "session-replaced";
+    const original = await provider.create({
+      context: { appRoot },
+      sessionKey,
+      templateKey: null,
+    });
+    const originalState = await original.captureState();
+    await original.shutdown();
+    await rm(originalState.metadata.rootPath as string, { recursive: true });
+
+    const replacement = await provider.create({
+      context: { appRoot },
+      sessionKey,
+      templateKey: null,
+    });
+    await replacement.captureState();
+    await replacement.shutdown();
+
+    await expect(
+      provider.create({
+        existingMetadata: originalState.metadata,
+        context: { appRoot },
+        sessionKey,
+        templateKey: null,
+      }),
+    ).rejects.toThrow(`Persisted sandbox "${sessionKey}" is unavailable from provider "just-bash"`);
   });
 
   it("supports readFile with line range options", async () => {
@@ -313,18 +367,18 @@ describe("just-bash sandbox file API", () => {
   });
 });
 
-describe("createLocalSandboxBackend with the just-bash engine", () => {
-  it("exposes a distinct stable backend name", () => {
-    const backend = createJustBashBackend();
-    expect(backend.name).toBe("just-bash");
+describe("createLocalSandboxEngine with the just-bash engine", () => {
+  it("exposes a distinct stable provider name", () => {
+    const provider = createJustBashProvider();
+    expect(provider.provider).toBe("just-bash");
   });
 
   it("creates a fresh session when no template key is requested", async () => {
     const appRoot = await createTemporaryCacheDirectory("fresh-session");
-    const backend = createJustBashBackend();
+    const provider = createJustBashProvider();
 
-    const handle = await backend.create({
-      runtimeContext: { appRoot },
+    const handle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-without-template",
       templateKey: null,
     });
@@ -337,15 +391,15 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
 
   it("reports a fresh build on first prewarm and a reuse on the second", async () => {
     const appRoot = await createTemporaryCacheDirectory("reuse-report");
-    const backend = createJustBashBackend();
+    const provider = createJustBashProvider();
 
-    const first = await backend.prewarm({
-      runtimeContext: { appRoot },
+    const first = await provider.prepare({
+      context: { appRoot },
       seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
       templateKey: "tpl-reuse-report",
     });
-    const second = await backend.prewarm({
-      runtimeContext: { appRoot },
+    const second = await provider.prepare({
+      context: { appRoot },
       seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
       templateKey: "tpl-reuse-report",
     });
@@ -413,21 +467,21 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
 
   it("touches a reused template so cleanup keeps the active template", async () => {
     const appRoot = await createTemporaryCacheDirectory("template-touch");
-    const backend = createJustBashBackend();
+    const provider = createJustBashProvider();
     const templateRoot = join(appRoot, ".eve", "sandbox-cache", "just-bash", "templates", "active");
     const oldTime = new Date(1_000);
     const now = Date.now();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [],
       templateKey: "active",
     });
     await utimes(templateRoot, oldTime, oldTime);
 
     await expect(
-      backend.prewarm({
-        runtimeContext: { appRoot },
+      provider.prepare({
+        context: { appRoot },
         seedFiles: [],
         templateKey: "active",
       }),
@@ -447,10 +501,10 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
 
   it("creates a session from a prewarmed template with seed files", async () => {
     const appRoot = await createTemporaryCacheDirectory("seed-template");
-    const backend = createJustBashBackend();
+    const provider = createJustBashProvider();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [
         {
           content: "# Weather skill\n",
@@ -460,8 +514,8 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
       templateKey: "template-seeded-later",
     });
 
-    const seededHandle = await backend.create({
-      runtimeContext: { appRoot },
+    const seededHandle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-from-repaired-template",
       templateKey: "template-seeded-later",
     });
@@ -472,51 +526,50 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
     expect(result.stdout.trim().split("\n")).toEqual(["/workspace/skills/weather.md"]);
   });
 
-  it("writes seed files before bootstrap and captures bootstrap outputs", async () => {
-    const appRoot = await createTemporaryCacheDirectory("seed-before-bootstrap");
-    const backend = createJustBashBackend();
+  it("writes seed files before preparation and captures preparation outputs", async () => {
+    const appRoot = await createTemporaryCacheDirectory("seed-before-preparation");
+    const provider = createJustBashProvider();
 
-    await backend.prewarm({
-      bootstrap: async ({ use }) => {
-        const sandbox = await use();
+    await provider.prepare({
+      prepare: async (sandbox) => {
         await expect(sandbox.readTextFile({ path: "/workspace/seed.txt" })).resolves.toBe(
           "authored seed",
         );
         await sandbox.writeTextFile({
-          content: "bootstrap output",
-          path: "/workspace/bootstrap.txt",
+          content: "preparation output",
+          path: "/workspace/preparation.txt",
         });
       },
-      runtimeContext: { appRoot },
+      context: { appRoot },
       seedFiles: [{ content: "authored seed", path: "/workspace/seed.txt" }],
-      templateKey: "template-seed-before-bootstrap",
+      templateKey: "template-seed-before-preparation",
     });
 
-    const handle = await backend.create({
-      runtimeContext: { appRoot },
-      sessionKey: "session-seed-before-bootstrap",
-      templateKey: "template-seed-before-bootstrap",
+    const handle = await provider.create({
+      context: { appRoot },
+      sessionKey: "session-seed-before-preparation",
+      templateKey: "template-seed-before-preparation",
     });
     await expect(handle.session.readTextFile({ path: "/workspace/seed.txt" })).resolves.toBe(
       "authored seed",
     );
-    await expect(handle.session.readTextFile({ path: "/workspace/bootstrap.txt" })).resolves.toBe(
-      "bootstrap output",
+    await expect(handle.session.readTextFile({ path: "/workspace/preparation.txt" })).resolves.toBe(
+      "preparation output",
     );
   });
 
   it("does not repair an existing session directory with later seed files", async () => {
     const appRoot = await createTemporaryCacheDirectory("seed-session");
-    const backend = createJustBashBackend();
+    const provider = createJustBashProvider();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [],
       templateKey: "template-seeded-later-session",
     });
 
-    const initialHandle = await backend.create({
-      runtimeContext: { appRoot },
+    const initialHandle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-seeded-later",
       templateKey: "template-seeded-later-session",
     });
@@ -524,8 +577,8 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
 
     await initialHandle.shutdown();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [
         {
           content: "# Weather skill\n",
@@ -535,9 +588,9 @@ describe("createLocalSandboxBackend with the just-bash engine", () => {
       templateKey: "template-seeded-later-session-next",
     });
 
-    const seededHandle = await backend.create({
+    const seededHandle = await provider.create({
       existingMetadata: initialState.metadata,
-      runtimeContext: { appRoot },
+      context: { appRoot },
       sessionKey: "session-seeded-later",
       templateKey: "template-seeded-later-session-next",
     });

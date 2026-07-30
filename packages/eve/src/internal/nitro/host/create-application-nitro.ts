@@ -16,7 +16,7 @@ import {
   writeEveVersionedCacheMetadata,
 } from "#internal/application/cache-metadata.js";
 import { createProductionNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
-import { createCompiledSandboxBackendPrunePlugin } from "#internal/nitro/host/compiled-sandbox-backend-prune-plugin.js";
+import { createCompiledSandboxEnginePrunePlugin } from "#internal/nitro/host/local-sandbox-provider-prune-plugin.js";
 import { createExtensionScopePlugin } from "#internal/bundler/extension-scope-plugin.js";
 import {
   configureDevelopmentNitroRoutes,
@@ -26,7 +26,7 @@ import { applyEveCronHandlerRoute } from "#internal/nitro/host/cron-handler-rout
 import { createNitroBundlerConfig } from "#internal/nitro/host/nitro-bundler-config.js";
 import {
   createOptionalEngineDependencyPlugin,
-  OPTIONAL_ENGINE_PACKAGES_BY_BACKEND_NAME,
+  OPTIONAL_ENGINE_PACKAGES_BY_PROVIDER,
 } from "#internal/nitro/host/optional-engine-dependency-plugin.js";
 import { addNitroRoutingImportSpecifierPlugin } from "#internal/nitro/host/nitro-routing-import-specifier-plugin.js";
 import { registerScheduleTaskHandlers } from "#internal/nitro/host/schedule-task-routes.js";
@@ -67,9 +67,9 @@ const WORKFLOW_CACHE_PATH_FRAGMENT = "/.eve/workflow-cache/";
  * traces it into `server/node_modules` automatically.
  */
 const FRAMEWORK_HOSTED_EXTERNAL_PACKAGES: readonly string[] = ["@napi-rs/keyring"];
-const LOCAL_SANDBOX_BACKEND_NAMES = new Set([
+const LOCAL_SANDBOX_PROVIDERS = new Set([
   "docker",
-  ...Object.keys(OPTIONAL_ENGINE_PACKAGES_BY_BACKEND_NAME),
+  ...Object.keys(OPTIONAL_ENGINE_PACKAGES_BY_PROVIDER),
 ]);
 
 function resolveWorkflowAliases(): Record<string, string> {
@@ -114,7 +114,7 @@ function collectHostedTraceDependencies(
     ...FRAMEWORK_HOSTED_EXTERNAL_PACKAGES,
     // Optional engine packages (just-bash, microsandbox) join the
     // externalize-and-trace path only when the compiled sandbox config
-    // selects their backend — the app's opt-in. Otherwise
+    // selects their provider — the app's opt-in. Otherwise
     // createOptionalEngineDependencyPlugin pins them as plain externals
     // so a resolvable-but-unrequested install adds nothing to hosted
     // output.
@@ -128,26 +128,22 @@ function collectHostedTraceDependencies(
  * Conservatively includes every local engine when an authored definition can
  * choose a sandbox dynamically at runtime.
  */
-function collectConfiguredSandboxBackendNames(manifest: CompiledAgentManifest): Set<string> {
+function collectConfiguredSandboxEngineNames(manifest: CompiledAgentManifest): Set<string> {
   const nodes = [manifest, ...manifest.subagents.map((subagent) => subagent.agent)];
-  return nodes.some((node) => node.sandbox !== null)
-    ? new Set(LOCAL_SANDBOX_BACKEND_NAMES)
-    : new Set();
+  return nodes.some((node) => node.sandbox !== null) ? new Set(LOCAL_SANDBOX_PROVIDERS) : new Set();
 }
 
 /**
  * Hosted Vercel builds can prune local engines only when no authored sandbox
  * definition can select one at runtime.
  */
-export function shouldPruneLocalSandboxBackends(input: {
-  readonly configuredBackendNames: ReadonlySet<string>;
+export function shouldPruneLocalSandboxEngines(input: {
+  readonly configuredProviders: ReadonlySet<string>;
   readonly preset: "vercel" | undefined;
 }): boolean {
   return (
     input.preset === "vercel" &&
-    ![...input.configuredBackendNames].some((backendName) =>
-      LOCAL_SANDBOX_BACKEND_NAMES.has(backendName),
-    )
+    ![...input.configuredProviders].some((provider) => LOCAL_SANDBOX_PROVIDERS.has(provider))
   );
 }
 
@@ -610,21 +606,19 @@ function createApplicationNitroBundlerConfiguration(
   preparedHost: PreparedApplicationHost,
   preset: "vercel" | undefined,
 ) {
-  const configuredBackendNames = collectConfiguredSandboxBackendNames(
+  const configuredProviders = collectConfiguredSandboxEngineNames(
     preparedHost.compileResult.manifest,
   );
-  const compiledSandboxBackendPrunePlugin = shouldPruneLocalSandboxBackends({
-    configuredBackendNames,
+  const compiledSandboxEnginePrunePlugin = shouldPruneLocalSandboxEngines({
+    configuredProviders,
     preset,
   })
-    ? createCompiledSandboxBackendPrunePlugin()
+    ? createCompiledSandboxEnginePrunePlugin()
     : null;
   const configuredOptionalEnginePackages: string[] = [];
   const unconfiguredOptionalEnginePackages: string[] = [];
-  for (const [backendName, packageName] of Object.entries(
-    OPTIONAL_ENGINE_PACKAGES_BY_BACKEND_NAME,
-  )) {
-    (configuredBackendNames.has(backendName)
+  for (const [provider, packageName] of Object.entries(OPTIONAL_ENGINE_PACKAGES_BY_PROVIDER)) {
+    (configuredProviders.has(provider)
       ? configuredOptionalEnginePackages
       : unconfiguredOptionalEnginePackages
     ).push(packageName);
@@ -636,7 +630,7 @@ function createApplicationNitroBundlerConfiguration(
     })),
   );
   const nitroBundlerPlugins = [
-    compiledSandboxBackendPrunePlugin,
+    compiledSandboxEnginePrunePlugin,
     createOptionalEngineDependencyPlugin(unconfiguredOptionalEnginePackages),
     extensionScopePlugin,
   ].filter((plugin) => plugin !== null);

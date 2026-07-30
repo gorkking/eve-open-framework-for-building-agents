@@ -60,7 +60,7 @@ export class DockerUnavailableError extends Error {
     "VercelSandbox, or DefaultSandbox.";
 
   constructor(cause?: unknown) {
-    super("The Docker sandbox backend requires Docker, but the `docker` CLI was not found.", {
+    super("The Docker sandbox provider requires Docker, but the `docker` CLI was not found.", {
       cause,
     });
     this.name = "DockerUnavailableError";
@@ -79,7 +79,7 @@ export class DockerDaemonUnavailableError extends Error {
 
   constructor(detail: string) {
     super(
-      "The Docker sandbox backend requires a running Docker daemon, but it is not reachable. " +
+      "The Docker sandbox provider requires a running Docker daemon, but it is not reachable. " +
         `Docker reported: ${detail}`,
     );
     this.name = "DockerDaemonUnavailableError";
@@ -108,7 +108,7 @@ let cachedDockerAvailability: boolean | undefined;
 /**
  * Synchronously probes whether a Docker daemon is reachable, for
  * `DefaultSandbox` availability chain. The result is cached for the
- * process lifetime: backend selection must be stable, and the probe
+ * process lifetime: provider selection must be stable, and the probe
  * costs a subprocess round-trip.
  */
 export function isDockerDaemonAvailableSync(): boolean {

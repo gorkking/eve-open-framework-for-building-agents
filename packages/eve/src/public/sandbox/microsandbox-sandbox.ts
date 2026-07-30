@@ -4,7 +4,7 @@ import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
  * Options accepted by `MicrosandboxSandbox.create()` and
  * `MicrosandboxSandbox.template()`.
  *
- * The microsandbox backend runs sandboxes in lightweight local VMs via
+ * The microsandbox provider runs sandboxes in lightweight local VMs via
  * [microsandbox](https://www.npmjs.com/package/microsandbox). Options
  * are eve-owned rather than a raw passthrough so the public surface can
  * stay stable while the underlying runtime evolves. Supported hosts:
@@ -40,19 +40,5 @@ export interface MicrosandboxSandboxCreateOptions {
     readonly skipVerify?: boolean;
   };
   /** Initial network policy applied to sandboxes after framework setup. */
-  readonly networkPolicy?: SandboxNetworkPolicy;
-}
-
-/**
- * Internal template update options retained by the built-in bridge.
- */
-export interface MicrosandboxBootstrapUseOptions {
-  readonly networkPolicy?: SandboxNetworkPolicy;
-}
-
-/**
- * Internal live-session update options retained by the built-in bridge.
- */
-export interface MicrosandboxSessionUseOptions {
   readonly networkPolicy?: SandboxNetworkPolicy;
 }

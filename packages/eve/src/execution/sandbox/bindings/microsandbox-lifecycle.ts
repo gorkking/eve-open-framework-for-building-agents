@@ -6,7 +6,7 @@ import {
   createFileBackedInternalSandboxSession,
   touchDirectory,
   writeSandboxSeedFiles,
-} from "#execution/sandbox/bindings/local-backend-utils.js";
+} from "#execution/sandbox/bindings/local-workspace-utils.js";
 import {
   MICROSANDBOX_METADATA_VERSION,
   readSessionMetadata,
@@ -36,37 +36,34 @@ import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.
 import { withDevelopmentSandboxMetadataPathTag } from "#execution/sandbox/development-run.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
 import { resolveSandboxCacheDirectory } from "#internal/application/paths.js";
+import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type {
-  SandboxBackendCreateInput,
-  SandboxBackendHandle,
-  SandboxBackendPrewarmInput,
-  SandboxBackendPrewarmResult,
-} from "#shared/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
-import type {
-  MicrosandboxBootstrapUseOptions,
-  MicrosandboxSessionUseOptions,
-} from "#public/sandbox/microsandbox-sandbox.js";
+  SandboxEngineCreateInput,
+  SandboxEngineHandle,
+  SandboxEnginePrepareInput,
+  SandboxEnginePrepareResult,
+} from "#shared/sandbox-engine.js";
+import {
+  SandboxResourceUnavailableError,
+  SandboxTemplateUnavailableError,
+} from "#shared/sandbox-engine.js";
 import type { InternalSandboxSession } from "#shared/sandbox-session.js";
 
-const activeMicrosandboxSessionHandles = new Map<
-  string,
-  SandboxBackendHandle<MicrosandboxSessionUseOptions>
->();
+const activeMicrosandboxSessionHandles = new Map<string, SandboxEngineHandle>();
 
 export async function prewarmMicrosandboxTemplate(input: {
-  readonly backendName: string;
+  readonly provider: string;
   readonly options: ResolvedMicrosandboxOptions;
   readonly optionsHash: string;
-  readonly prewarmInput: SandboxBackendPrewarmInput<MicrosandboxBootstrapUseOptions>;
-}): Promise<SandboxBackendPrewarmResult> {
+  readonly prewarmInput: SandboxEnginePrepareInput;
+}): Promise<SandboxEnginePrepareResult> {
   input.prewarmInput.log?.("loading microsandbox runtime");
   const module = await loadMicrosandboxModule({
-    appRoot: input.prewarmInput.runtimeContext.appRoot,
+    appRoot: input.prewarmInput.context.appRoot,
     log: input.prewarmInput.log,
     options: input.options,
   });
-  const cacheDirectory = resolveSandboxCacheDirectory(input.prewarmInput.runtimeContext.appRoot);
+  const cacheDirectory = resolveSandboxCacheDirectory(input.prewarmInput.context.appRoot);
   const templateRootPath = resolveMicrosandboxTemplateRootPath(
     cacheDirectory,
     input.prewarmInput.templateKey,
@@ -77,6 +74,8 @@ export async function prewarmMicrosandboxTemplate(input: {
 
   if (
     existing?.optionsHash === input.optionsHash &&
+    input.options.pullPolicy !== "always" &&
+    isImmutableOciImageReference(input.options.image) &&
     (await snapshotExists(module, existing.snapshotName))
   ) {
     input.prewarmInput.log?.("reusing cached snapshot");
@@ -123,19 +122,14 @@ export async function prewarmMicrosandboxTemplate(input: {
     }
     await writeSandboxSeedFiles(templateSession, input.prewarmInput.seedFiles);
 
-    if (input.prewarmInput.bootstrap !== undefined) {
-      input.prewarmInput.log?.("running sandbox bootstrap");
-      await input.prewarmInput.bootstrap({
-        use: async (useOptions?: MicrosandboxBootstrapUseOptions) => {
-          if (useOptions?.networkPolicy !== undefined) {
-            await templateSandbox.setNetworkPolicy(useOptions.networkPolicy);
-          }
-          return createLoggingSandboxSession({
-            log: input.prewarmInput.log,
-            session: templateSession,
-          });
-        },
-      });
+    if (input.prewarmInput.prepare !== undefined) {
+      input.prewarmInput.log?.("running template preparation");
+      await input.prewarmInput.prepare(
+        createLoggingSandboxSession({
+          log: input.prewarmInput.log,
+          session: templateSession,
+        }),
+      );
     }
 
     input.prewarmInput.log?.("snapshotting template VM");
@@ -165,16 +159,17 @@ export async function prewarmMicrosandboxTemplate(input: {
 }
 
 export async function createMicrosandboxHandle(input: {
-  readonly backendName: string;
-  readonly createInput: SandboxBackendCreateInput;
+  readonly provider: string;
+  readonly configuration?: JsonObject;
+  readonly createInput: SandboxEngineCreateInput;
   readonly options: ResolvedMicrosandboxOptions;
   readonly optionsHash: string;
-}): Promise<SandboxBackendHandle<MicrosandboxSessionUseOptions>> {
+}): Promise<SandboxEngineHandle> {
   const module = await loadMicrosandboxModule({
-    appRoot: input.createInput.runtimeContext.appRoot,
+    appRoot: input.createInput.context.appRoot,
     options: input.options,
   });
-  const cacheDirectory = resolveSandboxCacheDirectory(input.createInput.runtimeContext.appRoot);
+  const cacheDirectory = resolveSandboxCacheDirectory(input.createInput.context.appRoot);
   const sessionRootPath = resolveMicrosandboxSessionRootPath(
     cacheDirectory,
     input.createInput.sessionKey,
@@ -208,11 +203,18 @@ export async function createMicrosandboxHandle(input: {
     if (sandbox !== null) {
       return cacheHandle(
         activeSessionKey,
-        createHandle(sandbox, input.backendName, input.optionsHash, () => {
+        createHandle(sandbox, input.provider, input.configuration ?? {}, input.optionsHash, () => {
           activeMicrosandboxSessionHandles.delete(activeSessionKey);
         }),
       );
     }
+  }
+
+  if (input.createInput.existingMetadata !== undefined) {
+    throw new SandboxResourceUnavailableError({
+      provider: input.provider,
+      sessionKey: input.createInput.sessionKey,
+    });
   }
 
   let snapshotName: string | null = null;
@@ -230,8 +232,8 @@ export async function createMicrosandboxHandle(input: {
       templateMetadata.optionsHash !== input.optionsHash ||
       !(await snapshotExists(module, templateMetadata.snapshotName))
     ) {
-      throw new SandboxTemplateNotProvisionedError({
-        backendName: input.backendName,
+      throw new SandboxTemplateUnavailableError({
+        provider: input.provider,
         templateKey: input.createInput.templateKey,
       });
     }
@@ -261,8 +263,8 @@ export async function createMicrosandboxHandle(input: {
       input.createInput.templateKey !== null &&
       isMicrosandboxNotFoundError(error)
     ) {
-      throw new SandboxTemplateNotProvisionedError({
-        backendName: input.backendName,
+      throw new SandboxTemplateUnavailableError({
+        provider: input.provider,
         templateKey: input.createInput.templateKey,
       });
     }
@@ -272,7 +274,7 @@ export async function createMicrosandboxHandle(input: {
   await sandbox.writeMetadata(metadataPath, input.optionsHash);
   return cacheHandle(
     activeSessionKey,
-    createHandle(sandbox, input.backendName, input.optionsHash, () => {
+    createHandle(sandbox, input.provider, input.configuration ?? {}, input.optionsHash, () => {
       activeMicrosandboxSessionHandles.delete(activeSessionKey);
     }),
   );
@@ -280,10 +282,11 @@ export async function createMicrosandboxHandle(input: {
 
 function createHandle(
   sandbox: MicrosandboxVm,
-  backendName: string,
+  provider: string,
+  configuration: JsonObject,
   optionsHash: string,
   onShutdown?: () => void,
-): SandboxBackendHandle<MicrosandboxSessionUseOptions> {
+): SandboxEngineHandle {
   const session = buildSandboxSession(
     createMicrosandboxInternalSession(sandbox),
     async (policy) => {
@@ -292,19 +295,12 @@ function createHandle(
   );
   return {
     session,
-    useSessionFn: async (options?: MicrosandboxSessionUseOptions) => {
-      if (options?.networkPolicy !== undefined) {
-        await sandbox.setNetworkPolicy(options.networkPolicy);
-      }
-      return buildSandboxSession(createMicrosandboxInternalSession(sandbox), async (policy) => {
-        await sandbox.setNetworkPolicy(policy);
-      });
-    },
     async captureState() {
       const metadata = await sandbox.captureState(optionsHash);
       return {
-        backendName,
-        metadata: { ...metadata },
+        configuration,
+        provider: provider,
+        metadata: parseJsonObject(metadata),
         sessionKey: sandbox.id,
       };
     },
@@ -323,14 +319,15 @@ function createActiveMicrosandboxSessionKey(sessionRootPath: string, optionsHash
   return `${sessionRootPath}\0${optionsHash}`;
 }
 
-function cacheHandle(
-  key: string,
-  handle: SandboxBackendHandle<MicrosandboxSessionUseOptions>,
-): SandboxBackendHandle<MicrosandboxSessionUseOptions> {
+function cacheHandle(key: string, handle: SandboxEngineHandle): SandboxEngineHandle {
   activeMicrosandboxSessionHandles.set(key, handle);
   return handle;
 }
 
 export function clearActiveMicrosandboxSessionHandlesForTest(): void {
   activeMicrosandboxSessionHandles.clear();
+}
+
+function isImmutableOciImageReference(image: string): boolean {
+  return /@sha256:[a-f0-9]{64}$/i.test(image);
 }

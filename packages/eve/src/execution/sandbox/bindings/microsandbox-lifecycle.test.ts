@@ -5,7 +5,7 @@ import {
   createMicrosandboxHandle,
   prewarmMicrosandboxTemplate,
 } from "#execution/sandbox/bindings/microsandbox-lifecycle.js";
-import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
+import { SandboxTemplateUnavailableError } from "#shared/sandbox-engine.js";
 import {
   MICROSANDBOX_DEFAULT_IMAGE,
   resolveMicrosandboxOptions,
@@ -26,6 +26,7 @@ const fsMocks = vi.hoisted(() => ({
   mkdir: vi.fn(async (_path: string, _options?: unknown) => {}),
   rename: vi.fn(async (_oldPath: string, _newPath: string) => {}),
   rm: vi.fn(async (_path: string, _options?: unknown) => {}),
+  utimes: vi.fn(async (_path: string, _atime: Date, _mtime: Date) => {}),
 }));
 
 const metadataMocks = vi.hoisted(() => ({
@@ -76,13 +77,13 @@ describe("createMicrosandboxHandle", () => {
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
     const createInput = {
-      runtimeContext: { appRoot: "/tmp/eve-app" },
+      context: { appRoot: "/tmp/eve-app" },
       sessionKey: "session-key",
       templateKey: "template-key",
     };
 
     const firstHandle = await createMicrosandboxHandle({
-      backendName: "microsandbox",
+      provider: "microsandbox",
       createInput,
       options,
       optionsHash: "options-hash",
@@ -94,7 +95,7 @@ describe("createMicrosandboxHandle", () => {
     const state = await firstHandle.captureState();
 
     const secondHandle = await createMicrosandboxHandle({
-      backendName: "microsandbox",
+      provider: "microsandbox",
       createInput: {
         ...createInput,
         existingMetadata: state.metadata,
@@ -110,42 +111,34 @@ describe("createMicrosandboxHandle", () => {
     expect(runtimeMocks.createPreparedMicrosandbox).toHaveBeenCalledTimes(1);
   });
 
-  it("creates fresh from the template when persisted session state disappeared", async () => {
-    const vm = createFakeMicrosandboxVm("session-key");
+  it("does not replace a persisted session whose provider state disappeared", async () => {
     runtimeMocks.connectMicrosandbox.mockResolvedValueOnce(null);
-    runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
     runtimeMocks.snapshotExists.mockResolvedValue(true);
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
 
-    const handle = await createMicrosandboxHandle({
-      backendName: "microsandbox",
-      createInput: {
-        existingMetadata: {
-          optionsHash: "options-hash",
-          sandboxName: "deleted-sandbox",
-          stateSnapshotName: "deleted-session-snapshot",
-          version: 2,
+    await expect(
+      createMicrosandboxHandle({
+        provider: "microsandbox",
+        createInput: {
+          existingMetadata: {
+            optionsHash: "options-hash",
+            sandboxName: "deleted-sandbox",
+            stateSnapshotName: "deleted-session-snapshot",
+            version: 2,
+          },
+          context: { appRoot: "/tmp/eve-app" },
+          sessionKey: "session-key",
+          templateKey: "template-key",
         },
-        runtimeContext: { appRoot: "/tmp/eve-app" },
-        sessionKey: "session-key",
-        templateKey: "template-key",
-      },
-      options,
-      optionsHash: "options-hash",
-    });
+        options,
+        optionsHash: "options-hash",
+      }),
+    ).rejects.toThrow(
+      'Persisted sandbox "session-key" is unavailable from provider "microsandbox"',
+    );
 
     expect(runtimeMocks.connectMicrosandbox).toHaveBeenCalledTimes(1);
-    expect(runtimeMocks.createPreparedMicrosandbox).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fromSnapshot: "template-snapshot",
-        sessionKey: "session-key",
-        setupBaseRuntime: false,
-      }),
-    );
-    await expect(handle.captureState()).resolves.toMatchObject({
-      backendName: "microsandbox",
-      sessionKey: "session-key",
-    });
+    expect(runtimeMocks.createPreparedMicrosandbox).not.toHaveBeenCalled();
   });
 
   it("stops the VM and evicts the active-session cache on shutdown", async () => {
@@ -153,13 +146,13 @@ describe("createMicrosandboxHandle", () => {
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
     const createInput = {
-      runtimeContext: { appRoot: "/tmp/eve-app" },
+      context: { appRoot: "/tmp/eve-app" },
       sessionKey: "session-key",
       templateKey: "template-key",
     };
 
     const handle = await createMicrosandboxHandle({
-      backendName: "microsandbox",
+      provider: "microsandbox",
       createInput,
       options,
       optionsHash: "options-hash",
@@ -169,7 +162,7 @@ describe("createMicrosandboxHandle", () => {
     expect(vm.shutdown).toHaveBeenCalledTimes(1);
 
     const nextHandle = await createMicrosandboxHandle({
-      backendName: "microsandbox",
+      provider: "microsandbox",
       createInput,
       options,
       optionsHash: "options-hash",
@@ -187,16 +180,16 @@ describe("createMicrosandboxHandle", () => {
 
     await expect(
       createMicrosandboxHandle({
-        backendName: "microsandbox",
+        provider: "microsandbox",
         createInput: {
-          runtimeContext: { appRoot: "/tmp/eve-app" },
+          context: { appRoot: "/tmp/eve-app" },
           sessionKey: "session-key",
           templateKey: "template-key",
         },
         options,
         optionsHash: "options-hash",
       }),
-    ).rejects.toBeInstanceOf(SandboxTemplateNotProvisionedError);
+    ).rejects.toBeInstanceOf(SandboxTemplateUnavailableError);
   });
 });
 
@@ -212,17 +205,56 @@ describe("prewarmMicrosandboxTemplate", () => {
     });
   });
 
+  it("reuses a cached snapshot when its base image is immutable", async () => {
+    runtimeMocks.snapshotExists.mockResolvedValue(true);
+
+    const result = await prewarmMicrosandboxTemplate({
+      provider: "microsandbox",
+      options: resolveMicrosandboxOptions({
+        image: `ghcr.io/vercel/eve@sha256:${"a".repeat(64)}`,
+      }),
+      optionsHash: "options-hash",
+      prewarmInput: {
+        context: { appRoot: "/tmp/eve-app" },
+        seedFiles: [],
+        templateKey: "template-key",
+      },
+    });
+
+    expect(result).toEqual({ reused: true });
+    expect(runtimeMocks.createPreparedMicrosandbox).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds a cached snapshot when its base image is a floating tag", async () => {
+    runtimeMocks.snapshotExists.mockResolvedValue(true);
+    runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(createFakeMicrosandboxVm("template"));
+
+    const result = await prewarmMicrosandboxTemplate({
+      provider: "microsandbox",
+      options: resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE }),
+      optionsHash: "options-hash",
+      prewarmInput: {
+        context: { appRoot: "/tmp/eve-app" },
+        seedFiles: [],
+        templateKey: "template-key",
+      },
+    });
+
+    expect(result).toEqual({ reused: false });
+    expect(runtimeMocks.createPreparedMicrosandbox).toHaveBeenCalledOnce();
+  });
+
   it("replaces stale template metadata after rebuilding a missing snapshot", async () => {
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(createFakeMicrosandboxVm("template"));
     const appRoot = "/tmp/eve-app";
     const templateRootPath = "/tmp/eve-app/.eve/sandbox-cache/microsandbox/templates/template-key";
 
     const result = await prewarmMicrosandboxTemplate({
-      backendName: "microsandbox",
+      provider: "microsandbox",
       options: resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE }),
       optionsHash: "options-hash",
       prewarmInput: {
-        runtimeContext: { appRoot },
+        context: { appRoot },
         seedFiles: [],
         templateKey: "template-key",
       },
@@ -245,33 +277,32 @@ describe("prewarmMicrosandboxTemplate", () => {
     expect(result).toEqual({ reused: false });
   });
 
-  it("writes seed files before bootstrap and snapshots bootstrap outputs", async () => {
+  it("writes seed files before preparation and snapshots preparation outputs", async () => {
     const vm = createFakeMicrosandboxVm("template");
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
 
     await prewarmMicrosandboxTemplate({
-      backendName: "microsandbox",
+      provider: "microsandbox",
       options: resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE }),
       optionsHash: "options-hash",
       prewarmInput: {
-        bootstrap: async ({ use }) => {
-          const sandbox = await use();
+        prepare: async (sandbox) => {
           await expect(sandbox.readTextFile({ path: "/workspace/seed.txt" })).resolves.toBe(
             "authored seed",
           );
           await sandbox.writeTextFile({
-            content: "bootstrap output",
-            path: "/workspace/bootstrap.txt",
+            content: "preparation output",
+            path: "/workspace/preparation.txt",
           });
         },
-        runtimeContext: { appRoot: "/tmp/eve-app" },
+        context: { appRoot: "/tmp/eve-app" },
         seedFiles: [{ content: "authored seed", path: "/workspace/seed.txt" }],
         templateKey: "template-key",
       },
     });
 
-    await expect(vm.readFileBytes("/workspace/bootstrap.txt")).resolves.toEqual(
-      Buffer.from("bootstrap output"),
+    await expect(vm.readFileBytes("/workspace/preparation.txt")).resolves.toEqual(
+      Buffer.from("preparation output"),
     );
     expect(vm.writeFiles.mock.invocationCallOrder[1]).toBeLessThan(
       vm.stopAndSnapshot.mock.invocationCallOrder[0]!,

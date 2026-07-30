@@ -63,7 +63,7 @@ describe("sandboxProvider", () => {
     });
   });
 
-  it("tags sandbox backend resources with agent, channel, and session id", async () => {
+  it("tags sandbox provider resources with agent, channel, and session id", async () => {
     const ctx = new ContextContainer();
     const registry: RuntimeSandboxRegistry = createStubSandboxRegistry();
 
@@ -85,6 +85,51 @@ describe("sandboxProvider", () => {
           channel: "slack",
           sessionId: "session_1",
         },
+      }),
+    );
+  });
+
+  it("forwards validated parent and root sandbox state from a subagent run", async () => {
+    const ctx = new ContextContainer();
+    const registry: RuntimeSandboxRegistry = createStubSandboxRegistry();
+    const sandboxState = {
+      owner: {
+        nodeId: "__root__",
+        sessionId: "parent-session",
+      },
+      revision: "sandbox-revision",
+      value: {
+        adapterId: "example.com/sandbox",
+        id: "sandbox-1",
+        reference: { id: "sandbox-1" },
+      },
+    } as const;
+
+    ctx.set(BundleKey, createBundle({ agentName: "reviewer", registry }));
+    ctx.set(ChannelKey, {
+      kind: "subagent",
+      state: {
+        callId: "call-1",
+        parentContinuationToken: "parent-token",
+        parentSandboxState: sandboxState,
+        parentSessionId: "parent-session",
+        rootSandboxState: sandboxState,
+        subagentName: "reviewer",
+      },
+    });
+    ctx.set(SessionIdKey, "child-session");
+    ctx.set(SessionKey, {
+      auth: { current: null, initiator: null },
+      sessionId: "child-session",
+      turn: { id: "turn_1", sequence: 0 },
+    });
+
+    await sandboxProvider.create(ctx, createHarnessSession());
+
+    expect(ensureSandboxAccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentState: sandboxState,
+        rootState: sandboxState,
       }),
     );
   });

@@ -88,7 +88,7 @@ export interface SandboxRemovePathOptions {
  * for caching and `/workspace` path anchoring.
  *
  * Relative paths resolve from `/workspace`, the live working directory
- * for every backend. Absolute paths pass through unchanged.
+ * for every provider. Absolute paths pass through unchanged.
  *
  */
 export interface SandboxSession extends Pick<
@@ -126,8 +126,8 @@ export interface SandboxSession extends Pick<
    *
    * When the policy is known at creation time, prefer passing it to the
    * provider or applying it before returning the Sandbox. The
-   * Docker backend honors only `"allow-all"` and `"deny-all"`;
-   * the just-bash backend rejects this call entirely (its network policy
+   * Docker provider honors only `"allow-all"` and `"deny-all"`;
+   * the just-bash provider rejects this call entirely (its network policy
    * is fixed at sandbox creation and it runs no binaries to govern).
    */
   setNetworkPolicy(policy: SandboxNetworkPolicy): Promise<void>;
@@ -142,13 +142,13 @@ export interface SandboxSession extends Pick<
 /**
  * Internal sandbox session, used to construct the public {@link SandboxSession}.
  *
- * Backend implementers only need to provide byte-oriented file I/O and
+ * Provider implementers only need to provide byte-oriented file I/O and
  * a `spawn` primitive; the public surface (binary and text variants,
  * line-range slicing, encoding handling, the `run` wrapper) is built on
  * top of these primitives by `buildSandboxSession`.
  *
  * Each method's signature mirrors its public counterpart (and the AI
- * SDK {@link AiSdkSandbox} surface) so backends look symmetric with
+ * SDK {@link AiSdkSandbox} surface) so providers look symmetric with
  * what authored code sees. The `path` field on `readFile`/`writeFile`
  * here is the **already-resolved** path: the public-surface builder
  * calls `resolvePath` before delegating.
@@ -161,8 +161,8 @@ export interface InternalSandboxSession extends Pick<
    * Stable identifier surfaced on the public {@link SandboxSession}.
    */
   readonly id: string;
-  /** Removes an already-resolved path from the backend filesystem. */
+  /** Removes an already-resolved path from the provider filesystem. */
   removePath(options: SandboxRemovePathOptions): Promise<void>;
-  /** Translates a user-facing path to the backend's native path. */
+  /** Translates a user-facing path to the provider's native path. */
   resolvePath(path: string): string;
 }

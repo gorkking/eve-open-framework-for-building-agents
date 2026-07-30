@@ -66,6 +66,7 @@ function createSessionSandboxHarness() {
     readonly id: string;
   }
   const adapt = defineSandboxAdapter<ReturnType<typeof mockSandbox>, Reference>({
+    type: "eve/session-reset-test-sandbox",
     reference(sandbox) {
       return { id: sandbox.session.id };
     },

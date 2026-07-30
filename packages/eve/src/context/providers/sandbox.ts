@@ -1,7 +1,7 @@
 import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
+import { readSubagentSandboxAncestorStates } from "#execution/subagent-adapter.js";
 import type { HarnessSession } from "#harness/types.js";
 import type { SandboxAccess } from "#sandbox/state.js";
-import type { SandboxState, SandboxStateValue } from "#sandbox/state.js";
 import { type ChannelAdapter, getAdapterKind } from "#channel/adapter.js";
 import type { ContextContainer } from "#context/container.js";
 import { SandboxKey, SessionIdKey, SessionKey, TurnAbortSignalKey } from "#context/keys.js";
@@ -23,10 +23,8 @@ export const sandboxProvider: FrameworkContextProvider<SandboxAccess> = {
     const registry = node.sandboxRegistry;
     const sessionId = ctx.require(SessionIdKey);
     const channel = ctx.get(ChannelKey);
-    const adapterState = channel?.state as Record<string, unknown> | undefined;
+    const { parentState, rootState } = readSubagentSandboxAncestorStates(channel);
     const activeSession = ctx.require(SessionKey);
-    const parentState = adapterState?.parentSandboxState as SandboxState | undefined;
-    const rootState = adapterState?.rootSandboxState as SandboxStateValue | undefined;
 
     return {
       value: await ensureSandboxAccess({

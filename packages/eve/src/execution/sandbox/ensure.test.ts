@@ -16,13 +16,18 @@ import {
 import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
 import type { SandboxState, SandboxStateValue } from "#sandbox/state.js";
 import type { JsonObject } from "#shared/json.js";
-import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
+import {
+  defineSandboxTemplate,
+  recordSandboxTemplateReference,
+  type SandboxTemplate,
+} from "#shared/sandbox-template.js";
+import type { SandboxTemplatePrewarmLockInput } from "#execution/sandbox/template-prewarm-lock.js";
 import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
 
 const mocks = vi.hoisted(() => ({
   prewarmAppSandboxes: vi.fn(async () => {}),
-  waitForSandboxTemplatePrewarmLock: vi.fn(async () => {}),
+  waitForSandboxTemplatePrewarmLock: vi.fn(async (_input: SandboxTemplatePrewarmLockInput) => {}),
   waitForDevelopmentSandboxPrewarm: vi.fn(async () => {}),
 }));
 
@@ -55,6 +60,22 @@ const restoreTestSandbox = vi.fn((reference: TestSandboxReference) => {
 });
 const shutdownTestSandbox = vi.fn();
 const asTestSandbox = defineSandboxAdapter<TestSandboxHandle, TestSandboxReference>({
+  type: "eve/test-sandbox",
+  reference(handle) {
+    return { id: handle.id };
+  },
+  restore(reference) {
+    return restoreTestSandbox(reference);
+  },
+  session(handle) {
+    return handle.session;
+  },
+  shutdown(handle) {
+    shutdownTestSandbox(handle.id);
+  },
+});
+const asOtherTestSandbox = defineSandboxAdapter<TestSandboxHandle, TestSandboxReference>({
+  type: "eve/other-test-sandbox",
   reference(handle) {
     return { id: handle.id };
   },
@@ -76,6 +97,15 @@ function createTestSandbox(id: string): Sandbox {
   };
   testSandboxes.set(id, handle);
   return asTestSandbox(handle);
+}
+
+function createOtherTestSandbox(id: string): Sandbox {
+  const handle = {
+    id,
+    session: mockSandbox({ id }).session,
+  };
+  testSandboxes.set(id, handle);
+  return asOtherTestSandbox(handle);
 }
 
 function createTestRegistry(input: {
@@ -227,6 +257,25 @@ describe("ensureSandboxAccess", () => {
     expect(restoreTestSandbox).not.toHaveBeenCalled();
   });
 
+  it("tracks different providers separately when their sandbox ids match", async () => {
+    const first = await ensure({
+      registry: createTestRegistry({
+        definition: () => createTestSandbox("shared-provider-id"),
+      }),
+      sessionId: "first-session",
+    });
+    const second = await ensure({
+      registry: createTestRegistry({
+        definition: () => createOtherTestSandbox("shared-provider-id"),
+      }),
+      sessionId: "second-session",
+    });
+
+    await Promise.all([first.get(), second.get()]);
+
+    expect(countActiveSandboxHandles()).toBe(2);
+  });
+
   it("exposes durable parent and root sandboxes and preserves borrowed ownership", async () => {
     const root = await ensure({
       registry: createTestRegistry({
@@ -259,6 +308,53 @@ describe("ensureSandboxAccess", () => {
       },
       root: rootState,
     });
+    expect(countActiveSandboxHandles()).toBe(1);
+  });
+
+  it("keeps the original root sandbox distinct through nested children", async () => {
+    const root = await ensure({
+      registry: createTestRegistry({
+        definition: () => createTestSandbox("root-sandbox"),
+      }),
+      sessionId: "root-session",
+    });
+    await root.get();
+    const rootState = await root.captureState();
+
+    const parent = await ensure({
+      nodeId: "reviewer",
+      parentState: rootState!,
+      registry: createTestRegistry({
+        definition: () => createTestSandbox("reviewer-sandbox"),
+      }),
+      rootState: rootState!,
+      sessionId: "reviewer-session",
+    });
+    await parent.get();
+    const parentState = await parent.captureState();
+
+    const grandchildDefinition = vi.fn(async ({ parent, root: rootAncestor }) => {
+      expect((await parent?.sandbox)?.id).toBe("reviewer-sandbox");
+      expect((await rootAncestor?.sandbox)?.id).toBe("root-sandbox");
+      return await rootAncestor!.sandbox;
+    });
+    const grandchild = await ensure({
+      nodeId: "reviewer/writer",
+      parentState: parentState!,
+      registry: createTestRegistry({ definition: grandchildDefinition }),
+      rootState: parentState!.root,
+      sessionId: "writer-session",
+    });
+
+    await expect(grandchild.get()).resolves.toMatchObject({ id: "root-sandbox" });
+    expect(await grandchild.captureState()).toMatchObject({
+      owner: {
+        nodeId: "__root__",
+        sessionId: "root-session",
+      },
+      root: rootState,
+    });
+    expect(countActiveSandboxHandles()).toBe(2);
   });
 
   it("binds the exact compiled template reference before invoking the definition", async () => {
@@ -288,6 +384,48 @@ describe("ensureSandboxAccess", () => {
       options: {},
       reference: { snapshotId: "snapshot_123" },
     });
+  });
+
+  it("never fabricates a provider reference for an unbound production template", async () => {
+    const template = defineSandboxTemplate<{ snapshotId: string }, Record<string, never>>({
+      async prewarm() {
+        return { snapshotId: "build-only" };
+      },
+      create({ reference }) {
+        return createTestSandbox(reference.snapshotId);
+      },
+    });
+    const access = await ensure({
+      registry: createTestRegistry({
+        definition: () => template.create({}),
+        templates: [{ exportName: "template", template }],
+      }),
+    });
+
+    await expect(access.get()).rejects.toThrow(/not bound to a build result/);
+  });
+
+  it("binds the exact reference produced by development prewarming before creation", async () => {
+    mocks.waitForSandboxTemplatePrewarmLock.mockImplementationOnce(async ({ templateKey }) => {
+      recordSandboxTemplateReference(templateKey, { snapshotId: "development-snapshot" });
+    });
+    const template = defineSandboxTemplate<{ snapshotId: string }, Record<string, never>>({
+      async prewarm() {
+        return { snapshotId: "development-snapshot" };
+      },
+      create({ reference }) {
+        return createTestSandbox(reference.snapshotId);
+      },
+    });
+    const access = await ensure({
+      compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource(process.cwd()),
+      registry: createTestRegistry({
+        definition: () => template.create({}),
+        templates: [{ exportName: "template", template }],
+      }),
+    });
+
+    await expect(access.get()).resolves.toMatchObject({ id: "development-snapshot" });
   });
 
   it("waits for development prewarm before invoking a templated definition", async () => {

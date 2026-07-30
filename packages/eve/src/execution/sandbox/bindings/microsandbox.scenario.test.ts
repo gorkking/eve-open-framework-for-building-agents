@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 import {
-  createMicrosandboxSandboxBackend,
+  createMicrosandboxSandboxEngine,
   pruneMicrosandboxTemplates,
 } from "#execution/sandbox/bindings/microsandbox.js";
 import { isMicrosandboxPlatformSupported } from "#execution/sandbox/bindings/microsandbox-platform.js";
@@ -25,8 +25,8 @@ const runMicrosandboxVmScenarios =
 const createScratchDirectory = useTemporaryDirectories();
 
 async function createTemporaryCacheDirectory(label: string): Promise<string> {
-  // The backend derives its cache directory from
-  // `runtimeContext.appRoot` via `resolveSandboxCacheDirectory`, so the
+  // The provider derives its cache directory from
+  // `context.appRoot` via `resolveSandboxCacheDirectory`, so the
   // helper returns a temporary appRoot rather than a cache directory
   // directly.
   return await createScratchDirectory(`eve-microsandbox-${label}-`);
@@ -37,14 +37,14 @@ async function createPrewarmedHandle(input: {
   readonly sessionKey: string;
   readonly templateKey: string;
 }) {
-  const backend = createMicrosandboxSandboxBackend();
-  await backend.prewarm({
-    runtimeContext: { appRoot: input.appRoot },
+  const provider = createMicrosandboxSandboxEngine();
+  await provider.prepare({
+    context: { appRoot: input.appRoot },
     seedFiles: [],
     templateKey: input.templateKey,
   });
-  return await backend.create({
-    runtimeContext: { appRoot: input.appRoot },
+  return await provider.create({
+    context: { appRoot: input.appRoot },
     sessionKey: input.sessionKey,
     templateKey: input.templateKey,
   });
@@ -170,16 +170,16 @@ describe.runIf(runMicrosandboxVmScenarios)("microsandbox sandbox file API", () =
 
   it("preserves files across capture and reconnect", async () => {
     const appRoot = await createTemporaryCacheDirectory("file-api");
-    const backend = createMicrosandboxSandboxBackend();
+    const provider = createMicrosandboxSandboxEngine();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [],
       templateKey: "tpl-reconnect",
     });
 
-    const firstHandle = await backend.create({
-      runtimeContext: { appRoot },
+    const firstHandle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-reconnect",
       templateKey: "tpl-reconnect",
     });
@@ -190,16 +190,16 @@ describe.runIf(runMicrosandboxVmScenarios)("microsandbox sandbox file API", () =
 
     const state = await firstHandle.captureState();
 
-    expect(state.backendName).toBe("microsandbox");
+    expect(state.provider).toBe("microsandbox");
     expect(state.metadata).toMatchObject({
       optionsHash: expect.any(String),
       sandboxName: expect.any(String),
       version: 2,
     });
 
-    const reconnectedHandle = await backend.create({
+    const reconnectedHandle = await provider.create({
       existingMetadata: state.metadata,
-      runtimeContext: { appRoot },
+      context: { appRoot },
       sessionKey: "session-reconnect",
       templateKey: "tpl-reconnect",
     });
@@ -229,23 +229,23 @@ describe.runIf(runMicrosandboxVmScenarios)("microsandbox sandbox file API", () =
 
   it("reports a fresh build on first prewarm and a reuse on the second", async () => {
     const appRoot = await createTemporaryCacheDirectory("reuse-report");
-    const backend = createMicrosandboxSandboxBackend();
+    const provider = createMicrosandboxSandboxEngine();
 
-    const first = await backend.prewarm({
-      runtimeContext: { appRoot },
+    const first = await provider.prepare({
+      context: { appRoot },
       seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
       templateKey: "tpl-reuse-report",
     });
-    const second = await backend.prewarm({
-      runtimeContext: { appRoot },
+    const second = await provider.prepare({
+      context: { appRoot },
       seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
       templateKey: "tpl-reuse-report",
     });
 
     expect(first).toEqual({ reused: false });
     expect(second).toEqual({ reused: true });
-    const handle = await backend.create({
-      runtimeContext: { appRoot },
+    const handle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-reuse-report",
       templateKey: "tpl-reuse-report",
     });

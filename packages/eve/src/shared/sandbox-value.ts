@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { JsonValue } from "#shared/json.js";
 import { parseJsonValue } from "#shared/json.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
@@ -36,6 +34,12 @@ export interface SerializedSandbox {
  */
 export interface SandboxAdapterDefinition<RawSandbox, Reference extends JsonValue> {
   /**
+   * Stable protocol discriminator owned by the provider implementation.
+   *
+   * App sandbox definitions never see or supply this value.
+   */
+  readonly type: string;
+  /**
    * Captures the provider reference needed to restore this sandbox later.
    */
   reference(sandbox: RawSandbox): Reference | Promise<Reference>;
@@ -55,6 +59,7 @@ export interface SandboxAdapterDefinition<RawSandbox, Reference extends JsonValu
 }
 
 interface SandboxValueInternal {
+  readonly adapterId: string;
   serialize(): Promise<SerializedSandbox>;
   shutdown(): Promise<void>;
 }
@@ -67,13 +72,13 @@ type InternalSandbox = Sandbox & {
  * Adapts a provider-native handle into a durable {@link Sandbox}.
  *
  * The returned adapter function is normally created once at module scope by a
- * provider package. Its implementation identity is derived internally; app
- * authors do not provide persistence keys.
+ * provider package. The provider implementation owns its stable protocol
+ * discriminator; app sandbox definitions do not provide persistence keys.
  */
 export function defineSandboxAdapter<RawSandbox, Reference extends JsonValue>(
   definition: SandboxAdapterDefinition<RawSandbox, Reference>,
 ): (sandbox: RawSandbox) => Sandbox {
-  const adapterId = createSandboxAdapterId(definition);
+  const adapterId = expectSandboxAdapterType(definition.type);
   registerSandboxAdapter(adapterId, definition);
 
   return (sandbox) =>
@@ -120,6 +125,13 @@ export function restoreSandbox(serialized: SerializedSandbox): Sandbox {
  */
 export async function shutdownSandbox(sandbox: Sandbox): Promise<void> {
   await getSandboxInternal(sandbox).shutdown();
+}
+
+/**
+ * Reads the provider-owned protocol discriminator for process-local tracking.
+ */
+export function getSandboxAdapterType(sandbox: Sandbox): string {
+  return getSandboxInternal(sandbox).adapterId;
 }
 
 function createSandboxValue(input: {
@@ -177,6 +189,7 @@ function createSandboxValue(input: {
       await (await session()).writeTextFile(options);
     },
     [SANDBOX_VALUE]: {
+      adapterId: input.adapterId,
       async serialize() {
         const rawSandbox = await input.rawSandbox;
         return {
@@ -212,6 +225,7 @@ function registerSandboxAdapter<RawSandbox, Reference extends JsonValue>(
   definition: SandboxAdapterDefinition<RawSandbox, Reference>,
 ): void {
   getSandboxAdapterRegistry().set(adapterId, {
+    type: adapterId,
     reference(sandbox) {
       return definition.reference(sandbox as RawSandbox);
     },
@@ -244,14 +258,9 @@ function getSandboxAdapterRegistry(): SandboxAdapterRegistry {
   return container[SANDBOX_ADAPTERS];
 }
 
-function createSandboxAdapterId<RawSandbox, Reference extends JsonValue>(
-  definition: SandboxAdapterDefinition<RawSandbox, Reference>,
-): string {
-  const source = [
-    definition.reference.toString(),
-    definition.restore.toString(),
-    definition.session.toString(),
-    definition.shutdown?.toString() ?? "",
-  ].join("\n");
-  return `sandbox-${createHash("sha256").update(source).digest("hex").slice(0, 32)}`;
+function expectSandboxAdapterType(type: string): string {
+  if (type.trim() === "") {
+    throw new TypeError("Sandbox adapter type must be a non-empty provider protocol name.");
+  }
+  return type;
 }

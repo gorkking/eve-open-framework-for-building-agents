@@ -282,7 +282,7 @@ function synthesizeMockProcess(result: SandboxCommandResult): SandboxProcess {
 
 /**
  * Anchors a sandbox-relative path under `/workspace`, mirroring the real
- * backend contract documented on {@link SandboxSession.resolvePath}.
+ * provider contract documented on {@link SandboxSession.resolvePath}.
  */
 function resolveWorkspacePath(path: string): string {
   if (path.startsWith("/")) {

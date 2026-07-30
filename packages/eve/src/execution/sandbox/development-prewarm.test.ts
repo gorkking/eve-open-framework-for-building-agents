@@ -147,7 +147,7 @@ describe("development sandbox prewarm coordination", () => {
       appRoot,
       compiledArtifactsSource,
     });
-    prewarmLog?.('eve: built sandbox template "root" on backend "docker".');
+    prewarmLog?.('eve: built sandbox template "root" on provider "docker".');
 
     const logs: string[] = [];
     const unsubscribe = subscribeDevelopmentSandboxPrewarmLogs({
@@ -162,7 +162,7 @@ describe("development sandbox prewarm coordination", () => {
     await prewarm.promise;
 
     expect(logs).toEqual([
-      'eve: built sandbox template "root" on backend "docker".',
+      'eve: built sandbox template "root" on provider "docker".',
       'eve: sandbox template "root" (docker): apt-get update',
     ]);
   });
@@ -171,7 +171,7 @@ describe("development sandbox prewarm coordination", () => {
     const appRoot = "/tmp/eve-completed-app";
     const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
     mocks.prewarmAppSandboxes.mockImplementationOnce(async (input) => {
-      input.log?.('eve: built sandbox template "root" on backend "docker".');
+      input.log?.('eve: built sandbox template "root" on provider "docker".');
     });
 
     startDevelopmentSandboxPrewarmInBackground({
@@ -192,7 +192,7 @@ describe("development sandbox prewarm coordination", () => {
       log: (message) => secondLogs.push(message),
     });
 
-    expect(firstLogs).toEqual(['eve: built sandbox template "root" on backend "docker".']);
+    expect(firstLogs).toEqual(['eve: built sandbox template "root" on provider "docker".']);
     expect(secondLogs).toEqual([]);
   });
 

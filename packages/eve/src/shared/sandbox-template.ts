@@ -39,7 +39,13 @@ export interface SandboxTemplateDefinition<Reference extends JsonValue, CreateOp
    * not supply cache or revalidation keys.
    */
   readonly revision?: JsonValue;
+  /**
+   * Produces the provider reference frozen into the deployment.
+   */
   prewarm(input: SandboxTemplatePrewarmInput): Promise<Reference>;
+  /**
+   * Creates a durable sandbox from the frozen provider reference.
+   */
   create(input: {
     readonly options: CreateOptions;
     readonly reference: Reference;
@@ -50,6 +56,9 @@ export interface SandboxTemplateDefinition<Reference extends JsonValue, CreateOp
  * A provider-owned base that eve can prepare during build.
  */
 export interface SandboxTemplate<CreateOptions = Record<string, never>> {
+  /**
+   * Creates a durable sandbox from this build-prewarmed base.
+   */
   create(options: CreateOptions): Promise<Sandbox>;
 }
 
@@ -72,11 +81,7 @@ export function defineSandboxTemplate<
 >(definition: SandboxTemplateDefinition<Reference, CreateOptions>): SandboxTemplate<CreateOptions> {
   let reference: Reference | undefined;
   const implementationId = `template-${stableHash(
-    [
-      definition.prewarm.toString(),
-      definition.create.toString(),
-      stableJsonStringify(parseJsonValue(definition.revision ?? null)),
-    ].join("\n"),
+    stableJsonStringify(parseJsonValue(definition.revision ?? null)),
   )}`;
 
   const template: SandboxTemplateWithInternal<CreateOptions> = {
@@ -91,7 +96,7 @@ export function defineSandboxTemplate<
     [SANDBOX_TEMPLATE]: {
       implementationId,
       bind(value) {
-        reference = value as Reference;
+        reference = parseJsonValue(value) as Reference;
       },
       async prewarm(input) {
         return await definition.prewarm(input);
@@ -133,6 +138,13 @@ export function recordSandboxTemplateReference(templateKey: string, reference: u
  */
 export function readSandboxTemplateReference(templateKey: string): unknown {
   return getSandboxTemplateReferences().get(templateKey);
+}
+
+/**
+ * Returns whether the current process captured a reference for a template.
+ */
+export function hasSandboxTemplateReference(templateKey: string): boolean {
+  return getSandboxTemplateReferences().has(templateKey);
 }
 
 function getSandboxTemplateReferences(): Map<string, unknown> {

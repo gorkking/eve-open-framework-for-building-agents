@@ -1,5 +1,5 @@
-import { createDockerSandboxBackend } from "#execution/sandbox/bindings/local.js";
-import { createBuiltinSandbox } from "#execution/sandbox/backend-sandbox.js";
+import { createDockerSandboxEngine } from "#execution/sandbox/bindings/local.js";
+import { createBuiltinSandbox } from "#execution/sandbox/builtin-sandbox.js";
 import { createBuiltinSandboxTemplate } from "#execution/sandbox/builtin-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 import type { SandboxTemplate } from "#shared/sandbox-template.js";
@@ -37,8 +37,8 @@ export const DockerSandbox = {
    */
   async create(options: DockerSandboxCreateOptions = {}): Promise<Sandbox> {
     return await createBuiltinSandbox({
-      backend: createDockerSandboxBackend({ createOptions: options }),
-      backendName: "docker",
+      engine: createDockerSandboxEngine({ createOptions: options }),
+      provider: "docker",
       templateKey: null,
     });
   },
@@ -49,13 +49,13 @@ export const DockerSandbox = {
   template(options: DockerSandboxTemplateOptions = {}): DockerSandboxTemplate {
     const { prepare, ...createOptions } = options;
     return createBuiltinSandboxTemplate<undefined>({
-      backendName: "docker",
-      createBackend() {
-        return createDockerSandboxBackend({ createOptions });
+      provider: "docker",
+      createEngine() {
+        return createDockerSandboxEngine({ createOptions });
       },
       prepare,
       revision: createOptions,
-      templateBackend: createDockerSandboxBackend({ createOptions }),
+      templateEngine: createDockerSandboxEngine({ createOptions }),
     }) as DockerSandboxTemplate;
   },
 };

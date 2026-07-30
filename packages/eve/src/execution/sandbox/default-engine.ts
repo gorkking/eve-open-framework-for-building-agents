@@ -1,17 +1,17 @@
 import {
-  createDockerSandboxBackend,
-  createJustBashSandboxBackend,
-  createMicrosandboxSandboxBackend,
+  createDockerSandboxEngine,
+  createJustBashSandboxEngine,
+  createMicrosandboxSandboxEngine,
   isDockerDaemonAvailableSync,
   isMicrosandboxPlatformSupported,
 } from "#execution/sandbox/bindings/local.js";
 import { createVercelSandbox } from "#execution/sandbox/bindings/vercel.js";
-import { lazyBackend } from "#execution/sandbox/lazy-backend.js";
+import { lazyEngine } from "#execution/sandbox/lazy-engine.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
 import type { JustBashSandboxCreateOptions } from "#public/sandbox/just-bash-sandbox.js";
 import type { MicrosandboxSandboxCreateOptions } from "#public/sandbox/microsandbox-sandbox.js";
 import type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.js";
-import type { SandboxBackend } from "#shared/sandbox-backend.js";
+import type { SandboxEngine } from "#shared/sandbox-engine.js";
 
 /**
  * Per-provider options used when `DefaultSandbox` selects an available
@@ -36,24 +36,24 @@ const PRODUCTION_PROBES: DefaultSandboxProbes = {
   isMicrosandboxSupported: () => isMicrosandboxPlatformSupported(),
 };
 
-export function createDefaultSandboxBackend(options?: DefaultSandboxOptions): SandboxBackend {
-  return lazyBackend(() => selectDefaultSandboxBackend(options, PRODUCTION_PROBES));
+export function createDefaultSandboxEngine(options?: DefaultSandboxOptions): SandboxEngine {
+  return lazyEngine(() => selectDefaultSandboxEngine(options, PRODUCTION_PROBES));
 }
 
-export function selectDefaultSandboxBackend(
+export function selectDefaultSandboxEngine(
   options: DefaultSandboxOptions | undefined,
   probes: DefaultSandboxProbes,
-): SandboxBackend {
+): SandboxEngine {
   if (probes.isDeployedOnVercel()) {
     return createVercelSandbox({ createOptions: options?.vercel });
   }
   if (probes.isDockerAvailable()) {
-    return createDockerSandboxBackend({ createOptions: options?.docker });
+    return createDockerSandboxEngine({ createOptions: options?.docker });
   }
   if (probes.isMicrosandboxSupported()) {
-    return createMicrosandboxSandboxBackend({
+    return createMicrosandboxSandboxEngine({
       createOptions: options?.microsandbox,
     });
   }
-  return createJustBashSandboxBackend({ createOptions: options?.justBash });
+  return createJustBashSandboxEngine({ createOptions: options?.justBash });
 }

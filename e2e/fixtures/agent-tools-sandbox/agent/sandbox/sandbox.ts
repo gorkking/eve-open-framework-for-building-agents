@@ -4,7 +4,7 @@ import { VercelSandbox } from "eve/sandbox/vercel";
 /**
  * Sandbox lifecycle fixture exercising the surfaces an agent author relies
  * on. The matching evals live under `evals/sandbox/` and assert each piece
- * end-to-end through a real backend.
+ * end-to-end through a real provider.
  *
  * - `template.prepare` runs once per sandbox template. It writes a known marker
  *   file into the workspace AND installs a custom CLI (`eve-greet`) onto the
@@ -15,7 +15,7 @@ import { VercelSandbox } from "eve/sandbox/vercel";
  *   so an eval can prove session-scoped setup ran on top of the shared
  *   template.
  *
- * Backend is left as the framework default so this fixture works both
+ * Provider is left as the framework default so this fixture works both
  * locally (where `DefaultSandbox` resolves to Docker) and on Vercel
  * deployments (where it resolves to Vercel Sandbox). Both run the published
  * `ghcr.io/vercel/eve:latest` base image, which ships Python, Node, and git;

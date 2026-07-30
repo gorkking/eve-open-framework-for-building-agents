@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createMicrosandboxSandboxBackend } from "#execution/sandbox/bindings/microsandbox.js";
+import { createMicrosandboxSandboxEngine } from "#execution/sandbox/bindings/microsandbox.js";
 import {
   createMicrosandboxNetworkPlan,
   createTransformBrokerEnvironment,
@@ -22,13 +22,13 @@ vi.mock("#execution/sandbox/bindings/microsandbox-lifecycle.js", () => lifecycle
 // glibc Linux only; keep every microsandbox suite off Windows.
 const onWindows = process.platform === "win32";
 
-describe.skipIf(onWindows)("createMicrosandboxSandboxBackend", () => {
+describe.skipIf(onWindows)("createMicrosandboxSandboxEngine", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("exposes the stable backend name without loading microsandbox", () => {
-    expect(createMicrosandboxSandboxBackend().name).toBe("microsandbox");
+  it("exposes the stable provider name without loading microsandbox", () => {
+    expect(createMicrosandboxSandboxEngine().provider).toBe("microsandbox");
   });
 
   it("defaults to eve's published sandbox runtime image", () => {
@@ -52,8 +52,8 @@ describe.skipIf(onWindows)("createMicrosandboxSandboxBackend", () => {
     );
     lifecycleMocks.prewarmMicrosandboxTemplate.mockRejectedValueOnce(cause);
 
-    const prewarm = createMicrosandboxSandboxBackend().prewarm?.({
-      runtimeContext: { appRoot: "/tmp/eve-app" },
+    const prewarm = createMicrosandboxSandboxEngine().prepare({
+      context: { appRoot: "/tmp/eve-app" },
       seedFiles: [],
       templateKey: "template-key",
     });

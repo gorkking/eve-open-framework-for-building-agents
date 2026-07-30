@@ -8,8 +8,9 @@ export interface ShutdownCapableSandboxHandle {
 }
 
 /**
- * Process-level registry of live sandboxes, keyed by implementation and
- * session so repeated restoration replaces rather than accumulates entries.
+ * Process-level registry of live sandboxes, keyed by provider protocol and
+ * resource identity so repeated restoration replaces rather than accumulates
+ * entries.
  *
  * `ensureSandboxAccess` registers every sandbox it opens; the server
  * shutdown path drains the registry so no sandbox compute outlives the
@@ -17,22 +18,22 @@ export interface ShutdownCapableSandboxHandle {
  */
 const activeSandboxHandles = new Map<string, ShutdownCapableSandboxHandle>();
 
-function createActiveSandboxHandleKey(backendName: string, sessionKey: string): string {
-  return `${backendName}\0${sessionKey}`;
+function createActiveSandboxHandleKey(provider: string, resourceId: string): string {
+  return `${provider}\0${resourceId}`;
 }
 
 /**
  * Registers a live sandbox handle for shutdown tracking. A handle
- * created later for the same backend and session key replaces the
+ * created later for the same provider resource replaces the
  * previous entry.
  */
 export function trackActiveSandboxHandle(input: {
-  readonly backendName: string;
+  readonly provider: string;
   readonly handle: ShutdownCapableSandboxHandle;
-  readonly sessionKey: string;
+  readonly resourceId: string;
 }): void {
   activeSandboxHandles.set(
-    createActiveSandboxHandleKey(input.backendName, input.sessionKey),
+    createActiveSandboxHandleKey(input.provider, input.resourceId),
     input.handle,
   );
 }

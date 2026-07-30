@@ -18,6 +18,6 @@ export const SESSION_MARKER_TOKEN = "sandbox-session-setup-ok-X5T";
 /** Loopback endpoint that releases after ten curl requests arrive concurrently. */
 export const FANOUT_BARRIER_SERVER_URL = "http://127.0.0.1:43100/barrier";
 
-/** Mounted from `agent/sandbox/workspace/seed-data.txt` at session start. */
+/** Hydrated from `agent/sandbox/workspace/seed-data.txt` during template preparation. */
 export const WORKSPACE_SEED_PATH = "/workspace/seed-data.txt";
 export const WORKSPACE_SEED_TOKEN = "sandbox-workspace-seed-ok-Z9W";

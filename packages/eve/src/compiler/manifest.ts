@@ -157,7 +157,7 @@ export type CompiledSandboxDefinition = z.infer<typeof compiledSandboxDefinition
  * Compiled sandbox workspace folder preserved in the compiled manifest.
  *
  * Corresponds to the `agent/sandbox/workspace/` directory discovered on
- * disk. Mounted into the live sandbox cwd at session bootstrap.
+ * disk. Hydrated into the build-prewarmed sandbox template.
  */
 type CompiledSandboxWorkspace = z.infer<typeof compiledSandboxWorkspaceSchema>;
 

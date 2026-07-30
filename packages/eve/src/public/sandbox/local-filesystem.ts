@@ -1,5 +1,5 @@
 import { spawn as spawnChildProcess } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 
@@ -8,21 +8,45 @@ import { buildSandboxSession } from "#execution/sandbox/session.js";
 import type { JsonObject } from "#shared/json.js";
 import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
 import type { InternalSandboxSession } from "#shared/sandbox-session.js";
+import { SandboxResourceUnavailableError } from "#shared/sandbox-engine.js";
 
 interface LocalFilesystemHandle {
+  readonly device: number;
+  readonly inode: number;
   readonly root: string;
 }
 
 interface LocalFilesystemReference extends JsonObject {
+  readonly device: number;
+  readonly inode: number;
   readonly root: string;
 }
 
 const adaptLocalFilesystem = defineSandboxAdapter<LocalFilesystemHandle, LocalFilesystemReference>({
+  type: "eve/local-filesystem-sandbox",
   reference(handle) {
-    return { root: handle.root };
+    return {
+      device: handle.device,
+      inode: handle.inode,
+      root: handle.root,
+    };
   },
-  restore(reference) {
-    return { root: reference.root };
+  async restore(reference) {
+    const identity = await readDirectoryIdentity(reference.root);
+    if (
+      identity === null ||
+      identity.device !== reference.device ||
+      identity.inode !== reference.inode
+    ) {
+      throw new SandboxResourceUnavailableError({
+        provider: "local-filesystem",
+        sessionKey: reference.root,
+      });
+    }
+    return {
+      ...identity,
+      root: reference.root,
+    };
   },
   session(handle) {
     return buildSandboxSession(createLocalFilesystemSession(handle.root));
@@ -50,9 +74,33 @@ export const LocalFilesystemSandbox = {
   async open(options: LocalFilesystemSandboxOpenOptions): Promise<Sandbox> {
     const root = resolve(options.root);
     await mkdir(root, { recursive: true });
-    return adaptLocalFilesystem({ root });
+    const identity = await readDirectoryIdentity(root);
+    if (identity === null) {
+      throw new Error(`Local filesystem sandbox root "${root}" is not a directory.`);
+    }
+    return adaptLocalFilesystem({ ...identity, root });
   },
 };
+
+async function readDirectoryIdentity(
+  path: string,
+): Promise<{ readonly device: number; readonly inode: number } | null> {
+  try {
+    const metadata = await stat(path);
+    if (!metadata.isDirectory()) {
+      return null;
+    }
+    return {
+      device: metadata.dev,
+      inode: metadata.ino,
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 function createLocalFilesystemSession(root: string): InternalSandboxSession {
   const resolvePath = (path: string): string => {

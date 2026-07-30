@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 
 import type {
@@ -7,18 +6,13 @@ import type {
   CompiledWorkspaceResourceRoot,
 } from "#compiler/manifest.js";
 import { loadCompiledModuleMapFromAuthoredSource } from "#internal/authored-module-map-loader.js";
-import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import { createAuthoredSourceRuntimeCompiledArtifactsSource } from "#internal/application/runtime-compiled-artifacts-source.js";
 import {
-  createBundledRuntimeCompiledArtifactsSource,
-  createDiskRuntimeCompiledArtifactsSource,
   getRuntimeCompiledArtifactsSandboxAppRoot,
   type RuntimeCompiledArtifactsSource,
   type RuntimeDiskCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
 import { type ResolvedAgentGraphBundle, ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
-import { loadCompileMetadata } from "#runtime/loaders/compile-metadata.js";
-import { withBundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
 import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
 import { resolveRuntimeCompilerArtifactPaths } from "#runtime/loaders/artifact-paths.js";
 import { resolveRuntimeAgentGraph } from "#runtime/resolve-agent-graph.js";
@@ -28,7 +22,7 @@ import {
 } from "#runtime/sandbox/keys.js";
 import type { RuntimeRegisteredSandbox } from "#runtime/sandbox/registry.js";
 import { materializeWorkspaceDirectory } from "#runtime/workspace/seed-files.js";
-import type { SandboxSeedFile } from "#shared/sandbox-backend.js";
+import type { SandboxSeedFile } from "#shared/sandbox-engine.js";
 import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import {
   getSandboxTemplateInternal,
@@ -116,7 +110,7 @@ export async function prewarmSandboxes(
         const reference = await withSandboxTemplatePrewarmLock(
           {
             appRoot: input.appRoot,
-            backendName: target.template.implementationId,
+            provider: target.template.implementationId,
             templateKey: target.templateKey,
           },
           async () =>
@@ -183,50 +177,6 @@ export async function prewarmAppSandboxes(input: {
     bindings,
     compiledArtifactsSource,
   });
-}
-
-export async function prewarmBuiltAppSandboxes(input: {
-  readonly appRoot: string;
-  readonly log?: (message: string) => void;
-  readonly dispatch?: SandboxTemplatePrewarmDispatch;
-}): Promise<void> {
-  const builtArtifactsRoot = join(input.appRoot, ".output");
-  const builtArtifactsSource = createDiskRuntimeCompiledArtifactsSource(builtArtifactsRoot, {
-    moduleMapLoaderPath: resolvePackageSourceFilePath("src/internal/authored-module-map-loader.ts"),
-    sandboxAppRoot: input.appRoot,
-  });
-  const [metadata, manifest, moduleMap] = await Promise.all([
-    loadCompileMetadata({
-      compiledArtifactsSource: builtArtifactsSource,
-    }),
-    loadCompiledManifest({
-      compiledArtifactsSource: builtArtifactsSource,
-    }),
-    loadCompiledModuleMapFromAuthoredSource({
-      compiledArtifactsSource: builtArtifactsSource,
-    }),
-  ]);
-
-  await withBundledCompiledArtifacts(
-    {
-      manifest,
-      metadata: metadata ?? undefined,
-      moduleMap,
-      sessionId: "built-app-prewarm",
-    },
-    async () => {
-      const compiledArtifactsSource = createBundledRuntimeCompiledArtifactsSource();
-      await prewarmSandboxes({
-        appRoot: input.appRoot,
-        compileDirectoryPath:
-          resolveRuntimeCompilerArtifactPaths(builtArtifactsRoot).compileDirectoryPath,
-        compiledArtifactsSource,
-        dispatch: input.dispatch,
-        graph: await resolveRuntimeAgentGraph({ manifest, moduleMap }),
-        log: input.log,
-      });
-    },
-  );
 }
 
 async function collectPrewarmTargets(input: {

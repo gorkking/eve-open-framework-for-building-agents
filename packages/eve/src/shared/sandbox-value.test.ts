@@ -19,6 +19,7 @@ describe("defineSandboxAdapter", () => {
     const raw = mockSandbox({ id: "sandbox_1" });
     const restore = vi.fn(() => raw);
     const adapt = defineSandboxAdapter<ReturnType<typeof mockSandbox>, TestReference>({
+      type: "eve/test-sandbox-value-restore",
       reference(sandbox) {
         return { id: sandbox.session.id };
       },
@@ -32,6 +33,7 @@ describe("defineSandboxAdapter", () => {
     expect(isSandbox(sandbox)).toBe(true);
     const serialized = await serializeSandbox(sandbox);
     expect(serialized).toMatchObject({
+      adapterId: "eve/test-sandbox-value-restore",
       id: "sandbox_1",
       reference: { id: "sandbox_1" },
     });
@@ -48,6 +50,7 @@ describe("defineSandboxAdapter", () => {
   it("rejects non-JSON provider references at the durability boundary", async () => {
     const raw = mockSandbox();
     const adapt = defineSandboxAdapter<ReturnType<typeof mockSandbox>, TestReference>({
+      type: "eve/test-sandbox-value-lazy",
       reference() {
         return { invalid: new Date() } as never;
       },
@@ -68,6 +71,7 @@ describe("defineSandboxAdapter", () => {
     const raw = mockSandbox();
     const shutdown = vi.fn();
     const adapt = defineSandboxAdapter<ReturnType<typeof mockSandbox>, TestReference>({
+      type: "eve/test-sandbox-value-shutdown",
       reference(sandbox) {
         return { id: sandbox.session.id };
       },

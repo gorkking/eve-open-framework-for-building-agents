@@ -163,6 +163,7 @@ export default defineSandbox(async ({ session }) => {
 ## Reuse and sharing
 
 Reuse across runs of one eve session is automatic. The definition runs once, eve persists the returned `Sandbox`, and later runs reconnect to it.
+If the persisted provider resource has been deleted or replaced, restoration fails instead of silently substituting a fresh sandbox.
 
 To intentionally share one Vercel sandbox across independent eve sessions, choose the same provider resource:
 
@@ -243,12 +244,13 @@ export default defineSandbox(({ runtime }) => {
 
 ## Custom providers
 
-Provider packages adapt their native handle with `defineSandboxAdapter`. The adapter owns serialization and restoration; app definitions still return only `Sandbox` values:
+Provider packages adapt their native handle with `defineSandboxAdapter`. The adapter owns serialization and restoration; app definitions still return only `Sandbox` values. The provider-owned `type` identifies its durable wire protocol and stays inside the provider implementation.
 
 ```ts
 import { defineSandboxAdapter } from "eve/sandbox/provider";
 
 const asDevboxSandbox = defineSandboxAdapter<Devbox, { id: string }>({
+  type: "example.com/devbox",
   reference(devbox) {
     return { id: devbox.id };
   },

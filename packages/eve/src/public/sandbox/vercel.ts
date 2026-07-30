@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
-
 import { createVercelSandbox } from "#execution/sandbox/bindings/vercel.js";
-import { createBuiltinSandbox } from "#execution/sandbox/backend-sandbox.js";
+import { createBuiltinSandbox } from "#execution/sandbox/builtin-sandbox.js";
 import { createBuiltinSandboxTemplate } from "#execution/sandbox/builtin-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 import type { SandboxTemplate } from "#shared/sandbox-template.js";
 import type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.js";
+import { parseJsonObject } from "#shared/json.js";
 
 export type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.js";
 
@@ -37,10 +36,6 @@ export interface VercelSandboxTemplate extends Omit<
   getOrCreate(options: VercelSandboxGetOrCreateOptions): Promise<Sandbox>;
 }
 
-type InternalVercelTemplateCreateOptions = VercelSandboxCreateOptions & {
-  readonly __sessionKey?: string;
-};
-
 /**
  * Vercel Sandbox creation and build-prewarming.
  */
@@ -50,8 +45,8 @@ export const VercelSandbox = {
    */
   async create(options: VercelSandboxCreateOptions = {}): Promise<Sandbox> {
     return await createBuiltinSandbox({
-      backend: createVercelSandbox({ createOptions: options }),
-      backendName: "vercel",
+      engine: createVercelSandbox({ createOptions: options }),
+      provider: "vercel",
       templateKey: null,
     });
   },
@@ -61,23 +56,19 @@ export const VercelSandbox = {
    */
   template(options: VercelSandboxTemplateOptions = {}): VercelSandboxTemplate {
     const { prepare, ...templateCreateOptions } = options;
-    const template = createBuiltinSandboxTemplate<InternalVercelTemplateCreateOptions>({
-      backendName: "vercel",
-      createBackend(createOptions) {
-        const { __sessionKey: _sessionKey, ...vercelOptions } = createOptions ?? {};
+    const template = createBuiltinSandboxTemplate<VercelSandboxCreateOptions>({
+      provider: "vercel",
+      createEngine(createOptions) {
         return createVercelSandbox({
           createOptions: {
             ...templateCreateOptions,
-            ...vercelOptions,
+            ...createOptions,
           } as VercelSandboxCreateOptions,
         });
       },
       prepare,
       revision: createVercelTemplateOptionsRevision(templateCreateOptions),
-      sessionKey(createOptions) {
-        return createOptions?.__sessionKey;
-      },
-      templateBackend: createVercelSandbox({ createOptions: templateCreateOptions }),
+      templateEngine: createVercelSandbox({ createOptions: templateCreateOptions }),
     });
 
     return Object.assign(template, {
@@ -85,46 +76,12 @@ export const VercelSandbox = {
         name,
         ...createOptions
       }: VercelSandboxGetOrCreateOptions): Promise<Sandbox> {
-        return await template.create({
-          ...createOptions,
-          __sessionKey: name,
-        });
+        return await template.createWithSessionKey(createOptions, name);
       },
     }) as VercelSandboxTemplate;
   },
 };
 
-function createVercelTemplateOptionsRevision(options: VercelSandboxCreateOptions): string {
-  return createHash("sha256").update(stableSerialize(options, new WeakSet())).digest("hex");
-}
-
-function stableSerialize(value: unknown, seen: WeakSet<object>): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? JSON.stringify(value) : JSON.stringify(String(value));
-  }
-  if (typeof value === "bigint" || typeof value === "symbol") {
-    return JSON.stringify(String(value));
-  }
-  if (typeof value === "undefined") {
-    return "undefined";
-  }
-  if (typeof value === "function") {
-    return `function:${value.toString()}`;
-  }
-  if (seen.has(value)) {
-    throw new TypeError("VercelSandbox.template() options must not contain circular values.");
-  }
-
-  seen.add(value);
-  const serialized = Array.isArray(value)
-    ? `[${value.map((entry) => stableSerialize(entry, seen)).join(",")}]`
-    : `{${Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry, seen)}`)
-        .join(",")}}`;
-  seen.delete(value);
-  return serialized;
+function createVercelTemplateOptionsRevision(options: VercelSandboxCreateOptions) {
+  return parseJsonObject(options);
 }

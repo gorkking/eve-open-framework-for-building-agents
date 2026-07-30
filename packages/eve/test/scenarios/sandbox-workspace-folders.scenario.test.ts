@@ -7,7 +7,7 @@ import { discoverAgent } from "../../src/discover/discover-agent.js";
 import { resolveDiscoveryProject } from "../../src/discover/project.js";
 // The just-bash engine keeps this scenario hermetic (no Docker daemon
 // requirement); the workspace devDependency provides the install.
-import { createJustBashSandboxBackend } from "../../src/execution/sandbox/bindings/just-bash.js";
+import { createJustBashSandboxEngine } from "../../src/execution/sandbox/bindings/just-bash.js";
 import { useScenarioApp } from "../../src/internal/testing/scenario-app.js";
 import { SANDBOX_WORKSPACES_DESCRIPTOR } from "../../src/internal/testing/scenario-apps/sandbox-workspaces.js";
 import { materializeWorkspaceDirectory } from "../../src/runtime/workspace/seed-files.js";
@@ -28,7 +28,7 @@ describe("sandbox workspace folder convention", () => {
     // files. Production routes these through
     // `materializeWorkspaceResources` → `prewarmSandboxes`; this test
     // exercises the disk → sandbox round trip directly with the
-    // discovery output so it can stay focused on the local backend.
+    // discovery output so it can stay focused on the local provider.
     const files = (
       await Promise.all(
         discovered.manifest.sandboxWorkspaces.map((workspace) =>
@@ -38,16 +38,16 @@ describe("sandbox workspace folder convention", () => {
     ).flat();
 
     const appRoot = await createScratchDirectory("eve-sandbox-workspace-folders-");
-    const backend = createJustBashSandboxBackend();
+    const provider = createJustBashSandboxEngine();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: files.map((file) => ({ content: file.content, path: file.path })),
       templateKey: "template-default-workspace",
     });
 
-    const handle = await backend.create({
-      runtimeContext: { appRoot },
+    const handle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-default-workspace",
       templateKey: "template-default-workspace",
     });
@@ -72,16 +72,16 @@ describe("sandbox workspace folder convention", () => {
 
   it("opens an empty prewarmed template when the sandbox has no authored workspace files", async () => {
     const appRoot = await createScratchDirectory("eve-sandbox-no-workspace-");
-    const backend = createJustBashSandboxBackend();
+    const provider = createJustBashSandboxEngine();
 
-    await backend.prewarm({
-      runtimeContext: { appRoot },
+    await provider.prepare({
+      context: { appRoot },
       seedFiles: [],
       templateKey: "template-empty-workspace",
     });
 
-    const handle = await backend.create({
-      runtimeContext: { appRoot },
+    const handle = await provider.create({
+      context: { appRoot },
       sessionKey: "session-empty-workspace",
       templateKey: "template-empty-workspace",
     });
