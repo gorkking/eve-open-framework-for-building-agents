@@ -24,6 +24,12 @@ export default mcpChannel({
 Authentication is required by default. Use `none()` only when you intentionally
 want a public MCP endpoint.
 
+The endpoint validates `Host` and `Origin` before authentication. Browser
+requests must be exact same-origin, and plain HTTP is accepted only on
+loopback; remote endpoints must use HTTPS. The MCP channel does not enable
+cross-origin browser access. Put a same-origin backend or an authenticated
+server-side proxy in front of it when a browser application needs to connect.
+
 The endpoint serves MCP `2026-07-28` directly and keeps a stateless
 `2025-11-25` compatibility path for existing Streamable HTTP clients. Current
 clients use `server/discover`; older clients can continue to initialize
@@ -59,7 +65,9 @@ expiry, audience/resource, and scope enforcement.
 
 By default the resource is the request origin plus `/mcp`. Set `resource` when
 a public gateway fronts a private eve origin, or `metadataPath` when the
-well-known route must be mounted elsewhere.
+well-known route must be mounted elsewhere. Issuer and resource identifiers
+must use HTTPS without credentials, query, or fragment; loopback HTTP is
+accepted for local development.
 
 ## Invoke the agent
 
@@ -75,17 +83,25 @@ agent. Current clients receive four compatibility tools:
 acceptance. Keep the returned `invocationId` and call `agent_get` until the
 invocation is terminal, honoring `pollAfterMs` while it is working. A failed
 start whose response is ambiguous should not be retried automatically because
-each call creates a new invocation.
+each call creates a new invocation. Optional output schemas are limited to 64
+KiB, 32 levels, and 2,048 nodes; external `$ref` values are rejected.
 
-Every operation reruns the configured auth policy. Invocation access is bound
-to the same authenticated principal that started it; knowing an invocation ID
-is not sufficient. Bearer tokens are neither persisted with the invocation nor
-forwarded to the agent's tools.
+Every operation reruns the configured auth policy. With authenticated
+policies, invocation access is bound to the same principal that started it;
+knowing an invocation ID is not sufficient. Bearer tokens are neither
+persisted with the invocation nor forwarded to the agent's tools.
 
-`agent_get` reconstructs state from the durable eve session event stream and
-does not start work or run another model. When the agent requests input, pass
-the reported responses to `agent_update`. Cancellation is cooperative; poll
-the invocation until it reports `cancelled` or another terminal state.
+With `none()`, every caller shares the anonymous principal, so the random
+invocation ID is a bearer capability. Keep it out of logs and URLs, and treat
+it as usable until the underlying workflow retention expires. When the
+workflow backend reports a retention deadline, responses include `expiresAt`.
+
+`agent_get` reconstructs active state from a bounded tail snapshot of the
+durable eve session event stream and does not start work or run another model.
+Terminal state comes directly from the workflow run without reading the event
+stream. When the agent requests input, pass the reported responses to
+`agent_update`. Cancellation is cooperative; poll the invocation until it
+reports `cancelled` or another terminal state.
 
 ## Connect Claude Code
 

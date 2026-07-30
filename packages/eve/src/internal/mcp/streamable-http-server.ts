@@ -1,7 +1,8 @@
 import {
-  type CallToolRequest,
   createMcpHandler,
-  Server,
+  fromJsonSchema,
+  McpServer,
+  type McpToolAnnotations,
 } from "#compiled/@modelcontextprotocol/server/index.js";
 
 import type { SessionAuthContext } from "#channel/types.js";
@@ -12,7 +13,9 @@ export const MCP_LEGACY_PROTOCOL_VERSION = "2025-11-25";
 export interface McpToolDefinition {
   readonly name: string;
   readonly description?: string;
+  readonly annotations?: McpToolAnnotations;
   readonly inputSchema: Readonly<Record<string, unknown>>;
+  readonly outputSchema?: Readonly<Record<string, unknown>>;
 }
 
 export interface McpCallToolResult {
@@ -67,34 +70,42 @@ function createServer(
   options: Pick<McpStreamableHttpServerOptions, "name" | "version">,
   tools: ReadonlyMap<string, McpServerTool>,
   auth: SessionAuthContext | null,
-): Server {
-  const server = new Server(
+): McpServer {
+  const server = new McpServer(
     { name: options.name, version: options.version },
     { capabilities: { tools: { listChanged: false } } },
   );
 
-  server.setRequestHandler("tools/list", async () => ({
-    tools: [...tools.values()].map((tool) => tool.definition),
-  }));
-  server.setRequestHandler(
-    "tools/call",
-    async (request, context) => await callTool(request, context.mcpReq.signal, auth, tools),
-  );
+  for (const tool of tools.values()) {
+    server.registerTool(
+      tool.definition.name,
+      {
+        ...(tool.definition.annotations === undefined
+          ? {}
+          : { annotations: tool.definition.annotations }),
+        ...(tool.definition.description === undefined
+          ? {}
+          : { description: tool.definition.description }),
+        inputSchema: fromJsonSchema(tool.definition.inputSchema),
+        ...(tool.definition.outputSchema === undefined
+          ? {}
+          : { outputSchema: fromJsonSchema(tool.definition.outputSchema) }),
+      },
+      async (input, context) => await callTool(tool, input, context.mcpReq.signal, auth),
+    );
+  }
 
   return server;
 }
 
 async function callTool(
-  request: CallToolRequest,
+  tool: McpServerTool,
+  input: unknown,
   signal: AbortSignal,
   auth: SessionAuthContext | null,
-  tools: ReadonlyMap<string, McpServerTool>,
 ): Promise<McpCallToolResult> {
-  const tool = tools.get(request.params.name);
-  if (tool === undefined) return toolError(`Unknown tool: ${request.params.name}`);
-
   try {
-    return await tool.call(request.params.arguments ?? {}, { auth, signal });
+    return await tool.call(input, { auth, signal });
   } catch (error) {
     return toolError(error instanceof Error ? error.message : "Tool call failed.");
   }

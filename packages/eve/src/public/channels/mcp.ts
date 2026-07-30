@@ -6,6 +6,8 @@ import {
   type AgentInvocation,
 } from "#internal/invocation/agent-invocation-service.js";
 import { WorkflowAgentInvocationExecution } from "#internal/invocation/workflow-execution.js";
+import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { validateMcpHttpRequest } from "#internal/mcp/http-security.js";
 import {
   createMcpStreamableHttpServer,
   type McpCallToolResult,
@@ -68,12 +70,14 @@ export function mcpChannel(input: McpChannelInput): McpChannel {
   if (oauth !== undefined) {
     routes.unshift(protectedResourceMetadataRoute(oauth, path));
   }
-  return defineChannel({ cors: true, routes });
+  return defineChannel({ routes });
 }
 
 function protectedResourceMetadataRoute(options: OAuthResourceOptions, resourcePath: string) {
   const metadataPath = options.metadataPath ?? "/.well-known/oauth-protected-resource";
   return GET(metadataPath, async (request) => {
+    const securityFailure = validateMcpHttpRequest(request);
+    if (securityFailure !== undefined) return securityFailure;
     const resource =
       options.resource ?? new URL(resourcePath, new URL(request.url).origin).toString();
     const authorizationServers =
@@ -113,6 +117,8 @@ async function authenticateMcpRequest(
   policy: AuthFn<Request> | readonly AuthFn<Request>[],
   oauth: OAuthResourceOptions | undefined,
 ): Promise<Response> {
+  const securityFailure = validateMcpHttpRequest(request);
+  if (securityFailure !== undefined) return securityFailure;
   const auth = await routeAuth(request, policy);
   if (auth instanceof Response) {
     return oauth === undefined ? auth : addResourceChallenge(auth, request, oauth);
@@ -144,19 +150,33 @@ async function handleMcpRequest(
   return await createMcpStreamableHttpServer({
     authenticate: async () => auth,
     name: agentInfo.agent.name,
-    tools: createInvocationTools(service, description),
-    version: "1.0.0",
+    tools: createInvocationTools(
+      service,
+      description,
+      auth.authenticator === "none" && auth.principalType === "anonymous",
+    ),
+    version: resolveInstalledPackageInfo().version,
   })(request);
 }
 
 function createInvocationTools(
   service: AgentInvocationService,
   agentDescription: string | undefined,
+  publicAccess: boolean,
 ): readonly McpServerTool[] {
-  const startDescription = "Starts durable work and returns an invocation handle immediately.";
+  const publicHandleDescription = publicAccess
+    ? " On this public channel, the invocation ID is a bearer capability until workflow retention expires."
+    : "";
+  const startDescription = `Starts durable work and returns an invocation handle immediately.${publicHandleDescription}`;
   const tools: McpServerTool[] = [
     {
       definition: {
+        annotations: {
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
         description:
           agentDescription === undefined
             ? startDescription
@@ -171,6 +191,7 @@ function createInvocationTools(
           type: "object",
         },
         name: "agent_start",
+        outputSchema: AGENT_INVOCATION_OUTPUT_SCHEMA,
       },
       async call(value, context) {
         const body = record(value);
@@ -186,7 +207,13 @@ function createInvocationTools(
     },
     {
       definition: {
-        description: "Reads complete durable invocation state.",
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+          readOnlyHint: true,
+        },
+        description: `Reads complete durable invocation state.${publicHandleDescription}`,
         inputSchema: {
           additionalProperties: false,
           properties: {
@@ -196,6 +223,7 @@ function createInvocationTools(
           type: "object",
         },
         name: "agent_get",
+        outputSchema: AGENT_INVOCATION_OUTPUT_SCHEMA,
       },
       async call(value, context) {
         const body = record(value);
@@ -209,6 +237,12 @@ function createInvocationTools(
     },
     {
       definition: {
+        annotations: {
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
         description: "Answers a pending input request on a durable invocation.",
         inputSchema: {
           additionalProperties: false,
@@ -220,6 +254,7 @@ function createInvocationTools(
           type: "object",
         },
         name: "agent_update",
+        outputSchema: AGENT_INVOCATION_OUTPUT_SCHEMA,
       },
       async call(value, context) {
         const body = record(value);
@@ -236,6 +271,12 @@ function createInvocationTools(
     },
     {
       definition: {
+        annotations: {
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+          readOnlyHint: false,
+        },
         description:
           "Requests cancellation of a durable invocation. Read it again to observe acknowledgement.",
         inputSchema: {
@@ -245,6 +286,7 @@ function createInvocationTools(
           type: "object",
         },
         name: "agent_cancel",
+        outputSchema: AGENT_INVOCATION_OUTPUT_SCHEMA,
       },
       async call(value, context) {
         const body = record(value);
@@ -261,9 +303,10 @@ function createInvocationTools(
 }
 
 function invocationResult(invocation: AgentInvocation): McpCallToolResult {
+  const structuredContent = parseJsonObject(invocation);
   return {
-    content: [{ text: JSON.stringify(invocation), type: "text" }],
-    structuredContent: { ...invocation },
+    content: [{ text: JSON.stringify(structuredContent), type: "text" }],
+    structuredContent,
   };
 }
 
@@ -278,5 +321,68 @@ function requiredString(value: unknown, name: string): string {
 }
 
 function asJsonObject(value: unknown): JsonObject | undefined {
-  return value === undefined ? undefined : parseJsonObject(value);
+  if (value === undefined) return undefined;
+  const schema = parseJsonObject(value);
+  validateOutputSchemaComplexity(schema);
+  return schema;
+}
+
+const AGENT_INVOCATION_OUTPUT_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    createdAt: { format: "date-time", type: "string" },
+    error: { type: "object" },
+    expiresAt: { format: "date-time", type: "string" },
+    inputRequests: {
+      additionalProperties: { type: "object" },
+      type: "object",
+    },
+    invocationId: { type: "string" },
+    pollAfterMs: { minimum: 0, type: "integer" },
+    result: {},
+    status: {
+      enum: ["working", "input_required", "completed", "failed", "cancelled"],
+      type: "string",
+    },
+  },
+  required: ["createdAt", "invocationId", "status"],
+  type: "object",
+} as const;
+
+const MAX_OUTPUT_SCHEMA_BYTES = 64 * 1_024;
+const MAX_OUTPUT_SCHEMA_DEPTH = 32;
+const MAX_OUTPUT_SCHEMA_NODES = 2_048;
+
+function validateOutputSchemaComplexity(schema: JsonObject): void {
+  if (new TextEncoder().encode(JSON.stringify(schema)).byteLength > MAX_OUTPUT_SCHEMA_BYTES) {
+    throw new Error(`outputSchema must be at most ${String(MAX_OUTPUT_SCHEMA_BYTES)} bytes.`);
+  }
+
+  let nodes = 0;
+  const visit = (value: import("#shared/json.js").JsonValue, depth: number): void => {
+    nodes++;
+    if (nodes > MAX_OUTPUT_SCHEMA_NODES) {
+      throw new Error(
+        `outputSchema must contain at most ${String(MAX_OUTPUT_SCHEMA_NODES)} nodes.`,
+      );
+    }
+    if (depth > MAX_OUTPUT_SCHEMA_DEPTH) {
+      throw new Error(
+        `outputSchema must be at most ${String(MAX_OUTPUT_SCHEMA_DEPTH)} levels deep.`,
+      );
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === "$ref" && typeof entry === "string" && !entry.startsWith("#")) {
+        throw new Error("outputSchema external $ref values are not supported.");
+      }
+      visit(entry, depth + 1);
+    }
+  };
+
+  visit(schema, 0);
 }

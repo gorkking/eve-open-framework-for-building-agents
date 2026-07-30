@@ -1,0 +1,69 @@
+import {
+  hostHeaderValidationResponse,
+  originValidationResponse,
+} from "#compiled/@modelcontextprotocol/server/index.js";
+
+const LOOPBACK_IPV4_PREFIX = /^127\./;
+const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "[::1]"]);
+
+/**
+ * Applies the fetch-native HTTP guards required in front of the MCP SDK.
+ *
+ * Non-browser clients normally omit `Origin`; browser requests are restricted
+ * to the endpoint's exact origin. Plain HTTP is accepted only on loopback.
+ */
+export function validateMcpHttpRequest(request: Request): Response | undefined {
+  let target: URL;
+  try {
+    target = new URL(request.url);
+  } catch {
+    return securityError("Invalid MCP request URL.", 400);
+  }
+
+  if (
+    target.protocol !== "https:" &&
+    !(target.protocol === "http:" && isLoopbackHostname(target.hostname))
+  ) {
+    return securityError("MCP endpoints require HTTPS except on loopback.");
+  }
+
+  const hostFailure = hostHeaderValidationResponse(request, [target.hostname]);
+  if (hostFailure !== undefined) return hostFailure;
+
+  const originFailure = originValidationResponse(request, [target.hostname]);
+  if (originFailure !== undefined) return originFailure;
+
+  const originHeader = request.headers.get("origin");
+  if (originHeader === null || originHeader.length === 0) return undefined;
+
+  let origin: URL;
+  try {
+    origin = new URL(originHeader);
+  } catch {
+    return securityError("Invalid Origin header.");
+  }
+  if (origin.origin !== target.origin) {
+    return securityError(`Invalid Origin: ${origin.origin}`);
+  }
+
+  return undefined;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    LOOPBACK_HOSTNAMES.has(hostname) ||
+    LOOPBACK_IPV4_PREFIX.test(hostname) ||
+    hostname.endsWith(".localhost")
+  );
+}
+
+function securityError(message: string, status = 403): Response {
+  return Response.json(
+    {
+      error: { code: -32_000, message },
+      id: null,
+      jsonrpc: "2.0",
+    },
+    { headers: { "content-type": "application/json" }, status },
+  );
+}

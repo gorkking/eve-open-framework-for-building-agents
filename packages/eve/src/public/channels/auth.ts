@@ -446,12 +446,27 @@ function escapeChallengeValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-function isAbsoluteUrl(value: string): boolean {
+function isValidOAuthIdentifierUrl(value: string): boolean {
   try {
-    return new URL(value).origin !== "null";
+    const url = new URL(value);
+    const secureTransport =
+      url.protocol === "https:" || (url.protocol === "http:" && isLoopbackHostname(url.hostname));
+    return (
+      secureTransport &&
+      url.username.length === 0 &&
+      url.password.length === 0 &&
+      url.search.length === 0 &&
+      url.hash.length === 0
+    );
   } catch {
     return false;
   }
+}
+
+function isValidMetadataPath(value: string): boolean {
+  if (!value.startsWith("/") || value.startsWith("//")) return false;
+  const url = new URL(value, "https://eve.invalid");
+  return url.origin === "https://eve.invalid" && url.search.length === 0 && url.hash.length === 0;
 }
 
 /**
@@ -548,15 +563,21 @@ export function oauthResource(
     options.issuer !== undefined ? [options.issuer] : options.authorizationServers;
   if (
     authorizationServers.length === 0 ||
-    authorizationServers.some((value) => !isAbsoluteUrl(value))
+    authorizationServers.some((value) => !isValidOAuthIdentifierUrl(value))
   ) {
-    throw new Error("oauthResource requires at least one absolute authorization server URL.");
+    throw new Error(
+      "oauthResource requires at least one HTTPS authorization server URL (HTTP is allowed only on loopback).",
+    );
   }
-  if (options.resource !== undefined && !isAbsoluteUrl(options.resource)) {
-    throw new Error("oauthResource resource must be an absolute URL.");
+  if (options.resource !== undefined && !isValidOAuthIdentifierUrl(options.resource)) {
+    throw new Error(
+      "oauthResource resource must be an HTTPS URL without credentials, query, or fragment (HTTP is allowed only on loopback).",
+    );
   }
-  if (options.metadataPath !== undefined && !options.metadataPath.startsWith("/")) {
-    throw new Error("oauthResource metadataPath must start with '/'.");
+  if (options.metadataPath !== undefined && !isValidMetadataPath(options.metadataPath)) {
+    throw new Error(
+      "oauthResource metadataPath must be an absolute path without a host, query, or fragment.",
+    );
   }
 
   const list: readonly AuthFn<Request>[] = Array.isArray(auth)
@@ -816,17 +837,16 @@ export function isLoopbackRequest(request: Request): boolean {
   } catch {
     return false;
   }
-  if (LOOPBACK_HOSTNAMES.has(hostname)) {
-    return true;
-  }
-  if (LOOPBACK_IPV4_PREFIX.test(hostname)) {
-    return true;
-  }
-  // RFC 6761: the entire `.localhost` TLD is reserved for loopback.
-  if (hostname.endsWith(".localhost")) {
-    return true;
-  }
-  return false;
+  return isLoopbackHostname(hostname);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    LOOPBACK_HOSTNAMES.has(hostname) ||
+    LOOPBACK_IPV4_PREFIX.test(hostname) ||
+    // RFC 6761: the entire `.localhost` TLD is reserved for loopback.
+    hostname.endsWith(".localhost")
+  );
 }
 
 const ANONYMOUS_SESSION_AUTH_CONTEXT: SessionAuthContext = {

@@ -47,7 +47,15 @@ export class WorkflowAgentInvocationExecution implements AgentInvocationExecutio
       mode: "task",
     });
 
-    return workingInvocation(handle.sessionId, new Date().toISOString());
+    const run = await this.#readInvocationRun(handle.sessionId, input.auth);
+    if (run === undefined) {
+      throw new Error("Invocation run was unavailable after durable creation.");
+    }
+    return workingInvocation(
+      handle.sessionId,
+      run.createdAt.toISOString(),
+      run.expiredAt?.toISOString(),
+    );
   }
 
   async read(input: {
@@ -57,11 +65,16 @@ export class WorkflowAgentInvocationExecution implements AgentInvocationExecutio
     const run = await this.#readInvocationRun(input.invocationId, input.auth);
     if (run === undefined) return undefined;
 
-    const events = await readPersistedEvents(input.invocationId);
     if (isTerminalRunStatus(run.status)) {
       return await terminalInvocation(run);
     }
-    return projectNonterminal(run.runId, run.createdAt.toISOString(), events);
+    const events = await readRecentPersistedEvents(input.invocationId);
+    return projectNonterminal(
+      run.runId,
+      run.createdAt.toISOString(),
+      run.expiredAt?.toISOString(),
+      events,
+    );
   }
 
   async update(input: {
@@ -139,20 +152,27 @@ function invocationOwnerKey(auth: SessionAuthContext | null): string {
   ]);
 }
 
-async function readPersistedEvents(invocationId: string): Promise<HandleMessageStreamEvent[]> {
-  const readable = getRun(invocationId).getReadable<Uint8Array>({ startIndex: 0 });
+const INVOCATION_EVENT_WINDOW_SIZE = 64;
+
+async function readRecentPersistedEvents(
+  invocationId: string,
+): Promise<HandleMessageStreamEvent[]> {
+  const readable = getRun(invocationId).getReadable<Uint8Array>({
+    startIndex: -INVOCATION_EVENT_WINDOW_SIZE,
+  });
   const tailIndex = await readable.getTailIndex();
   if (tailIndex < 0) {
     await readable.cancel("invocation event stream is empty").catch(() => {});
     return [];
   }
+  const expectedEvents = Math.min(tailIndex + 1, INVOCATION_EVENT_WINDOW_SIZE);
 
   const reader = readable.getReader();
   const decoder = new TextDecoder();
   const events: HandleMessageStreamEvent[] = [];
   let buffer = "";
   try {
-    while (events.length <= tailIndex) {
+    while (events.length < expectedEvents) {
       const next = await reader.read();
       if (next.done) break;
       buffer += decoder.decode(next.value, { stream: true });
@@ -172,6 +192,7 @@ async function readPersistedEvents(invocationId: string): Promise<HandleMessageS
 function projectNonterminal(
   invocationId: string,
   createdAt: string,
+  expiresAt: string | undefined,
   events: readonly HandleMessageStreamEvent[],
 ): AgentInvocation {
   let status: "working" | "input_required" = "working";
@@ -193,6 +214,7 @@ function projectNonterminal(
   }
   return {
     createdAt,
+    expiresAt,
     inputRequests,
     invocationId,
     pollAfterMs: status === "working" ? 1_000 : undefined,
@@ -204,10 +226,15 @@ function projectNonterminal(
 async function terminalInvocation(run: {
   readonly createdAt: Date;
   readonly error?: unknown;
+  readonly expiredAt?: Date;
   readonly runId: string;
   readonly status: string;
 }): Promise<AgentInvocation> {
-  const base = { createdAt: run.createdAt.toISOString(), invocationId: run.runId };
+  const base = {
+    createdAt: run.createdAt.toISOString(),
+    expiresAt: run.expiredAt?.toISOString(),
+    invocationId: run.runId,
+  };
   if (run.status === "cancelled") return { ...base, status: "cancelled" };
   if (run.status === "failed") {
     return {
@@ -220,8 +247,12 @@ async function terminalInvocation(run: {
   return { ...base, result: safeJson(returned.output), status: "completed" };
 }
 
-function workingInvocation(invocationId: string, createdAt: string): AgentInvocation {
-  return { createdAt, invocationId, pollAfterMs: 1_000, status: "working" };
+function workingInvocation(
+  invocationId: string,
+  createdAt: string,
+  expiresAt: string | undefined,
+): AgentInvocation {
+  return { createdAt, expiresAt, invocationId, pollAfterMs: 1_000, status: "working" };
 }
 
 function safeJson(value: unknown): JsonValue {

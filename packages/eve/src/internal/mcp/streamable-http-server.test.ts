@@ -77,7 +77,12 @@ function server() {
           call,
           definition: {
             description: "Echoes input.",
-            inputSchema: { type: "object" },
+            inputSchema: {
+              additionalProperties: false,
+              properties: { value: { type: "number" } },
+              required: ["value"],
+              type: "object",
+            },
             name: "echo",
           },
         },
@@ -162,6 +167,27 @@ describe("stateless MCP Streamable HTTP server", () => {
       { value: 42 },
       expect.objectContaining({ auth, signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("enforces the advertised tool input schema before dispatch", async () => {
+    const { call, handle } = server();
+    const response = await handle(
+      modernRequest({
+        id: "invalid-call",
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { arguments: { extra: true, value: "not-a-number" }, name: "echo" },
+      }),
+    );
+
+    expect(await jsonRpcResponse(response)).toMatchObject({
+      id: "invalid-call",
+      result: {
+        content: [{ text: expect.stringContaining("Input validation error"), type: "text" }],
+        isError: true,
+      },
+    });
+    expect(call).not.toHaveBeenCalled();
   });
 
   it("returns JSON-RPC errors and acknowledges notifications", async () => {

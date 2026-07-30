@@ -41,12 +41,46 @@ describe("oauthResource", () => {
       oauthResource(() => principal, {
         authorizationServers: [],
       }),
-    ).toThrow("at least one absolute authorization server URL");
+    ).toThrow("at least one HTTPS authorization server URL");
     expect(() =>
       oauthResource(() => principal, {
         issuer: "https://auth.example",
         metadataPath: "oauth-protected-resource",
       }),
-    ).toThrow("metadataPath must start with '/'");
+    ).toThrow("metadataPath must be an absolute path");
+  });
+
+  it("requires secure OAuth identifiers and a same-origin metadata path", () => {
+    for (const issuer of [
+      "ftp://auth.example",
+      "http://auth.example",
+      "https://user:secret@auth.example",
+      "https://auth.example?tenant=one",
+      "https://auth.example#fragment",
+    ]) {
+      expect(() => oauthResource(() => principal, { issuer })).toThrow(
+        "HTTPS authorization server URL",
+      );
+    }
+
+    expect(() =>
+      oauthResource(() => principal, {
+        issuer: "https://auth.example",
+        resource: "http://agent.example/mcp",
+      }),
+    ).toThrow("resource must be an HTTPS URL");
+    expect(() =>
+      oauthResource(() => principal, {
+        issuer: "https://auth.example",
+        metadataPath: "//attacker.example/metadata",
+      }),
+    ).toThrow("metadataPath must be an absolute path");
+
+    expect(() =>
+      oauthResource(() => principal, {
+        issuer: "http://localhost:3000",
+        resource: "http://127.0.0.1:2117/mcp",
+      }),
+    ).not.toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SessionAuthContext } from "#channel/types.js";
 import type { RouteHandlerArgs } from "#channel/routes.js";
@@ -66,7 +66,19 @@ describe("mcpChannel", () => {
       "agent_cancel",
     ]);
     expect(body.result.tools[0]).toMatchObject({
+      annotations: {
+        destructiveHint: true,
+        openWorldHint: true,
+      },
       description: expect.stringContaining("Investigates tasks."),
+      outputSchema: { type: "object" },
+    });
+    expect(body.result.tools[1]).toMatchObject({
+      annotations: {
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+      },
     });
   });
 
@@ -91,6 +103,64 @@ describe("mcpChannel", () => {
     expect(response.status).toBe(200);
   });
 
+  it("rejects cross-origin requests before running auth", async () => {
+    const authenticate = vi.fn(() => principal);
+    const channel = mcpChannel({ auth: authenticate });
+    const route = channel.routes[1]!;
+    if (route.transport === "websocket") throw new Error("expected HTTP route");
+
+    const response = await route.handler(
+      mcpRequest(
+        {
+          id: 1,
+          jsonrpc: "2.0",
+          method: "tools/list",
+        },
+        { origin: "https://attacker.example" },
+      ),
+      routeArgs(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  it("bounds and rejects external output schemas before starting work", async () => {
+    const run = vi.fn();
+    const channel = mcpChannel({ auth: none() });
+    const route = channel.routes[1]!;
+    if (route.transport === "websocket") throw new Error("expected HTTP route");
+
+    const response = await route.handler(
+      mcpRequest({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: {
+            message: "work",
+            outputSchema: { $ref: "https://attacker.example/schema.json" },
+          },
+          name: "agent_start",
+        },
+      }),
+      routeArgs({ run } as unknown as Agent),
+    );
+
+    await expect(jsonRpcResponse(response)).resolves.toMatchObject({
+      result: {
+        content: [
+          {
+            text: "outputSchema external $ref values are not supported.",
+            type: "text",
+          },
+        ],
+        isError: true,
+      },
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("mounts OAuth resource metadata and augments auth failures", async () => {
     const channel = mcpChannel({
       auth: oauthResource(() => null, {
@@ -110,7 +180,7 @@ describe("mcpChannel", () => {
     const metadataRoute = channel.routes[0]!;
     if (metadataRoute.transport === "websocket") throw new Error("expected HTTP route");
     const metadata = await metadataRoute.handler(
-      new Request("https://private.example/.well-known/oauth-protected-resource"),
+      requestWithHost("https://private.example/.well-known/oauth-protected-resource"),
       {} as never,
     );
     await expect(metadata.json()).resolves.toEqual({
@@ -122,7 +192,7 @@ describe("mcpChannel", () => {
     const route = channel.routes[2]!;
     if (route.transport === "websocket") throw new Error("expected HTTP route");
     const response = await route.handler(
-      new Request("https://private.example/delegate", { method: "POST" }),
+      requestWithHost("https://private.example/delegate", { method: "POST" }),
       {} as never,
     );
     expect(response.status).toBe(401);
@@ -140,7 +210,7 @@ describe("mcpChannel", () => {
     const route = channel.routes[0]!;
     if (route.transport === "websocket") throw new Error("expected HTTP route");
     const response = await route.handler(
-      new Request("https://agent.example/.well-known/oauth-protected-resource"),
+      requestWithHost("https://agent.example/.well-known/oauth-protected-resource"),
       {} as never,
     );
     await expect(response.json()).resolves.toEqual({
@@ -150,27 +220,35 @@ describe("mcpChannel", () => {
   });
 });
 
-function routeArgs(): RouteHandlerArgs {
-  return attachAgentInfoRouteResponse(
-    attachRouteAgent({} as RouteHandlerArgs, {} as Agent),
-    async () =>
-      Response.json({
-        agent: {
-          description: "Investigates tasks.",
-          name: "compiled-agent",
-        },
-      }),
+function routeArgs(agent: Agent = {} as Agent): RouteHandlerArgs {
+  return attachAgentInfoRouteResponse(attachRouteAgent({} as RouteHandlerArgs, agent), async () =>
+    Response.json({
+      agent: {
+        description: "Investigates tasks.",
+        name: "compiled-agent",
+      },
+    }),
   );
 }
 
-function mcpRequest(body: unknown): Request {
+function mcpRequest(body: unknown, headers: Record<string, string> = {}): Request {
   return new Request("https://agent.example/mcp", {
     body: JSON.stringify(body),
     headers: {
       accept: "application/json, text/event-stream",
       "content-type": "application/json",
+      host: "agent.example",
+      ...headers,
     },
     method: "POST",
+  });
+}
+
+function requestWithHost(url: string, init: RequestInit = {}): Request {
+  const target = new URL(url);
+  return new Request(url, {
+    ...init,
+    headers: { host: target.host, ...Object.fromEntries(new Headers(init.headers)) },
   });
 }
 

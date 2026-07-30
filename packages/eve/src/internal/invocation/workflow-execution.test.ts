@@ -42,6 +42,7 @@ describe("WorkflowAgentInvocationExecution", () => {
   });
 
   it("seeds invocation metadata when starting a task run", async () => {
+    runsGet.mockResolvedValue(run({ status: "running" }));
     vi.mocked(agent.run).mockResolvedValue({
       continuationToken: "mcp:invocation:token",
       events: new ReadableStream(),
@@ -58,7 +59,11 @@ describe("WorkflowAgentInvocationExecution", () => {
         mode: "task",
       }),
     );
-    expect(invocation).toMatchObject({ invocationId: "wrun_invocation", status: "working" });
+    expect(invocation).toMatchObject({
+      createdAt: "2026-07-20T00:00:00.000Z",
+      invocationId: "wrun_invocation",
+      status: "working",
+    });
   });
 
   it("requires the same authenticated principal for invocation access", async () => {
@@ -116,6 +121,7 @@ describe("WorkflowAgentInvocationExecution", () => {
       inputRequests: { question: { prompt: "Proceed?" } },
       status: "input_required",
     });
+    expect(getReadable).toHaveBeenCalledWith({ startIndex: -64 });
   });
 
   it("uses workflow return value as terminal result", async () => {
@@ -126,6 +132,7 @@ describe("WorkflowAgentInvocationExecution", () => {
     await expect(
       execution().read({ auth, invocationId: "wrun_invocation" }),
     ).resolves.toMatchObject({ result: { answer: 42 }, status: "completed" });
+    expect(getReadable).not.toHaveBeenCalled();
   });
 
   it("terminally cancels the workflow run", async () => {

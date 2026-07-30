@@ -2,7 +2,13 @@
 
 The channel serves the MCP `2026-07-28` protocol and the official SDK v2's stateless fallback for `2025-11-25` clients. Current clients use `server/discover` and carry protocol and client metadata on each request. Older clients can still use `initialize` and Streamable HTTP. Neither path issues `Mcp-Session-Id`, and DELETE receives `405` because there is no process-local transport session to terminate.
 
-The implementation vendors the official `@modelcontextprotocol/server` v2 package as a build-time dependency and uses its dual-era web-standard handler with a low-level server. The vendored surface supports modern discovery, legacy initialization, `ping`, `tools/list`, `tools/call`, JSON-RPC errors, protocol validation, and request cancellation without adding an eve runtime dependency. Cancellation of durable agent work is also an explicit tool in the public channel; a cancellation notification arriving on another stateless HTTP request cannot reliably abort an earlier request.
+The implementation vendors the official `@modelcontextprotocol/server` v2 package as a build-time dependency and uses its dual-era web-standard handler with `McpServer`. SDK tool registration validates every call against the same JSON Schema returned by `tools/list`. The vendored surface supports modern discovery, legacy initialization, `ping`, `tools/list`, `tools/call`, JSON-RPC errors, protocol validation, and request cancellation without adding an eve runtime dependency. Cancellation of durable agent work is also an explicit tool in the public channel; a cancellation notification arriving on another stateless HTTP request cannot reliably abort an earlier request.
+
+The channel mounts Host and exact same-origin request validation in front of
+the SDK handler and auth walk. Remote endpoints require HTTPS; loopback HTTP
+remains available for local clients. No process-local cache owns invocation
+state: active reads consume only a bounded tail snapshot of the durable event
+stream, while terminal reads use workflow status and return values directly.
 
 ## Inspector
 

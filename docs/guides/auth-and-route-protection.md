@@ -226,7 +226,11 @@ and authentication challenges. `mcpChannel()` does this automatically.
 `oauthResource()` does not verify or issue tokens. The wrapped strategy remains
 responsible for signature or introspection, expiry, audience/resource, claims,
 and scope enforcement. The configured `scopes` are discovery metadata for
-clients, not an authorization check by themselves.
+clients, not an authorization check by themselves. Authorization-server and
+resource identifiers must be HTTPS URLs without credentials, query strings, or
+fragments. HTTP is accepted only for loopback development URLs. A custom
+`metadataPath` must be a same-origin absolute path; network-path references
+such as `//example.com/metadata` are rejected.
 
 ## Network policy
 
