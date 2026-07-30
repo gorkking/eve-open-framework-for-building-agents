@@ -61,6 +61,7 @@ jobs:
   e2e-models:
     name: e2e-models-local (${{ matrix.fixture_name }}, ${{ matrix.model_name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [changes, discover-fixtures]
     if: needs.changes.outputs.relevant == 'true'
     strategy:
@@ -136,6 +137,7 @@ jobs:
   e2e-worlds:
     name: e2e-worlds-local (${{ matrix.fixture_name }}, mock)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [changes, discover-fixtures]
     if: needs.changes.outputs.relevant == 'true'
     strategy:

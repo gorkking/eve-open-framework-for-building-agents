@@ -19,21 +19,22 @@ export function getAvailableSkills(prompt: BootstrapPrompt): AvailableBootstrapS
     // (authored skills); parse bullet lines from the section header to the
     // first blank line either way.
     const lines = getPromptContentText(message.content).split("\n");
-    const headerIndex = lines.findIndex((line) => line.trim() === "Available skills");
 
-    if (headerIndex < 0) {
-      continue;
-    }
-
-    for (const line of lines.slice(headerIndex + 1)) {
-      if (line.trim().length === 0) {
-        break;
+    for (const [index, line] of lines.entries()) {
+      if (line.trim() !== "Available skills") {
+        continue;
       }
 
-      const skill = parseAvailableSkill(line);
+      for (const skillLine of lines.slice(index + 1)) {
+        if (skillLine.trim().length === 0) {
+          break;
+        }
 
-      if (skill !== null) {
-        skillsById.set(skill.name, skill);
+        const skill = parseAvailableSkill(skillLine);
+
+        if (skill !== null) {
+          skillsById.set(skill.name, skill);
+        }
       }
     }
   }
@@ -48,7 +49,11 @@ export function findRelevantSkill(
   const normalizedMessage = normalizeText(message);
 
   for (const skill of skills) {
-    if (normalizedMessage.includes(normalizeText(skill.name))) {
+    const unqualifiedName = skill.name.split("__").at(-1) ?? skill.name;
+    if (
+      normalizedMessage.includes(normalizeText(skill.name)) ||
+      normalizedMessage.includes(normalizeText(unqualifiedName))
+    ) {
       return skill;
     }
   }

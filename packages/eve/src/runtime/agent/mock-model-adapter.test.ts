@@ -170,6 +170,61 @@ describe("createMockAuthoredRuntimeModel", () => {
     ]);
   });
 
+  it("discovers a dynamic skill in a second available-skills block", async () => {
+    const result = await generateWithPrompt([
+      {
+        content: [
+          "Available skills",
+          "Listed skills are available in this run.",
+          "- echo-marker: Use when the user asks for the echo marker. (path: /home/agent/.agents/skills/echo-marker/SKILL.md)",
+          "",
+          "Available skills",
+          "Listed skills are available in this run.",
+          "- dynamic-tenant-policy: Use when the user asks for the dynamic tenant policy skill. (path: /home/agent/.agents/skills/dynamic-tenant-policy/SKILL.md)",
+        ].join("\n"),
+        role: "system",
+      },
+      {
+        content: "Please use the dynamic tenant policy skill and follow its instructions exactly.",
+        role: "user",
+      },
+    ]);
+
+    expect(result.finishReason).toEqual({ raw: undefined, unified: "tool-calls" });
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({ skill: "dynamic-tenant-policy" }),
+        toolCallId: "call_load_skill",
+        toolName: "load_skill",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("matches a namespaced skill by its unqualified name", async () => {
+    const result = await generateWithPrompt([
+      {
+        content:
+          "Available skills\n- toolkit__toolkit-guide: Packaged guide. (path: /workspace/.agents/skills/toolkit__toolkit-guide/SKILL.md)",
+        role: "system",
+      },
+      {
+        content: "Use the toolkit guide skill to perform its packaged resource smoke test.",
+        role: "user",
+      },
+    ]);
+
+    expect(result.finishReason).toEqual({ raw: undefined, unified: "tool-calls" });
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({ skill: "toolkit__toolkit-guide" }),
+        toolCallId: "call_load_skill",
+        toolName: "load_skill",
+        type: "tool-call",
+      },
+    ]);
+  });
+
   it("does not reload a skill already loaded earlier in the session", async () => {
     const result = await generateWithPrompt([
       {
