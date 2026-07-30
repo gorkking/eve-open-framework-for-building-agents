@@ -291,6 +291,63 @@ Sharing live compute means both sessions see the same files and processes,
 commands can race, and per-user credentials or network policy cannot safely
 differ. The provider or application owns retention and deletion.
 
+## Docker authoring cases
+
+### Direct Docker sandbox
+
+An app can return a Docker sandbox without using a template:
+
+```ts
+// agent/sandbox.ts
+import { defineSandbox } from "eve/sandbox";
+import { DockerSandbox } from "eve/sandbox/docker";
+
+export default defineSandbox(() => {
+  return DockerSandbox.create({
+    image: "ghcr.io/vercel/eve:latest",
+  });
+});
+```
+
+`DockerSandbox.create()` starts a live container and returns it as the durable
+`Sandbox`. The wrapper serializes the container reference, so later runs
+reattach to the same container rather than invoking the definition again.
+
+### Docker sandbox built from a Dockerfile
+
+An adjacent Dockerfile is a build input to an exported Docker template:
+
+```text
+agent/sandbox/
+├── Dockerfile
+├── sandbox.ts
+└── workspace/
+```
+
+```dockerfile
+# agent/sandbox/Dockerfile
+FROM ghcr.io/vercel/eve:latest
+RUN sudo apt-get update \
+  && sudo apt-get install -y --no-install-recommends imagemagick
+```
+
+```ts
+// agent/sandbox/sandbox.ts
+import { defineSandbox } from "eve/sandbox";
+import { DockerSandbox } from "eve/sandbox/docker";
+
+export const template = DockerSandbox.template();
+
+export default defineSandbox(() => {
+  return template.create();
+});
+```
+
+During prewarm, the Docker implementation builds the image, starts a temporary
+container from it, hydrates the managed workspace, and commits the result as a
+local template. `template.create()` starts the session container from that
+template and returns the actual durable sandbox.
+
 ## Parent and child sharing
 
 A child that should use the parent's sandbox returns the parent's durable
@@ -380,44 +437,11 @@ through `defineSandboxTemplate()`. Internally it implements two phases:
 
 Neither method nor the reference appears in app definitions.
 
-## Dockerfile line of sight
-
-A future filesystem-authored base image uses the same template protocol:
-
-```text
-agent/sandbox/
-├── Dockerfile
-├── sandbox.ts
-└── workspace/
-```
-
-```dockerfile
-# agent/sandbox/Dockerfile
-FROM ghcr.io/vercel/eve:latest
-RUN sudo apt-get update \
-  && sudo apt-get install -y --no-install-recommends imagemagick
-```
-
-```ts
-// agent/sandbox/sandbox.ts
-import { defineSandbox } from "eve/sandbox";
-import { VercelSandbox } from "eve/sandbox/vercel";
-
-export const template = VercelSandbox.template({
-  async prepare(sandbox) {
-    await sandbox.run({ command: "pnpm install --frozen-lockfile" });
-  },
-});
-
-export default defineSandbox(() => {
-  return template.create({
-    resources: { vcpus: 4 },
-  });
-});
-```
+## Dockerfile build contract
 
 The compiler associates the Dockerfile build context with the exported
-template. A Vercel build performs:
+template. The Docker example above builds it locally. A
+`VercelSandbox.template()` paired with the same filesystem input can perform:
 
 ```text
 Dockerfile
@@ -429,9 +453,8 @@ Dockerfile
   → freeze the snapshot reference into the deployment
 ```
 
-The local Docker implementation uses the same public shape with
-`DockerSandbox.template()`, `docker build`, and a local committed template.
-Runtime needs neither the Dockerfile nor an image builder.
+In both cases runtime needs neither the Dockerfile nor an image builder. It
+consumes the provider reference produced by prewarming.
 
 The Dockerfile path, context digest, registry image, snapshot id, and cache
 identity remain private. An explicit provider `image` and a discovered
@@ -477,6 +500,9 @@ VercelSandbox.create(options): Promise<Sandbox>
 VercelSandbox.template(options): VercelSandboxTemplate
 VercelSandboxTemplate.create(options): Promise<Sandbox>
 VercelSandboxTemplate.getOrCreate(options): Promise<Sandbox>
+DockerSandbox.create(options): Promise<Sandbox>
+DockerSandbox.template(options): DockerSandboxTemplate
+DockerSandboxTemplate.create(options): Promise<Sandbox>
 LocalFilesystemSandbox.open(options): Sandbox | Promise<Sandbox>
 ctx.parent.sandbox: Promise<Sandbox>
 ctx.root.sandbox: Promise<Sandbox>
