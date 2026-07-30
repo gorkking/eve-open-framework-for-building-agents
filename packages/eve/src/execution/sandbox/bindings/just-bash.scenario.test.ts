@@ -9,7 +9,7 @@ import {
   createJustBashSandboxBackend,
   pruneJustBashSandboxTemplates,
 } from "#execution/sandbox/bindings/just-bash.js";
-import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";
+import type { SandboxBackend } from "#shared/sandbox-backend.js";
 
 const createScratchDirectory = useTemporaryDirectories();
 

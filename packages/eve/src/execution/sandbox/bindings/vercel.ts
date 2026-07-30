@@ -2,7 +2,6 @@ import {
   applyInitialVercelNetworkPolicy,
   ensureVercelSandboxBaseRuntime,
 } from "#execution/sandbox/bindings/vercel-base-runtime.js";
-import type { SandboxBootstrapContext } from "#public/definitions/sandbox.js";
 import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 import type {
   InternalSandboxSession,
@@ -20,8 +19,9 @@ import type {
   SandboxBackendPrewarmResult,
   SandboxBackendTags,
   SandboxSeedFile,
-} from "#public/definitions/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
+  SandboxBackendPrewarmContext,
+} from "#shared/sandbox-backend.js";
+import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
 import type {
   VercelSandboxBootstrapUseOptions,
   VercelSandboxSessionUseOptions,
@@ -48,6 +48,7 @@ import type {
   VercelModule,
   VercelSandbox,
 } from "#execution/sandbox/bindings/vercel-sdk-types.js";
+import type { JsonObject } from "#shared/json.js";
 
 export interface CreateVercelSandboxInput {
   readonly createSandbox?: CreateVercelSandbox;
@@ -79,25 +80,31 @@ export function createVercelSandbox(
     async create(
       createInput: SandboxBackendCreateInput,
     ): Promise<SandboxBackendHandle<VercelSandboxSessionUseOptions>> {
+      const runtimeCreateOptions =
+        createInput.signal === undefined
+          ? createOptions
+          : { ...createOptions, signal: createInput.signal };
       // Resolve tags up-front so tag-count validation fails fast before
       // we go to the network for the template snapshot.
-      const tags = resolveVercelSandboxTags(createOptions.tags, createInput.tags);
+      const tags = resolveVercelSandboxTags(runtimeCreateOptions.tags, createInput.tags);
 
       const template =
         createInput.templateKey === null
           ? null
-          : await readTemplateForCreate({
-              createOptions,
-              loadSandboxModule,
-              prewarmedTemplates,
-              templateKey: createInput.templateKey,
-            });
+          : createInput.templateReference === undefined
+            ? await readTemplateForCreate({
+                createOptions: runtimeCreateOptions,
+                loadSandboxModule,
+                prewarmedTemplates,
+                templateKey: createInput.templateKey,
+              })
+            : parseVercelTemplateReference(createInput.templateReference, createInput.templateKey);
 
       const sandboxModule = await loadSandboxModule();
       let session: VercelSandboxSessionCreateResult;
       try {
         session = await ensureSession({
-          createOptions,
+          createOptions: runtimeCreateOptions,
           createSandbox,
           existingMetadata: createInput.existingMetadata,
           sandboxModule,
@@ -156,15 +163,36 @@ export function createVercelSandbox(
         );
       }
       prewarmedTemplates.set(prewarmInput.templateKey, outcome.template);
-      return { reused: outcome.reused };
+      return {
+        reused: outcome.reused,
+        templateReference: outcome.template,
+      };
     },
   };
 }
 
-interface VercelSandboxTemplateRecord {
+interface VercelSandboxTemplateRecord extends JsonObject {
   readonly sandboxName: string;
   readonly snapshotId: string;
   readonly templateKey: string;
+}
+
+function parseVercelTemplateReference(
+  reference: Record<string, unknown>,
+  templateKey: string,
+): VercelSandboxTemplateRecord {
+  if (
+    typeof reference.sandboxName !== "string" ||
+    typeof reference.snapshotId !== "string" ||
+    reference.templateKey !== templateKey
+  ) {
+    throw new Error(`Invalid frozen Vercel sandbox template reference "${templateKey}".`);
+  }
+  return {
+    sandboxName: reference.sandboxName,
+    snapshotId: reference.snapshotId,
+    templateKey,
+  };
 }
 
 interface EnsureTemplateOutcome {
@@ -174,7 +202,7 @@ interface EnsureTemplateOutcome {
 
 interface EnsureTemplateInput {
   readonly bootstrap?: (
-    input: SandboxBootstrapContext<VercelSandboxBootstrapUseOptions>,
+    input: SandboxBackendPrewarmContext<VercelSandboxBootstrapUseOptions>,
   ) => void | Promise<void>;
   readonly createOptions: VercelCreateOptions;
   readonly createSandbox: CreateVercelSandbox;
@@ -591,7 +619,7 @@ function resolveVercelSandboxTags(
   if (count > VERCEL_SANDBOX_TAG_LIMIT) {
     throw new Error(
       `Vercel Sandbox supports at most ${VERCEL_SANDBOX_TAG_LIMIT} tags. ` +
-        'eve reserves "agent", "channel", and "sessionId"; remove or consolidate custom tags passed to vercel().',
+        'eve reserves "agent", "channel", and "sessionId"; remove or consolidate custom VercelSandbox tags.',
     );
   }
 

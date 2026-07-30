@@ -1,20 +1,17 @@
 import { toErrorMessage } from "#shared/errors.js";
 
 /**
- * The slice of `SandboxBackendHandle` the shutdown registry needs.
- * Structural so handles of any session-options generic register without
- * variance friction.
+ * The process-local shutdown operation the registry needs.
  */
 export interface ShutdownCapableSandboxHandle {
   shutdown(): Promise<void>;
 }
 
 /**
- * Process-level registry of live sandbox backend handles, keyed by
- * backend name and session key so repeated `create` calls for the same
- * session replace rather than accumulate entries.
+ * Process-level registry of live sandboxes, keyed by implementation and
+ * session so repeated restoration replaces rather than accumulates entries.
  *
- * `ensureSandboxAccess` registers every handle it opens; the server
+ * `ensureSandboxAccess` registers every sandbox it opens; the server
  * shutdown path drains the registry so no sandbox compute outlives the
  * eve server process.
  */

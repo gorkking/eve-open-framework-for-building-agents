@@ -77,7 +77,8 @@ export interface SandboxRemovePathOptions {
 }
 
 /**
- * Public eve-owned sandbox session exposed to authored lifecycle hooks.
+ * Public eve-owned filesystem and process surface implemented by every
+ * durable sandbox.
  *
  * The eight I/O methods (`run`, `spawn`, `readFile`, `readBinaryFile`,
  * `readTextFile`, `writeFile`, `writeBinaryFile`, `writeTextFile`) are
@@ -102,14 +103,9 @@ export interface SandboxSession extends Pick<
   | "writeTextFile"
 > {
   /**
-   * Stable identifier for the backend session this handle wraps.
+   * Stable identifier for the provider sandbox this handle wraps.
    *
-   * Persists across reconnects to the same logical session: two calls
-   * that resume the same underlying backend sandbox observe the same
-   * `id`. Template sessions constructed during bootstrap expose the
-   * template key; live sessions expose the session key assigned by the
-   * runtime. Useful as a cache key for per-session state that must
-   * outlive individual step executions.
+   * Persists across reconnections to the same provider resource.
    */
   readonly id: string;
   /**
@@ -128,8 +124,8 @@ export interface SandboxSession extends Pick<
    * never enter the sandbox process. The policy takes effect from the time
    * the call resolves, so await it before the egress you want governed.
    *
-   * When the policy is known at session start, prefer configuring it up
-   * front in the sandbox backend factory or `onSession`'s `use()`. The
+   * When the policy is known at creation time, prefer passing it to the
+   * provider or applying it before returning the Sandbox. The
    * Docker backend honors only `"allow-all"` and `"deny-all"`;
    * the just-bash backend rejects this call entirely (its network policy
    * is fixed at sandbox creation and it runs no binaries to govern).

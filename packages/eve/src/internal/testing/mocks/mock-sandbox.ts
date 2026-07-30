@@ -243,11 +243,8 @@ export function mockSandbox(input: MockSandboxInput = {}): MockSandbox {
   };
 
   const access: SandboxAccess = {
-    async captureState(): Promise<SandboxState> {
-      return {
-        initialized: false,
-        session: null,
-      };
+    async captureState(): Promise<SandboxState | null> {
+      return null;
     },
     async get(): Promise<SandboxSession> {
       return session;

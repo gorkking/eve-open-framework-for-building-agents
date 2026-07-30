@@ -1,35 +1,30 @@
-import type { SandboxSession } from "#public/definitions/sandbox.js";
-import type { SandboxBackendSessionState } from "#public/definitions/sandbox-backend.js";
+import type { Sandbox, SerializedSandbox } from "#shared/sandbox-value.js";
 
 /**
- * Serializable sandbox reconnect record stored on the harness session.
- * Alias for {@link SandboxBackendSessionState} kept at this layer so
- * `SandboxState.session` can describe itself without importing the
- * backend's public-API spelling into harness code.
+ * Owner of one durable sandbox value.
  */
-export type SandboxSessionState = SandboxBackendSessionState;
+export interface SandboxOwner {
+  readonly nodeId: string;
+  readonly sessionId: string;
+}
 
 /**
- * Serializable sandbox state carried on the harness session across
- * step boundaries.
- *
- * Contains only stable identifiers — live handles stay in a
- * process-level cache and are rehydrated per step via the backend.
- * Every agent owns exactly one sandbox, so the state is just a single
- * `initialized` flag and an optional persisted session record.
+ * Serializable sandbox value stored on the durable eve session.
  */
-export interface SandboxState {
-  readonly initialized: boolean;
-  readonly session: SandboxSessionState | null;
+export interface SandboxStateValue {
+  readonly owner: SandboxOwner;
+  readonly revision: string;
+  readonly value: SerializedSandbox;
+}
+
+export interface SandboxState extends SandboxStateValue {
+  readonly root?: SandboxStateValue;
 }
 
 /**
  * Lazy sandbox accessor bound to one step execution.
- *
- * Returned by `ensureSandboxAccess` and placed on the `AlsContext` (via
- * `SandboxKey`) so tools can call `ctx.getSandbox()`.
  */
 export interface SandboxAccess {
-  captureState(): Promise<SandboxState>;
-  get(): Promise<SandboxSession | null>;
+  captureState(): Promise<SandboxState | null>;
+  get(): Promise<Sandbox | null>;
 }

@@ -2,8 +2,7 @@ import { Readable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
-import { vercel } from "#public/sandbox/backends/vercel.js";
+import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
 import { createVercelSandbox } from "#execution/sandbox/bindings/vercel.js";
 
 // The credential fallback consults the developer's Vercel CLI auth and the
@@ -250,7 +249,14 @@ describe("createVercelSandbox", () => {
         seedFiles: [],
         templateKey: "template-key",
       }),
-    ).resolves.toEqual({ reused: true });
+    ).resolves.toMatchObject({
+      reused: true,
+      templateReference: {
+        sandboxName: "template-key",
+        snapshotId: "template-snapshot",
+        templateKey: "template-key",
+      },
+    });
 
     expect(sandboxModule.Sandbox.get).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -407,7 +413,13 @@ describe("createVercelSandbox", () => {
       templateKey: "template-key",
     });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toMatchObject({
+      reused: false,
+      templateReference: {
+        snapshotId: "template-snapshot",
+        templateKey: "template-key",
+      },
+    });
     expect(templateSandbox.snapshot).toHaveBeenCalledTimes(1);
   });
 
@@ -434,7 +446,7 @@ describe("createVercelSandbox", () => {
       templateKey: "template-key",
     });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toMatchObject({ reused: false });
     expect(staleTemplate.delete).toHaveBeenCalledTimes(1);
     expect(staleTemplate.runCommand).not.toHaveBeenCalled();
     expect(sandboxModule.Sandbox.create).toHaveBeenCalledWith(
@@ -468,7 +480,13 @@ describe("createVercelSandbox", () => {
       templateKey: "template-key",
     });
 
-    expect(result).toEqual({ reused: true });
+    expect(result).toMatchObject({
+      reused: true,
+      templateReference: {
+        snapshotId: "framework-snapshot",
+        templateKey: "template-key",
+      },
+    });
     // Reuse must not re-snapshot or re-create the template sandbox.
     expect(existingTemplate.snapshot).not.toHaveBeenCalled();
     expect(sandboxModule.Sandbox.create).not.toHaveBeenCalled();
@@ -629,6 +647,38 @@ describe("createVercelSandbox", () => {
     });
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("source");
     expect(sessionSandbox.snapshot).not.toHaveBeenCalled();
+  });
+
+  it("creates from the exact frozen snapshot without looking up the named template", async () => {
+    const sessionSandbox = createMockSandbox({ name: "session-key" });
+    const create = vi.fn().mockResolvedValue(sessionSandbox);
+    const get = vi.fn().mockResolvedValue(null);
+    const backend = createTestVercelSandbox({
+      createSandbox: create,
+      loadSandboxModule: async () => ({ Sandbox: { create, get } }) as never,
+    });
+
+    await backend.create({
+      runtimeContext: { appRoot: "/tmp/test-app-root" },
+      sessionKey: "session-key",
+      templateKey: "template-key",
+      templateReference: {
+        sandboxName: "template-key",
+        snapshotId: "snapshot-frozen-at-build",
+        templateKey: "template-key",
+      },
+    });
+
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith(expect.objectContaining({ name: "session-key" }));
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: {
+          snapshotId: "snapshot-frozen-at-build",
+          type: "snapshot",
+        },
+      }),
+    );
   });
 
   it("keeps author createOptions on template-less fresh sessions", async () => {
@@ -890,7 +940,7 @@ describe("createVercelSandbox", () => {
       templateKey: "template-key",
     });
 
-    expect(prewarmResult).toEqual({ reused: false });
+    expect(prewarmResult).toMatchObject({ reused: false });
     expect(freshTemplate.snapshot).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledTimes(3);
     expect(create.mock.calls[0]?.[0]).toMatchObject({
@@ -938,7 +988,7 @@ describe("createVercelSandbox", () => {
         seedFiles: [],
         templateKey: "template-key",
       }),
-    ).resolves.toEqual({ reused: false });
+    ).resolves.toMatchObject({ reused: false });
 
     expect(create).toHaveBeenCalledTimes(2);
     expect(staleTemplate.snapshot).toHaveBeenCalledTimes(1);
@@ -1747,9 +1797,9 @@ describe("createVercelSandbox", () => {
   });
 });
 
-describe("vercel (public factory)", () => {
-  it("returns a SandboxBackend value with name 'vercel'", () => {
-    const backend = vercel();
+describe("createVercelSandbox", () => {
+  it("returns the internal Vercel backend bridge", () => {
+    const backend = createVercelSandbox();
     expect(backend.name).toBe("vercel");
     expect(typeof backend.create).toBe("function");
     expect(typeof backend.prewarm).toBe("function");

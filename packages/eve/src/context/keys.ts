@@ -87,6 +87,7 @@ export const SessionCallbackKey = new ContextKey<SessionCallback>("eve.sessionCa
 
 export const SessionKey = new ContextKey<Session>("eve.session");
 export const SandboxKey = new ContextKey<SandboxAccess>("eve.sandbox");
+export const TurnAbortSignalKey = new ContextKey<AbortSignal>("eve.turnAbortSignal");
 
 // ---------------------------------------------------------------------------
 // Dynamic model keys

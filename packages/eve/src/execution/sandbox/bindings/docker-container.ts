@@ -3,7 +3,7 @@ import type { DockerCli } from "#execution/sandbox/bindings/docker-cli.js";
 import type { ResolvedDockerSandboxOptions } from "#execution/sandbox/bindings/docker-options.js";
 import { expectDockerSuccess } from "#execution/sandbox/bindings/docker-utils.js";
 import { withDevelopmentSandboxTags } from "#execution/sandbox/development-run.js";
-import type { SandboxBackendTags } from "#public/definitions/sandbox-backend.js";
+import type { SandboxBackendTags } from "#shared/sandbox-backend.js";
 import type { DockerSandboxNetworkPolicy } from "#public/sandbox/docker-sandbox.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 

@@ -1,16 +1,27 @@
-import type { SandboxBootstrapContext, SandboxSessionUseFn } from "#shared/sandbox-definition.js";
+import type { JsonObject } from "#shared/json.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
 
 /**
- * Live sandbox handle returned by a {@link SandboxBackend}.
- *
- * Wraps the public {@link SandboxSession} with lifecycle methods so the
- * runtime orchestrator can persist reconnect metadata and release
- * resources.
+ * Internal option application function retained by the built-in backend
+ * bridge while providers migrate to durable Sandbox values.
+ */
+export type SandboxBackendUseFn<O = Record<string, never>> = (
+  options?: O,
+) => Promise<SandboxSession>;
+
+/**
+ * Internal template-preparation context for built-in backends.
+ */
+export interface SandboxBackendPrewarmContext<O = Record<string, never>> {
+  readonly use: SandboxBackendUseFn<O>;
+}
+
+/**
+ * Internal live handle retained by the built-in backend bridge.
  */
 export interface SandboxBackendHandle<SO = Record<string, never>> {
   readonly session: SandboxSession;
-  readonly useSessionFn: SandboxSessionUseFn<SO>;
+  readonly useSessionFn: SandboxBackendUseFn<SO>;
   captureState(): Promise<SandboxBackendSessionState>;
   /**
    * Stops the underlying compute because the eve server is shutting
@@ -78,7 +89,12 @@ export interface SandboxBackendCreateInput {
    * fresh session from its default base runtime.
    */
   readonly templateKey: string | null;
+  /**
+   * Exact provider result captured while prewarming `templateKey`.
+   */
+  readonly templateReference?: JsonObject;
   readonly sessionKey: string;
+  readonly signal?: AbortSignal;
   readonly existingMetadata?: Record<string, unknown>;
   /**
    * Runtime tags the backend should attach to sandbox resources when
@@ -92,15 +108,13 @@ export interface SandboxBackendCreateInput {
  * Input passed to {@link SandboxBackend.prewarm} when the build pipeline
  * is preparing reusable templates.
  *
- * Every authored sandbox in the compiled graph receives exactly one
- * `prewarm(...)` call before runtime opens its first session. The
- * backend captures reusable template state from the supplied
- * `bootstrap` hook and `seedFiles`, then `backend.create(...)` opens
- * durable sessions from that state.
+ * Each exported built-in template receives one `prewarm(...)` call. The
+ * bridge captures reusable state from the supplied preparation callback and
+ * seed files, then opens durable sessions from that state.
  */
 export interface SandboxBackendPrewarmInput<BO = Record<string, never>> {
   readonly templateKey: string;
-  readonly bootstrap?: (input: SandboxBootstrapContext<BO>) => void | Promise<void>;
+  readonly bootstrap?: (input: SandboxBackendPrewarmContext<BO>) => void | Promise<void>;
   /**
    * Optional progress logger for backend-specific prewarm phases.
    */
@@ -122,23 +136,17 @@ export interface SandboxBackendPrewarmResult {
    * `false` when the backend captured fresh template state.
    */
   readonly reused: boolean;
+  /**
+   * Opaque provider reference frozen into the deployment for runtime create.
+   */
+  readonly templateReference?: JsonObject;
 }
 
 /**
- * Pluggable sandbox backend.
+ * Internal bridge protocol used by eve's existing built-in engines.
  *
- * A `SandboxBackend` is a value an author attaches to a
- * {@link SandboxDefinition} to choose which underlying runtime hosts the
- * sandbox. eve ships built-in backends (`docker()`,
- * `justbash()`, `microsandbox()`,
- * `vercel()`, and the availability-aware
- * `defaultSandbox()`), but the interface is public so authors can write
- * their own.
- *
- * A backend implements the full two-phase lifecycle:
- * {@link SandboxBackend.prewarm} captures reusable template state at
- * build time, and {@link SandboxBackend.create} starts or reattaches a
- * live session from that template at runtime.
+ * Custom providers implement `defineSandboxAdapter()` and optionally
+ * `defineSandboxTemplate()` instead of implementing this interface.
  */
 export interface SandboxBackend<BO = Record<string, never>, SO = Record<string, never>> {
   /**
@@ -167,4 +175,33 @@ export interface SandboxBackend<BO = Record<string, never>, SO = Record<string, 
    * fresh so the build pipeline can surface that in its logs.
    */
   prewarm(input: SandboxBackendPrewarmInput<BO>): Promise<SandboxBackendPrewarmResult>;
+}
+
+/**
+ * Internal signal that a built-in template must be prepared before retrying
+ * sandbox creation.
+ */
+export class SandboxTemplateNotProvisionedError extends Error {
+  readonly backendName: string;
+  readonly templateKey: string;
+
+  constructor(input: { readonly backendName: string; readonly templateKey: string }) {
+    super(
+      `Sandbox template "${input.templateKey}" is not provisioned for backend "${input.backendName}". Run \`eve build\` before serving traffic.`,
+    );
+    this.name = "SandboxTemplateNotProvisionedError";
+    this.backendName = input.backendName;
+    this.templateKey = input.templateKey;
+  }
+
+  static is(error: unknown): error is SandboxTemplateNotProvisionedError {
+    return (
+      error instanceof SandboxTemplateNotProvisionedError ||
+      (typeof error === "object" &&
+        error !== null &&
+        (error as { readonly name?: unknown }).name === "SandboxTemplateNotProvisionedError" &&
+        typeof (error as { readonly backendName?: unknown }).backendName === "string" &&
+        typeof (error as { readonly templateKey?: unknown }).templateKey === "string")
+    );
+  }
 }

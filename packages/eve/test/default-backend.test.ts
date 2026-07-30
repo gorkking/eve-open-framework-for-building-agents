@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  defaultSandbox,
-  selectDefaultSandbox,
+  createDefaultSandboxBackend,
+  selectDefaultSandboxBackend,
   type DefaultSandboxProbes,
-} from "../src/public/sandbox/backends/default.js";
+} from "../src/execution/sandbox/default-backend.js";
 
 function probes(overrides: Partial<DefaultSandboxProbes>): DefaultSandboxProbes {
   return {
@@ -14,10 +14,10 @@ function probes(overrides: Partial<DefaultSandboxProbes>): DefaultSandboxProbes 
   };
 }
 
-describe("selectDefaultSandbox", () => {
+describe("selectDefaultSandboxBackend", () => {
   it("prefers Vercel Sandbox when deploying on Vercel, before any local probe", () => {
     let probed = false;
-    const backend = selectDefaultSandbox(
+    const backend = selectDefaultSandboxBackend(
       undefined,
       probes({
         isDeployedOnVercel: () => true,
@@ -32,7 +32,7 @@ describe("selectDefaultSandbox", () => {
   });
 
   it("picks docker when a daemon is available", () => {
-    const backend = selectDefaultSandbox(
+    const backend = selectDefaultSandboxBackend(
       undefined,
       probes({ isDockerAvailable: () => true, isMicrosandboxSupported: () => true }),
     );
@@ -40,7 +40,7 @@ describe("selectDefaultSandbox", () => {
   });
 
   it("falls back to microsandbox on supported hosts without docker", () => {
-    const backend = selectDefaultSandbox(
+    const backend = selectDefaultSandboxBackend(
       undefined,
       probes({ isMicrosandboxSupported: () => true }),
     );
@@ -48,16 +48,16 @@ describe("selectDefaultSandbox", () => {
   });
 
   it("falls back to just-bash when nothing else is available", () => {
-    const backend = selectDefaultSandbox(undefined, probes({}));
+    const backend = selectDefaultSandboxBackend(undefined, probes({}));
     expect(backend.name).toBe("just-bash");
   });
 });
 
-describe("defaultSandbox", () => {
+describe("createDefaultSandboxBackend", () => {
   it("constructs a lazy backend without probing at construction time", () => {
     // Constructing must not touch the host: probing happens on first
     // use (name access / create / prewarm) via the lazy wrapper.
-    const backend = defaultSandbox({ docker: { image: "alpine:3" } });
+    const backend = createDefaultSandboxBackend({ docker: { image: "alpine:3" } });
     expect(typeof backend.create).toBe("function");
     expect(typeof backend.prewarm).toBe("function");
   });

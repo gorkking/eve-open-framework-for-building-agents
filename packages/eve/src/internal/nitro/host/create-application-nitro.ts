@@ -125,24 +125,19 @@ function collectHostedTraceDependencies(
 }
 
 /**
- * Collects the backend names every compiled sandbox in the graph (root
- * and subagents) selected, so the host build can make backend-aware
- * packaging decisions.
+ * Conservatively includes every local engine when an authored definition can
+ * choose a sandbox dynamically at runtime.
  */
 function collectConfiguredSandboxBackendNames(manifest: CompiledAgentManifest): Set<string> {
   const nodes = [manifest, ...manifest.subagents.map((subagent) => subagent.agent)];
-  return new Set(
-    nodes
-      .map((node) => node.sandbox?.backendName)
-      .filter((backendName): backendName is string => typeof backendName === "string"),
-  );
+  return nodes.some((node) => node.sandbox !== null)
+    ? new Set(LOCAL_SANDBOX_BACKEND_NAMES)
+    : new Set();
 }
 
 /**
- * Hosted Vercel builds can prune local sandbox backends only when the
- * app did not explicitly configure one. Omitted backends resolve through
- * `defaultSandbox()`, which selects Vercel on hosted Vercel and never
- * needs local runtime code there.
+ * Hosted Vercel builds can prune local engines only when no authored sandbox
+ * definition can select one at runtime.
  */
 export function shouldPruneLocalSandboxBackends(input: {
   readonly configuredBackendNames: ReadonlySet<string>;

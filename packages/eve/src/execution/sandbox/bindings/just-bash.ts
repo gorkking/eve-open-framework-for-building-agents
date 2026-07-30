@@ -32,8 +32,8 @@ import type {
   SandboxBackendHandle,
   SandboxBackendPrewarmInput,
   SandboxBackendPrewarmResult,
-} from "#public/definitions/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
+} from "#shared/sandbox-backend.js";
+import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
 import type { JustBashSandboxCreateOptions } from "#public/sandbox/just-bash-sandbox.js";
 
 const JUST_BASH_CACHE_DIRECTORY_NAME = "just-bash";
@@ -45,9 +45,8 @@ const JUST_BASH_CACHE_DIRECTORY_NAME = "just-bash";
 export const JUST_BASH_BACKEND_NAME = "just-bash";
 
 /**
- * Construction input for {@link createJustBashSandboxBackend}. Internal —
- * the public surface is the `justbash()` factory under
- * `eve/sandbox`.
+ * Construction input for the internal just-bash bridge behind
+ * `JustBashSandbox`.
  */
 export interface CreateJustBashSandboxBackendInput {
   readonly createOptions?: JustBashSandboxCreateOptions;

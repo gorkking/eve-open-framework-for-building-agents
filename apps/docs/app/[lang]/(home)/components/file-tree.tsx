@@ -112,14 +112,14 @@ export default defineTool({
       "Every agent includes an isolated sandbox. Add sandbox/sandbox.ts to swap in any backend or customize its setup.",
     code: `import { defineSandbox } from
   "eve/sandbox";
+import { VercelSandbox } from
+  "eve/sandbox/vercel";
 
-export default defineSandbox({
-  async bootstrap({ sandbox }) {
-    await sandbox.run(
-      "git clone repo /workspace"
-    );
-  },
-});`,
+export default defineSandbox(() =>
+  VercelSandbox.create({
+    resources: { vcpus: 2 },
+  })
+);`,
   },
   {
     label: "Channels",

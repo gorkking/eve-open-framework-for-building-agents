@@ -41,8 +41,8 @@ import type {
   SandboxBackendHandle,
   SandboxBackendPrewarmInput,
   SandboxBackendPrewarmResult,
-} from "#public/definitions/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
+} from "#shared/sandbox-backend.js";
+import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
 import type {
   MicrosandboxBootstrapUseOptions,
   MicrosandboxSessionUseOptions,

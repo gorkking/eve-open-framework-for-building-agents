@@ -404,11 +404,9 @@ describe("app runtime dependency tracing", () => {
           join(appRoot, "agent", "sandbox.ts"),
           [
             'import { defineSandbox } from "eve/sandbox";',
-            'import { justbash } from "eve/sandbox/just-bash";',
+            'import { JustBashSandbox } from "eve/sandbox/just-bash";',
             "",
-            "export default defineSandbox({",
-            "  backend: justbash(),",
-            "});",
+            "export default defineSandbox(() => JustBashSandbox.create());",
             "",
           ].join("\n"),
         );

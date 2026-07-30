@@ -22,7 +22,7 @@ import {
 } from "#execution/sandbox/bindings/docker-options.js";
 import { dockerTemplateImageReference } from "#execution/sandbox/bindings/docker-templates.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
+import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 import { bufferToStream } from "#execution/sandbox/stream-utils.js";
 

@@ -29,7 +29,7 @@ import {
   loadOptionalEnginePackage,
 } from "#internal/application/optional-package-install.js";
 import { withDevelopmentSandboxTags } from "#execution/sandbox/development-run.js";
-import type { SandboxBackendTags } from "#public/definitions/sandbox-backend.js";
+import type { SandboxBackendTags } from "#shared/sandbox-backend.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 import type {
@@ -452,7 +452,7 @@ async function restoreMicrosandboxSessionSnapshot(input: {
 const MICROSANDBOX_MISSING_PACKAGE_MESSAGE =
   "The microsandbox sandbox backend requires the `microsandbox` package, which is not bundled " +
   "with eve. Install it in your application (for example `pnpm add -D microsandbox`), or use " +
-  "docker() / vercel() instead.";
+  "DockerSandbox / VercelSandbox instead.";
 
 /**
  * Loads the microsandbox npm package and ensures its VM runtime is

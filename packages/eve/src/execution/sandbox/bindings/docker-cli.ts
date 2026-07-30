@@ -56,8 +56,8 @@ export class DockerUnavailableError extends Error {
   readonly hint =
     "Install and start Docker Desktop, OrbStack, Colima, or another runtime exposing a " +
     "Docker-compatible `docker` CLI (or point EVE_DOCKER_PATH at one, e.g. Podman). " +
-    "Alternatively use microsandbox(), the dependency-free justbash(), " +
-    "vercel(), or defaultSandbox() to pick by availability.";
+    "Alternatively use MicrosandboxSandbox, the dependency-free JustBashSandbox, " +
+    "VercelSandbox, or DefaultSandbox.";
 
   constructor(cause?: unknown) {
     super("The Docker sandbox backend requires Docker, but the `docker` CLI was not found.", {
@@ -74,9 +74,8 @@ export class DockerDaemonUnavailableError extends Error {
   /** Structured remediation, surfaced by the semantic-error catalog. */
   readonly hint =
     "Start Docker Desktop (or your Docker-compatible runtime) and retry. Alternatively use " +
-    "microsandbox(), the dependency-free justbash() (installed automatically " +
-    "by `eve dev`, or `pnpm add -D just-bash`), vercel(), or defaultSandbox() " +
-    "to pick by availability.";
+    "MicrosandboxSandbox, the dependency-free JustBashSandbox (installed automatically " +
+    "by `eve dev`, or `pnpm add -D just-bash`), VercelSandbox, or DefaultSandbox.";
 
   constructor(detail: string) {
     super(
@@ -108,7 +107,7 @@ let cachedDockerAvailability: boolean | undefined;
 
 /**
  * Synchronously probes whether a Docker daemon is reachable, for
- * `defaultSandbox()`'s availability chain. The result is cached for the
+ * `DefaultSandbox` availability chain. The result is cached for the
  * process lifetime: backend selection must be stable, and the probe
  * costs a subprocess round-trip.
  */

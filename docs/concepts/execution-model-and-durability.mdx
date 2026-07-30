@@ -19,7 +19,7 @@ The Workflow SDK is not inherently tied to Vercel. In local development and in a
 
 When a Vercel production deployment changes, the next model turn in an existing session uses that deployment's current instructions, model, and tools. The durable session keeps its conversation history and authored state, so identity-based channels such as Telegram private chats and Twilio phone-number conversations adopt agent updates without requiring a new session.
 
-Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the workflow state store or the sandbox runtime. Those are separate adapters: Workflow uses the active world implementation, and Sandbox uses the backend from `agent/sandbox` or `defaultBackend()`.
+Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the workflow state store or sandbox compute. Workflow uses the active world implementation, while an authored sandbox definition returns the durable provider sandbox the agent should use. Without an authored definition, eve selects its availability-aware default.
 
 For advanced self-hosted deployments, the root `agent.ts` can select the installed Workflow world package to use with `experimental.workflow.world`:
 

@@ -1,15 +1,14 @@
 import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
 
-import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
+import type {
+  CompiledAgentManifest,
+  CompiledAgentNodeManifest,
+  CompiledWorkspaceResourceRoot,
+} from "#compiler/manifest.js";
 import { loadCompiledModuleMapFromAuthoredSource } from "#internal/authored-module-map-loader.js";
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import { createAuthoredSourceRuntimeCompiledArtifactsSource } from "#internal/application/runtime-compiled-artifacts-source.js";
-import type {
-  SandboxBackend,
-  SandboxBackendPrewarmInput,
-  SandboxBackendPrewarmResult,
-  SandboxSeedFile,
-} from "#public/definitions/sandbox-backend.js";
 import {
   createBundledRuntimeCompiledArtifactsSource,
   createDiskRuntimeCompiledArtifactsSource,
@@ -23,18 +22,39 @@ import { withBundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts
 import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
 import { resolveRuntimeCompilerArtifactPaths } from "#runtime/loaders/artifact-paths.js";
 import { resolveRuntimeAgentGraph } from "#runtime/resolve-agent-graph.js";
-import { createRuntimeSandboxTemplateKey } from "#runtime/sandbox/keys.js";
+import {
+  createRuntimeSandboxDefinitionRevision,
+  createRuntimeSandboxTemplateKey,
+} from "#runtime/sandbox/keys.js";
 import type { RuntimeRegisteredSandbox } from "#runtime/sandbox/registry.js";
-import { createRuntimeSandboxTemplatePlan } from "#runtime/sandbox/template-plan.js";
 import { materializeWorkspaceDirectory } from "#runtime/workspace/seed-files.js";
+import type { SandboxSeedFile } from "#shared/sandbox-backend.js";
+import { parseJsonValue, type JsonValue } from "#shared/json.js";
+import {
+  getSandboxTemplateInternal,
+  recordSandboxTemplateReference,
+  type InternalSandboxTemplate,
+  type SandboxTemplatePrewarmInput,
+} from "#shared/sandbox-template.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { withSandboxTemplateBuildContext } from "#execution/sandbox/creation-context.js";
+import { createSandboxHydrator } from "#execution/sandbox/builtin-template.js";
 import { withSandboxTemplatePrewarmLock } from "./template-prewarm-lock.js";
 
 interface PrewarmTarget {
-  readonly backend: SandboxBackend;
+  readonly exportName: string;
+  readonly input: SandboxTemplatePrewarmInput;
   readonly label: string;
-  readonly input: SandboxBackendPrewarmInput;
+  readonly nodeId: string;
   readonly signature: string;
+  readonly template: InternalSandboxTemplate;
+  readonly templateKey: string;
+}
+
+interface SandboxTemplateBinding {
+  readonly exportName: string;
+  readonly nodeId: string;
+  readonly reference: JsonValue;
 }
 
 interface NodeSandbox extends RuntimeRegisteredSandbox {
@@ -42,16 +62,12 @@ interface NodeSandbox extends RuntimeRegisteredSandbox {
 }
 
 /**
- * Optional dispatch override that intercepts every `backend.prewarm`
- * call. Production code never supplies this; the orchestrator dispatches
- * directly to the backend. Tests inject a recorder to verify which
- * templates the orchestrator emits and what bootstrap calls flow through
- * them.
+ * Optional test/build dispatch around one provider template prewarm.
  */
-export type SandboxBackendPrewarmDispatch = (input: {
-  readonly backend: SandboxBackend;
-  readonly input: SandboxBackendPrewarmInput;
-}) => Promise<SandboxBackendPrewarmResult>;
+export type SandboxTemplatePrewarmDispatch = (input: {
+  readonly prewarm: () => Promise<unknown>;
+  readonly templateKey: string;
+}) => Promise<unknown>;
 
 interface PrewarmSandboxesInput {
   readonly appRoot: string;
@@ -59,105 +75,86 @@ interface PrewarmSandboxesInput {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly graph: ResolvedAgentGraphBundle;
   readonly log?: (message: string) => void;
-  readonly dispatch?: SandboxBackendPrewarmDispatch;
+  readonly dispatch?: SandboxTemplatePrewarmDispatch;
   readonly onPrewarmSignature?: (signature: string) => void;
   readonly shouldPrewarmSignature?: (signature: string) => boolean;
 }
 
 /**
- * Prewarms every backend sandbox template required by one compiled
- * runtime graph.
- *
- * Iterates every registered sandbox and invokes `backend.prewarm(...)`
- * for each backend template.
+ * Prewarms every exported sandbox template in a resolved agent graph.
  */
-export async function prewarmSandboxes(input: PrewarmSandboxesInput): Promise<void> {
+export async function prewarmSandboxes(
+  input: PrewarmSandboxesInput,
+): Promise<readonly SandboxTemplateBinding[]> {
   const targets = await collectPrewarmTargets(input);
-
   if (targets.length === 0) {
-    return;
+    return [];
   }
 
   const signature = createPrewarmSignature(targets);
   if (input.shouldPrewarmSignature?.(signature) === false) {
-    return;
+    return [];
   }
 
-  const dispatch =
-    input.dispatch ??
-    (async ({ backend, input: prewarmInput }) => {
-      return await backend.prewarm(prewarmInput);
-    });
-
   input.log?.(`eve: initializing ${formatSandboxTemplateCount(targets.length)}...`);
-
-  const results = await Promise.all(
-    targets.map(async ({ backend, label, input: prewarmInput }) => {
-      const logBackendProgress = (message: string) => {
-        if (!shouldLogSandboxPrewarmProgress(message)) {
-          return;
-        }
-        input.log?.(`eve: sandbox template "${label}" (${backend.name}): ${message}`);
-      };
-      let result: SandboxBackendPrewarmResult;
-      try {
-        result = await withSandboxTemplatePrewarmLock(
+  const bindings = await Promise.all(
+    targets.map(async (target) => {
+      const runPrewarm = async () =>
+        await withSandboxTemplateBuildContext(
           {
-            appRoot: prewarmInput.runtimeContext.appRoot,
-            backendName: backend.name,
-            templateKey: prewarmInput.templateKey,
+            appRoot: input.appRoot,
+            log:
+              input.log === undefined
+                ? undefined
+                : (message) => input.log?.(`eve: sandbox template "${target.label}": ${message}`),
+            templateKey: target.templateKey,
           },
-          async () => {
-            return await dispatch({
-              backend,
-              input: {
-                ...prewarmInput,
-                log: input.log === undefined ? undefined : logBackendProgress,
-              },
-            });
-          },
+          async () => await target.template.prewarm(target.input),
         );
+
+      try {
+        const reference = await withSandboxTemplatePrewarmLock(
+          {
+            appRoot: input.appRoot,
+            backendName: target.template.implementationId,
+            templateKey: target.templateKey,
+          },
+          async () =>
+            input.dispatch === undefined
+              ? await runPrewarm()
+              : await input.dispatch({
+                  prewarm: runPrewarm,
+                  templateKey: target.templateKey,
+                }),
+        );
+        target.template.bind(reference);
+        recordSandboxTemplateReference(target.templateKey, reference);
+        return {
+          exportName: target.exportName,
+          nodeId: target.nodeId,
+          reference: parseJsonValue(reference),
+        };
       } catch (error) {
-        const prewarmError = formatPrewarmFailureForEnvironment({
-          backendName: backend.name,
-          error,
-        });
         input.log?.(
-          `eve: failed to initialize sandbox template "${label}" on backend "${backend.name}": ${toErrorMessage(prewarmError)}`,
+          `eve: failed to initialize sandbox template "${target.label}": ${toErrorMessage(error)}`,
         );
-        throw prewarmError;
+        throw error;
       }
-      return result;
     }),
   );
-  const reusedCount = results.filter((result) => result.reused).length;
-  input.log?.(
-    `eve: initialized ${formatSandboxTemplateCount(targets.length)} (${reusedCount} reused, ${
-      targets.length - reusedCount
-    } built).`,
-  );
+  input.log?.(`eve: initialized ${formatSandboxTemplateCount(targets.length)}.`);
   input.onPrewarmSignature?.(signature);
+  return bindings;
 }
 
-/**
- * Loads the compiled runtime graph for one authored app root and
- * prewarms every backend's sandbox templates required by that graph.
- *
- * Hydrates the module map directly from authored source so callers
- * don't need a pre-existing `module-map.mjs` import in Node's cache.
- * Shared entrypoint for `eve dev` startup, the dev watcher, and the
- * Vercel build hook.
- */
 export async function prewarmAppSandboxes(input: {
   readonly appRoot: string;
   readonly compiledArtifactsSource?: RuntimeCompiledArtifactsSource;
-  readonly loadAgentGraph?: (
-    input: Readonly<{
-      compiledArtifactsSource: RuntimeDiskCompiledArtifactsSource;
-    }>,
-  ) => Promise<ResolvedAgentGraphBundle>;
+  readonly loadAgentGraph?: (input: {
+    readonly compiledArtifactsSource: RuntimeDiskCompiledArtifactsSource;
+  }) => Promise<ResolvedAgentGraphBundle>;
   readonly log?: (message: string) => void;
-  readonly dispatch?: SandboxBackendPrewarmDispatch;
+  readonly dispatch?: SandboxTemplatePrewarmDispatch;
   readonly onPrewarmSignature?: (signature: string) => void;
   readonly shouldPrewarmSignature?: (signature: string) => boolean;
 }): Promise<void> {
@@ -171,7 +168,7 @@ export async function prewarmAppSandboxes(input: {
     compiledArtifactsSource,
   });
 
-  await prewarmSandboxes({
+  const bindings = await prewarmSandboxes({
     appRoot: getRuntimeCompiledArtifactsSandboxAppRoot(compiledArtifactsSource) ?? input.appRoot,
     compileDirectoryPath: resolveRuntimeCompilerArtifactPaths(compiledArtifactsSource.appRoot)
       .compileDirectoryPath,
@@ -182,16 +179,16 @@ export async function prewarmAppSandboxes(input: {
     onPrewarmSignature: input.onPrewarmSignature,
     shouldPrewarmSignature: input.shouldPrewarmSignature,
   });
+  await writeSandboxTemplateBindings({
+    bindings,
+    compiledArtifactsSource,
+  });
 }
 
-/**
- * Loads one built app's bundled compiled artifacts and prewarms the sandbox
- * templates that its production Nitro runtime will request.
- */
 export async function prewarmBuiltAppSandboxes(input: {
   readonly appRoot: string;
   readonly log?: (message: string) => void;
-  readonly dispatch?: SandboxBackendPrewarmDispatch;
+  readonly dispatch?: SandboxTemplatePrewarmDispatch;
 }): Promise<void> {
   const builtArtifactsRoot = join(input.appRoot, ".output");
   const builtArtifactsSource = createDiskRuntimeCompiledArtifactsSource(builtArtifactsRoot, {
@@ -219,18 +216,13 @@ export async function prewarmBuiltAppSandboxes(input: {
     },
     async () => {
       const compiledArtifactsSource = createBundledRuntimeCompiledArtifactsSource();
-      const graph = await resolveRuntimeAgentGraph({
-        manifest,
-        moduleMap,
-      });
-
       await prewarmSandboxes({
         appRoot: input.appRoot,
         compileDirectoryPath:
           resolveRuntimeCompilerArtifactPaths(builtArtifactsRoot).compileDirectoryPath,
         compiledArtifactsSource,
         dispatch: input.dispatch,
-        graph,
+        graph: await resolveRuntimeAgentGraph({ manifest, moduleMap }),
         log: input.log,
       });
     },
@@ -238,63 +230,124 @@ export async function prewarmBuiltAppSandboxes(input: {
 }
 
 async function collectPrewarmTargets(input: {
-  readonly appRoot: string;
   readonly compileDirectoryPath: string;
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly graph: ResolvedAgentGraphBundle;
 }): Promise<readonly PrewarmTarget[]> {
-  const runtimeContext = { appRoot: input.appRoot };
-
   const targets: PrewarmTarget[] = [];
 
   await Promise.all(
     collectNodeSandboxes(input.graph).map(async ({ definition, nodeId, workspaceResourceRoot }) => {
-      const templatePlan = createRuntimeSandboxTemplatePlan({
-        definition,
+      const seedFiles = await loadResourceRootSeedFiles({
+        compileDirectoryPath: input.compileDirectoryPath,
         workspaceResourceRoot,
       });
-      const templateKey = await createRuntimeSandboxTemplateKey({
-        backendName: definition.backend.name,
-        compiledArtifactsSource: input.compiledArtifactsSource,
-        nodeId,
-        sourceId: definition.sourceId,
-        templatePlan,
-      });
-
-      if (templateKey === null) {
+      if (definition.templates.length === 0) {
+        if (seedFiles.length > 0) {
+          throw new Error(
+            `Sandbox "${definition.logicalPath}" has a managed workspace but exports no SandboxTemplate.`,
+          );
+        }
         return;
       }
 
-      targets.push({
-        backend: definition.backend,
-        label: formatLabel(nodeId),
-        input: {
-          bootstrap: definition.bootstrap,
-          seedFiles: await loadResourceRootSeedFiles({
-            compileDirectoryPath: input.compileDirectoryPath,
-            workspaceResourceRoot,
-          }),
-          runtimeContext,
-          templateKey,
-        },
-        signature: `${definition.backend.name}:${nodeId}:${templateKey}`,
+      const revision = await createRuntimeSandboxDefinitionRevision({
+        compiledArtifactsSource: input.compiledArtifactsSource,
+        nodeId,
+        sourceHash: definition.sourceHash,
+        sourceId: definition.sourceId,
+        workspaceResourceRoot,
       });
+
+      await Promise.all(
+        definition.templates.map(async ({ exportName, template }) => {
+          const internal = getSandboxTemplateInternal(template);
+          const templateKey = await createRuntimeSandboxTemplateKey({
+            compiledArtifactsSource: input.compiledArtifactsSource,
+            exportName,
+            implementationId: internal.implementationId,
+            nodeId,
+            revision,
+          });
+          targets.push({
+            exportName,
+            input: {
+              assets: {},
+              hydrate: createSandboxHydrator(seedFiles),
+            },
+            label: `${formatLabel(nodeId)}:${exportName}`,
+            nodeId,
+            signature: `${internal.implementationId}:${nodeId}:${exportName}:${templateKey}`,
+            template: internal,
+            templateKey,
+          });
+        }),
+      );
     }),
   );
 
-  // Template keys factor in nodeId (see runtime/sandbox/keys.ts), so each
-  // node already produces a distinct templateKey; no dedup is needed.
   return targets.sort((left, right) => left.label.localeCompare(right.label));
 }
 
-/**
- * Resolves the per-node compiled workspace resource root to an absolute
- * disk path under `.eve/compile/` and materializes its contents into the
- * `{path, content}` shape consumed by sandbox backends.
- *
- * Returns an empty array when the resource root descriptor advertises no
- * root entries (the materializer would emit no files anyway).
- */
+async function writeSandboxTemplateBindings(input: {
+  readonly bindings: readonly SandboxTemplateBinding[];
+  readonly compiledArtifactsSource: RuntimeDiskCompiledArtifactsSource;
+}): Promise<void> {
+  if (input.bindings.length === 0) {
+    return;
+  }
+  const paths = resolveRuntimeCompilerArtifactPaths(input.compiledArtifactsSource.appRoot);
+  const manifest = await loadCompiledManifest({
+    compiledArtifactsSource: input.compiledArtifactsSource,
+  });
+  const nextManifest = applySandboxTemplateBindings(manifest, input.bindings);
+  await writeFile(paths.compiledManifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
+}
+
+function applySandboxTemplateBindings(
+  manifest: CompiledAgentManifest,
+  bindings: readonly SandboxTemplateBinding[],
+): CompiledAgentManifest {
+  const byNodeId = new Map<string, SandboxTemplateBinding[]>();
+  for (const binding of bindings) {
+    const existing = byNodeId.get(binding.nodeId);
+    if (existing === undefined) {
+      byNodeId.set(binding.nodeId, [binding]);
+    } else {
+      existing.push(binding);
+    }
+  }
+
+  const bindNode = (node: CompiledAgentNodeManifest, nodeId: string): CompiledAgentNodeManifest => {
+    if (node.sandbox === null) {
+      return node;
+    }
+    const nodeBindings = byNodeId.get(nodeId) ?? [];
+    return {
+      ...node,
+      sandbox: {
+        ...node.sandbox,
+        templateReferences: {
+          ...node.sandbox.templateReferences,
+          ...Object.fromEntries(
+            nodeBindings.map((binding) => [binding.exportName, binding.reference]),
+          ),
+        },
+      },
+    };
+  };
+
+  const root = bindNode(manifest, ROOT_RUNTIME_AGENT_NODE_ID);
+  return {
+    ...manifest,
+    ...root,
+    subagents: manifest.subagents.map((subagent) => ({
+      ...subagent,
+      agent: bindNode(subagent.agent, subagent.nodeId),
+    })),
+  };
+}
+
 async function loadResourceRootSeedFiles(input: {
   readonly compileDirectoryPath: string;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
@@ -325,11 +378,7 @@ async function loadGraphFromArtifacts(input: {
       compiledArtifactsSource: input.compiledArtifactsSource,
     }),
   ]);
-
-  return await resolveRuntimeAgentGraph({
-    manifest,
-    moduleMap,
-  });
+  return await resolveRuntimeAgentGraph({ manifest, moduleMap });
 }
 
 function collectNodeSandboxes(graph: ResolvedAgentGraphBundle): readonly NodeSandbox[] {
@@ -352,39 +401,4 @@ function createPrewarmSignature(targets: readonly PrewarmTarget[]): string {
 
 function formatSandboxTemplateCount(count: number): string {
   return `${count} sandbox ${count === 1 ? "template" : "templates"}`;
-}
-
-function shouldLogSandboxPrewarmProgress(message: string): boolean {
-  return (
-    !message.startsWith("checking ") &&
-    !message.startsWith("reusing ") &&
-    message !== "loading microsandbox runtime" &&
-    message !== "microsandbox runtime ready"
-  );
-}
-
-function formatPrewarmFailureForEnvironment(input: {
-  readonly backendName: string;
-  readonly error: unknown;
-}): unknown {
-  if (!isVercelEnvironment() || !isLocalSandboxBackend(input.backendName)) {
-    return input.error;
-  }
-
-  return new Error(
-    `The ${input.backendName} sandbox backend is not available when deploying on Vercel. ` +
-      "Vercel build containers cannot run local Docker containers or microsandbox VMs. " +
-      "Use defaultBackend() so eve selects Vercel Sandbox on Vercel, or configure a " +
-      "Vercel-compatible backend explicitly, such as vercel(). " +
-      `Original ${input.backendName} error: ${toErrorMessage(input.error)}`,
-    { cause: input.error },
-  );
-}
-
-function isVercelEnvironment(): boolean {
-  return Boolean(process.env.VERCEL?.trim());
-}
-
-function isLocalSandboxBackend(backendName: string): boolean {
-  return backendName === "docker" || backendName === "microsandbox";
 }

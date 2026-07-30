@@ -1,5 +1,5 @@
 import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
-import { defaultSandbox } from "#public/sandbox/backends/default.js";
+import { DefaultSandbox } from "#public/sandbox/default.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
 
 /**
@@ -52,7 +52,13 @@ export function createRuntimeSandboxRegistry(input: {
   readonly authoredSandbox: ResolvedSandboxDefinition | null;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
 }): RuntimeSandboxRegistry {
-  const definition = input.authoredSandbox ?? createFrameworkSandboxDefinition();
+  const definition =
+    input.authoredSandbox ??
+    createFrameworkSandboxDefinition({
+      hasWorkspace:
+        input.workspaceResourceRoot.contentHash !== undefined ||
+        input.workspaceResourceRoot.rootEntries.length > 0,
+    });
   return {
     sandbox: {
       definition,
@@ -65,18 +71,21 @@ export function createRuntimeSandboxRegistry(input: {
  * Builds the framework default sandbox definition used when no agent
  * authored override is present.
  *
- * The `backend` is resolved through {@link defaultSandbox} on each
- * call so the framework default picks up the same environment-aware
- * fallback as authored sandboxes that omit `backend` (`vercel()`
- * on hosted Vercel, then Docker, microsandbox, or just-bash by availability). Implemented as
- * a factory rather than a constant so the environment is read at
- * graph-resolution time rather than at module-load time.
+ * `DefaultSandbox` chooses Vercel when hosted, then Docker, microsandbox, or
+ * just-bash by local availability. A managed workspace adds an internal
+ * exported template so build prewarming remains explicit in the resolved
+ * definition.
  */
-export function createFrameworkSandboxDefinition(): ResolvedSandboxDefinition {
+export function createFrameworkSandboxDefinition(input: {
+  readonly hasWorkspace: boolean;
+}): ResolvedSandboxDefinition {
+  const template = input.hasWorkspace ? DefaultSandbox.template() : null;
   return {
-    backend: defaultSandbox(),
+    definition: () => (template === null ? DefaultSandbox.create() : template.create()),
     logicalPath: "eve:framework/default-sandbox",
+    sourceHash: DEFAULT_SANDBOX_SOURCE_ID,
     sourceId: DEFAULT_SANDBOX_SOURCE_ID,
     sourceKind: "module",
+    templates: template === null ? [] : [{ exportName: "template", template }],
   };
 }

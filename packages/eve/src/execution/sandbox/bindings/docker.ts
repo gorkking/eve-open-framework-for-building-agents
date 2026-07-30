@@ -34,8 +34,8 @@ import type {
   SandboxBackendHandle,
   SandboxBackendPrewarmInput,
   SandboxBackendPrewarmResult,
-} from "#public/definitions/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
+} from "#shared/sandbox-backend.js";
+import { SandboxTemplateNotProvisionedError } from "#shared/sandbox-backend.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
 
 export {
@@ -50,9 +50,8 @@ export {
 export const DOCKER_BACKEND_NAME = "docker";
 
 /**
- * Construction input for {@link createDockerSandboxBackend}. Internal —
- * the public surface is the `docker()` factory under
- * `eve/sandbox`.
+ * Construction input for the internal Docker bridge behind
+ * `DockerSandbox`.
  */
 export interface CreateDockerSandboxBackendInput {
   readonly createOptions?: DockerSandboxCreateOptions;
@@ -66,7 +65,7 @@ export interface CreateDockerSandboxBackendInput {
  * Two-phase lifecycle mapped onto Docker primitives:
  *
  * - `prewarm` runs the base image, applies base setup, runs the
- *   authored `bootstrap`, writes seed files, then `docker commit`s the
+ *   authored preparation, writes seed files, then `docker commit`s the
  *   container into a reusable template image.
  * - `create` starts (or restarts) one long-lived container per session
  *   key from the template image. The container's filesystem carries

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { shouldPruneLocalSandboxBackends } from "#internal/nitro/host/create-application-nitro.js";
 
 describe("shouldPruneLocalSandboxBackends", () => {
-  it("prunes local backends from hosted Vercel builds when the sandbox uses defaultSandbox", () => {
+  it("prunes local engines when no authored definition can select one", () => {
     expect(
       shouldPruneLocalSandboxBackends({
         configuredBackendNames: new Set(),

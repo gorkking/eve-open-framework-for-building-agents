@@ -14,7 +14,7 @@ import type {
   SandboxBackendHandle,
   SandboxBackendPrewarmInput,
   SandboxBackendPrewarmResult,
-} from "#public/definitions/sandbox-backend.js";
+} from "#shared/sandbox-backend.js";
 import type {
   MicrosandboxBootstrapUseOptions,
   MicrosandboxSandboxCreateOptions,
@@ -30,9 +30,8 @@ export { pruneMicrosandboxTemplates } from "#execution/sandbox/bindings/microsan
 export const MICROSANDBOX_BACKEND_NAME = "microsandbox";
 
 /**
- * Construction input for {@link createMicrosandboxSandboxBackend}.
- * Internal — the public surface is the `microsandbox()` factory
- * under `eve/sandbox`.
+ * Construction input for the internal microsandbox bridge behind
+ * `MicrosandboxSandbox`.
  */
 export interface CreateMicrosandboxSandboxBackendInput {
   readonly createOptions?: MicrosandboxSandboxCreateOptions;

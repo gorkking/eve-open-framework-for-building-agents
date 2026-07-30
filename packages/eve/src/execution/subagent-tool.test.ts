@@ -292,8 +292,8 @@ describe("buildSubagentRunInput", () => {
     expect(runInput.input.outputSchema).toBeUndefined();
   });
 
-  it("includes parentSandboxState and sandboxSessionId for self-delegation", () => {
-    const sandboxState = { initialized: true, session: null };
+  it("includes the parent's durable sandbox state for self-delegation", () => {
+    const sandboxState = createSandboxState();
     const session = { ...makeSession(), sandboxState };
     const action: RuntimeSubagentCallActionRequest = {
       ...makeAction(),
@@ -309,12 +309,12 @@ describe("buildSubagentRunInput", () => {
 
     expect(runInput.adapter.state).toMatchObject({
       parentSandboxState: sandboxState,
-      sandboxSessionId: "parent-session",
+      rootSandboxState: sandboxState,
     });
   });
 
-  it("does not include sandbox sharing fields for normal subagents", () => {
-    const sandboxState = { initialized: true, session: null };
+  it("makes the parent's durable sandbox available to normal subagents", () => {
+    const sandboxState = createSandboxState();
     const session = { ...makeSession(), sandboxState };
     const { runInput } = buildRuntimeSubagentRunInput({
       action: makeAction(),
@@ -324,7 +324,24 @@ describe("buildSubagentRunInput", () => {
       session,
     });
 
-    expect(runInput.adapter.state).not.toHaveProperty("parentSandboxState");
-    expect(runInput.adapter.state).not.toHaveProperty("sandboxSessionId");
+    expect(runInput.adapter.state).toMatchObject({
+      parentSandboxState: sandboxState,
+      rootSandboxState: sandboxState,
+    });
   });
 });
+
+function createSandboxState() {
+  return {
+    owner: {
+      nodeId: "__root__",
+      sessionId: "parent-session",
+    },
+    revision: "sandbox-revision",
+    value: {
+      adapterId: "test-adapter",
+      id: "test-sandbox",
+      reference: { id: "test-sandbox" },
+    },
+  } as const;
+}

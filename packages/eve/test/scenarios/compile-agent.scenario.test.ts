@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -39,6 +39,7 @@ const createAppRoot = useTemporaryAppRoots();
 const runFile = promisify(execFile);
 
 const APP_ROOT_OPTIONS = { packageName: "test-agent" } as const;
+const EVE_PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const ROOT_TYPE_DEFINITIONS = fileURLToPath(
   new URL("../../../../node_modules/@types", import.meta.url),
@@ -640,13 +641,13 @@ describe("compileAgent", () => {
       },
     ]);
     expect(result.manifest.sandbox).toEqual({
-      description: undefined,
       exportName: undefined,
       logicalPath: "sandbox/sandbox.cjs",
-      revalidationKey: undefined,
       sourceHash: expect.any(String),
       sourceId: "sandbox/sandbox.cjs",
       sourceKind: "module",
+      templateExports: [],
+      templateReferences: {},
     });
     expect(normalizeArtifactValue(moduleMapText, app.appRoot)).toContain('"agent.cjs": module_0');
     expect(normalizeArtifactValue(moduleMapText, app.appRoot)).toContain(
@@ -1130,11 +1131,12 @@ describe("compileAgent", () => {
     );
   });
 
-  it("stores resolved sandbox bootstrap revalidation keys in compiled artifacts", async () => {
+  it("discovers exported sandbox templates without invoking the session definition", async () => {
     const { agentRoot, appRoot } = await createAppRoot(
-      "eve-compile-sandbox-revalidation-key-",
+      "eve-compile-sandbox-template-",
       APP_ROOT_OPTIONS,
     );
+    await linkEvePackage(appRoot);
 
     await mkdir(join(agentRoot, "sandbox"), {
       recursive: true,
@@ -1144,15 +1146,17 @@ describe("compileAgent", () => {
     await writeFile(
       join(agentRoot, "sandbox", "sandbox.mjs"),
       [
-        "export default {",
-        "  async revalidationKey() {",
-        '    return "bootstrap-revalidation-key-v1";',
-        "  },",
-        "  async bootstrap({ use }) {",
-        "    const sandbox = await use();",
-        '    await sandbox.run({ command: "echo bootstrap" });',
-        "  },",
-        "};",
+        'import { defineSandbox } from "eve/sandbox";',
+        'import { defineSandboxTemplate } from "eve/sandbox/provider";',
+        "",
+        "export const template = defineSandboxTemplate({",
+        '  async prewarm() { return { snapshotId: "snapshot-v1" }; },',
+        '  async create() { throw new Error("runtime only"); },',
+        "});",
+        "",
+        "export default defineSandbox(() => {",
+        '  throw new Error("session definition must not run during compile");',
+        "});",
         "",
       ].join("\n"),
     );
@@ -1162,21 +1166,22 @@ describe("compileAgent", () => {
     });
 
     expect(result.manifest.sandbox).toEqual({
-      description: undefined,
       exportName: undefined,
       logicalPath: "sandbox/sandbox.mjs",
-      revalidationKey: "bootstrap-revalidation-key-v1",
       sourceHash: expect.any(String),
       sourceId: "sandbox/sandbox.mjs",
       sourceKind: "module",
+      templateExports: ["template"],
+      templateReferences: {},
     });
   });
 
-  it("compiles sandbox bootstrap without a revalidation key", async () => {
+  it("compiles a direct sandbox definition without a template", async () => {
     const { agentRoot, appRoot } = await createAppRoot(
-      "eve-compile-sandbox-without-revalidation-key-",
+      "eve-compile-sandbox-direct-",
       APP_ROOT_OPTIONS,
     );
+    await linkEvePackage(appRoot);
 
     await mkdir(join(agentRoot, "sandbox"), {
       recursive: true,
@@ -1186,12 +1191,10 @@ describe("compileAgent", () => {
     await writeFile(
       join(agentRoot, "sandbox", "sandbox.mjs"),
       [
-        "export default {",
-        "  async bootstrap({ use }) {",
-        "    const sandbox = await use();",
-        '    await sandbox.run({ command: "echo bootstrap" });',
-        "  },",
-        "};",
+        'import { defineSandbox } from "eve/sandbox";',
+        "export default defineSandbox(() => {",
+        '  throw new Error("runtime only");',
+        "});",
         "",
       ].join("\n"),
     );
@@ -1201,31 +1204,21 @@ describe("compileAgent", () => {
     });
 
     expect(result.manifest.sandbox).toEqual({
-      description: undefined,
       exportName: undefined,
       logicalPath: "sandbox/sandbox.mjs",
-      revalidationKey: undefined,
       sourceHash: expect.any(String),
       sourceId: "sandbox/sandbox.mjs",
       sourceKind: "module",
+      templateExports: [],
+      templateReferences: {},
     });
   });
 
-  it("rejects sandbox bootstrap revalidation keys that resolve to empty or non-string values", async () => {
-    const emptyKeyApp = await createSandboxRevalidationKeyValidationApp({
-      name: "empty",
-      revalidationKeyExpression: '() => ""',
-    });
-    const nonStringKeyApp = await createSandboxRevalidationKeyValidationApp({
-      name: "non-string",
-      revalidationKeyExpression: "() => 123",
-    });
+  it("rejects the removed object-shaped sandbox lifecycle", async () => {
+    const app = await createSandboxDefinitionValidationApp();
 
-    await expect(compileAgent({ startPath: emptyKeyApp.appRoot })).rejects.toThrow(
-      /must return a non-empty string/,
-    );
-    await expect(compileAgent({ startPath: nonStringKeyApp.appRoot })).rejects.toThrow(
-      /must return a string/,
+    await expect(compileAgent({ startPath: app.appRoot })).rejects.toThrow(
+      /created with defineSandbox/,
     );
   });
 
@@ -1234,6 +1227,7 @@ describe("compileAgent", () => {
       "eve-compile-subagent-sandbox-",
       APP_ROOT_OPTIONS,
     );
+    await linkEvePackage(appRoot);
     const subagentRoot = join(agentRoot, "subagents", "researcher");
 
     await mkdir(join(subagentRoot, "sandbox"), {
@@ -1255,12 +1249,13 @@ describe("compileAgent", () => {
     await writeFile(
       join(subagentRoot, "sandbox", "sandbox.mjs"),
       [
-        "export default {",
-        "  async onSession({ use }) {",
-        "    const sandbox = await use();",
-        '    await sandbox.run({ command: "mkdir -p .research" });',
-        "  },",
-        "};",
+        'import { defineSandbox } from "eve/sandbox";',
+        'import { DefaultSandbox } from "eve/sandbox";',
+        "export default defineSandbox(async () => {",
+        "  const sandbox = await DefaultSandbox.create();",
+        '  await sandbox.run({ command: "mkdir -p .research" });',
+        "  return sandbox;",
+        "});",
         "",
       ].join("\n"),
     );
@@ -1366,14 +1361,11 @@ describe("compileAgent", () => {
   });
 });
 
-async function createSandboxRevalidationKeyValidationApp(input: {
-  readonly name: string;
-  readonly revalidationKeyExpression: string;
-}): Promise<{ readonly agentRoot: string; readonly appRoot: string }> {
-  const app = await createAppRoot(
-    `eve-compile-sandbox-${input.name}-revalidation-key-`,
-    APP_ROOT_OPTIONS,
-  );
+async function createSandboxDefinitionValidationApp(): Promise<{
+  readonly agentRoot: string;
+  readonly appRoot: string;
+}> {
+  const app = await createAppRoot("eve-compile-invalid-sandbox-definition-", APP_ROOT_OPTIONS);
 
   await mkdir(join(app.agentRoot, "sandbox"), {
     recursive: true,
@@ -1387,7 +1379,6 @@ async function createSandboxRevalidationKeyValidationApp(input: {
     join(app.agentRoot, "sandbox", "sandbox.mjs"),
     [
       "export default {",
-      `  revalidationKey: ${input.revalidationKeyExpression},`,
       "  async bootstrap({ use }) {",
       "    const sandbox = await use();",
       '    await sandbox.run({ command: "echo bootstrap" });',
@@ -1398,6 +1389,11 @@ async function createSandboxRevalidationKeyValidationApp(input: {
   );
 
   return app;
+}
+
+async function linkEvePackage(appRoot: string): Promise<void> {
+  await mkdir(join(appRoot, "node_modules"), { recursive: true });
+  await symlink(EVE_PACKAGE_ROOT, join(appRoot, "node_modules", "eve"), "dir");
 }
 
 async function expectTscToPass(

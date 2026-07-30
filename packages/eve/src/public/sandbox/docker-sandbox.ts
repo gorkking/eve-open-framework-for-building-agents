@@ -14,19 +14,19 @@ export type DockerSandboxPullPolicy = "if-not-present" | "always" | "never";
  * Docker supports coarse-grained egress control only: `"allow-all"`
  * attaches the container to the default bridge network, `"deny-all"`
  * runs it with networking disabled. Domain-level policies and
- * credential brokering require `vercel()`.
+ * credential brokering require `VercelSandbox`.
  */
 export type DockerSandboxNetworkPolicy = "allow-all" | "deny-all";
 
 /**
- * Options accepted by `docker(opts)`.
+ * Options accepted by `DockerSandbox.create()` and `DockerSandbox.template()`.
  */
 export interface DockerSandboxCreateOptions {
   /**
    * Base container image for templates and sessions. Defaults to
    * `ghcr.io/vercel/eve:latest` — eve's published sandbox runtime image.
    * Framework setup creates `/workspace` and verifies Bash. Install any
-   * authored runtime tools in sandbox bootstrap or provide them through a
+   * authored runtime tools in template preparation or provide them through a
    * custom image.
    */
   readonly image?: string;

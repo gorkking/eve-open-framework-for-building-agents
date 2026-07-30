@@ -11,7 +11,7 @@ import {
 import type { ChannelRouteMethod } from "#public/definitions/channel.js";
 import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
 import type { InternalInstructionsDefinition } from "#shared/instructions-definition.js";
-import { jsonObjectSchema } from "#shared/json-schemas.js";
+import { jsonObjectSchema, jsonValueSchema } from "#shared/json-schemas.js";
 import type { Node } from "#shared/node.js";
 import type {
   MarkdownSourceRef,
@@ -41,7 +41,7 @@ export const ROOT_COMPILED_AGENT_NODE_ID = "__root__";
 /**
  * Current compiled manifest schema version.
  */
-export const COMPILED_AGENT_MANIFEST_VERSION = 37;
+export const COMPILED_AGENT_MANIFEST_VERSION = 38;
 
 /**
  * Compiled channel entry preserved in the compiled manifest.
@@ -502,22 +502,13 @@ const compiledScheduleDefinitionSchema = z
 
 const compiledSandboxDefinitionSchema = z
   .object({
-    /**
-     * Stable name of the authored backend (`"local"`, `"vercel"`,
-     * `"local-just-bash"`, or a custom backend's name), captured at
-     * compile time so build pipelines can make backend-aware decisions
-     * (for example including the optional just-bash engine package in
-     * hosted output). Absent when the definition omits `backend` or the
-     * backend's name could not be resolved at compile time.
-     */
-    backendName: z.string().optional(),
-    description: z.string().optional(),
     exportName: z.string().optional(),
     logicalPath: z.string(),
-    revalidationKey: z.string().optional(),
     sourceHash: z.string(),
     sourceId: z.string(),
     sourceKind: z.literal("module"),
+    templateExports: z.array(z.string()).readonly(),
+    templateReferences: z.record(z.string(), jsonValueSchema).optional(),
   })
   .strict();
 

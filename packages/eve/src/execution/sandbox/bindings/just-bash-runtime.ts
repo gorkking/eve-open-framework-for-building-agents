@@ -11,7 +11,7 @@ import { adaptMultiplexedCommandToSandboxProcess } from "#execution/sandbox/mult
 import { shellQuote } from "#execution/sandbox/shell-quote.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
 import { loadOptionalEnginePackage } from "#internal/application/optional-package-install.js";
-import type { SandboxBackendHandle } from "#public/definitions/sandbox-backend.js";
+import type { SandboxBackendHandle } from "#shared/sandbox-backend.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 import type {
   SandboxProcess,
@@ -62,7 +62,7 @@ async function loadJustBashModule(input: {
     missingMessage:
       "The just-bash sandbox backend requires the `just-bash` package, which is not bundled " +
       "with eve. Install it in your application (for example `pnpm add -D just-bash`), or use " +
-      "docker() / defaultSandbox() instead.",
+      "DockerSandbox or DefaultSandbox instead.",
     packageName: JUST_BASH_PACKAGE_NAME,
   }).catch((error: unknown) => {
     justBashModulePromise = undefined;
@@ -182,8 +182,8 @@ export async function justBashSetNetworkPolicyUnsupported(): Promise<never> {
   throw new Error(
     "setNetworkPolicy() is not supported on the just-bash sandbox backend. just-bash " +
       "applies its network policy only at sandbox creation (no run-time update) and does not run " +
-      "git or other binaries. Use docker() for coarse egress control or vercel() / " +
-      "microsandbox() for credential brokering.",
+      "git or other binaries. Use DockerSandbox for coarse egress control or VercelSandbox / " +
+      "MicrosandboxSandbox for credential brokering.",
   );
 }
 

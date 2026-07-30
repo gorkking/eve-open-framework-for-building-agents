@@ -1,33 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
-import type {
-  SandboxBackend,
-  SandboxBackendCreateInput,
-} from "#public/definitions/sandbox-backend.js";
-import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
-import {
-  createBundledRuntimeCompiledArtifactsSource,
-  createDiskRuntimeCompiledArtifactsSource,
-  type RuntimeCompiledArtifactsSource,
-} from "#runtime/compiled-artifacts-source.js";
-import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
-import type { ResolvedSandboxDefinition } from "#runtime/types.js";
-import { ContextContainer, contextStorage, loadContext } from "#context/container.js";
-import { SessionKey } from "#context/keys.js";
-import type { Session } from "#context/keys.js";
 import {
   clearActiveSandboxHandlesForTest,
   countActiveSandboxHandles,
   shutdownActiveSandboxHandles,
 } from "#execution/sandbox/active-handles.js";
 import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
-import type { SandboxState } from "#sandbox/state.js";
+import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
+import type { SandboxDefinitionContext } from "#public/definitions/sandbox.js";
+import {
+  createBundledRuntimeCompiledArtifactsSource,
+  createDiskRuntimeCompiledArtifactsSource,
+  type RuntimeCompiledArtifactsSource,
+} from "#runtime/compiled-artifacts-source.js";
+import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
+import type { SandboxState, SandboxStateValue } from "#sandbox/state.js";
+import type { JsonObject } from "#shared/json.js";
+import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
+import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
+import type { SandboxSession } from "#shared/sandbox-session.js";
 
 const mocks = vi.hoisted(() => ({
   prewarmAppSandboxes: vi.fn(async () => {}),
-  waitForSandboxTemplatePrewarmLock: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
-  waitForDevelopmentSandboxPrewarm: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+  waitForSandboxTemplatePrewarmLock: vi.fn(async () => {}),
+  waitForDevelopmentSandboxPrewarm: vi.fn(async () => {}),
 }));
 
 vi.mock("#execution/sandbox/development-prewarm.js", () => ({
@@ -40,356 +36,327 @@ vi.mock("#execution/sandbox/template-prewarm-lock.js", () => ({
   waitForSandboxTemplatePrewarmLock: mocks.waitForSandboxTemplatePrewarmLock,
 }));
 
-function createTestRegistry(
-  definition: Partial<ResolvedSandboxDefinition>,
-  backend: SandboxBackend,
-): RuntimeSandboxRegistry {
-  const resolved: ResolvedSandboxDefinition = {
-    backend,
-    logicalPath: "agent/sandbox/sandbox.ts",
-    sourceHash: "test-source-hash",
-    sourceId: "agent/sandbox/sandbox",
-    sourceKind: "module",
-    ...definition,
-  };
+interface TestSandboxReference extends JsonObject {
+  readonly id: string;
+}
 
+interface TestSandboxHandle {
+  readonly id: string;
+  readonly session: SandboxSession;
+}
+
+const testSandboxes = new Map<string, TestSandboxHandle>();
+const restoreTestSandbox = vi.fn((reference: TestSandboxReference) => {
+  const handle = testSandboxes.get(reference.id);
+  if (handle === undefined) {
+    throw new Error(`Missing test sandbox "${reference.id}".`);
+  }
+  return handle;
+});
+const shutdownTestSandbox = vi.fn();
+const asTestSandbox = defineSandboxAdapter<TestSandboxHandle, TestSandboxReference>({
+  reference(handle) {
+    return { id: handle.id };
+  },
+  restore(reference) {
+    return restoreTestSandbox(reference);
+  },
+  session(handle) {
+    return handle.session;
+  },
+  shutdown(handle) {
+    shutdownTestSandbox(handle.id);
+  },
+});
+
+function createTestSandbox(id: string): Sandbox {
+  const handle = {
+    id,
+    session: mockSandbox({ id }).session,
+  };
+  testSandboxes.set(id, handle);
+  return asTestSandbox(handle);
+}
+
+function createTestRegistry(input: {
+  readonly definition: RuntimeSandboxRegistry["sandbox"]["definition"]["definition"];
+  readonly sourceHash?: string;
+  readonly templates?: ReadonlyArray<{
+    readonly exportName: string;
+    readonly reference?: unknown;
+    readonly template: SandboxTemplate;
+  }>;
+}): RuntimeSandboxRegistry {
   return {
     sandbox: {
-      definition: resolved,
+      definition: {
+        definition: input.definition,
+        logicalPath: "agent/sandbox/sandbox.ts",
+        sourceHash: input.sourceHash ?? "test-source-hash",
+        sourceId: "agent/sandbox/sandbox",
+        sourceKind: "module",
+        templates: input.templates ?? [],
+      },
       workspaceResourceRoot: { logicalPath: "", rootEntries: [] },
     },
   };
 }
 
-function createBackend(): SandboxBackend {
-  const sandbox = mockSandbox({ id: "sbx_session_auth" });
-  const create = vi.fn(async (input: SandboxBackendCreateInput) => {
-    return {
-      captureState: async () => ({
-        backendName: "test",
-        metadata: {},
-        sessionKey: input.sessionKey,
-      }),
-      useSessionFn: async () => sandbox.session,
-      shutdown: async () => {},
-      session: sandbox.session,
-    };
-  });
-
-  return { create, name: "test", prewarm: vi.fn() };
-}
-
 async function ensure(input: {
   readonly compiledArtifactsSource?: RuntimeCompiledArtifactsSource;
-  readonly runOnSession?: (callback: () => Promise<void>) => Promise<void>;
+  readonly nodeId?: string;
+  readonly parentState?: SandboxStateValue;
   readonly registry: RuntimeSandboxRegistry;
-  readonly state?: SandboxState;
-  readonly tags?: Record<string, string>;
+  readonly rootState?: SandboxStateValue;
+  readonly signal?: AbortSignal;
+  readonly sessionId?: string;
+  readonly state?: SandboxState | null;
 }) {
+  const sessionId = input.sessionId ?? "session_1";
   return await ensureSandboxAccess({
     compiledArtifactsSource:
       input.compiledArtifactsSource ?? createBundledRuntimeCompiledArtifactsSource(),
-    nodeId: "__root__",
+    nodeId: input.nodeId ?? "__root__",
+    parentState: input.parentState,
     registry: input.registry,
-    runOnSession: input.runOnSession,
-    sessionId: "session_1",
+    rootState: input.rootState,
+    signal: input.signal,
+    session: createSession(sessionId),
+    sessionId,
     state: input.state ?? null,
-    tags: input.tags,
   });
 }
 
-function createSession(): Session {
+function createSession(sessionId: string): SandboxDefinitionContext["session"] {
   return {
     auth: {
       current: {
-        attributes: {},
-        authenticator: "slack-webhook",
-        issuer: "slack:T123",
-        principalId: "slack:T123:U123",
+        attributes: { teamId: "team_1" },
+        authenticator: "test",
+        issuer: "test",
+        principalId: "user_1",
         principalType: "user",
       },
       initiator: null,
     },
-    sessionId: "session_1",
+    id: sessionId,
     turn: { id: "turn_1", sequence: 0 },
   };
 }
 
 describe("ensureSandboxAccess", () => {
   beforeEach(() => {
-    mocks.prewarmAppSandboxes.mockReset();
-    mocks.prewarmAppSandboxes.mockResolvedValue(undefined);
-    mocks.waitForSandboxTemplatePrewarmLock.mockReset();
-    mocks.waitForSandboxTemplatePrewarmLock.mockResolvedValue(undefined);
-    mocks.waitForDevelopmentSandboxPrewarm.mockReset();
-    mocks.waitForDevelopmentSandboxPrewarm.mockResolvedValue(undefined);
+    clearActiveSandboxHandlesForTest();
+    testSandboxes.clear();
+    restoreTestSandbox.mockClear();
+    shutdownTestSandbox.mockClear();
+    mocks.prewarmAppSandboxes.mockClear();
+    mocks.waitForDevelopmentSandboxPrewarm.mockClear();
+    mocks.waitForSandboxTemplatePrewarmLock.mockClear();
   });
 
-  it("waits for background dev prewarm before creating a templated sandbox", async () => {
-    const prewarm = createDeferred<void>();
-    mocks.waitForDevelopmentSandboxPrewarm.mockReturnValueOnce(prewarm.promise);
-    const bootstrap = vi.fn();
-    const backend = createBackend();
-    const registry = createTestRegistry({ bootstrap }, backend);
-    const appRoot = process.cwd();
-
+  it("invokes the definition lazily with session and runtime context", async () => {
+    const signal = new AbortController().signal;
+    const definition = vi.fn(() => createTestSandbox("sandbox_1"));
     const access = await ensure({
-      compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource(appRoot),
-      registry,
+      registry: createTestRegistry({ definition }),
+      signal,
     });
-    const getPromise = access.get();
 
-    await vi.waitFor(() => {
-      expect(mocks.waitForDevelopmentSandboxPrewarm).toHaveBeenCalledWith(
-        expect.objectContaining({
-          appRoot,
-          compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource(appRoot),
+    expect(definition).not.toHaveBeenCalled();
+    expect(await access.captureState()).toBeNull();
+
+    await expect(access.get()).resolves.toMatchObject({ id: "sandbox_1" });
+    expect(definition).toHaveBeenCalledWith({
+      parent: null,
+      root: null,
+      runtime: { mode: expect.stringMatching(/^(development|production)$/) },
+      session: expect.objectContaining({
+        auth: expect.objectContaining({
+          current: expect.objectContaining({ principalId: "user_1" }),
         }),
-      );
-    });
-    expect(backend.create).not.toHaveBeenCalled();
-
-    prewarm.resolve();
-    await getPromise;
-
-    expect(backend.create).toHaveBeenCalledTimes(1);
-  });
-
-  it("prewarms and retries once when a templated sandbox is missing at first use", async () => {
-    const backend = createBackend();
-    const registry = createTestRegistry({ bootstrap: vi.fn() }, backend);
-    const appRoot = process.cwd();
-    const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
-    vi.mocked(backend.create).mockRejectedValueOnce(
-      new SandboxTemplateNotProvisionedError({
-        backendName: "test",
-        templateKey: "missing-template",
+        id: "session_1",
       }),
-    );
-
-    const access = await ensure({
-      compiledArtifactsSource,
-      registry,
-    });
-    await access.get();
-
-    expect(mocks.prewarmAppSandboxes).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appRoot,
-        compiledArtifactsSource,
-      }),
-    );
-    expect(backend.create).toHaveBeenCalledTimes(2);
-  });
-
-  it("prewarms and retries when a dev-runtime copy reports a missing template", async () => {
-    const backend = createBackend();
-    const registry = createTestRegistry({ bootstrap: vi.fn() }, backend);
-    const appRoot = process.cwd();
-    const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
-    vi.mocked(backend.create).mockRejectedValueOnce({
-      backendName: "test",
-      message: 'Sandbox template "missing-template" is not provisioned for backend "test".',
-      name: "SandboxTemplateNotProvisionedError",
-      templateKey: "missing-template",
-    });
-
-    const access = await ensure({
-      compiledArtifactsSource,
-      registry,
-    });
-    await access.get();
-
-    expect(mocks.prewarmAppSandboxes).toHaveBeenCalledTimes(1);
-    expect(backend.create).toHaveBeenCalledTimes(2);
-  });
-
-  it("opens dev snapshot artifact sandboxes with the authored app root", async () => {
-    const backend = createBackend();
-    const registry = createTestRegistry({ bootstrap: vi.fn() }, backend);
-    const appRoot = process.cwd();
-    const snapshotRoot = `${appRoot}/.eve/dev-runtime/snapshots/current/app`;
-    const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(snapshotRoot, {
-      moduleMapLoaderPath: "/tmp/eve-package/authored-module-map-loader.ts",
-      sandboxAppRoot: appRoot,
-    });
-
-    const access = await ensure({
-      compiledArtifactsSource,
-      registry,
-    });
-    await access.get();
-
-    expect(mocks.waitForDevelopmentSandboxPrewarm).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appRoot,
-        compiledArtifactsSource,
-      }),
-    );
-    expect(mocks.waitForSandboxTemplatePrewarmLock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appRoot,
-      }),
-    );
-    expect(backend.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeContext: { appRoot },
-      }),
-    );
-  });
-
-  it("runs onSession inside the active eve context", async () => {
-    const ctx = new ContextContainer();
-    const session = createSession();
-    ctx.set(SessionKey, session);
-
-    let observedSession: Session | undefined;
-    let observedSessionId: string | undefined;
-    const onSession = vi.fn((input) => {
-      observedSession = loadContext().require(SessionKey);
-      observedSessionId = input.ctx.session.id;
-    });
-    const backend = createBackend();
-    const registry = createTestRegistry({ onSession }, backend);
-
-    const access = await ensure({
-      registry,
-      runOnSession: async (callback) => await contextStorage.run(ctx, callback),
-    });
-    await access.get();
-
-    expect(observedSession).toBe(session);
-    expect(observedSessionId).toBe("session_1");
-    expect(onSession).toHaveBeenCalledWith({
-      ctx: expect.objectContaining({
-        session: expect.objectContaining({ id: "session_1" }),
-      }),
-      use: expect.any(Function),
+      signal,
     });
   });
 
-  it("reattaches with persisted metadata and skips onSession when the session key matches", async () => {
-    const ctx = new ContextContainer();
-    ctx.set(SessionKey, createSession());
-    const runOnSession = async (callback: () => Promise<void>) =>
-      await contextStorage.run(ctx, callback);
-    const onSession = vi.fn();
-    const backend = createBackend();
-    const registry = createTestRegistry({ onSession }, backend);
+  it("restores persisted provider state without invoking the definition again", async () => {
+    const definition = vi.fn(() => createTestSandbox("sandbox_1"));
+    const registry = createTestRegistry({ definition });
+    const first = await ensure({ registry });
 
-    const first = await ensure({ registry, runOnSession });
     await first.get();
     const state = await first.captureState();
-    expect(onSession).toHaveBeenCalledTimes(1);
+    expect(state).not.toBeNull();
+    expect(state?.value).toMatchObject({
+      id: "sandbox_1",
+      reference: { id: "sandbox_1" },
+    });
 
-    const second = await ensure({ registry, runOnSession, state });
-    await second.get();
+    const second = await ensure({ registry, state });
+    const restored = await second.get();
+    await restored?.run({ command: "true" });
 
-    expect(onSession).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(backend.create).mock.calls[1]?.[0].existingMetadata).toEqual({});
+    expect(definition).toHaveBeenCalledTimes(1);
+    expect(restoreTestSandbox).toHaveBeenCalledWith({ id: "sandbox_1" });
   });
 
-  it("re-runs onSession and drops stale metadata when the session key rotates", async () => {
-    const ctx = new ContextContainer();
-    ctx.set(SessionKey, createSession());
-    const onSession = vi.fn();
-    const backend = createBackend();
-    const registry = createTestRegistry({ onSession }, backend);
+  it("invokes the definition again when its private compatibility revision changes", async () => {
+    const firstDefinition = vi.fn(() => createTestSandbox("sandbox_1"));
+    const first = await ensure({
+      registry: createTestRegistry({
+        definition: firstDefinition,
+        sourceHash: "source-v1",
+      }),
+    });
+    await first.get();
+    const state = await first.captureState();
 
-    const access = await ensure({
-      registry,
-      runOnSession: async (callback) => await contextStorage.run(ctx, callback),
-      state: {
-        initialized: true,
-        session: {
-          backendName: "test",
-          metadata: { sandboxName: "stale" },
-          sessionKey: "eve-sbx-ses-test-stale-key",
+    const secondDefinition = vi.fn(() => createTestSandbox("sandbox_2"));
+    const second = await ensure({
+      registry: createTestRegistry({
+        definition: secondDefinition,
+        sourceHash: "source-v2",
+      }),
+      state,
+    });
+
+    await expect(second.get()).resolves.toMatchObject({ id: "sandbox_2" });
+    expect(secondDefinition).toHaveBeenCalledTimes(1);
+    expect(restoreTestSandbox).not.toHaveBeenCalled();
+  });
+
+  it("exposes durable parent and root sandboxes and preserves borrowed ownership", async () => {
+    const root = await ensure({
+      registry: createTestRegistry({
+        definition: () => createTestSandbox("root-sandbox"),
+      }),
+      sessionId: "root-session",
+    });
+    await root.get();
+    const rootState = await root.captureState();
+    expect(rootState).not.toBeNull();
+
+    const childDefinition = vi.fn(async ({ parent, root: rootAncestor }) => {
+      expect((await parent?.sandbox)?.id).toBe("root-sandbox");
+      expect((await rootAncestor?.sandbox)?.id).toBe("root-sandbox");
+      return await parent!.sandbox;
+    });
+    const child = await ensure({
+      nodeId: "reviewer",
+      parentState: rootState!,
+      registry: createTestRegistry({ definition: childDefinition }),
+      rootState: rootState!,
+      sessionId: "child-session",
+    });
+
+    await expect(child.get()).resolves.toMatchObject({ id: "root-sandbox" });
+    expect(await child.captureState()).toMatchObject({
+      owner: {
+        nodeId: "__root__",
+        sessionId: "root-session",
+      },
+      root: rootState,
+    });
+  });
+
+  it("binds the exact compiled template reference before invoking the definition", async () => {
+    const create = vi.fn(({ reference }: { reference: { snapshotId: string } }) =>
+      createTestSandbox(reference.snapshotId),
+    );
+    const template = defineSandboxTemplate<{ snapshotId: string }, Record<string, never>>({
+      async prewarm() {
+        return { snapshotId: "prewarmed" };
+      },
+      create,
+    });
+    const registry = createTestRegistry({
+      definition: () => template.create({}),
+      templates: [
+        {
+          exportName: "template",
+          reference: { snapshotId: "snapshot_123" },
+          template,
         },
+      ],
+    });
+
+    const access = await ensure({ registry });
+    await expect(access.get()).resolves.toMatchObject({ id: "snapshot_123" });
+    expect(create).toHaveBeenCalledWith({
+      options: {},
+      reference: { snapshotId: "snapshot_123" },
+    });
+  });
+
+  it("waits for development prewarm before invoking a templated definition", async () => {
+    const waiting = createDeferred<void>();
+    mocks.waitForDevelopmentSandboxPrewarm.mockReturnValueOnce(waiting.promise);
+    const template = defineSandboxTemplate<{ snapshotId: string }, Record<string, never>>({
+      async prewarm() {
+        return { snapshotId: "snapshot_1" };
+      },
+      create() {
+        return createTestSandbox("sandbox_1");
       },
     });
-    await access.get();
-
-    expect(onSession).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(backend.create).mock.calls[0]?.[0].existingMetadata).toBeUndefined();
-  });
-
-  it("does not pass bootstrap or seed files to runtime create", async () => {
-    const bootstrap = vi.fn();
-    const backend = createBackend();
-    const registry = createTestRegistry({ bootstrap, revalidationKey: "test-bootstrap" }, backend);
-
-    const access = await ensure({ registry });
-    await access.get();
-
-    expect(bootstrap).not.toHaveBeenCalled();
-    expect(backend.create).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        bootstrap: expect.anything(),
-        seedFiles: expect.anything(),
-      }),
-    );
-  });
-
-  it("passes a null template key for sandboxes with no bootstrap or seed files", async () => {
-    const backend = createBackend();
-    const registry = createTestRegistry({}, backend);
-
-    const access = await ensure({ registry });
-    await access.get();
-
-    expect(backend.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        templateKey: null,
-      }),
-    );
-  });
-
-  it("passes runtime tags to the sandbox backend", async () => {
-    const backend = createBackend();
-    const registry = createTestRegistry({}, backend);
-
+    const definition = vi.fn(() => template.create({}));
+    const appRoot = process.cwd();
     const access = await ensure({
-      registry,
-      tags: {
-        agent: "weather-agent",
-        channel: "http",
-        sessionId: "session_1",
-      },
-    });
-    await access.get();
-
-    expect(backend.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tags: {
-          agent: "weather-agent",
-          channel: "http",
-          sessionId: "session_1",
-        },
+      compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource(appRoot),
+      registry: createTestRegistry({
+        definition,
+        templates: [
+          {
+            exportName: "template",
+            reference: { snapshotId: "snapshot_1" },
+            template,
+          },
+        ],
       }),
-    );
+    });
+
+    const sandbox = access.get();
+    await vi.waitFor(() => {
+      expect(mocks.waitForDevelopmentSandboxPrewarm).toHaveBeenCalled();
+    });
+    expect(definition).not.toHaveBeenCalled();
+
+    waiting.resolve();
+    await sandbox;
+    expect(definition).toHaveBeenCalledTimes(1);
   });
 
-  it("tracks created handles for server shutdown", async () => {
-    clearActiveSandboxHandlesForTest();
-    const backend = createBackend();
-    const registry = createTestRegistry({}, backend);
+  it("rejects definitions that return an ordinary session instead of a durable sandbox", async () => {
+    const access = await ensure({
+      registry: createTestRegistry({
+        definition: () => mockSandbox().session as Sandbox,
+      }),
+    });
 
-    const access = await ensure({ registry });
+    await expect(access.get()).rejects.toThrow(/must return a durable Sandbox value/);
+  });
+
+  it("tracks custom provider sandboxes for process shutdown", async () => {
+    const access = await ensure({
+      registry: createTestRegistry({
+        definition: () => createTestSandbox("custom-sandbox"),
+      }),
+    });
+
     await access.get();
-
     expect(countActiveSandboxHandles()).toBe(1);
+
     await shutdownActiveSandboxHandles();
-    expect(countActiveSandboxHandles()).toBe(0);
+    expect(shutdownTestSandbox).toHaveBeenCalledWith("custom-sandbox");
   });
 });
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+  const promise = new Promise<T>((promiseResolve) => {
     resolve = promiseResolve;
-    reject = promiseReject;
   });
-  return { promise, reject, resolve };
+  return { promise, resolve };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CompiledWorkspaceResourceRoot } from "../src/compiler/manifest.js";
-import { docker } from "../src/public/sandbox/backends/docker.js";
+import type { Sandbox } from "../src/public/definitions/sandbox.js";
 import {
   createFrameworkSandboxDefinition,
   createRuntimeSandboxRegistry,
@@ -73,12 +73,20 @@ describe("createRuntimeSandboxRegistry", () => {
     expect(registry.sandbox?.workspaceResourceRoot).toBe(workspaceResourceRoot);
   });
 
-  it("createFrameworkSandboxDefinition resolves a fresh default backend on each call", () => {
-    const definition = createFrameworkSandboxDefinition();
+  it("creates a template-less framework definition without managed files", () => {
+    const definition = createFrameworkSandboxDefinition({ hasWorkspace: false });
 
     expect(definition.sourceId).toBe(DEFAULT_SANDBOX_SOURCE_ID);
     expect(definition.sourceKind).toBe("module");
-    expect(typeof definition.backend.name).toBe("string");
+    expect(typeof definition.definition).toBe("function");
+    expect(definition.templates).toEqual([]);
+  });
+
+  it("exports a framework template when managed files need build prewarming", () => {
+    const definition = createFrameworkSandboxDefinition({ hasWorkspace: true });
+
+    expect(definition.templates).toHaveLength(1);
+    expect(definition.templates[0]?.exportName).toBe("template");
   });
 });
 
@@ -87,9 +95,11 @@ function createResolvedSandboxDefinition(input: {
   readonly sourceId: string;
 }): ResolvedSandboxDefinition {
   return {
-    backend: docker(),
+    definition: () => ({}) as Sandbox,
     logicalPath: input.logicalPath,
+    sourceHash: "sandbox-source-hash",
     sourceId: input.sourceId,
     sourceKind: "module",
+    templates: [],
   };
 }
