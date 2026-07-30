@@ -9,34 +9,9 @@ instructions, connections, or subagents.
 
 ## Configure the channel
 
-Create `agent/channels/mcp.ts` and use the same inbound auth strategies as any
-other eve channel:
-
-```ts
-import { localDev, vercelOidc } from "eve/channels/auth";
-import { mcpChannel } from "eve/channels/mcp";
-
-export default mcpChannel({
-  auth: [vercelOidc(), localDev()],
-});
-```
-
-Authentication is required by default. Use `none()` only when you intentionally
-want a public MCP endpoint.
-
-The endpoint validates `Host` and `Origin` before authentication. Browser
-requests must be exact same-origin, and plain HTTP is accepted only on
-loopback; remote endpoints must use HTTPS. The MCP channel does not enable
-cross-origin browser access. Put a same-origin backend or an authenticated
-server-side proxy in front of it when a browser application needs to connect.
-
-The endpoint serves MCP `2026-07-28` directly and keeps a stateless
-`2025-11-25` compatibility path for existing Streamable HTTP clients. Current
-clients use `server/discover`; older clients can continue to initialize
-normally. eve does not retain an MCP transport session in either mode.
-
-For an interactive OAuth login, decorate your existing verifier with
-`oauthResource()`:
+For a remotely accessible MCP endpoint, start with OAuth resource
+authentication. Create `agent/channels/mcp.ts` and decorate your access-token
+verifier with `oauthResource()`:
 
 ```ts
 import { oauthResource } from "eve/channels/auth";
@@ -68,6 +43,50 @@ a public gateway fronts a private eve origin, or `metadataPath` when the
 well-known route must be mounted elsewhere. Issuer and resource identifiers
 must use HTTPS without credentials, query, or fragment; loopback HTTP is
 accepted for local development.
+
+### Other auth modes
+
+`mcpChannel()` also accepts the same inbound auth strategies as any other eve
+channel. For preconfigured Vercel workload identity with a local-development
+fallback:
+
+```ts
+import { localDev, vercelOidc } from "eve/channels/auth";
+import { mcpChannel } from "eve/channels/mcp";
+
+export default mcpChannel({
+  auth: [vercelOidc(), localDev()],
+});
+```
+
+This form does not advertise an interactive OAuth login. A deployed caller
+must send a Vercel OIDC bearer token; a request addressed to a loopback host
+falls through to `localDev()` and needs no credential. Static Basic, bearer,
+JWT, generic OIDC, and custom `AuthFn` policies work the same way, but clients
+must be configured with their credentials out of band.
+
+Authentication is required by default. Use `none()` only when you intentionally
+want a public MCP endpoint:
+
+```ts
+import { none } from "eve/channels/auth";
+import { mcpChannel } from "eve/channels/mcp";
+
+export default mcpChannel({
+  auth: none(),
+});
+```
+
+The endpoint validates `Host` and `Origin` before authentication. Browser
+requests must be exact same-origin, and plain HTTP is accepted only on
+loopback; remote endpoints must use HTTPS. The MCP channel does not enable
+cross-origin browser access. Put a same-origin backend or an authenticated
+server-side proxy in front of it when a browser application needs to connect.
+
+The endpoint serves MCP `2026-07-28` directly and keeps a stateless
+`2025-11-25` compatibility path for existing Streamable HTTP clients. Current
+clients use `server/discover`; older clients can continue to initialize
+normally. eve does not retain an MCP transport session in either mode.
 
 ## Invoke the agent
 
