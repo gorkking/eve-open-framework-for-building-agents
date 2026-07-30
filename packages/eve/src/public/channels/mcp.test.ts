@@ -7,7 +7,7 @@ import {
   attachRouteAgent,
 } from "#internal/nitro/routes/channel-route-context.js";
 import { MCP_LEGACY_PROTOCOL_VERSION } from "#internal/mcp/streamable-http-server.js";
-import { none, oauthResource } from "#public/channels/auth.js";
+import { ForbiddenError, none, oauthResource, withAuthChallenges } from "#public/channels/auth.js";
 import type { Agent } from "#public/definitions/channel.js";
 import { mcpChannel } from "#public/channels/mcp.js";
 
@@ -57,7 +57,14 @@ describe("mcpChannel", () => {
       routeArgs(),
     );
     const body = (await jsonRpcResponse(tools)) as {
-      result: { tools: { description?: string; name: string }[] };
+      result: {
+        tools: Array<{
+          description?: string;
+          inputSchema: Record<string, unknown>;
+          name: string;
+          outputSchema?: Record<string, unknown>;
+        }>;
+      };
     };
     expect(body.result.tools.map((tool) => tool.name)).toEqual([
       "agent_start",
@@ -78,6 +85,51 @@ describe("mcpChannel", () => {
         idempotentHint: true,
         openWorldHint: false,
         readOnlyHint: true,
+      },
+    });
+    expect(body.result.tools[2]).toMatchObject({
+      inputSchema: {
+        properties: {
+          responses: {
+            items: {
+              properties: {
+                optionId: { type: "string" },
+                requestId: { type: "string" },
+                text: { type: "string" },
+              },
+              required: ["requestId"],
+            },
+          },
+        },
+      },
+      outputSchema: {
+        properties: {
+          authorizations: {
+            items: {
+              properties: {
+                authorization: {
+                  properties: { url: { format: "uri", type: "string" } },
+                },
+                name: { type: "string" },
+              },
+            },
+          },
+          inputRequests: {
+            additionalProperties: {
+              properties: {
+                options: {
+                  items: {
+                    properties: {
+                      id: { description: "Stable identifier for the option.", type: "string" },
+                    },
+                  },
+                },
+                requestId: { type: "string" },
+              },
+            },
+          },
+          status: { enum: expect.arrayContaining(["authorization_required"]) },
+        },
       },
     });
   });
@@ -163,11 +215,17 @@ describe("mcpChannel", () => {
 
   it("mounts OAuth resource metadata and augments auth failures", async () => {
     const channel = mcpChannel({
-      auth: oauthResource(() => null, {
-        issuer: "https://issuer.example",
-        resource: "https://agent.example/delegate",
-        scopes: ["agent:invoke"],
-      }),
+      auth: oauthResource(
+        withAuthChallenges(
+          () => null,
+          [{ parameters: { realm: "eve" }, scheme: "Basic" }, { scheme: "Bearer" }],
+        ),
+        {
+          issuer: "https://issuer.example",
+          resource: "https://agent.example/delegate",
+          scopes: ["agent:invoke"],
+        },
+      ),
       path: "/delegate",
     });
     expect(channel.routes.map((route) => `${route.method} ${route.path}`)).toEqual([
@@ -196,10 +254,63 @@ describe("mcpChannel", () => {
       {} as never,
     );
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toContain(
+    const challenge = response.headers.get("www-authenticate");
+    expect(challenge).toContain(
       'resource_metadata="https://agent.example/.well-known/oauth-protected-resource"',
     );
-    expect(response.headers.get("www-authenticate")).toContain('scope="agent:invoke"');
+    expect(challenge).toContain('Basic realm="eve"');
+    expect(challenge).toContain('scope="agent:invoke"');
+    expect(challenge?.match(/\bBearer\b/g)).toHaveLength(1);
+  });
+
+  it("adds resource metadata only to explicit insufficient-scope responses", async () => {
+    const genericChannel = mcpChannel({
+      auth: oauthResource(
+        () => {
+          throw new ForbiddenError();
+        },
+        { issuer: "https://issuer.example", scopes: ["agent:invoke"] },
+      ),
+    });
+    const genericRoute = genericChannel.routes[2]!;
+    if (genericRoute.transport === "websocket") throw new Error("expected HTTP route");
+    const generic = await genericRoute.handler(
+      requestWithHost("https://agent.example/mcp", { method: "POST" }),
+      {} as never,
+    );
+    expect(generic.status).toBe(403);
+    expect(generic.headers.get("www-authenticate")).toBeNull();
+
+    const scopedChannel = mcpChannel({
+      auth: oauthResource(
+        () => {
+          throw new ForbiddenError({
+            challenges: [
+              {
+                parameters: { error: "insufficient_scope", scope: "agent:admin" },
+                scheme: "Bearer",
+              },
+            ],
+          });
+        },
+        { issuer: "https://issuer.example", scopes: ["agent:invoke"] },
+      ),
+    });
+    const scopedRoute = scopedChannel.routes[2]!;
+    if (scopedRoute.transport === "websocket") throw new Error("expected HTTP route");
+    const scoped = await scopedRoute.handler(
+      requestWithHost("https://agent.example/mcp", { method: "POST" }),
+      {} as never,
+    );
+    const scopedChallenge = scoped.headers.get("www-authenticate");
+    expect(scoped.status).toBe(403);
+    expect(scopedChallenge).toContain('error="insufficient_scope"');
+    expect(scopedChallenge).toContain('scope="agent:admin"');
+    expect(scopedChallenge).not.toContain('scope="agent:invoke"');
+    expect(scopedChallenge).toContain(
+      'resource_metadata="https://agent.example/.well-known/oauth-protected-resource"',
+    );
+    expect(scopedChallenge?.match(/\bBearer\b/g)).toHaveLength(1);
   });
 
   it("derives the protected resource from the public request origin", async () => {

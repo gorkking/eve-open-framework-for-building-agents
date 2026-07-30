@@ -359,6 +359,10 @@ describe("localDev", () => {
     });
   });
 
+  it("does not treat a DNS name beginning with `127.` as loopback", () => {
+    expect(localDev()(requestFor("http://127.attacker.example:3000/"))).toBeNull();
+  });
+
   it("authenticates requests addressed to the IPv6 loopback `::1`", () => {
     expect(localDev()(requestFor("http://[::1]:3000/"))).toMatchObject({
       principalType: "local-dev",

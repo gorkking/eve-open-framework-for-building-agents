@@ -1,4 +1,5 @@
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
+import { z } from "#compiled/zod/index.js";
 import { defineChannel, DELETE, GET, POST, type Channel } from "#public/definitions/channel.js";
 import type { RouteHandlerArgs } from "#channel/routes.js";
 import {
@@ -17,7 +18,7 @@ import {
   createMcpProtectedResourceMetadata,
   createMcpResourceChallenge,
 } from "#internal/mcp/protected-resource.js";
-import { inputResponseSchema } from "#runtime/input/types.js";
+import { inputRequestSchema, inputResponseSchema } from "#runtime/input/types.js";
 import {
   readOAuthResourceOptions,
   routeAuth,
@@ -103,12 +104,164 @@ function addResourceChallenge(
   const publicBase = options.resource ?? new URL(request.url).origin;
   const metadataUrl = new URL(metadataPath, publicBase).toString();
   const headers = new Headers(response.headers);
-  headers.append("www-authenticate", createMcpResourceChallenge(metadataUrl, options.scopes));
+  const existing = headers.get("www-authenticate");
+  if (response.status === 401) {
+    headers.set("www-authenticate", mergeMcpBearerChallenge(existing, metadataUrl, options.scopes));
+  } else {
+    const challenge = augmentInsufficientScopeChallenge(existing, metadataUrl);
+    if (challenge === undefined) return response;
+    headers.set("www-authenticate", challenge);
+  }
   return new Response(response.body, {
     headers,
     status: response.status,
     statusText: response.statusText,
   });
+}
+
+interface ParsedAuthChallenge {
+  readonly scheme: string;
+  readonly value: string;
+}
+
+function mergeMcpBearerChallenge(
+  header: string | null,
+  metadataUrl: string,
+  scopes: readonly string[] | undefined,
+): string {
+  const challenges = parseAuthChallenges(header);
+  const bearer =
+    challenges.find(
+      (challenge) =>
+        challenge.scheme.toLowerCase() === "bearer" && hasAuthParameter(challenge.value, "error"),
+    ) ?? challenges.find((challenge) => challenge.scheme.toLowerCase() === "bearer");
+  const canonical =
+    bearer === undefined
+      ? createMcpResourceChallenge(metadataUrl, scopes)
+      : augmentBearerChallenge(bearer.value, metadataUrl, scopes);
+  return replaceBearerChallenges(challenges, bearer, canonical);
+}
+
+function augmentInsufficientScopeChallenge(
+  header: string | null,
+  metadataUrl: string,
+): string | undefined {
+  const challenges = parseAuthChallenges(header);
+  const bearer = challenges.find(
+    (challenge) =>
+      challenge.scheme.toLowerCase() === "bearer" &&
+      hasAuthParameter(challenge.value, "error", "insufficient_scope"),
+  );
+  if (bearer === undefined) return undefined;
+  return replaceBearerChallenges(
+    challenges,
+    bearer,
+    augmentBearerChallenge(bearer.value, metadataUrl),
+  );
+}
+
+function replaceBearerChallenges(
+  challenges: readonly ParsedAuthChallenge[],
+  selected: ParsedAuthChallenge | undefined,
+  replacement: string,
+): string {
+  const result: string[] = [];
+  let inserted = false;
+  for (const challenge of challenges) {
+    if (challenge.scheme.toLowerCase() !== "bearer") {
+      result.push(challenge.value);
+      continue;
+    }
+    if (!inserted && challenge === selected) {
+      result.push(replacement);
+      inserted = true;
+    }
+  }
+  if (!inserted) result.push(replacement);
+  return result.join(", ");
+}
+
+function augmentBearerChallenge(
+  challenge: string,
+  metadataUrl: string,
+  scopes?: readonly string[],
+): string {
+  let result = challenge;
+  if (!hasAuthParameter(result, "resource_metadata")) {
+    result = appendAuthParameter(result, "resource_metadata", metadataUrl);
+  }
+  if (scopes?.length && !hasAuthParameter(result, "scope")) {
+    result = appendAuthParameter(result, "scope", scopes.join(" "));
+  }
+  return result;
+}
+
+function appendAuthParameter(challenge: string, name: string, value: string): string {
+  const separator = challenge.trim().toLowerCase() === "bearer" ? " " : ", ";
+  return `${challenge}${separator}${name}="${escapeAuthParameter(value)}"`;
+}
+
+function escapeAuthParameter(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function hasAuthParameter(challenge: string, name: string, value?: string): boolean {
+  const escapedName = name.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (value === undefined) {
+    return new RegExp(`(?:^|[\\s,])${escapedName}\\s*=`, "i").test(challenge);
+  }
+  const escapedValue = value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?:^|[\\s,])${escapedName}\\s*=\\s*(?:"${escapedValue}"|${escapedValue})(?=$|[\\s,])`,
+    "i",
+  ).test(challenge);
+}
+
+function parseAuthChallenges(header: string | null): readonly ParsedAuthChallenge[] {
+  if (header === null) return [];
+  const challenges: Array<{ scheme: string; value: string }> = [];
+  for (const part of splitQuotedHeaderList(header)) {
+    const scheme = readChallengeScheme(part);
+    if (scheme !== undefined) {
+      challenges.push({ scheme, value: part });
+      continue;
+    }
+    const current = challenges.at(-1);
+    if (current !== undefined) current.value += `, ${part}`;
+  }
+  return challenges;
+}
+
+function splitQuotedHeaderList(header: string): readonly string[] {
+  const parts: string[] = [];
+  let escaped = false;
+  let quoted = false;
+  let start = 0;
+  for (let index = 0; index < header.length; index++) {
+    const character = header[index];
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === '"') {
+      quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      const part = header.slice(start, index).trim();
+      if (part.length > 0) parts.push(part);
+      start = index + 1;
+    }
+  }
+  const last = header.slice(start).trim();
+  if (last.length > 0) parts.push(last);
+  return parts;
+}
+
+function readChallengeScheme(value: string): string | undefined {
+  const match = /^([!#$%&'*+\-.^_`|~0-9A-Za-z]+)(?:\s+|$)/.exec(value);
+  if (match === null) return undefined;
+  const scheme = match[1];
+  if (scheme === undefined) return undefined;
+  return value.slice(scheme.length).trimStart().startsWith("=") ? undefined : scheme;
 }
 
 async function authenticateMcpRequest(
@@ -248,7 +401,7 @@ function createInvocationTools(
           additionalProperties: false,
           properties: {
             invocationId: { type: "string" },
-            responses: { items: { type: "object" }, type: "array" },
+            responses: { items: INPUT_RESPONSE_JSON_SCHEMA, type: "array" },
           },
           required: ["invocationId", "responses"],
           type: "object",
@@ -327,21 +480,74 @@ function asJsonObject(value: unknown): JsonObject | undefined {
   return schema;
 }
 
+const INPUT_REQUEST_JSON_SCHEMA = embeddedJsonSchema(inputRequestSchema);
+const INPUT_RESPONSE_JSON_SCHEMA = embeddedJsonSchema(inputResponseSchema);
+
+function embeddedJsonSchema(schema: z.ZodType): Readonly<Record<string, unknown>> {
+  const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(schema, { io: "input" });
+  return jsonSchema;
+}
+
+const AUTHORIZATION_CHALLENGE_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    displayName: { type: "string" },
+    expiresAt: { format: "date-time", type: "string" },
+    instructions: { type: "string" },
+    url: { format: "uri", type: "string" },
+    userCode: { type: "string" },
+  },
+  type: "object",
+} as const;
+
+const AUTHORIZATION_REQUEST_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    authorization: AUTHORIZATION_CHALLENGE_SCHEMA,
+    description: { type: "string" },
+    name: { type: "string" },
+    webhookUrl: { format: "uri", type: "string" },
+  },
+  required: ["description", "name"],
+  type: "object",
+} as const;
+
 const AGENT_INVOCATION_OUTPUT_SCHEMA = {
   additionalProperties: false,
   properties: {
+    authorizations: {
+      items: AUTHORIZATION_REQUEST_SCHEMA,
+      minItems: 1,
+      type: "array",
+    },
     createdAt: { format: "date-time", type: "string" },
-    error: { type: "object" },
+    error: {
+      additionalProperties: false,
+      properties: {
+        code: { type: "integer" },
+        data: {},
+        message: { type: "string" },
+      },
+      required: ["code", "message"],
+      type: "object",
+    },
     expiresAt: { format: "date-time", type: "string" },
     inputRequests: {
-      additionalProperties: { type: "object" },
+      additionalProperties: INPUT_REQUEST_JSON_SCHEMA,
       type: "object",
     },
     invocationId: { type: "string" },
     pollAfterMs: { minimum: 0, type: "integer" },
     result: {},
     status: {
-      enum: ["working", "input_required", "completed", "failed", "cancelled"],
+      enum: [
+        "working",
+        "input_required",
+        "authorization_required",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
       type: "string",
     },
   },

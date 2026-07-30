@@ -54,6 +54,7 @@ describe("oauthResource", () => {
     for (const issuer of [
       "ftp://auth.example",
       "http://auth.example",
+      "http://127.attacker.example",
       "https://user:secret@auth.example",
       "https://auth.example?tenant=one",
       "https://auth.example#fragment",

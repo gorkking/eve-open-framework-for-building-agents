@@ -28,6 +28,7 @@ import {
   isRuntimeIpAllowed,
   type RuntimeIpAllowList,
 } from "#runtime/governance/network/ip-allow-list.js";
+import { isLoopbackHostname } from "#shared/loopback.js";
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -809,26 +810,6 @@ export function localDev(): AuthFn<Request> {
   };
 }
 
-/**
- * Hostnames {@link localDev} treats as loopback, in addition to the
- * `*.localhost` wildcard and the `127.0.0.0/8` range. `0.0.0.0` is
- * intentionally excluded — it is the "all interfaces" sentinel, not a
- * loopback address, and requests claiming it as their host generally
- * originate from somewhere else on the network.
- *
- * Node's `URL.hostname` preserves brackets around IPv6 addresses (the
- * WHATWG-serialized form), so the IPv6 loopback is recognized as the
- * literal `"[::1]"` rather than `"::1"`.
- */
-const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "[::1]"]);
-
-/**
- * `127.0.0.0/8` is the full IPv4 loopback block — every `127.x.x.x`
- * address resolves to the same machine, and dev tools sometimes bind
- * to addresses other than `127.0.0.1` for multi-instance setups.
- */
-const LOOPBACK_IPV4_PREFIX = /^127\./;
-
 /** Returns whether a request URL names a loopback host accepted by {@link localDev}. */
 export function isLoopbackRequest(request: Request): boolean {
   let hostname: string;
@@ -838,15 +819,6 @@ export function isLoopbackRequest(request: Request): boolean {
     return false;
   }
   return isLoopbackHostname(hostname);
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    LOOPBACK_HOSTNAMES.has(hostname) ||
-    LOOPBACK_IPV4_PREFIX.test(hostname) ||
-    // RFC 6761: the entire `.localhost` TLD is reserved for loopback.
-    hostname.endsWith(".localhost")
-  );
 }
 
 const ANONYMOUS_SESSION_AUTH_CONTEXT: SessionAuthContext = {

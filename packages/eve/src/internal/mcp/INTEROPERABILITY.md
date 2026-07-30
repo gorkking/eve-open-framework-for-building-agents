@@ -4,6 +4,12 @@ The channel serves the MCP `2026-07-28` protocol and the official SDK v2's state
 
 The implementation vendors the official `@modelcontextprotocol/server` v2 package as a build-time dependency and uses its dual-era web-standard handler with `McpServer`. SDK tool registration validates every call against the same JSON Schema returned by `tools/list`. The vendored surface supports modern discovery, legacy initialization, `ping`, `tools/list`, `tools/call`, JSON-RPC errors, protocol validation, and request cancellation without adding an eve runtime dependency. Cancellation of durable agent work is also an explicit tool in the public channel; a cancellation notification arriving on another stateless HTTP request cannot reliably abort an earlier request.
 
+The compatibility tools advertise the complete input-request, input-response,
+and connection-authorization shapes. MCP hosts can therefore render HITL
+prompts and outbound OAuth challenges directly from tool discovery. Successful
+input delivery returns an immediate `working` acknowledgement; clients should
+not resubmit the same answers and should resume polling.
+
 The channel mounts Host and exact same-origin request validation in front of
 the SDK handler and auth walk. Remote endpoints require HTTPS; loopback HTTP
 remains available for local clients. No process-local cache owns invocation

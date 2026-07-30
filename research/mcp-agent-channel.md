@@ -422,16 +422,29 @@ The public state is:
 ```ts
 interface AgentInvocation {
   invocationId: string;
-  status: "working" | "input_required" | "completed" | "failed" | "cancelled";
+  status:
+    "working" | "input_required" | "authorization_required" | "completed" | "failed" | "cancelled";
   createdAt: string;
-  updatedAt: string;
   expiresAt?: string;
   pollAfterMs?: number;
   inputRequests?: Record<string, McpInputRequest>;
+  authorizations?: Array<{
+    name: string;
+    description: string;
+    authorization?: {
+      url?: string;
+      userCode?: string;
+      expiresAt?: string;
+      instructions?: string;
+      displayName?: string;
+    };
+    webhookUrl?: string;
+  }>;
   result?: unknown;
   error?: {
-    code: string;
+    code: number;
     message: string;
+    data?: unknown;
   };
 }
 ```
@@ -447,6 +460,7 @@ token, live request object, or MCP transport object.
 
 - eve running -> `working`
 - eve waiting on a supported input request -> `input_required`
+- eve waiting on an outbound connection authorization -> `authorization_required`
 - successful terminal output -> `completed`
 - workflow/runtime failure -> `failed`
 - acknowledged cooperative cancellation -> `cancelled`
@@ -777,6 +791,7 @@ After the external-host experience is stable:
 - restart-safe reads;
 - duplicate update/cancel requests;
 - input-required round trip;
+- outbound connection authorization-required projection and completion;
 - expired token and insufficient scope;
 - cross-principal rejection and explicitly allowed team sharing;
 - no bearer material persisted in session/invocation state.

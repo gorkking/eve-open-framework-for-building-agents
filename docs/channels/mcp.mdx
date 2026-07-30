@@ -99,9 +99,21 @@ workflow backend reports a retention deadline, responses include `expiresAt`.
 `agent_get` reconstructs active state from a bounded tail snapshot of the
 durable eve session event stream and does not start work or run another model.
 Terminal state comes directly from the workflow run without reading the event
-stream. When the agent requests input, pass the reported responses to
-`agent_update`. Cancellation is cooperative; poll the invocation until it
-reports `cancelled` or another terminal state.
+stream.
+
+Active invocations use three non-terminal states:
+
+- `working`: continue polling according to `pollAfterMs`.
+- `input_required`: present the structured `inputRequests` and pass answers to
+  `agent_update`. A successful update acknowledges the accepted answers with a
+  fresh `working` state; continue polling rather than submitting them again.
+- `authorization_required`: present each entry in `authorizations`, including
+  its sign-in URL, user code, or instructions when supplied. Connection
+  authorization completes through its callback and resumes the invocation
+  automatically; continue polling according to `pollAfterMs`.
+
+Cancellation is cooperative; poll the invocation until it reports `cancelled`
+or another terminal state.
 
 ## Connect Claude Code
 

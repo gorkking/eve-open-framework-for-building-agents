@@ -1,17 +1,27 @@
 import type { SessionAuthContext } from "#channel/types.js";
+import type { ConnectionAuthorizationChallenge } from "#public/connections/errors.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import type { JsonObject, JsonValue } from "#shared/json.js";
 export type AgentInvocationStatus =
   | "working"
   | "input_required"
+  | "authorization_required"
   | "completed"
   | "failed"
   | "cancelled";
+
+export interface AgentInvocationAuthorizationRequest {
+  readonly authorization?: ConnectionAuthorizationChallenge;
+  readonly description: string;
+  readonly name: string;
+  readonly webhookUrl?: string;
+}
 
 export interface AgentInvocation {
   readonly invocationId: string;
   readonly status: AgentInvocationStatus;
   readonly createdAt: string;
+  readonly authorizations?: readonly AgentInvocationAuthorizationRequest[];
   readonly expiresAt?: string;
   readonly pollAfterMs?: number;
   readonly inputRequests?: Readonly<Record<string, InputRequest>>;

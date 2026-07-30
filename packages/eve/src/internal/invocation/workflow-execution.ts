@@ -4,6 +4,7 @@ import { RunExpiredError, WorkflowRunNotFoundError } from "#compiled/@workflow/e
 import type { SessionAuthContext } from "#channel/types.js";
 import type {
   AgentInvocation,
+  AgentInvocationAuthorizationRequest,
   AgentInvocationExecution,
   AgentInvocationMutationResult,
   AgentInvocationStatus,
@@ -37,6 +38,7 @@ export class WorkflowAgentInvocationExecution implements AgentInvocationExecutio
     const handle = await this.#agent.run({
       adapter: { kind: "http" },
       auth: input.auth,
+      capabilities: { requestInput: true },
       channelName: this.#channelName,
       continuationToken: `${this.#channelName}:${continuationToken}`,
       externalInvocation: {
@@ -107,8 +109,10 @@ export class WorkflowAgentInvocationExecution implements AgentInvocationExecutio
       throw error;
     }
 
-    const invocation = await this.read(input);
-    return invocation === undefined ? { type: "not_found" } : { invocation, type: "success" };
+    return {
+      invocation: workingInvocation(input.invocationId, current.createdAt, current.expiresAt),
+      type: "success",
+    };
   }
 
   async cancel(input: {
@@ -195,29 +199,47 @@ function projectNonterminal(
   expiresAt: string | undefined,
   events: readonly HandleMessageStreamEvent[],
 ): AgentInvocation {
-  let status: "working" | "input_required" = "working";
+  const authorizations = new Map<string, AgentInvocationAuthorizationRequest>();
   let inputRequests: Readonly<Record<string, InputRequest>> | undefined;
   let result: JsonValue | undefined;
   for (const event of events) {
     if (event.type === "input.requested") {
-      status = "input_required";
       inputRequests = Object.fromEntries(
         event.data.requests.map((request) => [request.requestId, request]),
       );
     } else if (event.type === "turn.started") {
-      status = "working";
+      authorizations.clear();
       inputRequests = undefined;
       result = undefined;
+    } else if (event.type === "authorization.required") {
+      authorizations.set(event.data.name, {
+        ...(event.data.authorization === undefined
+          ? {}
+          : { authorization: event.data.authorization }),
+        description: event.data.description,
+        name: event.data.name,
+        ...(event.data.webhookUrl === undefined ? {} : { webhookUrl: event.data.webhookUrl }),
+      });
+    } else if (event.type === "authorization.completed") {
+      authorizations.delete(event.data.name);
     } else if (event.type === "message.completed" && event.data.message !== null) {
       result = safeJson(event.data.message);
     }
   }
+  const pendingAuthorizations = [...authorizations.values()];
+  const status: "working" | "input_required" | "authorization_required" =
+    pendingAuthorizations.length > 0
+      ? "authorization_required"
+      : inputRequests === undefined
+        ? "working"
+        : "input_required";
   return {
+    authorizations: pendingAuthorizations.length > 0 ? pendingAuthorizations : undefined,
     createdAt,
     expiresAt,
     inputRequests,
     invocationId,
-    pollAfterMs: status === "working" ? 1_000 : undefined,
+    pollAfterMs: status === "working" || status === "authorization_required" ? 1_000 : undefined,
     result,
     status,
   };

@@ -3,8 +3,7 @@ import {
   originValidationResponse,
 } from "#compiled/@modelcontextprotocol/server/index.js";
 
-const LOOPBACK_IPV4_PREFIX = /^127\./;
-const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "[::1]"]);
+import { isLoopbackHostname } from "#shared/loopback.js";
 
 /**
  * Applies the fetch-native HTTP guards required in front of the MCP SDK.
@@ -47,14 +46,6 @@ export function validateMcpHttpRequest(request: Request): Response | undefined {
   }
 
   return undefined;
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    LOOPBACK_HOSTNAMES.has(hostname) ||
-    LOOPBACK_IPV4_PREFIX.test(hostname) ||
-    hostname.endsWith(".localhost")
-  );
 }
 
 function securityError(message: string, status = 403): Response {

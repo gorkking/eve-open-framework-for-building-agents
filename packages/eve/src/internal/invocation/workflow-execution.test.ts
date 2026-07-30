@@ -55,6 +55,7 @@ describe("WorkflowAgentInvocationExecution", () => {
 
     expect(agent.run).toHaveBeenCalledWith(
       expect.objectContaining({
+        capabilities: { requestInput: true },
         externalInvocation: expect.objectContaining({ continuationToken: expect.any(String) }),
         mode: "task",
       }),
@@ -122,6 +123,108 @@ describe("WorkflowAgentInvocationExecution", () => {
       status: "input_required",
     });
     expect(getReadable).toHaveBeenCalledWith({ startIndex: -64 });
+  });
+
+  it("returns working immediately after accepting pending input", async () => {
+    runsGet.mockResolvedValue(run({ status: "running" }));
+    getReadable.mockReturnValue(
+      eventStream([
+        {
+          type: "input.requested",
+          data: {
+            sequence: 0,
+            stepIndex: 0,
+            turnId: "turn_1",
+            requests: [
+              {
+                action: {
+                  callId: "call_1",
+                  input: {},
+                  kind: "tool-call",
+                  toolName: "ask_question",
+                },
+                options: [{ id: "yes", label: "Yes" }],
+                prompt: "Proceed?",
+                requestId: "question",
+              },
+            ],
+          },
+        } as HandleMessageStreamEvent,
+      ]),
+    );
+    vi.mocked(agent.deliver).mockResolvedValue({ sessionId: "wrun_invocation" });
+
+    await expect(
+      execution().update({
+        auth,
+        invocationId: "wrun_invocation",
+        responses: [{ optionId: "yes", requestId: "question" }],
+      }),
+    ).resolves.toMatchObject({
+      invocation: { pollAfterMs: 1_000, status: "working" },
+      type: "success",
+    });
+    expect(agent.deliver).toHaveBeenCalledOnce();
+    expect(getReadable).toHaveBeenCalledOnce();
+  });
+
+  it("projects and clears pending connection authorization", async () => {
+    runsGet.mockResolvedValue(run({ status: "running" }));
+    const required = {
+      type: "authorization.required",
+      data: {
+        authorization: {
+          displayName: "Linear",
+          url: "https://linear.example/authorize",
+        },
+        description: "Sign in to Linear",
+        name: "linear",
+        sequence: 0,
+        stepIndex: 1,
+        turnId: "turn_1",
+        webhookUrl: "https://agent.example/connections/linear/callback/token",
+      },
+    } as HandleMessageStreamEvent;
+    getReadable.mockReturnValue(eventStream([required]));
+
+    await expect(
+      execution().read({ auth, invocationId: "wrun_invocation" }),
+    ).resolves.toMatchObject({
+      authorizations: [
+        {
+          authorization: {
+            displayName: "Linear",
+            url: "https://linear.example/authorize",
+          },
+          description: "Sign in to Linear",
+          name: "linear",
+        },
+      ],
+      pollAfterMs: 1_000,
+      status: "authorization_required",
+    });
+
+    getReadable.mockReturnValue(
+      eventStream([
+        required,
+        {
+          type: "authorization.completed",
+          data: {
+            name: "linear",
+            outcome: "authorized",
+            sequence: 0,
+            stepIndex: 2,
+            turnId: "turn_1",
+          },
+        } as HandleMessageStreamEvent,
+      ]),
+    );
+    await expect(
+      execution().read({ auth, invocationId: "wrun_invocation" }),
+    ).resolves.toMatchObject({
+      authorizations: undefined,
+      status: "working",
+    });
   });
 
   it("uses workflow return value as terminal result", async () => {

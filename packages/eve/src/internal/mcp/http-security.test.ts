@@ -43,6 +43,9 @@ describe("MCP HTTP security", () => {
   it("allows plain HTTP only on loopback", () => {
     expect(validateMcpHttpRequest(request("http://localhost:2117/mcp"))).toBeUndefined();
     expect(validateMcpHttpRequest(request("http://127.0.0.7:2117/mcp"))).toBeUndefined();
+    expect(validateMcpHttpRequest(request("http://127.attacker.example:2117/mcp"))?.status).toBe(
+      403,
+    );
     expect(validateMcpHttpRequest(request("http://agent.example/mcp"))?.status).toBe(403);
   });
 });
