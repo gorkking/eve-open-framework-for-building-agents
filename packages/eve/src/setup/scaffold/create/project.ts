@@ -32,7 +32,7 @@ export default eveChannel({
     // Open on localhost for \`eve dev\` and the REPL; ignored in production.
     localDev(),
     // This placeholder will not allow browser requests in production.
-    // Replace it with your app's auth provider, like Better Auth, Auth.js, or Clerk,
+    // Replace it with your app's auth provider, like Auth.js or Clerk,
     // or use none() for a public demo.
     placeholderAuth(),
   ],
@@ -240,10 +240,7 @@ const AGENT_INSTRUCTIONS_TEMPLATE = `# Identity
 You are a helpful assistant.
 `;
 
-const SHARED_TEMPLATE_FILES: Record<string, string> = {
-  "agent/channels/eve.ts": DEFAULT_EVE_CHANNEL_TEMPLATE,
-  "agent/instructions.md": AGENT_INSTRUCTIONS_TEMPLATE,
-  "tsconfig.json": `{
+export const DEFAULT_TSCONFIG_TEMPLATE = `{
   "compilerOptions": {
     "target": "ES2022",
     "module": "esnext",
@@ -256,7 +253,12 @@ const SHARED_TEMPLATE_FILES: Record<string, string> = {
   },
   "include": ["agent/**/*.ts", "evals/**/*.ts"]
 }
-`,
+`;
+
+const SHARED_TEMPLATE_FILES: Record<string, string> = {
+  "agent/channels/eve.ts": DEFAULT_EVE_CHANNEL_TEMPLATE,
+  "agent/instructions.md": AGENT_INSTRUCTIONS_TEMPLATE,
+  "tsconfig.json": DEFAULT_TSCONFIG_TEMPLATE,
   ".gitignore": `node_modules
 .env*
 .eve

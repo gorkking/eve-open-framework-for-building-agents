@@ -13,7 +13,7 @@ Step 1 scaffolded the agent without a web frontend. Add one now with `eve channe
 npx eve channels add web
 ```
 
-This adds a Next.js app (`next.config.ts`, `app/page.tsx`, `app/_components/`) wired to the existing eve channel, plus the chat UI components and their dependencies. Run `npm install` afterward to install the added packages. The generated `next.config.ts` wraps your config with `withEve`, which wires the eve routes automatically:
+This adds a Next.js app (`next.config.ts`, `app/page.tsx`, `app/_components/`) wired to the existing eve channel, plus the chat UI components and their dependencies. The generated `next.config.ts` wraps your config with `withEve`, which wires the eve routes automatically:
 
 ```ts title="next.config.ts"
 import type { NextConfig } from "next";

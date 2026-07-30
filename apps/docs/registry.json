@@ -786,7 +786,7 @@
             "bin": "eve",
             "args": ["integration", "setup", "web"]
           },
-          "requires": ">=0.27.8"
+          "requires": ">=0.28.1"
         }
       },
       "dependencies": [

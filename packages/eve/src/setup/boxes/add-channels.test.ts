@@ -343,7 +343,7 @@ describe("addChannels box", () => {
     expect(result.kind).toBe("done");
   });
 
-  it("warns for overwritten files, an overridden node engine, and competing Next.js configs", async () => {
+  it("warns for overwritten and preserved files, node engines, and competing configs", async () => {
     const deps = createDeps();
     deps.ensureChannel.mockResolvedValueOnce({
       kind: "web",
@@ -352,7 +352,7 @@ describe("addChannels box", () => {
       filesOverwritten: ["/tmp/project/app/page.tsx"],
       nodeEngineOverride: { previous: "22.x", next: "24.x" },
       competingNextConfigFiles: ["/tmp/project/next.config.mjs"],
-      filesSkipped: [],
+      filesSkipped: ["/tmp/project/agent/channels/eve.ts", "/tmp/project/tsconfig.json"],
       packageJsonUpdated: [],
     });
     const prompter = createPrompter();
@@ -366,6 +366,12 @@ describe("addChannels box", () => {
     );
     expect(prompter.log.warning).toHaveBeenCalledWith(
       "Found competing Next.js config at /tmp/project/next.config.mjs; merge any needed settings into next.config.ts and remove it before starting the preview, or Next.js may ignore the generated eve rewrite.",
+    );
+    expect(prompter.log.warning).toHaveBeenCalledWith(
+      "Preserved /tmp/project/tsconfig.json. Make sure it includes TypeScript and TSX files, enables JSX, and maps `@/*` to `./*` before starting Web Chat.",
+    );
+    expect(prompter.log.warning).toHaveBeenCalledWith(
+      "Preserved /tmp/project/agent/channels/eve.ts. Connect the Web Chat app's authentication to this channel before deploying.",
     );
   });
 

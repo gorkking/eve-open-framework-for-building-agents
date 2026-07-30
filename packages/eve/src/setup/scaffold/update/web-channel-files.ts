@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { DEFAULT_EVE_CHANNEL_TEMPLATE } from "../create/project.js";
+import { DEFAULT_EVE_CHANNEL_TEMPLATE, DEFAULT_TSCONFIG_TEMPLATE } from "../create/project.js";
 import { WEB_APP_TEMPLATE_FILES } from "../create/web-template.js";
 import { pathExists, writeTextFile } from "../files.js";
 
@@ -9,6 +9,7 @@ export const WEB_CHANNEL_PATH = "agent/channels/eve.ts";
 export const WEB_NEXT_CONFIG_PATH = "next.config.ts";
 export const WEB_VERCEL_JSON_PATH = "vercel.json";
 
+const WEB_TSCONFIG_PATH = "tsconfig.json";
 const WEB_VERCEL_JSON_SCHEMA = "https://openapi.vercel.sh/vercel.json";
 const SUPPORTED_NEXT_CONFIG_PATHS = [
   "next.config.js",
@@ -45,6 +46,27 @@ export async function reconcileRegistryInstalledWebChannel(
     { force: true },
   );
   return { action: channelExists ? "overwritten" : "created", filePath };
+}
+
+/**
+ * Creates the Web Chat tsconfig or replaces the untouched eve base config.
+ * Any user-authored configuration remains owned by the app.
+ */
+export async function reconcileRegistryInstalledWebTsconfig(
+  projectRoot: string,
+): Promise<{ action: "created" | "overwritten" | "skipped"; filePath: string }> {
+  const filePath = join(projectRoot, WEB_TSCONFIG_PATH);
+  const tsconfigExists = await pathExists(filePath);
+  const existingTsconfig = tsconfigExists ? await readFile(filePath, "utf8") : undefined;
+
+  if (existingTsconfig !== undefined && existingTsconfig !== DEFAULT_TSCONFIG_TEMPLATE) {
+    return { action: "skipped", filePath };
+  }
+
+  await writeTextFile(filePath, WEB_APP_TEMPLATE_FILES[WEB_TSCONFIG_PATH], {
+    force: true,
+  });
+  return { action: tsconfigExists ? "overwritten" : "created", filePath };
 }
 
 /**

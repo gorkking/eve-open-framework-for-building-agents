@@ -13,7 +13,11 @@ When no authored `instrumentation.ts` exists, `eve dev` records agent, AI SDK, a
 
 The directory is an immutable OTLP/JSON spool and remains available after `eve dev` exits, subject to the [retention policy](#local-trace-retention) below. Inspection tools may build a query index from these segments, but the index is derived and can be rebuilt without changing the captured trace data.
 
-Use `eve trace ls` to list captured traces and `eve trace <trace>` to inspect a session's span tree.
+Use `eve traces ls` to list captured traces and `eve traces <trace>` to inspect a session's span tree.
+
+When a model call is served by Vercel AI Gateway, its `agent.step` span also carries the cost the gateway reported: `gen_ai.usage.cost` (raw inference, USD), `gen_ai.usage.gateway_cost` (with the gateway surcharge), `gen_ai.usage.input_cost` / `gen_ai.usage.output_cost` (the split), and `gen_ai.generation.id` for reconciliation with the gateway dashboard. These attributes only exist for gateway-served calls — other providers emit nothing. Cost per turn is the sum across the turn's step spans.
+
+Model and step spans also split token usage when the provider reports details: `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_creation.input_tokens` (named for the [OTel GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai)) alongside the `agent.usage.input_tokens` / `agent.usage.output_tokens` totals — cached tokens price differently, so the split makes cost attribution exact. Providers without detailed usage emit only the totals.
 
 The local writer is an internal development default, not a second provider layered over authored instrumentation. When `instrumentation.ts` exists, its setup retains control and the zero-config writer is not installed.
 
@@ -193,13 +197,13 @@ When `eve build` fails on discovery errors, the CLI prints the full diagnostics 
 
 ### Common failures
 
-| Symptom                                       | Likely cause and fix                                                                                                                                                                                                                                                                                                                                                                     |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tool not discovered (the model never sees it) | Run `eve info`. Confirm the file is in the right slot (`agent/tools/<name>.ts`) and default-exports `defineTool(...)`, and check `.eve/diagnostics.json` for shape errors. `schedules/` are root-only.                                                                                                                                                                                   |
-| Model won't call a tool it should             | Tighten the tool `description` and `inputSchema`; put procedural guidance in a [skill](../skills), not the description. Confirm it's in the active set with `eve info`.                                                                                                                                                                                                                  |
-| Stuck on `session.waiting`                    | The turn is parked on an approval, a question, or a connection sign-in. Answer it, or POST a follow-up with the `continuationToken` (a stale token is rejected).                                                                                                                                                                                                                         |
-| 401 on production routes                      | Expected: auth fails closed. If your app includes Web Chat, configure the default shared-password sign-in with `EVE_ACCESS_PASSWORD` and `BETTER_AUTH_SECRET`, or replace the app's auth and wire your provider into the channel. If your app does not include Web Chat, replace `placeholderAuth()` with a real `AuthFn`. See [Auth and route protection](./auth-and-route-protection). |
-| Build fails with discovery errors             | Read the printed diagnostics and `.eve/diagnostics.json`; confirm the root-vs-subagent boundary is valid and secrets come from env vars.                                                                                                                                                                                                                                                 |
+| Symptom                                       | Likely cause and fix                                                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tool not discovered (the model never sees it) | Run `eve info`. Confirm the file is in the right slot (`agent/tools/<name>.ts`) and default-exports `defineTool(...)`, and check `.eve/diagnostics.json` for shape errors. `schedules/` are root-only. |
+| Model won't call a tool it should             | Tighten the tool `description` and `inputSchema`; put procedural guidance in a [skill](../skills), not the description. Confirm it's in the active set with `eve info`.                                |
+| Stuck on `session.waiting`                    | The turn is parked on an approval, a question, or a connection sign-in. Answer it, or POST a follow-up with the `continuationToken` (a stale token is rejected).                                       |
+| 401 on production routes                      | Expected: auth fails closed. Configure Web Chat's default sign-in, or connect your app's auth to the channel. See [Auth and route protection](./auth-and-route-protection).                            |
+| Build fails with discovery errors             | Read the printed diagnostics and `.eve/diagnostics.json`; confirm the root-vs-subagent boundary is valid and secrets come from env vars.                                                               |
 
 ## What to read next
 

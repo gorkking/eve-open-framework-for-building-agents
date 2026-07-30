@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import {
   deriveSlackConnectorSlug,
   ensureChannel,
@@ -229,6 +231,26 @@ function warnOverwrittenFiles(log: ChannelSetupLog, files: readonly string[] | u
   }
 }
 
+function warnPreservedWebFiles(
+  log: ChannelSetupLog,
+  projectRoot: string,
+  files: readonly string[],
+): void {
+  const channelPath = join(projectRoot, "agent/channels/eve.ts");
+  if (files.includes(channelPath)) {
+    log.warning(
+      `Preserved ${channelPath}. Connect the Web Chat app's authentication to this channel before deploying.`,
+    );
+  }
+
+  const tsconfigPath = join(projectRoot, "tsconfig.json");
+  if (files.includes(tsconfigPath)) {
+    log.warning(
+      `Preserved ${tsconfigPath}. Make sure it includes TypeScript and TSX files, enables JSX, and maps \`@/*\` to \`./*\` before starting Web Chat.`,
+    );
+  }
+}
+
 function warnCompetingNextConfigFiles(
   log: ChannelSetupLog,
   files: readonly string[] | undefined,
@@ -366,6 +388,7 @@ export function addChannels(
     payload.dependenciesChanged ||= result.packageJsonUpdated.length > 0;
     signal?.throwIfAborted();
     warnOverwrittenFiles(log, result.filesOverwritten);
+    warnPreservedWebFiles(log, projectPath, result.filesSkipped);
     if (
       result.kind === "web" &&
       result.action !== "skipped" &&

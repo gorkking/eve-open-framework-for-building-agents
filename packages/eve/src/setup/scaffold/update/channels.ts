@@ -19,6 +19,7 @@ import {
   ensureWebVercelJson,
   findCompetingNextConfigFiles,
   reconcileRegistryInstalledWebChannel,
+  reconcileRegistryInstalledWebTsconfig,
   renderWebAppTemplate,
   WEB_CHANNEL_PATH,
   WEB_VERCEL_JSON_PATH,
@@ -507,12 +508,19 @@ async function ensureWebChannel(
   filesSkipped.push(...packageManagerConfiguration.filesSkipped);
 
   if (options.registryItemInstalled) {
-    const channel = await reconcileRegistryInstalledWebChannel(options.projectRoot, appName);
-    if (channel.action === "skipped") {
-      filesSkipped.push(channel.filePath);
-    } else {
-      filesWritten.push(channel.filePath);
-      if (channel.action === "overwritten") filesOverwritten.push(channel.filePath);
+    const reconciliations = await Promise.all([
+      reconcileRegistryInstalledWebChannel(options.projectRoot, appName),
+      reconcileRegistryInstalledWebTsconfig(options.projectRoot),
+    ]);
+    for (const reconciliation of reconciliations) {
+      if (reconciliation.action === "skipped") {
+        filesSkipped.push(reconciliation.filePath);
+      } else {
+        filesWritten.push(reconciliation.filePath);
+        if (reconciliation.action === "overwritten") {
+          filesOverwritten.push(reconciliation.filePath);
+        }
+      }
     }
   } else {
     for (const [relPath, content] of Object.entries(WEB_APP_TEMPLATE_FILES)) {
