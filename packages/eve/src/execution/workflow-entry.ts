@@ -1,6 +1,7 @@
 import { createHook, getWorkflowMetadata, getWritable } from "#compiled/@workflow/core/index.js";
 
 import type {
+  ChannelGateReceipt,
   DeliverHookPayload,
   DeliverPayload,
   HookPayload,
@@ -18,8 +19,6 @@ import {
 } from "#execution/delegated-parent-result.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
-import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
-import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-step.js";
 import { dispatchAndAwaitTurn } from "#execution/turn-dispatch.js";
 import { normalizeSerializableError } from "#execution/workflow-errors.js";
 import { createSessionStep } from "#execution/create-session-step.js";
@@ -35,6 +34,13 @@ import { DEFAULT_SESSION_TIMEOUT_MS } from "#execution/session-timeout.js";
 import { emitTerminalSessionCompletionStep } from "#execution/terminal-session-completion-step.js";
 import { createSessionTimeoutControl } from "#execution/session-timeout-control.js";
 import { readSerializedSubagentDepth } from "#harness/subagent-depth.js";
+import {
+  CHANNEL_GATE_READY_NAMESPACE,
+  CHANNEL_GATE_RECEIPT_NAMESPACE,
+  type ChannelGateReady,
+} from "#execution/channel-gate-protocol.js";
+import { publishChannelGateReadyStep } from "#execution/channel-gate-steps.js";
+import { ChannelGateNamesKey } from "#context/keys.js";
 
 const SAFE_OUTER_WORKFLOW_FAILURE_MESSAGE =
   "Agent workflow failed. Inspect the private session trace for details.";
@@ -71,7 +77,7 @@ type DriverLoopOutcome =
 
 type NextSessionAction =
   | {
-      readonly delivery: DeliverHookPayload | null;
+      readonly delivery: HookPayload | null;
       readonly kind: "delivery";
     }
   | { readonly kind: "expired" };
@@ -109,6 +115,15 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
   input.serializedContext["eve.sessionId"] = sessionId;
 
   const driverWritable = getWritable<Uint8Array>();
+  const channelGateNames = input.serializedContext[ChannelGateNamesKey.name];
+  const gateReceiptWritable =
+    Array.isArray(channelGateNames) && channelGateNames.length > 0
+      ? getWritable<ChannelGateReceipt>({ namespace: CHANNEL_GATE_RECEIPT_NAMESPACE })
+      : undefined;
+  const gateReadyWritable =
+    gateReceiptWritable === undefined
+      ? undefined
+      : getWritable<ChannelGateReady>({ namespace: CHANNEL_GATE_READY_NAMESPACE });
 
   try {
     // Derived once and reused for createSession + tag emission so the
@@ -130,6 +145,8 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
     const outcome = await runDriverLoop({
       capabilities,
       driverWritable,
+      gateReadyWritable,
+      gateReceiptWritable,
       initialInput: {
         kind: "deliver",
         payloads: [
@@ -190,6 +207,8 @@ function createSafeOuterWorkflowError(): Error {
 async function runDriverLoop(input: {
   readonly capabilities?: SessionCapabilities;
   readonly driverWritable: WritableStream<Uint8Array>;
+  readonly gateReadyWritable?: WritableStream<ChannelGateReady>;
+  readonly gateReceiptWritable?: WritableStream<ChannelGateReceipt>;
   readonly initialInput: HookPayload;
   readonly mode: RunMode;
   readonly serializedContext: Record<string, unknown>;
@@ -230,6 +249,9 @@ async function runDriverLoop(input: {
       controlToken: nextTurnControlToken(),
       delivery: args.delivery,
       deliveryHook,
+      ...(input.gateReceiptWritable === undefined
+        ? {}
+        : { gateReceiptWritable: input.gateReceiptWritable }),
       mode: input.mode,
       parentWritable: input.driverWritable,
       serializedContext: args.serializedContext,
@@ -241,6 +263,12 @@ async function runDriverLoop(input: {
   };
 
   try {
+    if (input.gateReadyWritable !== undefined) {
+      await publishChannelGateReadyStep({
+        serializedContext: input.serializedContext,
+        writable: input.gateReadyWritable,
+      });
+    }
     if (input.sessionState.continuationToken) {
       await deliveryHook.rekey(input.sessionState.continuationToken);
       await sessionTimeout?.rekey(input.sessionState.continuationToken);
@@ -268,6 +296,10 @@ async function runDriverLoop(input: {
         // report `done`/`park`. The driver-owned `dispatch-*` arms exist
         // solely for pre-change pinned drivers, which run their own code.
         throw new Error(`Driver received unexpected turn action "${action.kind}".`);
+      }
+
+      if (action.reset === true) {
+        return { kind: "result", result: { output: "" } };
       }
 
       if (action.cancelled === true) {
@@ -332,48 +364,13 @@ async function runDriverLoop(input: {
         };
       }
 
-      const nextDeliver = nextAction.delivery;
-      if (nextDeliver === null) {
+      const nextDelivery = nextAction.delivery;
+      if (nextDelivery === null) {
         return { kind: "result", result: { output: "" } };
       }
 
-      const routed = await routeDeliverToChildren({
-        auth: nextDeliver.auth,
-        parentWritable: input.driverWritable,
-        payloads: nextDeliver.payloads,
-        sessionState: action.sessionState,
-      });
-
-      if (routed.kind === "cancel-turn") {
-        await cancelDescendantTurnsStep({
-          serializedContext: action.serializedContext,
-          sessionState: action.sessionState,
-        });
-        const settled = await settleCancelledTurnStep({
-          parentWritable: input.driverWritable,
-          serializedContext: action.serializedContext,
-          sessionState: action.sessionState,
-        });
-        action = {
-          ...action,
-          serializedContext: settled.serializedContext,
-          sessionState: settled.sessionState,
-        };
-        continue;
-      }
-
-      if (routed.remainder === undefined) {
-        // Fully routed to a descendant; parent has no turn to run.
-        continue;
-      }
-
       action = await runTurn({
-        delivery: {
-          auth: nextDeliver.auth,
-          kind: "deliver",
-          payloads: [routed.remainder],
-          requestId: nextDeliver.requestId,
-        },
+        delivery: nextDelivery,
         serializedContext: action.serializedContext,
         sessionState: action.sessionState,
       });
@@ -398,8 +395,18 @@ async function waitForNextSessionAction(input: {
   }
 
   if (input.bufferedDeliveries.length > 0) {
+    const first = input.bufferedDeliveries.shift()!;
+    const deliveries = [first];
+    if (first.gateOperation === undefined) {
+      while (
+        input.bufferedDeliveries.length > 0 &&
+        input.bufferedDeliveries[0]?.gateOperation === undefined
+      ) {
+        deliveries.push(input.bufferedDeliveries.shift()!);
+      }
+    }
     return {
-      delivery: coalesceDeliveries(input.bufferedDeliveries.splice(0)),
+      delivery: coalesceDeliveries(deliveries),
       kind: "delivery",
     };
   }
@@ -416,11 +423,18 @@ async function waitForNextSessionAction(input: {
       return { kind: "expired" };
     }
 
+    if (first.value.kind === "session-reset") {
+      return { delivery: first.value, kind: "delivery" };
+    }
+
     if (first.value.kind !== "deliver") {
       continue;
     }
 
     let coalesced = first.value;
+    if (coalesced.gateOperation !== undefined) {
+      return { delivery: coalesced, kind: "delivery" };
+    }
 
     while (true) {
       const ready = await takeReadyPayload(input.deliveryHook.next());
@@ -437,6 +451,14 @@ async function waitForNextSessionAction(input: {
       // Preserve a timeout queued after a delivery. The delivery committed
       // first, so its active turn settles before the offered timeout is read.
       if (ready.value.kind === "session-timeout") {
+        break;
+      }
+
+      if (ready.value.kind === "session-reset") {
+        break;
+      }
+
+      if (ready.value.kind === "deliver" && ready.value.gateOperation !== undefined) {
         break;
       }
 

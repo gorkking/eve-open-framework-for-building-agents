@@ -77,7 +77,11 @@ export class ScheduleDispatcher {
   async trigger(input: ScheduleDispatchInput): Promise<ScheduleDispatchResult> {
     const sessions: Session[] = [];
     const waitUntilTasks: Promise<unknown>[] = [];
-    const receive = createCrossChannelReceiveFn(this.runtime, toCrossChannelTargets(this.channels));
+    const receive = createCrossChannelReceiveFn(
+      this.runtime,
+      toCrossChannelTargets(this.channels),
+      { name: input.scheduleId, type: "schedule" },
+    );
 
     const args: ScheduleHandlerArgs = {
       appAuth: SCHEDULE_APP_AUTH,

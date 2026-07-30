@@ -1,4 +1,5 @@
 import type { SessionAuthContext } from "#channel/types.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 
 import { createLogger, logError } from "#internal/logging.js";
 import { buildGitHubBinding } from "#public/channels/github/binding.js";
@@ -328,7 +329,7 @@ async function sendGitHubTurn(input: {
       },
     );
   } catch (error) {
-    logError(log, input.logMessage ?? "GitHub delivery failed", error, {
+    logChannelOperationFailure(log, input.logMessage ?? "GitHub delivery failed", error, {
       deliveryId: input.event.delivery.id,
     });
   }

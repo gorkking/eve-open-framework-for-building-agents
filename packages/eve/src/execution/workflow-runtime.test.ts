@@ -20,6 +20,7 @@ const getWorldMock = vi.fn();
 const resumeHookMock = vi.fn();
 const cancelRunMock = vi.fn();
 const startMock = vi.fn();
+const prepareChannelGateOperationMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   cancelRun: (...args: unknown[]) => cancelRunMock(...args),
@@ -34,6 +35,10 @@ vi.mock("#runtime/sessions/compiled-agent-cache.js", () => ({
   getCompiledRuntimeAgentBundle: vi.fn(),
 }));
 
+vi.mock("#execution/channel-gate-runtime.js", () => ({
+  prepareChannelGateOperation: (...args: unknown[]) => prepareChannelGateOperationMock(...args),
+}));
+
 afterEach(() => {
   getHookByTokenMock.mockReset();
   getRunMock.mockReset();
@@ -41,6 +46,7 @@ afterEach(() => {
   resumeHookMock.mockReset();
   cancelRunMock.mockReset();
   startMock.mockReset();
+  prepareChannelGateOperationMock.mockReset();
   vi.mocked(getCompiledRuntimeAgentBundle).mockReset();
   vi.unstubAllEnvs();
 });
@@ -144,6 +150,77 @@ describe("createWorkflowRuntime#deliver", () => {
       payloads: [{ message: "hello" }],
     });
   });
+
+  it("attaches a prepared gate operation to the existing delivery hook and awaits its receipt", async () => {
+    const wait = vi.fn().mockResolvedValue("allow");
+    const cancel = vi.fn();
+    prepareChannelGateOperationMock.mockResolvedValue({
+      cancel,
+      operation: {
+        adapterKind: "channel:test",
+        auth: null,
+        id: "operation-1",
+        names: ["session.resume"],
+      },
+      wait,
+    });
+    getHookByTokenMock.mockResolvedValue({ runId: "owner-session" });
+    resumeHookMock.mockResolvedValue({ runId: "owner-session" });
+
+    await expect(
+      buildRuntime().deliver({
+        auth: null,
+        continuationToken: "test:active-hook",
+        gate: {
+          adapterKind: "channel:test",
+          names: ["session.resume"],
+        },
+        payload: { message: "hello" },
+      }),
+    ).resolves.toEqual({ sessionId: "owner-session" });
+
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      { runId: "owner-session" },
+      expect.objectContaining({
+        gateOperation: expect.objectContaining({ id: "operation-1" }),
+        kind: "deliver",
+      }),
+    );
+    expect(wait).toHaveBeenCalledOnce();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("abandons a gated delivery when the continuation changes owners before resume", async () => {
+    const cancel = vi.fn();
+    const wait = vi.fn();
+    prepareChannelGateOperationMock.mockResolvedValue({
+      cancel,
+      operation: {
+        adapterKind: "channel:test",
+        auth: null,
+        id: "operation-1",
+        names: ["session.resume"],
+      },
+      wait,
+    });
+    getHookByTokenMock.mockResolvedValue({ runId: "observed-owner" });
+    resumeHookMock.mockResolvedValue({ runId: "replacement-owner" });
+
+    await expect(
+      buildRuntime().deliver({
+        auth: null,
+        continuationToken: "test:active-hook",
+        gate: {
+          adapterKind: "channel:test",
+          names: ["session.resume"],
+        },
+        payload: { message: "hello" },
+      }),
+    ).rejects.toSatisfy(isRuntimeNoActiveSessionError);
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+  });
 });
 
 describe("createWorkflowRuntime#cancelTurn", () => {
@@ -192,6 +269,40 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     resumeHookMock.mockRejectedValue(failure);
 
     await expect(buildRuntime().cancelTurn({ sessionId: "session-1" })).rejects.toBe(failure);
+  });
+
+  it("routes a gated cancellation through the existing cancel hook", async () => {
+    const wait = vi.fn().mockResolvedValue("allow");
+    prepareChannelGateOperationMock.mockResolvedValue({
+      cancel: vi.fn(),
+      operation: {
+        adapterKind: "channel:test",
+        auth: null,
+        id: "operation-1",
+        names: ["turn.cancel"],
+      },
+      wait,
+    });
+    resumeHookMock.mockResolvedValue({ runId: "turn-run" });
+
+    await expect(
+      buildRuntime().cancelTurn({
+        auth: null,
+        gate: { adapterKind: "channel:test", names: ["turn.cancel"] },
+        sessionId: "session-1",
+        turnId: "turn-2",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "session-1:cancel",
+      expect.objectContaining({
+        gateOperation: expect.objectContaining({ id: "operation-1" }),
+        kind: "cancel",
+        turnId: "turn-2",
+      }),
+    );
+    expect(wait).toHaveBeenCalledOnce();
   });
 });
 
@@ -248,6 +359,42 @@ describe("createWorkflowRuntime#terminateSession", () => {
     cancelRunMock.mockRejectedValue(failure);
 
     await expect(buildRuntime().terminateSession({ sessionId: "session-1" })).rejects.toBe(failure);
+  });
+
+  it("routes a gated reset through session control and waits for the target workflow to finish", async () => {
+    const wait = vi.fn().mockResolvedValue("allow");
+    const returnValue = Promise.resolve({ output: "" });
+    prepareChannelGateOperationMock.mockResolvedValue({
+      cancel: vi.fn(),
+      operation: {
+        adapterKind: "channel:test",
+        auth: null,
+        id: "operation-1",
+        names: ["session.reset"],
+      },
+      wait,
+    });
+    resumeHookMock.mockResolvedValue({ runId: "turn-run" });
+    getRunMock.mockReturnValue({ returnValue });
+
+    await expect(
+      buildRuntime().terminateSession({
+        auth: null,
+        continuationToken: "test:active-hook",
+        gate: { adapterKind: "channel:test", names: ["session.reset"] },
+        sessionId: "session-1",
+      }),
+    ).resolves.toEqual({ status: "terminated" });
+
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "session-1:cancel",
+      expect.objectContaining({
+        gateOperation: expect.objectContaining({ id: "operation-1" }),
+        kind: "reset",
+      }),
+    );
+    expect(wait).toHaveBeenCalledOnce();
+    expect(getRunMock).toHaveBeenCalledWith("session-1");
   });
 });
 

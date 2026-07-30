@@ -3,7 +3,7 @@ import { createHook } from "#compiled/@workflow/core/index.js";
 import { claimHookOwnership, disposeHook, isHookConflictError } from "#execution/hook-ownership.js";
 import {
   sessionCancelHookToken,
-  type TurnCancelPayload,
+  type TurnInterruptionPayload,
 } from "#execution/turn-cancellation-token.js";
 import { TurnCancelledError } from "#harness/turn-cancellation.js";
 
@@ -21,7 +21,7 @@ export interface TurnCancellationControl {
    * the signal aborted. Race it against turn-owned awaits — never
    * `await` it alone.
    */
-  readonly requested: Promise<"cancel">;
+  readonly requested: Promise<"cancel" | "reset">;
   /** Disposes the hook, abandoning any outstanding read. Idempotent. */
   dispose(): Promise<void>;
 }
@@ -32,10 +32,13 @@ export interface TurnCancellationControl {
  * run — the turn then runs uncancellable rather than failing.
  */
 export async function createTurnCancellationControl(input: {
+  readonly acceptReset?: boolean;
+  readonly authorize?: (payload: TurnInterruptionPayload, available: boolean) => Promise<boolean>;
+  readonly canCancel?: boolean;
   readonly expectedTurnId: string;
   readonly sessionId: string;
 }): Promise<TurnCancellationControl | undefined> {
-  const hook = createHook<TurnCancelPayload>({
+  const hook = createHook<TurnInterruptionPayload>({
     token: sessionCancelHookToken(input.sessionId),
   });
   // Hook promises and iterators share one durable cursor. Create the
@@ -53,9 +56,9 @@ export async function createTurnCancellationControl(input: {
   const controller = new AbortController();
   // The durable abort fires in the read's continuation so its call site
   // is reached deterministically on every replay.
-  const requested = consumeMatchingCancel(iterator, input.expectedTurnId).then(() => {
+  const requested = consumeAllowedInterruption(iterator, input).then((kind) => {
     controller.abort(new TurnCancelledError());
-    return "cancel" as const;
+    return kind;
   });
 
   let disposed = false;
@@ -74,19 +77,36 @@ export async function createTurnCancellationControl(input: {
 
 // Mismatched turn guards are consumed as no-ops; each read is durable,
 // so the skip sequence replays deterministically.
-async function consumeMatchingCancel(
-  iterator: AsyncIterator<TurnCancelPayload>,
-  expectedTurnId: string,
-): Promise<void> {
+async function consumeAllowedInterruption(
+  iterator: AsyncIterator<TurnInterruptionPayload>,
+  input: {
+    readonly acceptReset?: boolean;
+    readonly authorize?: (payload: TurnInterruptionPayload, available: boolean) => Promise<boolean>;
+    readonly canCancel?: boolean;
+    readonly expectedTurnId: string;
+  },
+): Promise<"cancel" | "reset"> {
   while (true) {
     const next = await iterator.next();
     if (next.done) return await new Promise<never>(() => {});
-    if (matchesActiveTurn(next.value, expectedTurnId)) return;
+    const payload = next.value;
+    if (payload.kind === "reset") {
+      if (input.acceptReset !== true) continue;
+      if ((await input.authorize?.(payload, true)) === true) return "reset";
+      continue;
+    }
+
+    const available = input.canCancel !== false && matchesActiveTurn(payload, input.expectedTurnId);
+    if (payload.gateOperation !== undefined) {
+      if ((await input.authorize?.(payload, available)) === true) return "cancel";
+      continue;
+    }
+    if (available) return "cancel";
   }
 }
 
 function matchesActiveTurn(payload: unknown, expectedTurnId: string): boolean {
   if (typeof payload !== "object" || payload === null) return true;
-  const guard = (payload as TurnCancelPayload).turnId;
+  const guard = (payload as TurnInterruptionPayload & { readonly turnId?: string }).turnId;
   return guard === undefined || guard === expectedTurnId;
 }

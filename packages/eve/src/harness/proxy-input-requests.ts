@@ -1,6 +1,6 @@
 import type { SubagentInputRequestHookPayload } from "#channel/types.js";
 import type { HarnessSession, SessionStateMap } from "#harness/types.js";
-import type { InputRequestKind } from "#runtime/input/types.js";
+import type { InputRequest, InputRequestKind } from "#runtime/input/types.js";
 
 const PROXY_INPUT_REQUESTS_KEY = "eve.runtime.proxyInputRequests";
 
@@ -14,6 +14,7 @@ const PROXY_INPUT_REQUEST_KINDS = {
 export interface ProxyInputRequest {
   readonly childContinuationToken: string;
   readonly kind: InputRequestKind;
+  readonly request?: InputRequest;
 }
 
 /** `requestId → route` map stored on the parent session. */
@@ -117,6 +118,7 @@ export function toProxyInputRequestEntries(
         {
           childContinuationToken: payload.childContinuationToken,
           kind: request.kind,
+          request,
         },
       ] as const,
   );
@@ -170,9 +172,21 @@ function parseProxyInputRequest(value: unknown): ProxyInputRequest | undefined {
   return {
     childContinuationToken: value.childContinuationToken,
     kind: value.kind,
+    request: "request" in value && isInputRequestLike(value.request) ? value.request : undefined,
   };
 }
 
 function isInputRequestKind(value: unknown): value is InputRequestKind {
   return typeof value === "string" && Object.hasOwn(PROXY_INPUT_REQUEST_KINDS, value);
+}
+
+function isInputRequestLike(value: unknown): value is InputRequest {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "requestId" in value &&
+    typeof value.requestId === "string" &&
+    "kind" in value &&
+    isInputRequestKind(value.kind)
+  );
 }

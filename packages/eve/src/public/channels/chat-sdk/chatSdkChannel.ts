@@ -1,4 +1,5 @@
 import type { SessionAuthContext } from "#channel/types.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
 import { createLogger, extractErrorId, formatErrorHint } from "#internal/logging.js";
@@ -29,6 +30,7 @@ import {
   POST,
   type Channel,
   type ChannelEvents,
+  type ChannelGates,
   type ChannelSessionOps,
   type RouteHandlerArgs,
   type SendFn,
@@ -166,6 +168,8 @@ export interface ChatSdkChannelConfig<
   readonly webhook?: Omit<WebhookOptions, "waitUntil">;
   /** Optional Eve event handlers. Supplied handlers replace built-in defaults. */
   readonly events?: ChatSdkChannelEvents<TAdapters>;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<ChatSdkChannelContext<TAdapters>, ChatSdkReceiveTarget>;
   /**
    * Prefix for default Eve HITL button action ids. Change this if your Chat SDK
    * app already uses the `eve_input:` prefix.
@@ -256,14 +260,18 @@ export function chatSdkChannel<TAdapters extends ChatSdkAdapters>(
         "chatSdkChannel input actions require a thread on the Chat SDK action event.",
       );
     }
-    await bridgeSend(
-      bot,
-      { inputResponses: [response] },
-      {
-        auth: config.resolveInputAuth ? await config.resolveInputAuth(event) : null,
-        thread: event.thread,
-      },
-    );
+    try {
+      await bridgeSend(
+        bot,
+        { inputResponses: [response] },
+        {
+          auth: config.resolveInputAuth ? await config.resolveInputAuth(event) : null,
+          thread: event.thread,
+        },
+      );
+    } catch (error) {
+      logChannelOperationFailure(log, "input action delivery failed", error);
+    }
   });
 
   const channel = defineChannel<
@@ -272,6 +280,7 @@ export function chatSdkChannel<TAdapters extends ChatSdkAdapters>(
     ChatSdkReceiveTarget,
     ChatSdkInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "chat-sdk",
     state: initialState(),
     metadata: metadataFromState,

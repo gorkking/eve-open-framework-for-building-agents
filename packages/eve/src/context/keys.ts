@@ -62,6 +62,8 @@ export const InitiatorAuthKey = new ContextKey<SessionAuthContext | null>("eve.i
 export const SessionIdKey = new ContextKey<string>("eve.sessionId");
 export const ContinuationTokenKey = new ContextKey<string>("eve.continuationToken");
 export const ChannelRequestIdKey = new ContextKey<string>("eve.channelRequestId");
+/** Session-bound channel gates enabled when this session was created. */
+export const ChannelGateNamesKey = new ContextKey<readonly string[]>("eve.channelGateNames");
 export const ChannelInstrumentationKey = new ContextKey<ChannelInstrumentationProjection>(
   "eve.channelInstrumentation",
 );

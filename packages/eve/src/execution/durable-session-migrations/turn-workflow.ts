@@ -10,7 +10,7 @@
  * deployment still runs after a rollout. Future shape changes bump
  * {@link TURN_WORKFLOW_INPUT_VERSION} and append a v{N} → v{N+1} migration.
  */
-import type { HookPayload, SessionCapabilities } from "#channel/types.js";
+import type { ChannelGateReceipt, HookPayload, SessionCapabilities } from "#channel/types.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import type { RunMode } from "#shared/run-mode.js";
 
@@ -32,6 +32,8 @@ export interface TurnWorkflowInput {
   readonly version: typeof TURN_WORKFLOW_INPUT_VERSION;
   readonly capabilities: SessionCapabilities | undefined;
   readonly completionToken: string;
+  /** Private stream used to acknowledge target-owned gate evaluation. */
+  readonly gateReceiptWritable?: WritableStream<ChannelGateReceipt>;
   /**
    * Additive driver feature negotiation. Older pinned drivers omit this,
    * which keeps runtime-action orchestration on the legacy entry-owned path.
@@ -48,6 +50,7 @@ export interface TurnWorkflowDispatchInput {
   readonly capabilities: SessionCapabilities | undefined;
   readonly completionToken: string;
   readonly delivery: HookPayload;
+  readonly gateReceiptWritable?: WritableStream<ChannelGateReceipt>;
   readonly mode: RunMode;
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly serializedContext: Record<string, unknown>;
@@ -60,6 +63,9 @@ export function createTurnWorkflowInput(input: TurnWorkflowDispatchInput): TurnW
   return {
     capabilities: input.capabilities,
     completionToken: input.completionToken,
+    ...(input.gateReceiptWritable === undefined
+      ? {}
+      : { gateReceiptWritable: input.gateReceiptWritable }),
     driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
     mode: input.mode,
     stepInput: {

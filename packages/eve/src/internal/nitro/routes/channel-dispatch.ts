@@ -11,6 +11,8 @@ import { createResetFn } from "#channel/reset-session.js";
 import { createSendFn } from "#channel/send.js";
 import { createResolveActiveSessionFn } from "#channel/resolve-active-session.js";
 import { createGetSessionFn } from "#channel/session.js";
+import { executeGatedCancel, executeGatedDelivery } from "#channel/gated-operations.js";
+import { ChannelGateDeniedError, ChannelGateUnavailableError } from "#channel/gate-errors.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { readTrustedDevelopmentClientAddress } from "#internal/nitro/dev-client-address.js";
 import { DEVELOPMENT_WORKFLOW_SECRET_ENV } from "#internal/workflow/development-world-protocol.js";
@@ -89,6 +91,29 @@ export async function dispatchChannelRequest(
       return await matchedChannel.fetch(event.req, ctx);
     });
   } catch (error) {
+    if (error instanceof ChannelGateDeniedError) {
+      flushBackgroundTasks(event, routeArgs.backgroundTasks, routeKey, matchedChannel.name);
+      return channelGateDeniedResponse(error);
+    }
+    if (error instanceof ChannelGateUnavailableError) {
+      const errorId =
+        error.errorId ??
+        logError(log, "channel gate unavailable", error, {
+          routeKey,
+          channel: matchedChannel.name,
+          gate: error.gate,
+        });
+      if (error.errorId !== undefined) {
+        log.error("channel gate unavailable", {
+          routeKey,
+          channel: matchedChannel.name,
+          errorId,
+          gate: error.gate,
+        });
+      }
+      flushBackgroundTasks(event, routeArgs.backgroundTasks, routeKey, matchedChannel.name);
+      return channelGateUnavailableResponse(errorId);
+    }
     // Without this a handler throw is only Nitro's default 5xx, with no eve log.
     const errorId = logError(log, "channel handler threw", error, {
       routeKey,
@@ -133,6 +158,39 @@ export async function dispatchChannelWebSocketRequest(
     flushBackgroundTasks(event, routeArgs.backgroundTasks, routeKey, matchedChannel.name);
     return hooks;
   } catch (error) {
+    if (error instanceof ChannelGateDeniedError) {
+      flushBackgroundTasks(event, routeArgs.backgroundTasks, routeKey, matchedChannel.name);
+      return rejectWebSocketUpgrade(
+        {
+          error: error.reason ?? "Channel operation denied.",
+          gate: error.gate,
+          ok: false,
+        },
+        403,
+      );
+    }
+    if (error instanceof ChannelGateUnavailableError) {
+      const errorId =
+        error.errorId ??
+        logError(log, "channel websocket gate unavailable", error, {
+          routeKey,
+          channel: matchedChannel.name,
+          gate: error.gate,
+        });
+      if (error.errorId !== undefined) {
+        log.error("channel websocket gate unavailable", {
+          routeKey,
+          channel: matchedChannel.name,
+          errorId,
+          gate: error.gate,
+        });
+      }
+      flushBackgroundTasks(event, routeArgs.backgroundTasks, routeKey, matchedChannel.name);
+      return rejectWebSocketUpgrade(
+        { error: "Channel policy is temporarily unavailable.", errorId, ok: false },
+        503,
+      );
+    }
     const errorId = logError(log, "channel websocket handler threw", error, {
       routeKey,
       channel: matchedChannel.name,
@@ -188,15 +246,16 @@ function buildRouteArgs(
   };
   const channel = bundle.channels.find((candidate) => candidate.name === channelName);
   const adapter = channel?.adapter ?? { kind: "channel" };
-  const agent = createRouteAgent(bundle.runtime, requestId);
+  const agent = createRouteAgent(bundle.runtime, requestId, adapter);
   const send = createSendFn(bundle.runtime, adapter, channelName, { requestId });
   const resolveActiveSession = createResolveActiveSessionFn(bundle.runtime, channelName);
-  const cancel = createCancelFn(bundle.runtime, channelName);
-  const reset = createResetFn(bundle.runtime, channelName);
-  const getSession = createGetSessionFn(bundle.runtime);
+  const cancel = createCancelFn(bundle.runtime, channelName, adapter);
+  const reset = createResetFn(bundle.runtime, channelName, adapter);
+  const getSession = createGetSessionFn(bundle.runtime, adapter);
   const receive = createCrossChannelReceiveFn(
     bundle.runtime,
     toCrossChannelTargets(bundle.channels),
+    { name: channelName, type: "channel" },
   );
 
   const args = attachRouteAgent(
@@ -227,14 +286,28 @@ function buildRouteArgs(
   };
 }
 
-function createRouteAgent(runtime: Runtime, requestId: string | undefined): Agent {
+function createRouteAgent(
+  runtime: Runtime,
+  requestId: string | undefined,
+  adapter: import("#channel/adapter.js").ChannelAdapter,
+): Agent {
   return {
     async cancelTurn(input) {
-      return await runtime.cancelTurn(input);
+      return await executeGatedCancel({
+        adapter,
+        auth: input.auth,
+        runtime,
+        sessionId: input.sessionId,
+        turnId: input.turnId,
+      });
     },
     async deliver(input) {
       const deliverInput: DeliverInput = { ...input, requestId }; // Avoid mutating a frozen caller input.
-      return await runtime.deliver(deliverInput);
+      return await executeGatedDelivery({
+        adapter,
+        delivery: { ...deliverInput, auth: input.auth },
+        runtime,
+      });
     },
     async getEventStream(sessionId, options) {
       return await runtime.getEventStream(sessionId, options);
@@ -280,6 +353,15 @@ function flushBackgroundTasks(
     Promise.allSettled(tasks).then((results) => {
       for (const result of results) {
         if (result.status === "rejected") {
+          if (result.reason instanceof ChannelGateDeniedError) {
+            log.info("channel background operation denied", {
+              routeKey,
+              channel,
+              gate: result.reason.gate,
+              reason: result.reason.reason,
+            });
+            continue;
+          }
           logError(log, "channel background task failed", result.reason, {
             routeKey,
             channel,
@@ -287,6 +369,28 @@ function flushBackgroundTasks(
         }
       }
     }),
+  );
+}
+
+function channelGateDeniedResponse(error: ChannelGateDeniedError): Response {
+  return Response.json(
+    {
+      error: error.reason ?? "Channel operation denied.",
+      gate: error.gate,
+      ok: false,
+    },
+    { status: 403 },
+  );
+}
+
+function channelGateUnavailableResponse(errorId: string): Response {
+  return Response.json(
+    {
+      error: "Channel policy is temporarily unavailable.",
+      errorId,
+      ok: false,
+    },
+    { status: 503 },
   );
 }
 

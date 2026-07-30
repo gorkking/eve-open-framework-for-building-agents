@@ -1,6 +1,7 @@
 import type { DiscordInstrumentationMetadata } from "#public/channels/discord/index.js";
 import type { SessionHandle } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelSessionOps } from "#public/definitions/channel.js";
 
@@ -21,7 +22,11 @@ import {
   type DiscordMessageBody,
   type DiscordPostedMessage,
 } from "#public/channels/discord/api.js";
-import { defaultEvents, defaultOnCommand } from "#public/channels/discord/defaults.js";
+import {
+  defaultDiscordAuth,
+  defaultEvents,
+  defaultOnCommand,
+} from "#public/channels/discord/defaults.js";
 import {
   deriveComponentInputResponses,
   deriveModalInputResponses,
@@ -48,7 +53,13 @@ import {
 import { type DiscordWebhookVerifier } from "#public/channels/discord/verify.js";
 import { verifyDiscordInbound } from "#public/channels/discord/verifyInbound.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
-import { defineChannel, POST, type Channel, type SendFn } from "#public/definitions/channel.js";
+import {
+  defineChannel,
+  POST,
+  type Channel,
+  type ChannelGates,
+  type SendFn,
+} from "#public/definitions/channel.js";
 
 const log = createLogger("discord.channel");
 
@@ -156,6 +167,8 @@ export interface DiscordChannelConfig {
   ): DiscordCommandResultOrPromise;
 
   readonly events?: DiscordChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<DiscordChannelContext, DiscordReceiveTarget>;
 }
 
 /** Low-level Discord handle exposed to hooks and event handlers. */
@@ -215,6 +228,7 @@ export function discordChannel(config: DiscordChannelConfig = {}): DiscordChanne
     DiscordReceiveTarget,
     DiscordInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "discord",
     state: initialDiscordState(),
     metadata: (state) => ({ channelId: state.channelId, guildId: state.guildId }),
@@ -608,7 +622,7 @@ async function dispatchCommand(input: {
       },
     );
   } catch (error) {
-    log.error("command delivery failed", { error });
+    logChannelOperationFailure(log, "command delivery failed", error);
   }
 }
 
@@ -622,7 +636,7 @@ async function dispatchInputResponses(input: {
     await input.send(
       { inputResponses: input.inputResponses },
       {
-        auth: null,
+        auth: defaultDiscordAuth(input.interaction),
         continuationToken: discordContinuationToken(
           input.interaction.channelId,
           input.conversationId,
@@ -635,7 +649,7 @@ async function dispatchInputResponses(input: {
       },
     );
   } catch (error) {
-    log.error("interaction response delivery failed", { error });
+    logChannelOperationFailure(log, "interaction response delivery failed", error);
   }
 }
 

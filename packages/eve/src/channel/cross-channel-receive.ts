@@ -7,6 +7,7 @@ import { createSendFn } from "#channel/send.js";
 import type { Session } from "#channel/session.js";
 import type { Runtime, SessionAuthContext } from "#channel/types.js";
 import type { ResolvedChannelDefinition } from "#runtime/types.js";
+import { evaluateChannelReceiveGate, type ChannelReceiveSource } from "#channel/gates.js";
 
 /**
  * Options accepted by {@link CrossChannelReceiveFn}. Mirrors the input
@@ -41,6 +42,7 @@ export interface CrossChannelTarget {
   readonly definition: CompiledChannel;
   readonly receive?: CompiledChannel["receive"];
   readonly adapter?: ChannelAdapter;
+  readonly receiveGate?: CompiledChannel["receiveGate"];
 }
 
 /**
@@ -61,6 +63,7 @@ export function toCrossChannelTargets(
             name: channel.name,
             definition: channel.definition,
             receive: channel.receive,
+            receiveGate: channel.definition.receiveGate,
             adapter: channel.adapter,
           },
         ],
@@ -76,6 +79,7 @@ export function toCrossChannelTargets(
 export function createCrossChannelReceiveFn(
   runtime: Runtime,
   channels: readonly CrossChannelTarget[],
+  source: ChannelReceiveSource = { name: "unknown", type: "channel" },
 ): CrossChannelReceiveFn {
   return async (channel, options) => {
     const targetChannel = resolveTargetByReference(channel, channels);
@@ -87,6 +91,7 @@ export function createCrossChannelReceiveFn(
         target: options.target as Readonly<Record<string, unknown>>,
         auth: options.auth,
       },
+      source,
       describeMissingReceive: () =>
         `args.receive(): channel "${targetChannel.name}" does not implement receive(). ` +
         `Declare a receive hook on the channel to accept cross-channel sessions.`,
@@ -98,7 +103,8 @@ export function createCrossChannelReceiveFn(
 
 interface InvokeChannelReceiveInput {
   readonly runtime: Runtime;
-  readonly target: Pick<CrossChannelTarget, "name" | "receive" | "adapter">;
+  readonly target: Pick<CrossChannelTarget, "name" | "receive" | "receiveGate" | "adapter">;
+  readonly source: ChannelReceiveSource;
   readonly input: {
     readonly message: string;
     readonly target: Readonly<Record<string, unknown>>;
@@ -121,6 +127,11 @@ export async function invokeChannelReceive(args: InvokeChannelReceiveInput): Pro
   if (!args.target.adapter) {
     throw new Error(args.describeMissingAdapter());
   }
+  await evaluateChannelReceiveGate({
+    gate: args.target.receiveGate,
+    payload: args.input,
+    source: args.source,
+  });
   const send = createSendFn(args.runtime, args.target.adapter, args.target.name);
   return await args.target.receive(args.input, { send });
 }

@@ -289,7 +289,7 @@ describe("discordChannel() inbound route", () => {
     expect(send).toHaveBeenCalledWith(
       { inputResponses: [{ optionId: "approve", requestId: "call_1" }] },
       expect.objectContaining({
-        auth: null,
+        auth: expect.objectContaining({ principalId: "discord:U01" }),
         continuationToken: "C01:M01",
       }),
     );

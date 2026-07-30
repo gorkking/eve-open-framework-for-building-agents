@@ -2,7 +2,10 @@ import type { SessionAuthContext } from "#channel/types.js";
 
 import { extractErrorId, formatErrorHint } from "#internal/logging.js";
 import { splitDiscordMessageContent } from "#public/channels/discord/api.js";
-import type { DiscordCommandInteraction } from "#public/channels/discord/inbound.js";
+import type {
+  DiscordCommandInteraction,
+  DiscordInteractionBase,
+} from "#public/channels/discord/inbound.js";
 import { renderInputRequestComponents } from "#public/channels/discord/hitl.js";
 import type {
   DiscordChannelEvents,
@@ -17,7 +20,9 @@ import type {
  * `principalType` `service` for bot actors or `user` otherwise. Copies the
  * channel, interaction, user, guild, and member-nick attributes.
  */
-export function defaultDiscordAuth(interaction: DiscordCommandInteraction): SessionAuthContext {
+export function defaultDiscordAuth<TInteraction extends DiscordInteractionBase>(
+  interaction: TInteraction,
+): SessionAuthContext {
   const attributes: Record<string, string> = {
     channel_id: interaction.channelId,
     interaction_id: interaction.id,

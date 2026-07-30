@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { CHANNEL_SENTINEL, type CompiledChannel } from "#channel/compiled-channel.js";
+import { ChannelGateDeniedError, ChannelGateUnavailableError } from "#channel/gate-errors.js";
 import {
   createCrossChannelReceiveFn,
   type CrossChannelTarget,
@@ -170,4 +171,56 @@ describe("createCrossChannelReceiveFn", () => {
 
     expect(slack.receive.mock.calls[0]![0]).toEqual(expect.objectContaining({ auth }));
   });
+
+  it("evaluates channel.receive before authored receive with source metadata", async () => {
+    const slack = makeChannel("slack");
+    const order: string[] = [];
+    slack.receive.mockImplementation(async () => {
+      order.push("receive");
+      return makeSession();
+    });
+    slack.target = {
+      ...slack.target,
+      receiveGate: async (_input, ctx) => {
+        order.push(`gate:${ctx.source.type}:${ctx.source.name}`);
+        return { type: "allow" };
+      },
+    };
+    const fn = createCrossChannelReceiveFn(makeRuntime(), [slack.target], {
+      name: "router",
+      type: "channel",
+    });
+
+    await fn(slack.definition, { auth: null, message: "go", target: {} });
+
+    expect(order).toEqual(["gate:channel:router", "receive"]);
+  });
+
+  it.each([
+    [
+      "denial",
+      async () => ({ reason: "Private target.", type: "deny" as const }),
+      ChannelGateDeniedError,
+    ],
+    [
+      "failure",
+      async () => Promise.reject(new Error("policy database offline")),
+      ChannelGateUnavailableError,
+    ],
+  ])(
+    "blocks authored receive and send side effects on gate %s",
+    async (_name, gate, ErrorClass) => {
+      const runtime = makeRuntime();
+      const slack = makeChannel("slack");
+      slack.target = { ...slack.target, receiveGate: gate };
+      const fn = createCrossChannelReceiveFn(runtime, [slack.target]);
+
+      await expect(
+        fn(slack.definition, { auth: null, message: "go", target: {} }),
+      ).rejects.toBeInstanceOf(ErrorClass);
+      expect(slack.receive).not.toHaveBeenCalled();
+      expect(runtime.run).not.toHaveBeenCalled();
+      expect(runtime.deliver).not.toHaveBeenCalled();
+    },
+  );
 });

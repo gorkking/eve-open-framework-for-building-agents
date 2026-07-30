@@ -8,6 +8,7 @@ import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import type { ChannelAdapter } from "#channel/adapter.js";
 import type { AgentLimitsDefinition } from "#shared/agent-definition.js";
 import type { JsonObject } from "#shared/json.js";
+import type { ChannelGateName, SessionChannelGateName } from "#channel/gates.js";
 
 export type { ContextAccessor } from "#context/key.js";
 export type { ChannelInstrumentationProjection } from "#channel/instrumentation.js";
@@ -21,6 +22,12 @@ export type RunSessionLimits = Pick<
 
 /** Identifies the session turn to cancel. */
 export interface CancelTurnInput {
+  /** Authenticated actor for a gated public cancellation. */
+  readonly auth?: SessionAuthContext | null;
+  /** Continuation token whose observed owner is being cancelled. */
+  readonly continuationToken?: string;
+  /** Configured gate metadata. Omitted by framework control-plane cancellation. */
+  readonly gate?: ChannelGateRequest;
   readonly sessionId: string;
   /** Limits the request to the turn the caller observed. */
   readonly turnId?: string;
@@ -33,6 +40,12 @@ export interface CancelTurnResult {
 
 /** Identifies a session to transition permanently to a terminal state. */
 export interface TerminateSessionInput {
+  /** Authenticated actor for a gated public reset. */
+  readonly auth?: SessionAuthContext | null;
+  /** Continuation token whose observed owner is being reset. */
+  readonly continuationToken?: string;
+  /** Configured gate metadata. Omitted by framework control-plane termination. */
+  readonly gate?: ChannelGateRequest;
   /** Human-readable reason recorded on the terminal workflow transition. */
   readonly reason?: string;
   readonly sessionId: string;
@@ -42,6 +55,35 @@ export interface TerminateSessionInput {
 export type TerminateSessionResult =
   | { readonly status: "terminated" }
   | { readonly status: "already_terminal" };
+
+/** Gate configuration attached to a public runtime operation. */
+export interface ChannelGateRequest {
+  readonly adapterKind: string;
+  readonly names: readonly SessionChannelGateName[];
+}
+
+/** Durable identity attached to an operation consumed by its target session. */
+export interface ChannelGateOperation extends ChannelGateRequest {
+  readonly auth: SessionAuthContext | null;
+  readonly id: string;
+}
+
+/** Private acknowledgement emitted by the target session after gate evaluation. */
+export type ChannelGateReceipt =
+  | { readonly id: string; readonly status: "allow" }
+  | { readonly id: string; readonly status: "no_active_session" }
+  | {
+      readonly id: string;
+      readonly status: "denied";
+      readonly gate: ChannelGateName;
+      readonly reason?: string;
+    }
+  | {
+      readonly id: string;
+      readonly status: "unavailable";
+      readonly gate: SessionChannelGateName;
+      readonly errorId?: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Lineage
@@ -143,10 +185,20 @@ export interface DeliverPayload {
  */
 export interface DeliverHookPayload {
   readonly auth?: SessionAuthContext | null;
+  /** Present when the target session must evaluate gates before consumption. */
+  readonly gateOperation?: ChannelGateOperation;
   /** Inbound channel request id used only for workflow attributes. */
   readonly requestId?: string;
   readonly kind: "deliver";
   readonly payloads: readonly DeliverPayload[];
+}
+
+/** Gated reset delivered to a parked session through its existing public hook. */
+export interface SessionResetHookPayload {
+  readonly continuationToken: string;
+  readonly gateOperation: ChannelGateOperation;
+  readonly kind: "session-reset";
+  readonly reason?: string;
 }
 
 /** Internal deadline signal sent through the session's delivery hook. */
@@ -218,6 +270,7 @@ export interface SubagentAuthorizationEventHookPayload {
 export type HookPayload =
   | DeliverHookPayload
   | RuntimeActionResultHookPayload
+  | SessionResetHookPayload
   | SessionTimeoutHookPayload
   | SubagentAuthorizationEventHookPayload
   | SubagentInputRequestHookPayload;
@@ -353,6 +406,8 @@ export interface DeliverInput {
    * this field before calling the adapter's hooks.
    */
   readonly auth?: SessionAuthContext | null;
+  /** Configured gates evaluated by the session before consuming this delivery. */
+  readonly gate?: ChannelGateRequest;
   /** Inbound channel request id used to correlate workflow attributes. */
   readonly requestId?: string;
   readonly continuationToken: string;

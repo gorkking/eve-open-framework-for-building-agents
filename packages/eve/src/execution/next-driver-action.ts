@@ -37,6 +37,8 @@ export type NextDriverAction =
        * working.
        */
       readonly cancelled?: true;
+      /** Set when an allowed public reset intentionally terminates the session. */
+      readonly reset?: true;
     }
   | {
       readonly kind: "dispatch-runtime-actions";

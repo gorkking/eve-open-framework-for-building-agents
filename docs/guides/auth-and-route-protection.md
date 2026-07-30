@@ -3,9 +3,10 @@ title: "Auth & Route Protection"
 description: "Secure your agent's HTTP routes with an ordered auth walk, verifier helpers, and connection OAuth via Vercel Connect."
 ---
 
-eve has two independent auth systems:
+eve separates authentication, operation authorization, and outbound credentials:
 
 - **Route auth** (inbound) decides who can reach your agent's HTTP routes. It runs at the channel layer, gating the request before any model work runs.
+- **Channel gates** authorize what that authenticated actor may do to an existing session.
 - **Tool and connection auth** (outbound) is how your agent signs in to an external service it calls, like an OAuth MCP server. It happens later, when a tool or connection actually reaches out.
 
 Start with route auth.
@@ -249,9 +250,40 @@ Inside runtime code, `ctx.session.auth` carries the result of the channel's rout
 - A follow-up message updates `auth.current` but leaves `auth.initiator` alone. When a different caller follows up on the same session, `auth.current` tracks the new caller for that turn while `auth.initiator` stays pinned to whoever started it.
 - Both are `null` only on internal runtime paths (subagents, for instance) that never went through an authored route. HTTP traffic always populates `auth.current`, since the walk either accepts with a `SessionAuthContext` or returns `401`.
 
-Use the principal on `auth.current` (or `auth.initiator`) to scope tools, resolve [dynamic capabilities](./dynamic-capabilities) per principal, or enforce tenant boundaries. There's no second per-session ownership ACL stacked on top of route auth. Access is decided at the HTTP boundary, and the durable session carries the caller snapshot forward into your runtime code.
+Use the principal on `auth.current` (or `auth.initiator`) to scope tools, resolve [dynamic capabilities](./dynamic-capabilities) per principal, or enforce tenant boundaries. The durable session carries the caller snapshot forward, and [channel gates](../channels/custom#authorize-channel-operations-with-gates) can enforce a per-operation policy before eve resumes or mutates that session.
 
-Route auth does not enforce session ownership. If multiple users or tenants can reach the same route, you must implement the per-user, per-tenant, or per-session authorization your application requires.
+Route auth alone does not enforce session ownership. If multiple users or tenants can reach the same route, configure gates for follow-up, HITL, cancellation, and reset operations, and apply the same ownership policy to read-only stream or inspection routes in your application.
+
+### Authentication, gates, and events
+
+Authentication establishes the actor. Gates authorize that actor before a protected channel operation. Channel `events` observe lifecycle activity and may update durable channel state, but they run too late to authorize the operation that produced the event.
+
+For example, an initiator-only HITL gate compares the stable principals route auth placed on the session:
+
+```ts
+gates: {
+  "input.response": (_input, _channel, ctx) =>
+    ctx.session.auth.current?.principalId ===
+    ctx.session.auth.initiator?.principalId
+      ? { type: "allow" }
+      : { type: "deny", reason: "Only the initiating user may respond." },
+}
+```
+
+Use an async gate when authorization lives outside eve:
+
+```ts
+gates: {
+  "session.resume": async (_input, _channel, ctx) =>
+    (await database.mayResume(ctx.session.auth.current, ctx.session.id))
+      ? { type: "allow" }
+      : { type: "deny" },
+}
+```
+
+On an existing-session delivery, `"session.resume"` runs before `"input.response"`; the latter also covers option labels converted from text, freeform answers, and a follow-up that dismisses a dismissable question. Gate denial changes no session state and generic HTTP routes return `403`, including the optional author-declared reason. A gate that throws, returns a malformed decision, or cannot rehydrate the target session's gate code fails closed with `503` and an opaque error id. Webhook transports still acknowledge the platform request and drop a denied operation; Slack leaves HITL controls active unless gated delivery succeeds.
+
+Existing-session gates execute in the target session's existing entry/turn workflow path, immediately before that workflow consumes the protected operation. They evaluate cloned state, and eve discards all channel/session mutations made by the callback regardless of its decision. External side effects cannot be rolled back, so callbacks should be policy-oriented and idempotent. Sessions without the immutable readiness declaration for a requested gate fail closed and must be restarted.
 
 ## Tool and connection auth
 

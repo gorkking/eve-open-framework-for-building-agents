@@ -25,11 +25,15 @@ export default defineChannel({
       return Response.json({ ok: true, sessionId: session.id });
     }),
     POST("/threads/:threadId/stop", async (_request, { params, cancel }) => {
-      const result = await cancel({ continuationToken: params.threadId ?? "" });
+      const result = await cancel({
+        auth: AUTH,
+        continuationToken: params.threadId ?? "",
+      });
       return Response.json(result);
     }),
     POST("/threads/:threadId/new", async (_request, { params, reset }) => {
       const result = await reset({
+        auth: AUTH,
         continuationToken: params.threadId ?? "",
         reason: "E2E user requested /new",
       });

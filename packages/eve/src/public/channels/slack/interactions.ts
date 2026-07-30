@@ -24,6 +24,7 @@ import {
 } from "#compiled/@chat-adapter/slack/webhook.js";
 
 import { createLogger } from "#internal/logging.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import {
   buildSlackBinding,
   resolveSlackBotToken,
@@ -381,37 +382,40 @@ export async function handleInteractionPost(
   if (inputResponses.length > 0) {
     const user = interaction.actions[0]?.user;
     if (!user) return ack;
+    const actorAuth = buildSlackAuthContext({
+      channelId: interaction.channelId,
+      teamId: interaction.teamId,
+      threadTs: interaction.threadTs,
+      userId: user.id,
+      userName: user.username ?? user.name,
+    });
 
     ctx.waitUntil(
-      ctx
-        .send(
-          { inputResponses },
-          {
-            auth: buildSlackAuthContext({
-              channelId: interaction.channelId,
-              teamId: interaction.teamId,
-              threadTs: interaction.threadTs,
-              userId: user.id,
-              userName: user.username ?? user.name,
-            }),
-            continuationToken,
-            state: {
-              channelId: interaction.channelId,
-              threadTs: interaction.threadTs,
-              teamId: interaction.teamId ?? null,
-              triggeringUserId: user.id,
+      (async () => {
+        try {
+          await ctx.send(
+            { inputResponses },
+            {
+              auth: actorAuth,
+              continuationToken,
+              state: {
+                channelId: interaction.channelId,
+                threadTs: interaction.threadTs,
+                teamId: interaction.teamId ?? null,
+                triggeringUserId: user.id,
+              },
             },
-          },
-        )
-        .catch((error: unknown) => {
-          log.error("HITL interaction delivery failed", { error });
-        }),
-    );
-
-    ctx.waitUntil(
-      updateAnsweredHitlCard(interaction, deps).catch((error: unknown) => {
-        log.error("HITL answered-card update failed", { error });
-      }),
+          );
+        } catch (error) {
+          logChannelOperationFailure(log, "HITL interaction delivery failed", error);
+          return;
+        }
+        try {
+          await updateAnsweredHitlCard(interaction, deps);
+        } catch (error) {
+          log.error("HITL answered-card update failed", { error });
+        }
+      })(),
     );
   }
 
@@ -428,11 +432,25 @@ export async function handleInteractionPost(
       const slackCtx: SlackInteractionContext = {
         cancel: (options = {}) =>
           ctx.cancel({
+            auth: buildSlackAuthContext({
+              channelId: interaction.channelId,
+              teamId: interaction.teamId,
+              threadTs: interaction.threadTs,
+              userId: interaction.actions[0]?.user.id ?? "unknown",
+              userName: interaction.actions[0]?.user.username ?? interaction.actions[0]?.user.name,
+            }),
             continuationToken,
             turnId: options.turnId,
           }),
         reset: (options = {}) =>
           ctx.reset({
+            auth: buildSlackAuthContext({
+              channelId: interaction.channelId,
+              teamId: interaction.teamId,
+              threadTs: interaction.threadTs,
+              userId: interaction.actions[0]?.user.id ?? "unknown",
+              userName: interaction.actions[0]?.user.username ?? interaction.actions[0]?.user.name,
+            }),
             continuationToken,
             reason: options.reason,
           }),
@@ -549,41 +567,43 @@ async function handleViewSubmission(
   const teamId = user?.teamId ?? payload.teamId ?? null;
 
   ctx.waitUntil(
-    ctx
-      .send(
-        { inputResponses: [{ requestId: metadata.requestId, text }] },
-        {
-          auth: buildSlackAuthContext({
-            channelId: metadata.channelId,
-            teamId,
-            threadTs: metadata.threadTs,
-            userId: triggeringUserId,
-            userName: user?.username ?? user?.name,
-          }),
-          continuationToken: metadata.continuationToken,
-          state: {
-            channelId: metadata.channelId,
-            threadTs: metadata.threadTs,
-            teamId,
-            triggeringUserId,
+    (async () => {
+      try {
+        await ctx.send(
+          { inputResponses: [{ requestId: metadata.requestId, text }] },
+          {
+            auth: buildSlackAuthContext({
+              channelId: metadata.channelId,
+              teamId,
+              threadTs: metadata.threadTs,
+              userId: triggeringUserId,
+              userName: user?.username ?? user?.name,
+            }),
+            continuationToken: metadata.continuationToken,
+            state: {
+              channelId: metadata.channelId,
+              threadTs: metadata.threadTs,
+              teamId,
+              triggeringUserId,
+            },
           },
-        },
-      )
-      .catch((error: unknown) => {
-        log.error("freeform answer delivery failed", { error });
-      }),
-  );
-
-  ctx.waitUntil(
-    updateAnsweredFreeformCard({
-      channelId: metadata.channelId,
-      messageTs: metadata.messageTs,
-      answerLabel: text,
-      userId: triggeringUserId ?? undefined,
-      deps: _deps,
-    }).catch((error: unknown) => {
-      log.error("freeform answered-card update failed", { error });
-    }),
+        );
+      } catch (error) {
+        logChannelOperationFailure(log, "freeform answer delivery failed", error);
+        return;
+      }
+      try {
+        await updateAnsweredFreeformCard({
+          channelId: metadata.channelId,
+          messageTs: metadata.messageTs,
+          answerLabel: text,
+          userId: triggeringUserId ?? undefined,
+          deps: _deps,
+        });
+      } catch (error) {
+        log.error("freeform answered-card update failed", { error });
+      }
+    })(),
   );
 
   return ack;

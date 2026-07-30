@@ -2,6 +2,7 @@ import { type ChannelCors } from "#channel/cors.js";
 import type { RouteDefinition, SendFn } from "#channel/routes.js";
 import type { Session, SessionHandle } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
+import type { ChannelGates } from "#channel/gates.js";
 
 /**
  * Enriched return shape from a channel's {@link ChannelAdapter.fetchFile}
@@ -76,6 +77,8 @@ export interface GenericChannelDefinition<
   ): Promise<Session>;
 
   readonly events?: TEvents;
+  /** Pre-operation authorization policies for channel and session mutations. */
+  readonly gates?: ChannelGates<TCtx, TReceiveTarget>;
 
   /**
    * Fetches bytes for a `URL` object encountered on a `FilePart.data` by the

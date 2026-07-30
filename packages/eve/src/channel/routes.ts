@@ -117,6 +117,8 @@ export type GetSessionFn = (sessionId: string) => Session;
  * the turn the caller observed; a stale guard is consumed as a benign no-op.
  */
 export interface CancelOptions {
+  /** Authenticated actor requesting cancellation, or explicit anonymous `null`. */
+  readonly auth: SessionAuthContext | null;
   readonly continuationToken: string;
   readonly turnId?: string;
 }
@@ -134,6 +136,8 @@ export type CancelFn = (options: CancelOptions) => Promise<CancelTurnResult>;
 
 /** Options for {@link ResetFn}. */
 export interface ResetOptions {
+  /** Authenticated actor requesting reset, or explicit anonymous `null`. */
+  readonly auth: SessionAuthContext | null;
   /** Channel-local raw token, in the same format accepted by {@link SendFn}. */
   readonly continuationToken: string;
   /** Human-readable terminal reason. Do not include credentials or message contents. */

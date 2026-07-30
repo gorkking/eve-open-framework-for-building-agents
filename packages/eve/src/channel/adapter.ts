@@ -6,6 +6,7 @@ import type { SessionHandle } from "#channel/session.js";
 import type { DeliverPayload } from "#channel/types.js";
 import type { FetchFileResult, FetchFileFunction } from "#shared/channel-definition.js";
 import { toChannelLocalContinuationToken } from "#shared/continuation-token.js";
+import type { ChannelAdapterGates } from "#channel/gates.js";
 
 const log = createLogger("channel.adapter");
 
@@ -171,6 +172,9 @@ export type ChannelAdapter<TCtx extends ChannelAdapterContext<any> = ChannelAdap
   readonly instrumentation?: {
     readonly metadata?: ChannelInstrumentationMetadataProjector;
   };
+
+  /** Session-bound policy gates evaluated before protected operations. */
+  readonly gates?: ChannelAdapterGates;
 } & ChannelEventHandlers<TCtx>;
 
 // ---------------------------------------------------------------------------

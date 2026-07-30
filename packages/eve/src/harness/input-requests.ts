@@ -357,10 +357,7 @@ type ResolvePendingInputResult = {
 // Pending batch management
 // ---------------------------------------------------------------------------
 
-/**
- * Returns true when the session is parked on a pending HITL batch
- * (tool approvals or `ask_question` prompts).
- */
+/** Returns whether the session is parked on a pending HITL batch. */
 export function hasPendingInputBatch(state: SessionStateMap | undefined): boolean {
   return getPendingInputBatch(state) !== undefined;
 }
@@ -370,6 +367,13 @@ export function hasPendingInputBatch(state: SessionStateMap | undefined): boolea
  */
 export function getPendingInputRequestIds(state: SessionStateMap | undefined): ReadonlySet<string> {
   return new Set(getPendingInputBatch(state)?.requests.map((request) => request.requestId));
+}
+
+/** Returns the complete currently pending HITL requests. */
+export function getPendingInputRequests(
+  state: SessionStateMap | undefined,
+): readonly InputRequest[] {
+  return [...(getPendingInputBatch(state)?.requests ?? [])];
 }
 
 function getPendingInputBatch(state: SessionStateMap | undefined): PendingInputBatch | undefined {

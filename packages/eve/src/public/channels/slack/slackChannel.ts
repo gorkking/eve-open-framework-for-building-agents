@@ -8,6 +8,7 @@ import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelSessionOps } from "#public/definitions/channel.js";
 
 import { createLogger, logError } from "#internal/logging.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import {
   buildSlackBinding,
@@ -28,6 +29,7 @@ import {
   defaultInputRequestedHandler,
   defaultOnAppMention,
   defaultOnDirectMessage,
+  defaultSlackAuth,
 } from "#public/channels/slack/defaults.js";
 import {
   parseMessageEvent,
@@ -61,6 +63,7 @@ import {
   POST,
   type CancelFn,
   type Channel,
+  type ChannelGates,
   type ResetFn,
   type ResetResult,
   type SendFn,
@@ -601,6 +604,8 @@ export interface SlackChannelConfig {
   ): void | Promise<void>;
 
   readonly events?: SlackChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<SlackChannelContext, SlackReceiveTarget>;
 }
 
 function rebuildSlackContext(
@@ -676,6 +681,7 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
     SlackReceiveTarget,
     SlackInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "slack",
     state: {
       channelId: null as string | null,
@@ -1026,6 +1032,7 @@ async function dispatchSlackMessage(input: {
   const ctx: SlackInboundMessageContext = {
     cancel: (options = {}) =>
       input.cancel({
+        auth: defaultSlackAuth(input.message, { slack, thread }),
         continuationToken,
         turnId: options.turnId,
       }),
@@ -1038,6 +1045,7 @@ async function dispatchSlackMessage(input: {
       })) !== undefined,
     reset: (options = {}) =>
       input.reset({
+        auth: defaultSlackAuth(input.message, { slack, thread }),
         continuationToken,
         reason: options.reason,
       }),
@@ -1091,6 +1099,7 @@ async function dispatchSlackEvent(input: {
   const ctx: SlackInboundEventContext = {
     cancel: ({ channelId, threadTs, turnId }) =>
       input.cancel({
+        auth: null,
         continuationToken: slackContinuationToken(channelId, threadTs),
         turnId,
       }),
@@ -1107,6 +1116,7 @@ async function dispatchSlackEvent(input: {
       }),
     reset: ({ channelId, threadTs, reason }) =>
       input.reset({
+        auth: null,
         continuationToken: slackContinuationToken(channelId, threadTs),
         reason,
       }),
@@ -1210,6 +1220,8 @@ async function deliverSlackMessage(input: {
       },
     );
   } catch (error) {
-    logError(log, `${input.kind} delivery failed`, error, { channelId: message.channelId });
+    logChannelOperationFailure(log, `${input.kind} delivery failed`, error, {
+      channelId: message.channelId,
+    });
   }
 }

@@ -1,6 +1,7 @@
 import type { TeamsInstrumentationMetadata } from "#public/channels/teams/index.js";
 import type { SessionHandle } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelSessionOps } from "#public/definitions/channel.js";
 
@@ -55,7 +56,13 @@ import {
 } from "#public/channels/teams/inbound.js";
 import { verifyTeamsRequest, type TeamsWebhookVerifier } from "#public/channels/teams/verify.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
-import { defineChannel, POST, type Channel, type SendFn } from "#public/definitions/channel.js";
+import {
+  defineChannel,
+  POST,
+  type Channel,
+  type ChannelGates,
+  type SendFn,
+} from "#public/definitions/channel.js";
 
 const log = createLogger("teams.channel");
 
@@ -188,6 +195,8 @@ export interface TeamsChannelConfig {
   readonly credentials?: TeamsChannelCredentials;
   /** Overrides merged over the built-in event handlers (typing, replies, HITL cards, auth cards, terminal errors). */
   readonly events?: TeamsChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<TeamsChannelContext, TeamsReceiveTarget>;
   /** Inbound attachment handling. File ingestion is off unless `enabled: true`. */
   readonly files?: TeamsFilesConfig;
   /** Override the default webhook route path (`/eve/v1/teams`). */
@@ -279,6 +288,7 @@ export function teamsChannel(config: TeamsChannelConfig = {}): TeamsChannel {
     TeamsReceiveTarget,
     TeamsInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "teams",
     state: initialTeamsState(),
     fetchFile: createTeamsFetchFile(filesPolicy),
@@ -619,7 +629,7 @@ async function dispatchMessage(input: {
       },
     );
   } catch (error) {
-    log.error("Teams message delivery failed", { error });
+    logChannelOperationFailure(log, "Teams message delivery failed", error);
   }
 }
 
@@ -678,7 +688,7 @@ async function dispatchInputResponses(input: {
       },
     );
   } catch (error) {
-    log.error("Teams input response delivery failed", { error });
+    logChannelOperationFailure(log, "Teams input response delivery failed", error);
   }
 }
 

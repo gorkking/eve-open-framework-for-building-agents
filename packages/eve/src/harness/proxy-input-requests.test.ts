@@ -4,6 +4,7 @@ import {
   clearProxyInputRequestsForChild,
   getProxyInputRequests,
   hasProxyInputRequests,
+  toProxyInputRequestEntries,
   upsertProxyInputRequests,
 } from "#harness/proxy-input-requests.js";
 import type { HarnessSession } from "#harness/types.js";
@@ -146,5 +147,46 @@ describe("getProxyInputRequests type safety", () => {
       "eve.runtime.proxyInputRequests": [{ requestId: "req-1" }],
     });
     expect(getProxyInputRequests(session.state).size).toBe(0);
+  });
+});
+
+describe("toProxyInputRequestEntries", () => {
+  it("stores the complete descendant request for root-channel policy checks", () => {
+    const request = {
+      action: { callId: "call_1", input: {}, kind: "tool-call" as const, toolName: "deploy" },
+      allowFreeform: false,
+      kind: "tool-approval" as const,
+      options: [
+        { id: "deny", label: "Deny" },
+        { id: "approve", label: "Approve" },
+      ],
+      prompt: "Approve deployment?",
+      requestId: "req_1",
+    };
+
+    expect(
+      toProxyInputRequestEntries({
+        callId: "call_1",
+        childContinuationToken: "child-token",
+        childSessionId: "child-session",
+        event: {
+          requests: [request],
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn_0",
+        },
+        kind: "subagent-input-request",
+        subagentName: "researcher",
+      }),
+    ).toEqual([
+      [
+        "req_1",
+        {
+          childContinuationToken: "child-token",
+          kind: "tool-approval",
+          request,
+        },
+      ],
+    ]);
   });
 });

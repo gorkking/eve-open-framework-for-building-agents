@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createResetFn } from "#channel/reset-session.js";
+import { ChannelGateDeniedError } from "#channel/gate-errors.js";
 import type { Runtime } from "#channel/types.js";
+import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
 
 function createRuntime(overrides?: Partial<Runtime>): Runtime {
   return {
@@ -20,7 +22,13 @@ describe("createResetFn", () => {
   it("namespaces the channel-local token before resolving its owner", async () => {
     const runtime = createRuntime();
 
-    await createResetFn(runtime, "imessage")({ continuationToken: "direct:+1:+2" });
+    await createResetFn(
+      runtime,
+      "imessage",
+    )({
+      auth: null,
+      continuationToken: "direct:+1:+2",
+    });
 
     expect(runtime.resolveSession).toHaveBeenCalledWith("imessage:direct:+1:+2");
   });
@@ -29,7 +37,13 @@ describe("createResetFn", () => {
     const runtime = createRuntime({ resolveSession: vi.fn().mockResolvedValue(undefined) });
 
     await expect(
-      createResetFn(runtime, "imessage")({ continuationToken: "direct:+1:+2" }),
+      createResetFn(
+        runtime,
+        "imessage",
+      )({
+        auth: null,
+        continuationToken: "direct:+1:+2",
+      }),
     ).resolves.toEqual({ status: "no_active_session" });
     expect(runtime.terminateSession).not.toHaveBeenCalled();
   });
@@ -42,6 +56,7 @@ describe("createResetFn", () => {
         runtime,
         "imessage",
       )({
+        auth: null,
         continuationToken: "direct:+1:+2",
         reason: "User requested /new",
       }),
@@ -59,7 +74,13 @@ describe("createResetFn", () => {
     });
 
     await expect(
-      createResetFn(runtime, "imessage")({ continuationToken: "direct:+1:+2" }),
+      createResetFn(
+        runtime,
+        "imessage",
+      )({
+        auth: null,
+        continuationToken: "direct:+1:+2",
+      }),
     ).resolves.toEqual({ status: "reset", previousSessionId: "sess_1" });
   });
 
@@ -69,7 +90,13 @@ describe("createResetFn", () => {
       resolveSession: vi.fn().mockRejectedValue(resolutionFailure),
     });
     await expect(
-      createResetFn(resolutionRuntime, "imessage")({ continuationToken: "direct:+1:+2" }),
+      createResetFn(
+        resolutionRuntime,
+        "imessage",
+      )({
+        auth: null,
+        continuationToken: "direct:+1:+2",
+      }),
     ).rejects.toBe(resolutionFailure);
 
     const terminationFailure = new Error("World unavailable");
@@ -77,7 +104,77 @@ describe("createResetFn", () => {
       terminateSession: vi.fn().mockRejectedValue(terminationFailure),
     });
     await expect(
-      createResetFn(terminationRuntime, "imessage")({ continuationToken: "direct:+1:+2" }),
+      createResetFn(
+        terminationRuntime,
+        "imessage",
+      )({
+        auth: null,
+        continuationToken: "direct:+1:+2",
+      }),
     ).rejects.toBe(terminationFailure);
+  });
+
+  it("evaluates session.reset with actor and reason before termination", async () => {
+    const actor = {
+      attributes: {},
+      authenticator: "test",
+      principalId: "user_1",
+      principalType: "user" as const,
+    };
+    const runtime = createRuntime();
+    const reset = createResetFn(runtime, "imessage", {
+      gates: { "session.reset": async () => ({ type: "allow" }) },
+      kind: "channel:imessage",
+    });
+
+    await expect(
+      reset({
+        auth: actor,
+        continuationToken: "direct:+1:+2",
+        reason: "Start over",
+      }),
+    ).resolves.toEqual({ previousSessionId: "sess_1", status: "reset" });
+    expect(runtime.terminateSession).toHaveBeenCalledWith({
+      auth: actor,
+      continuationToken: "imessage:direct:+1:+2",
+      gate: {
+        adapterKind: "channel:imessage",
+        names: ["session.reset"],
+      },
+      reason: "Start over",
+      sessionId: "sess_1",
+    });
+  });
+
+  it("leaves the session and token owner untouched when session.reset denies", async () => {
+    const runtime = createRuntime({
+      terminateSession: vi.fn().mockRejectedValue(new ChannelGateDeniedError("session.reset")),
+    });
+    const reset = createResetFn(runtime, "imessage", {
+      gates: { "session.reset": async () => ({ type: "allow" }) },
+      kind: "channel:imessage",
+    });
+
+    await expect(reset({ auth: null, continuationToken: "direct:+1:+2" })).rejects.toBeInstanceOf(
+      ChannelGateDeniedError,
+    );
+    expect(runtime.terminateSession).toHaveBeenCalledOnce();
+  });
+
+  it("reports no active session when ownership changes before gated reset", async () => {
+    const runtime = createRuntime({
+      terminateSession: vi
+        .fn()
+        .mockRejectedValue(new RuntimeNoActiveSessionError("imessage:direct:+1:+2")),
+    });
+    const reset = createResetFn(runtime, "imessage", {
+      gates: { "session.reset": async () => ({ type: "allow" }) },
+      kind: "channel:imessage",
+    });
+
+    await expect(reset({ auth: null, continuationToken: "direct:+1:+2" })).resolves.toEqual({
+      status: "no_active_session",
+    });
+    expect(runtime.terminateSession).toHaveBeenCalledOnce();
   });
 });

@@ -5,7 +5,7 @@ import {
   registerTelegramFreeformPrompt,
   renderTelegramInputRequest,
 } from "#public/channels/telegram/hitl.js";
-import type { TelegramMessage } from "#public/channels/telegram/inbound.js";
+import type { TelegramCallbackQuery, TelegramMessage } from "#public/channels/telegram/inbound.js";
 import type {
   TelegramChannelEvents,
   TelegramContext,
@@ -39,6 +39,36 @@ export function defaultTelegramAuth(message: TelegramMessage): SessionAuthContex
     authenticator: "telegram-webhook",
     issuer: groupScoped ? `telegram:${message.chat.id}` : "telegram",
     principalId,
+    principalType: user.isBot ? "service" : "user",
+  };
+}
+
+/** Internal default auth projection for a Telegram callback-query actor. */
+export function defaultTelegramCallbackAuth(
+  query: TelegramCallbackQuery,
+): SessionAuthContext | null {
+  const message = query.message;
+  if (message === undefined) return null;
+  const user = query.from;
+  const attributes: Record<string, string> = {
+    callback_query_id: query.id,
+    chat_id: message.chat.id,
+    chat_type: message.chat.type,
+    message_id: message.messageId,
+    user_id: user.id,
+  };
+  if (message.chat.title !== undefined) attributes.chat_title = message.chat.title;
+  if (message.messageThreadId !== undefined) {
+    attributes.message_thread_id = String(message.messageThreadId);
+  }
+  if (user.username !== undefined) attributes.username = user.username;
+  const groupScoped = message.chat.type === "group" || message.chat.type === "supergroup";
+
+  return {
+    attributes,
+    authenticator: "telegram-webhook",
+    issuer: groupScoped ? `telegram:${message.chat.id}` : "telegram",
+    principalId: groupScoped ? `telegram:${message.chat.id}:${user.id}` : `telegram:${user.id}`,
     principalType: user.isBot ? "service" : "user",
   };
 }

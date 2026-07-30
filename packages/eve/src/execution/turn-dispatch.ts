@@ -1,4 +1,9 @@
-import type { DeliverHookPayload, HookPayload, SessionCapabilities } from "#channel/types.js";
+import type {
+  ChannelGateReceipt,
+  DeliverHookPayload,
+  HookPayload,
+  SessionCapabilities,
+} from "#channel/types.js";
 import { TurnControlReceiver } from "#execution/turn-control-receiver.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import type { NextDriverAction } from "#execution/next-driver-action.js";
@@ -27,6 +32,7 @@ export async function dispatchAndAwaitTurn(input: {
   readonly controlToken: string;
   readonly delivery: HookPayload;
   readonly deliveryHook: SessionDeliveryHook;
+  readonly gateReceiptWritable?: WritableStream<ChannelGateReceipt>;
   readonly mode: RunMode;
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly serializedContext: Record<string, unknown>;
@@ -43,6 +49,9 @@ export async function dispatchAndAwaitTurn(input: {
       capabilities: input.capabilities,
       completionToken: control.token,
       delivery: input.delivery,
+      ...(input.gateReceiptWritable === undefined
+        ? {}
+        : { gateReceiptWritable: input.gateReceiptWritable }),
       mode: input.mode,
       parentWritable: input.parentWritable,
       serializedContext: input.serializedContext,

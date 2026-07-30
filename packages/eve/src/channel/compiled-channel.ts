@@ -3,6 +3,7 @@ import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
 import type { RouteDefinition, SendFn } from "#channel/routes.js";
 import type { Session } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
+import type { ChannelGates } from "#channel/gates.js";
 
 export const CHANNEL_SENTINEL = "eve:channel" as const;
 const CHANNEL_INSTRUMENTATION_KIND = Symbol.for("eve.channel.instrumentationKind");
@@ -28,6 +29,7 @@ export interface CompiledChannel<
   readonly adapter: ChannelAdapter<any>;
   readonly cors?: NormalizedChannelCorsOptions;
   readonly __metadata?: TMetadata;
+  readonly receiveGate?: ChannelGates<any, TReceiveTarget>["channel.receive"];
   readonly receive?: (
     input: {
       readonly message: string;

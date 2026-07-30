@@ -8,6 +8,7 @@ import { resolveForwardedPrincipal, type TrustedForwarders } from "#channel/forw
 import { parseSessionCallback } from "#channel/session-callback.js";
 import { hasInternalRefScheme } from "#internal/attachments/url-refs.js";
 import { createLogger, logError } from "#internal/logging.js";
+import { ChannelGateError } from "#channel/gate-errors.js";
 import {
   readAgentInfoRouteResponse,
   readRouteAgent,
@@ -42,6 +43,7 @@ import {
   type Channel,
   type ChannelCors,
   type ChannelEvents,
+  type ChannelGates,
   type ChannelSessionOps,
 } from "#public/definitions/channel.js";
 import type { ChannelMethod } from "#public/definitions/channel.js";
@@ -173,6 +175,8 @@ export interface EveChannelInput {
    * the event data, {@link EveEventContext}, and `SessionContext` (the same shape as custom channels).
    */
   readonly events?: EveChannelEvents;
+  /** Pre-operation policies for resumes, HITL responses, cancellation, and reset. */
+  readonly gates?: ChannelGates;
 }
 
 /**
@@ -196,6 +200,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
 
   return defineChannel<undefined, EveEventContext>({
     cors: normalizeEveCors(input.cors),
+    gates: input.gates,
     routes: [
       GET(EVE_INFO_ROUTE_PATH, async (req, args) => {
         const authResult = await routeAuth(req, input.auth);
@@ -290,10 +295,12 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         let result: Awaited<ReturnType<typeof reset>>;
         try {
           result = await reset({
+            auth: authResult,
             continuationToken: body.continuationToken,
             reason: "Client requested session reset",
           });
         } catch (error) {
+          if (error instanceof ChannelGateError) throw error;
           const errorId = logError(log, "session-reset request failed", error);
           return Response.json(
             { error: "Failed to reset the session.", errorId, ok: false },
@@ -405,8 +412,13 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           if (agent === undefined) {
             throw new Error("Missing route agent.");
           }
-          result = await agent.cancelTurn({ sessionId, turnId: body.turnId });
+          result = await agent.cancelTurn({
+            auth: authResult,
+            sessionId,
+            turnId: body.turnId,
+          });
         } catch (error) {
+          if (error instanceof ChannelGateError) throw error;
           const errorId = logError(log, "cancel-turn request failed", error, { sessionId });
           return Response.json(
             { error: "Failed to cancel the turn.", errorId, ok: false },

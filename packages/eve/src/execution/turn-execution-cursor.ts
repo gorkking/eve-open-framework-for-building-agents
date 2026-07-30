@@ -1,4 +1,4 @@
-import type { DeliverHookPayload, HookPayload } from "#channel/types.js";
+import type { ChannelGateReceipt, DeliverHookPayload, HookPayload } from "#channel/types.js";
 import type { TurnControlPayload } from "#execution/turn-control-protocol.js";
 import { sendTurnControlStep } from "#execution/turn-control-protocol.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
@@ -21,6 +21,7 @@ type TurnTerminalAction =
       readonly authorizationNames?: readonly string[];
       readonly cancelled?: true;
       readonly kind: "park";
+      readonly reset?: true;
     };
 
 /** Owns the mutable durable state cursor for one active turn workflow. */
@@ -30,15 +31,18 @@ export class TurnExecutionCursor {
 
   private currentSerializedContext: Record<string, unknown>;
   private currentSessionState: DurableSessionState;
+  readonly gateReceiptWritable?: WritableStream<ChannelGateReceipt>;
   private lastReportedContinuationToken: string;
 
   constructor(input: {
     readonly controlToken: string;
+    readonly gateReceiptWritable?: WritableStream<ChannelGateReceipt>;
     readonly parentWritable: WritableStream<Uint8Array>;
     readonly serializedContext: Record<string, unknown>;
     readonly sessionState: DurableSessionState;
   }) {
     this.controlToken = input.controlToken;
+    this.gateReceiptWritable = input.gateReceiptWritable;
     this.currentSerializedContext = input.serializedContext;
     this.currentSessionState = input.sessionState;
     this.lastReportedContinuationToken = input.sessionState.continuationToken;

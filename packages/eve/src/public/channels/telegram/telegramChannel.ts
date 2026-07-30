@@ -2,6 +2,7 @@ import type { TelegramInstrumentationMetadata } from "#public/channels/telegram/
 import { defaultDeliverResult, type ChannelAdapterContext } from "#channel/adapter.js";
 import type { SessionHandle } from "#channel/session.js";
 import type { DeliverPayload, SessionAuthContext } from "#channel/types.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelSessionOps } from "#public/definitions/channel.js";
 import { isCompiledChannel } from "#channel/compiled-channel.js";
@@ -26,12 +27,11 @@ import {
   collectTelegramFileParts,
   createTelegramFetchFile,
 } from "#public/channels/telegram/attachments.js";
+import { dispatchTelegramCallbackQuery } from "#public/channels/telegram/callback-query.js";
 import { defaultEvents, defaultOnMessage } from "#public/channels/telegram/defaults.js";
 import {
-  TELEGRAM_HITL_CALLBACK_PREFIX,
   isTelegramSyntheticResponse,
   resolveTelegramInputResponses,
-  telegramCallbackInputResponse,
   telegramReplyInputResponse,
   type TelegramHitlState,
 } from "#public/channels/telegram/hitl.js";
@@ -52,7 +52,13 @@ import {
   type TelegramWebhookSecretToken,
   type TelegramWebhookVerifier,
 } from "#public/channels/telegram/verify.js";
-import { defineChannel, POST, type Channel, type SendFn } from "#public/definitions/channel.js";
+import {
+  defineChannel,
+  POST,
+  type Channel,
+  type ChannelGates,
+  type SendFn,
+} from "#public/definitions/channel.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 
 const log = createLogger("telegram.channel");
@@ -152,6 +158,8 @@ export interface TelegramChannelConfig {
   readonly credentials?: TelegramChannelCredentials;
   /** Per-event handler overrides. See {@link TelegramChannelEvents}. */
   readonly events?: TelegramChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<TelegramChannelContext, TelegramReceiveTarget>;
   /** Handler for non-HITL callback queries. */
   readonly onCallbackQuery?: (
     ctx: TelegramContext,
@@ -210,6 +218,7 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
     TelegramReceiveTarget,
     TelegramInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "telegram",
     state: initialTelegramState(config.botUsername),
     metadata: (state) => ({
@@ -258,11 +267,18 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
             return new Response("ok");
           }
 
+          const query = update.callbackQuery;
+          const state = stateFromCallbackQuery(query, config);
           waitUntil(
-            dispatchCallbackQuery({
-              config,
-              query: update.callbackQuery,
+            dispatchTelegramCallbackQuery({
+              continuationToken: continuationTokenFromState(state),
+              onCallbackQuery: config.onCallbackQuery,
+              query,
               send,
+              state,
+              telegram: {
+                telegram: buildTelegramHandle({ config, state }),
+              },
             }),
           );
           return new Response("ok");
@@ -532,64 +548,7 @@ async function dispatchMessage(input: {
       },
     );
   } catch (error) {
-    log.error("message delivery failed", { error });
-  }
-}
-
-async function dispatchCallbackQuery(input: {
-  readonly config: TelegramChannelConfig;
-  readonly query: TelegramCallbackQuery;
-  readonly send: SendFn<TelegramChannelState>;
-}): Promise<void> {
-  const state = stateFromCallbackQuery(input.query, input.config);
-  const telegram: TelegramContext = {
-    telegram: buildTelegramHandle({ config: input.config, state }),
-  };
-
-  if (input.query.data?.startsWith(TELEGRAM_HITL_CALLBACK_PREFIX) === true) {
-    try {
-      await telegram.telegram.answerCallbackQuery({
-        callbackQueryId: input.query.id,
-        text: "Answer received.",
-      });
-    } catch (error) {
-      log.warn("Telegram callback-query acknowledgement failed", { error });
-    }
-
-    if (!input.query.message || !state.chatId) return;
-    try {
-      await input.send(
-        {
-          inputResponses: [telegramCallbackInputResponse(input.query.data)],
-        },
-        {
-          auth: null,
-          continuationToken: continuationTokenFromState(state),
-          state,
-        },
-      );
-    } catch (error) {
-      log.error("callback query delivery failed", { error });
-    }
-    return;
-  }
-
-  if (input.config.onCallbackQuery !== undefined) {
-    try {
-      await input.config.onCallbackQuery(telegram, input.query);
-    } catch (error) {
-      log.error("custom callback-query handler failed", { error });
-    }
-    return;
-  }
-
-  try {
-    await telegram.telegram.answerCallbackQuery({
-      callbackQueryId: input.query.id,
-      text: "Unsupported action.",
-    });
-  } catch (error) {
-    log.warn("Telegram unsupported callback-query acknowledgement failed", { error });
+    logChannelOperationFailure(log, "message delivery failed", error);
   }
 }
 

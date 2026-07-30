@@ -6,7 +6,14 @@ import { isCompiledChannel } from "#channel/compiled-channel.js";
 import type { InferReceiveTarget } from "#channel/receive-target.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import type { ContextAccessor } from "#context/key.js";
-import { SessionKey, type Session } from "#context/keys.js";
+import {
+  AuthKey,
+  ContinuationTokenKey,
+  InitiatorAuthKey,
+  SessionIdKey,
+  SessionKey,
+  type Session,
+} from "#context/keys.js";
 import type { slackChannel, SlackInstrumentationMetadata } from "#public/channels/slack/index.js";
 import type {
   twilioChannel,
@@ -227,6 +234,67 @@ describe("defineChannel", () => {
 
     const adapter = getAdapter(channel) as Record<string, unknown>;
     expect(typeof adapter["turn.cancelled"]).toBe("function");
+  });
+
+  it("wires async session gates to typed channel and session context", async () => {
+    const observed: unknown[] = [];
+    const runtimeOnlyProperties: unknown[] = [];
+    const channel = defineChannel({
+      context(state: { checks: number }) {
+        return { policy: "initiator-only" as const, state };
+      },
+      gates: {
+        async "session.resume"(input, channelContext, ctx) {
+          if (Date.now() < 0) {
+            // Gates can inspect the token but cannot re-key the live session.
+            // @ts-expect-error setContinuationToken is intentionally absent from gate context.
+            channelContext.setContinuationToken("other");
+          }
+          channelContext.state.checks += 1;
+          runtimeOnlyProperties.push(
+            Reflect.get(channelContext, "ctx"),
+            Reflect.get(channelContext, "session"),
+          );
+          observed.push(input, channelContext.policy, ctx.session);
+          return { type: "allow" };
+        },
+      },
+      routes: [POST("/x", async () => new Response("ok"))],
+      state: { checks: 0 },
+    });
+    const adapter = getAdapter(channel);
+    const gateAdapter = { ...adapter, state: structuredClone(adapter.state) };
+    const context = new ContextContainer();
+    context.set(AuthKey, null);
+    context.set(ContinuationTokenKey, "guarded:C1");
+    context.set(InitiatorAuthKey, null);
+    context.set(SessionIdKey, "sess_1");
+
+    const decision = await gateAdapter.gates?.["session.resume"]?.(
+      { message: "continue" },
+      buildAdapterContext(gateAdapter, context),
+      {
+        session: {
+          auth: { current: null, initiator: null },
+          id: "sess_1",
+          turn: { id: "turn_1", sequence: 1 },
+        },
+      },
+    );
+
+    expect(decision).toEqual({ type: "allow" });
+    expect(observed).toEqual([
+      { message: "continue" },
+      "initiator-only",
+      {
+        auth: { current: null, initiator: null },
+        id: "sess_1",
+        turn: { id: "turn_1", sequence: 1 },
+      },
+    ]);
+    expect(gateAdapter.state).toEqual({ checks: 1 });
+    expect(adapter.state).toEqual({ checks: 0 });
+    expect(runtimeOnlyProperties).toEqual([undefined, undefined]);
   });
 
   it("falls back to open metadata for channels without metadata()", () => {

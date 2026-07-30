@@ -46,7 +46,12 @@ import {
 } from "#public/channels/github/state.js";
 import type { GitHubPullRequestContextConfig } from "#public/channels/github/pr-context.js";
 import { verifyGitHubRequest } from "#public/channels/github/verify.js";
-import { defineChannel, POST, type Channel } from "#public/definitions/channel.js";
+import {
+  defineChannel,
+  POST,
+  type Channel,
+  type ChannelGates,
+} from "#public/definitions/channel.js";
 
 const log = createLogger("github.channel");
 
@@ -153,6 +158,8 @@ export interface GitHubChannelConfig {
   readonly botName?: string;
   readonly credentials?: GitHubChannelCredentials;
   readonly events?: GitHubChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<GitHubChannelContext, GitHubReceiveTarget>;
   readonly progress?: GitHubProgressConfig;
   readonly pullRequestContext?: GitHubPullRequestContextConfig;
   readonly route?: string;
@@ -228,6 +235,7 @@ export function githubChannel(config: GitHubChannelConfig = {}): GitHubChannel {
   };
 
   const channel = defineChannel<GitHubChannelState, GitHubChannelContext, GitHubReceiveTarget>({
+    gates: config.gates,
     kindHint: "github",
     state: initialGitHubState(),
 

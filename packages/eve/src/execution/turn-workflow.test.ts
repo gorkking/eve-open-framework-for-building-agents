@@ -5,6 +5,12 @@ import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-st
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
+import {
+  evaluateChannelDeliveryGatesStep,
+  evaluateSessionResetGateStep,
+  evaluateTurnCancelGateStep,
+  publishChannelGateAllowStep,
+} from "#execution/channel-gate-steps.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { turnWorkflow } from "#execution/turn-workflow.js";
 import {
@@ -28,6 +34,13 @@ vi.mock("#compiled/@workflow/core/runtime.js", () => ({
 
 vi.mock("./route-child-delivery.js", () => ({
   routeDeliverToChildren: vi.fn(),
+}));
+
+vi.mock("./channel-gate-steps.js", () => ({
+  evaluateChannelDeliveryGatesStep: vi.fn(),
+  evaluateSessionResetGateStep: vi.fn(),
+  evaluateTurnCancelGateStep: vi.fn(),
+  publishChannelGateAllowStep: vi.fn(),
 }));
 
 vi.mock("./subagent-event-proxy-step.js", () => ({
@@ -791,6 +804,236 @@ describe("turnWorkflow", () => {
     });
   });
 
+  it("blocks a gated delivery before routing or authored delivery", async () => {
+    const sessionState = createSessionState({ hasProxyInputRequests: true });
+    installInbox([]);
+    vi.mocked(evaluateChannelDeliveryGatesStep).mockResolvedValueOnce({ status: "block" });
+    const { input } = createInput({
+      driverCapabilities: { turnInbox: true },
+      sessionState,
+    });
+    const gatedInput: TurnWorkflowInput = {
+      ...input,
+      stepInput: {
+        ...input.stepInput,
+        input: {
+          auth: null,
+          gateOperation: {
+            adapterKind: "channel:test",
+            auth: null,
+            id: "operation-1",
+            names: ["session.resume"],
+          },
+          kind: "deliver",
+          payloads: [{ message: "continue" }],
+        },
+      },
+    };
+
+    await turnWorkflow(gatedInput);
+
+    expect(evaluateChannelDeliveryGatesStep).toHaveBeenCalledOnce();
+    expect(routeDeliverToChildren).not.toHaveBeenCalled();
+    expect(turnStep).not.toHaveBeenCalled();
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "turn-token",
+      expect.objectContaining({
+        action: expect.objectContaining({ kind: "park" }),
+        kind: "turn-result",
+      }),
+    );
+  });
+
+  it("evaluates an active-turn cancellation before aborting the turn", async () => {
+    const sessionState = createSessionState();
+    installInbox([], {
+      cancelPayloads: [
+        {
+          continuationToken: "http:test",
+          gateOperation: {
+            adapterKind: "channel:test",
+            auth: null,
+            id: "operation-1",
+            names: ["turn.cancel"],
+          },
+          kind: "cancel",
+        },
+      ],
+    });
+    vi.mocked(evaluateTurnCancelGateStep).mockResolvedValueOnce({ status: "allow" });
+    vi.mocked(turnStep).mockImplementationOnce(
+      async ({ abortSignal, serializedContext, sessionState: currentState }) => {
+        await new Promise<void>((resolve) => {
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return {
+          action: "cancelled",
+          serializedContext,
+          sessionState: currentState,
+        };
+      },
+    );
+
+    const { input } = createInput({
+      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
+      sessionState,
+    });
+    await turnWorkflow(input);
+
+    expect(evaluateTurnCancelGateStep).toHaveBeenCalledOnce();
+    expect(publishChannelGateAllowStep).toHaveBeenCalledWith({
+      id: "operation-1",
+      writable: undefined,
+    });
+    expect(cancelDescendantTurnsStep).toHaveBeenCalledOnce();
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "turn-token",
+      expect.objectContaining({
+        action: expect.objectContaining({ cancelled: true, kind: "park" }),
+      }),
+    );
+  });
+
+  it("keeps an active turn running when its cancellation gate denies", async () => {
+    const sessionState = createSessionState();
+    installInbox([], {
+      cancelPayloads: [
+        {
+          continuationToken: "http:test",
+          gateOperation: {
+            adapterKind: "channel:test",
+            auth: null,
+            id: "operation-1",
+            names: ["turn.cancel"],
+          },
+          kind: "cancel",
+        },
+      ],
+    });
+    let gateEvaluated!: () => void;
+    const evaluated = new Promise<void>((resolve) => {
+      gateEvaluated = resolve;
+    });
+    vi.mocked(evaluateTurnCancelGateStep).mockImplementationOnce(async () => {
+      gateEvaluated();
+      return { status: "block" };
+    });
+    vi.mocked(turnStep).mockImplementationOnce(
+      async ({ abortSignal, serializedContext, sessionState: currentState }) => {
+        await evaluated;
+        expect(abortSignal?.aborted).toBe(false);
+        return {
+          action: "done",
+          output: "completed normally",
+          serializedContext,
+          sessionState: currentState,
+        };
+      },
+    );
+
+    const { input } = createInput({
+      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
+      sessionState,
+    });
+    await turnWorkflow(input);
+
+    expect(evaluateTurnCancelGateStep).toHaveBeenCalledOnce();
+    expect(publishChannelGateAllowStep).not.toHaveBeenCalled();
+    expect(cancelDescendantTurnsStep).not.toHaveBeenCalled();
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "turn-token",
+      expect.objectContaining({
+        action: expect.objectContaining({
+          kind: "done",
+          output: "completed normally",
+        }),
+      }),
+    );
+  });
+
+  it("terminates through the existing turn result path after an allowed parked reset", async () => {
+    const sessionState = createSessionState();
+    installInbox([]);
+    vi.mocked(evaluateSessionResetGateStep).mockResolvedValueOnce({ status: "allow" });
+    const { input } = createInput({
+      driverCapabilities: { turnInbox: true },
+      sessionState,
+    });
+    const resetInput: TurnWorkflowInput = {
+      ...input,
+      stepInput: {
+        ...input.stepInput,
+        input: {
+          continuationToken: "http:test",
+          gateOperation: {
+            adapterKind: "channel:test",
+            auth: null,
+            id: "operation-1",
+            names: ["session.reset"],
+          },
+          kind: "session-reset",
+        },
+      },
+    };
+
+    await turnWorkflow(resetInput);
+
+    expect(evaluateSessionResetGateStep).toHaveBeenCalledOnce();
+    expect(publishChannelGateAllowStep).toHaveBeenCalledWith({
+      id: "operation-1",
+      writable: undefined,
+    });
+    expect(turnStep).not.toHaveBeenCalled();
+    expect(cancelDescendantTurnsStep).toHaveBeenCalledOnce();
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "turn-token",
+      expect.objectContaining({
+        action: expect.objectContaining({ kind: "park", reset: true }),
+      }),
+    );
+  });
+
+  it("leaves a parked session unchanged when its reset gate denies", async () => {
+    const sessionState = createSessionState();
+    installInbox([]);
+    vi.mocked(evaluateSessionResetGateStep).mockResolvedValueOnce({ status: "block" });
+    const { input } = createInput({
+      driverCapabilities: { turnInbox: true },
+      sessionState,
+    });
+    const resetInput: TurnWorkflowInput = {
+      ...input,
+      stepInput: {
+        ...input.stepInput,
+        input: {
+          continuationToken: "http:test",
+          gateOperation: {
+            adapterKind: "channel:test",
+            auth: null,
+            id: "operation-1",
+            names: ["session.reset"],
+          },
+          kind: "session-reset",
+        },
+      },
+    };
+
+    await turnWorkflow(resetInput);
+
+    expect(publishChannelGateAllowStep).not.toHaveBeenCalled();
+    expect(cancelDescendantTurnsStep).not.toHaveBeenCalled();
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      "turn-token",
+      expect.objectContaining({
+        action: {
+          kind: "park",
+          serializedContext: input.stepInput.serializedContext,
+          sessionState,
+        },
+      }),
+    );
+  });
+
   it("proxies child authorization lifecycle events while continuing to await its result", async () => {
     const pendingState = createSessionState();
     const requiredState = createSessionState();
@@ -919,6 +1162,7 @@ describe("turnWorkflow", () => {
   });
 
   it("mints a unique delivery request id per wait so a stale forward is not re-accepted", async () => {
+    const initialState = createSessionState();
     const pendingState = createSessionState({ hasProxyInputRequests: true });
     const completedState = createSessionState();
     // The first wait resolves on its child result while a delivery forwarded for
@@ -986,7 +1230,7 @@ describe("turnWorkflow", () => {
     const { input } = createInput({
       driverCapabilities: { turnInbox: true },
       mode: "task",
-      sessionState: pendingState,
+      sessionState: initialState,
     });
     await turnWorkflow(input);
 

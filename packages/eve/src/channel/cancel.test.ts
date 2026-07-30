@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createCancelFn } from "#channel/cancel.js";
+import { ChannelGateDeniedError } from "#channel/gate-errors.js";
 import type { Runtime } from "#channel/types.js";
 
 function createRuntime(overrides?: Partial<Runtime>): Runtime {
@@ -21,7 +22,7 @@ describe("createCancelFn", () => {
     const runtime = createRuntime();
 
     const cancel = createCancelFn(runtime, "slack");
-    await cancel({ continuationToken: "C1:T1" });
+    await cancel({ auth: null, continuationToken: "C1:T1" });
 
     expect(runtime.resolveSession).toHaveBeenCalledWith("slack:C1:T1");
   });
@@ -30,7 +31,11 @@ describe("createCancelFn", () => {
     const runtime = createRuntime();
 
     const cancel = createCancelFn(runtime, "slack");
-    const result = await cancel({ continuationToken: "C1:T1", turnId: "turn_3" });
+    const result = await cancel({
+      auth: null,
+      continuationToken: "C1:T1",
+      turnId: "turn_3",
+    });
 
     expect(result).toEqual({ status: "accepted" });
     expect(runtime.cancelTurn).toHaveBeenCalledWith({ sessionId: "sess_1", turnId: "turn_3" });
@@ -40,7 +45,7 @@ describe("createCancelFn", () => {
     const runtime = createRuntime({ resolveSession: vi.fn().mockResolvedValue(undefined) });
 
     const cancel = createCancelFn(runtime, "slack");
-    const result = await cancel({ continuationToken: "unknown" });
+    const result = await cancel({ auth: null, continuationToken: "unknown" });
 
     expect(result).toEqual({ status: "no_active_turn" });
     expect(runtime.cancelTurn).not.toHaveBeenCalled();
@@ -53,7 +58,7 @@ describe("createCancelFn", () => {
 
     const cancel = createCancelFn(runtime, "slack");
 
-    await expect(cancel({ continuationToken: "C1:T1" })).resolves.toEqual({
+    await expect(cancel({ auth: null, continuationToken: "C1:T1" })).resolves.toEqual({
       status: "no_active_turn",
     });
   });
@@ -64,9 +69,71 @@ describe("createCancelFn", () => {
 
     const cancel = createCancelFn(runtime, "slack");
 
-    await expect(cancel({ continuationToken: "C1:T1" })).rejects.toBe(failure);
+    await expect(cancel({ auth: null, continuationToken: "C1:T1" })).rejects.toBe(failure);
     expect(runtime.cancelTurn).not.toHaveBeenCalled();
     expect(runtime.run).not.toHaveBeenCalled();
     expect(runtime.deliver).not.toHaveBeenCalled();
+  });
+
+  it("evaluates turn.cancel with the actor before using the raw cancellation primitive", async () => {
+    const actor = {
+      attributes: {},
+      authenticator: "test",
+      principalId: "user_1",
+      principalType: "user" as const,
+    };
+    const runtime = createRuntime({
+      cancelTurn: vi.fn().mockResolvedValue({ status: "accepted" }),
+    });
+    const cancel = createCancelFn(runtime, "slack", {
+      gates: { "turn.cancel": async () => ({ type: "allow" }) },
+      kind: "channel:slack",
+    });
+
+    await expect(
+      cancel({ auth: actor, continuationToken: "C1:T1", turnId: "turn_3" }),
+    ).resolves.toEqual({ status: "accepted" });
+    expect(runtime.cancelTurn).toHaveBeenCalledWith({
+      auth: actor,
+      continuationToken: "slack:C1:T1",
+      gate: {
+        adapterKind: "channel:slack",
+        names: ["turn.cancel"],
+      },
+      sessionId: "sess_1",
+      turnId: "turn_3",
+    });
+  });
+
+  it("leaves the turn untouched when turn.cancel denies", async () => {
+    const runtime = createRuntime({
+      cancelTurn: vi
+        .fn()
+        .mockRejectedValue(new ChannelGateDeniedError("turn.cancel", "Initiator only.")),
+    });
+    const cancel = createCancelFn(runtime, "slack", {
+      gates: { "turn.cancel": async () => ({ type: "allow" }) },
+      kind: "channel:slack",
+    });
+
+    await expect(cancel({ auth: null, continuationToken: "C1:T1" })).rejects.toBeInstanceOf(
+      ChannelGateDeniedError,
+    );
+    expect(runtime.cancelTurn).toHaveBeenCalledOnce();
+  });
+
+  it("reports a benign no-op when token ownership changes before gated cancellation", async () => {
+    const runtime = createRuntime({
+      cancelTurn: vi.fn().mockResolvedValue({ status: "no_active_turn" }),
+    });
+    const cancel = createCancelFn(runtime, "slack", {
+      gates: { "turn.cancel": async () => ({ type: "allow" }) },
+      kind: "channel:slack",
+    });
+
+    await expect(cancel({ auth: null, continuationToken: "C1:T1" })).resolves.toEqual({
+      status: "no_active_turn",
+    });
+    expect(runtime.cancelTurn).toHaveBeenCalledOnce();
   });
 });

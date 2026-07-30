@@ -6,6 +6,7 @@ import { createSession, type Session } from "#channel/session.js";
 import type { SendFn, SendOptions, SendPayload } from "#channel/routes.js";
 import { isRuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
 import { serializeUrlFilePart } from "#internal/attachments/url-refs.js";
+import { executeGatedDelivery } from "#channel/gated-operations.js";
 
 export function createSendFn<TState = undefined>(
   runtime: Runtime,
@@ -34,16 +35,21 @@ export function createSendFn<TState = undefined>(
     } = normalizeSendInput(input);
     const message = serializeUrlFilePartsInMessage(rawMessage);
 
+    const payload = { inputResponses, message, context, outputSchema };
     try {
-      const deliverInput: DeliverInput = {
+      const deliverInput: DeliverInput & { readonly auth: SessionAuthContext | null } = {
         auth,
         continuationToken,
         requestId: metadata.requestId,
-        payload: { inputResponses, message, context, outputSchema },
+        payload,
       };
-      const { sessionId } = await runtime.deliver(deliverInput);
+      const { sessionId } = await executeGatedDelivery({
+        adapter,
+        delivery: deliverInput,
+        runtime,
+      });
 
-      return createSession(sessionId, rawToken, runtime);
+      return createSession(sessionId, rawToken, runtime, adapter);
     } catch (error) {
       if (!isRuntimeNoActiveSessionError(error)) {
         throw error;
@@ -79,7 +85,7 @@ export function createSendFn<TState = undefined>(
     }
     const handle = await runtime.run(runInput);
 
-    return createSession(handle.sessionId, rawToken, runtime);
+    return createSession(handle.sessionId, rawToken, runtime, adapter);
   };
 }
 

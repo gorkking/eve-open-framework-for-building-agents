@@ -567,6 +567,29 @@ describe("chatSdkChannel", () => {
       },
     );
   });
+
+  it("forwards gates while preserving resolveInputAuth as the actor resolver", async () => {
+    const resolveInputAuth = vi.fn(async () => AUTH);
+    const gate = vi.fn(async () => ({ type: "allow" as const }));
+    const bridge = chatSdkChannel({
+      adapters: { test: testAdapter() },
+      concurrency: "concurrent",
+      gates: { "input.response": gate },
+      resolveInputAuth,
+      state: memoryState(),
+      userName: "bot",
+    });
+
+    const { send } = await firePost(bridge.channel, "/eve/v1/test", {
+      actionId: "eve_input:request-1:approve",
+      kind: "action",
+      value: "approve",
+    });
+
+    expect(getAdapter(bridge.channel).gates?.["input.response"]).toBeTypeOf("function");
+    expect(resolveInputAuth).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[1]).toMatchObject({ auth: AUTH });
+  });
 });
 
 describe("messageToUserContent", () => {

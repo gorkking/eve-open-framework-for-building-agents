@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { buildAdapterContext } from "#channel/adapter-context.js";
 import { callAdapterEventHandler, type ChannelAdapter } from "#channel/adapter.js";
 import { isCompiledChannel, type CompiledChannel } from "#channel/compiled-channel.js";
+import { ChannelGateDeniedError } from "#channel/gate-errors.js";
 import { isHttpRouteDefinition } from "#channel/routes.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { SessionKey } from "#context/keys.js";
@@ -253,6 +254,7 @@ async function firePost(
     readonly cancel?: ReturnType<typeof vi.fn>;
     readonly reset?: ReturnType<typeof vi.fn>;
     readonly resolveActiveSession?: ReturnType<typeof vi.fn>;
+    readonly send?: ReturnType<typeof vi.fn>;
   } = {},
 ): Promise<{
   cancel: ReturnType<typeof vi.fn>;
@@ -270,7 +272,7 @@ async function firePost(
   const reset =
     overrides.reset ??
     vi.fn().mockResolvedValue({ status: "reset", previousSessionId: "session_previous" });
-  const send = vi.fn().mockResolvedValue({ id: "s1", continuationToken: "ct" });
+  const send = overrides.send ?? vi.fn().mockResolvedValue({ id: "s1", continuationToken: "ct" });
   const waitUntil = vi.fn();
 
   const response = await post.handler(request, {
@@ -1108,10 +1110,13 @@ describe("slackChannel() inbound mention pipeline", () => {
 
     const { cancel, send } = await firePost(channel, buildSignedRequest({ body }));
 
-    expect(cancel).toHaveBeenCalledWith({
-      continuationToken: "C_STEER:1700000000.000100",
-      turnId: "turn_observed",
-    });
+    expect(cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: expect.objectContaining({ principalId: "slack:T01:U01" }),
+        continuationToken: "C_STEER:1700000000.000100",
+        turnId: "turn_observed",
+      }),
+    );
     expect(send).toHaveBeenCalledTimes(1);
     expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
   });
@@ -1131,10 +1136,13 @@ describe("slackChannel() inbound mention pipeline", () => {
 
     const { reset, send } = await firePost(channel, buildSignedRequest({ body }));
 
-    expect(reset).toHaveBeenCalledWith({
-      continuationToken: "C_RESET:1700000000.000200",
-      reason: "Slack user requested a fresh conversation",
-    });
+    expect(reset).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: expect.objectContaining({ principalId: "slack:T01:U01" }),
+        continuationToken: "C_RESET:1700000000.000200",
+        reason: "Slack user requested a fresh conversation",
+      }),
+    );
     expect(send).toHaveBeenCalledTimes(1);
     expect(reset.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
   });
@@ -1681,6 +1689,7 @@ describe("slackChannel() generic Events API pipeline", () => {
     const { cancel } = await firePost(channel, buildSignedRequest({ body }));
 
     expect(cancel).toHaveBeenCalledWith({
+      auth: null,
       continuationToken: "C01:1700000000.000001",
       turnId: "turn_observed",
     });
@@ -1702,6 +1711,7 @@ describe("slackChannel() generic Events API pipeline", () => {
     const { reset } = await firePost(channel, buildSignedRequest({ body }));
 
     expect(reset).toHaveBeenCalledWith({
+      auth: null,
       continuationToken: "C01:1700000000.000001",
       reason: "Reaction requested a fresh conversation",
     });
@@ -2104,10 +2114,13 @@ describe("slackChannel() HITL interaction pipeline", () => {
       }),
     );
 
-    expect(cancel).toHaveBeenCalledWith({
-      continuationToken: "C01:1700000000.000001",
-      turnId: "turn_observed",
-    });
+    expect(cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: expect.objectContaining({ principalId: "slack:T01:U01" }),
+        continuationToken: "C01:1700000000.000001",
+        turnId: "turn_observed",
+      }),
+    );
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -2141,10 +2154,13 @@ describe("slackChannel() HITL interaction pipeline", () => {
       }),
     );
 
-    expect(reset).toHaveBeenCalledWith({
-      continuationToken: "C01:1700000000.000001",
-      reason: "New conversation button clicked",
-    });
+    expect(reset).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: expect.objectContaining({ principalId: "slack:T01:U01" }),
+        continuationToken: "C01:1700000000.000001",
+        reason: "New conversation button clicked",
+      }),
+    );
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -2206,6 +2222,44 @@ describe("slackChannel() HITL interaction pipeline", () => {
         triggeringUserId: "U_APPROVER",
       },
     });
+  });
+
+  it("leaves HITL controls active when the gated delivery is denied", async () => {
+    const channel = slackChannel({ credentials: { botToken: "xoxb-test" } });
+    const send = vi
+      .fn()
+      .mockRejectedValue(
+        new ChannelGateDeniedError("input.response", "Only the initiator may answer."),
+      );
+
+    const { response } = await firePost(
+      channel,
+      buildSignedInteractionRequest({
+        actions: [
+          {
+            action_id: `${HITL_ACTION_PREFIX}approval_abc123:button:0`,
+            text: { text: "Approve", type: "plain_text" },
+            value: "approve",
+          },
+        ],
+        channel: { id: "C01" },
+        message: {
+          blocks: [{ text: { text: "Approve?", type: "mrkdwn" }, type: "section" }],
+          thread_ts: "1700000000.000001",
+          ts: "1700000000.000010",
+        },
+        team: { id: "T01" },
+        type: "block_actions",
+        user: { id: "U_OTHER", team_id: "T01", username: "other" },
+      }),
+      { send },
+    );
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url) === "https://slack.com/api/chat.update"),
+    ).toBe(false);
   });
 
   it("updates one answered HITL card without removing sibling batched buttons", async () => {

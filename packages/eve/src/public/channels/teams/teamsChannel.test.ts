@@ -218,6 +218,42 @@ describe("teamsChannel", () => {
     );
   });
 
+  it("forwards gates while preserving onInputResponse as the actor resolver", async () => {
+    const actor = {
+      attributes: { role: "approver" },
+      authenticator: "teams-custom",
+      principalId: "approver_1",
+      principalType: "user" as const,
+    };
+    const gate = vi.fn(async () => ({ type: "allow" as const }));
+    const channel = teamsChannel({
+      credentials: { webhookVerifier: () => true },
+      gates: { "input.response": gate },
+      onInputResponse: async () => ({ auth: actor }),
+    });
+    const compiled = asCompiled(channel);
+    const { send } = await firePost(channel, {
+      ...baseActivity({ conversationType: "channel" }),
+      from: { aadObjectId: "AAD_USER", id: "USER", name: "Ada" },
+      name: "adaptiveCard/action",
+      type: "invoke",
+      value: {
+        action: {
+          data: {
+            eve_input: {
+              optionId: "approve",
+              replyToActivityId: "THREAD_ROOT",
+              requestId: "REQ",
+            },
+          },
+        },
+      },
+    });
+
+    expect(compiled.adapter.gates?.["input.response"]).toBeTypeOf("function");
+    expect(send.mock.calls[0]?.[1]).toMatchObject({ auth: actor });
+  });
+
   it("handles unmentioned message-form HITL responses before the mention gate", async () => {
     const onMessage = vi.fn(() => null);
     const raw = messageActivity({ conversationType: "channel" });

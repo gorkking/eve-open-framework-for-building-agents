@@ -1,5 +1,6 @@
 import type { SessionHandle } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
+import { logChannelOperationFailure } from "#channel/log-operation-failure.js";
 import type { RouteHandler } from "#channel/routes.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelSessionOps } from "#public/definitions/channel.js";
@@ -47,6 +48,7 @@ import {
   GET,
   POST,
   type Channel,
+  type ChannelGates,
   type SendFn,
 } from "#public/definitions/channel.js";
 
@@ -240,6 +242,8 @@ export interface TwilioChannelConfig {
   ): TwilioInboundResultOrPromise;
 
   readonly events?: TwilioChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<TwilioChannelContext, TwilioReceiveTarget>;
 }
 
 /** Low-level Twilio handle exposed to hooks and event handlers. */
@@ -298,6 +302,7 @@ export function twilioChannel(config: TwilioChannelConfig): TwilioChannel {
     TwilioReceiveTarget,
     TwilioInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "twilio",
     state: {
       from: null as string | null,
@@ -575,7 +580,7 @@ async function dispatchText(input: {
       },
     );
   } catch (error) {
-    log.error("text delivery failed", { error });
+    logChannelOperationFailure(log, "text delivery failed", error);
   }
 }
 
@@ -652,7 +657,7 @@ async function dispatchVoiceTranscription(input: {
       },
     );
   } catch (error) {
-    log.error("voice transcription delivery failed", { error });
+    logChannelOperationFailure(log, "voice transcription delivery failed", error);
   }
 }
 

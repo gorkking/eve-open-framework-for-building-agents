@@ -31,6 +31,7 @@ import {
   defineChannel,
   POST,
   type Channel,
+  type ChannelGates,
   type ChannelSessionOps,
   type SendFn,
 } from "#public/definitions/channel.js";
@@ -171,6 +172,8 @@ export interface LinearChannelConfig {
   readonly api?: LinearApiOptions;
   readonly credentials?: LinearChannelCredentials;
   readonly events?: LinearChannelEvents;
+  /** Policies evaluated before existing-session and proactive receive operations. */
+  readonly gates?: ChannelGates<LinearChannelContext, LinearReceiveTarget>;
   readonly route?: string;
 
   /** Inbound Agent Session hook. Defaults to dispatching `created` and `prompted` events. */
@@ -204,6 +207,7 @@ export function linearChannel(config: LinearChannelConfig = {}): LinearChannel {
     LinearReceiveTarget,
     LinearInstrumentationMetadata
   >({
+    gates: config.gates,
     kindHint: "linear",
     state: initialLinearState(),
     metadata(state): LinearInstrumentationMetadata {

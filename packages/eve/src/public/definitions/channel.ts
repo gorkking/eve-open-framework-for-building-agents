@@ -7,24 +7,56 @@ import type { TypedReceiveTarget } from "#channel/receive-target.js";
 import type { RouteDefinition, SendFn } from "#channel/routes.js";
 import type { Session, SessionHandle } from "#channel/session.js";
 import type {
-  CancelTurnInput,
+  CancelTurnInput as RuntimeCancelTurnInput,
   CancelTurnResult,
   DeliverInput,
   DeliverPayload,
   GetEventStreamOptions,
   RunHandle,
   RunInput,
+  SessionAuthContext,
 } from "#channel/types.js";
 import { buildCallbackContext } from "#context/build-callback-context.js";
 import type { UnstampedMessageStreamEvent, MessageStreamEvent } from "#protocol/message.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { GenericChannelDefinition, GenericReceiveInput } from "#shared/channel-definition.js";
+import type {
+  ChannelAdapterGateHandler,
+  ChannelGateContext,
+  ChannelGates,
+  InputResponseGateInput,
+  SessionResetGateInput,
+  SessionResumeGateInput,
+  TurnCancelGateInput,
+} from "#channel/gates.js";
 
 declare const CHANNEL_METADATA_TYPE: unique symbol;
 
-export type { CancelTurnInput, CancelTurnResult, GetEventStreamOptions } from "#channel/types.js";
+export type { CancelTurnResult, GetEventStreamOptions } from "#channel/types.js";
 export type { Session, SessionHandle } from "#channel/session.js";
 export type { ChannelCors, ChannelCorsOptions } from "#channel/cors.js";
+export {
+  ChannelGateDeniedError,
+  ChannelGateError,
+  ChannelGateUnavailableError,
+} from "#channel/gate-errors.js";
+export type {
+  ChannelGateChannel,
+  ChannelGateContext,
+  ChannelGateDecision,
+  ChannelReceiveGateInput,
+  ChannelGateName,
+  ChannelGates,
+  ChannelReceiveGateContext,
+  ChannelReceiveSource,
+  InputResponseAnswerGateInput,
+  InputResponseDismissGateInput,
+  InputResponseGateInput,
+  SessionResetGateInput,
+  SessionResumeGateInput,
+  SessionChannelGateName,
+  TurnCancelGateInput,
+} from "#channel/gates.js";
 export { GET, POST, PUT, PATCH, DELETE, WS } from "#channel/routes.js";
 export type {
   CancelFn,
@@ -63,6 +95,11 @@ export type ChannelMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  * route key in the compiler manifest and runtime route table.
  */
 export type ChannelRouteMethod = ChannelMethod | "WEBSOCKET";
+
+/** Public cancellation input, including the authenticated actor or explicit anonymous `null`. */
+export type CancelTurnInput = RuntimeCancelTurnInput & {
+  readonly auth: SessionAuthContext | null;
+};
 
 /**
  * Per-request surface exposed to a route's `fetch` handler. The
@@ -146,7 +183,9 @@ export interface Agent {
    * `continuationToken` — routes typically catch the failure and fall back
    * to `run()` to start a new session.
    */
-  deliver(input: DeliverInput): Promise<{ sessionId: string }>;
+  deliver(
+    input: DeliverInput & { readonly auth: SessionAuthContext | null },
+  ): Promise<{ sessionId: string }>;
   /**
    * Returns a readable NDJSON-style stream of lifecycle events for an
    * existing session. Used by the framework's HTTP session-stream route and by
@@ -264,9 +303,10 @@ export type ReceiveInput<TReceiveTarget = Record<string, unknown>> =
 /**
  * The object passed to {@link defineChannel}. `routes` is required; `state`
  * seeds durable adapter state, `context` builds the per-step `channel` argument
- * for `events` and `deliver`, `events` handle session lifecycle, `receive`
- * accepts cross-channel handoffs, `fetchFile` stages remote file URLs, and
- * `metadata` projects observability data.
+ * for `events` and `deliver`, `gates` authorize protected operations, `events`
+ * handle session lifecycle, `receive` accepts cross-channel handoffs,
+ * `fetchFile` stages remote file URLs, and `metadata` projects observability
+ * data.
  *
  * Generics: `TState` (adapter state), `TCtx` (context factory return type),
  * `TReceiveTarget` (cross-channel target shape), `TMetadata` (instrumentation
@@ -330,6 +370,7 @@ export function defineChannel<
     routes: definition.routes,
     adapter,
     cors,
+    receiveGate: definition.gates?.["channel.receive"],
     receive: definition.receive,
   };
 
@@ -367,7 +408,8 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
   const hasFetchFile = definition.fetchFile !== undefined;
   const metadata = definition.metadata;
   const hasMetadata = metadata !== undefined;
-  const hasBehavior = hasState || hasContext || hasMetadata;
+  const sessionGates = buildSessionGates(definition.gates);
+  const hasBehavior = hasState || hasContext || hasMetadata || Object.keys(sessionGates).length > 0;
 
   const eventHandlers: Record<string, unknown> = {};
   let hasEventHandlers = false;
@@ -413,6 +455,7 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
               return metadata(state as NonNullable<TState>);
             },
           },
+    gates: sessionGates,
 
     createAdapterContext(base): any {
       const state = base.state;
@@ -437,4 +480,37 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
   } as ChannelAdapter<any>;
 
   return adapter;
+}
+
+function buildSessionGates<TCtx, TReceiveTarget>(
+  gates: ChannelGates<TCtx, TReceiveTarget> | undefined,
+): Record<string, ChannelAdapterGateHandler> {
+  if (gates === undefined) return {};
+
+  const result: Record<string, ChannelAdapterGateHandler> = {};
+  const wrap = <TInput>(
+    name: "input.response" | "session.resume" | "turn.cancel" | "session.reset",
+    handler: ((input: TInput, channel: any, ctx: ChannelGateContext) => unknown) | undefined,
+  ): void => {
+    if (handler === undefined) return;
+    result[name] = (input, adapterCtx, ctx) => {
+      const {
+        ctx: _ctx,
+        session: _session,
+        setContinuationToken: _setContinuationToken,
+        ...channelContext
+      } = adapterCtx as typeof adapterCtx & { setContinuationToken?: unknown };
+      const channel = {
+        ...channelContext,
+        continuationToken: adapterCtx.session?.continuationToken ?? "",
+      };
+      return handler(input as TInput, channel, ctx) as ReturnType<ChannelAdapterGateHandler>;
+    };
+  };
+
+  wrap<InputResponseGateInput>("input.response", gates["input.response"]);
+  wrap<SessionResumeGateInput>("session.resume", gates["session.resume"]);
+  wrap<TurnCancelGateInput>("turn.cancel", gates["turn.cancel"]);
+  wrap<SessionResetGateInput>("session.reset", gates["session.reset"]);
+  return result;
 }

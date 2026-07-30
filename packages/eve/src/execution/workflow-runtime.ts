@@ -51,7 +51,9 @@ import { walkCauseChain } from "#shared/errors.js";
 import {
   sessionCancelHookToken,
   type TurnCancelPayload,
+  type TurnResetPayload,
 } from "#execution/turn-cancellation-token.js";
+import { prepareChannelGateOperation } from "#execution/channel-gate-runtime.js";
 
 const WORKFLOW_ENTRY_NAME = "workflowEntry";
 const TURN_WORKFLOW_NAME = "turnWorkflow";
@@ -183,10 +185,67 @@ export function createWorkflowRuntime(config: {
     },
 
     async cancelTurn(input: CancelTurnInput): Promise<CancelTurnResult> {
+      if (input.gate !== undefined) {
+        const operation = await prepareChannelGateOperation({
+          auth: input.auth ?? null,
+          gate: input.gate,
+          sessionId: input.sessionId,
+        });
+        const payload: {
+          -readonly [Key in keyof TurnCancelPayload]: TurnCancelPayload[Key];
+        } = {
+          gateOperation: operation.operation,
+          kind: "cancel",
+        };
+        if (input.continuationToken !== undefined) {
+          payload.continuationToken = input.continuationToken;
+        }
+        if (input.turnId !== undefined) payload.turnId = input.turnId;
+        try {
+          await resumeHook(sessionCancelHookToken(input.sessionId), payload);
+        } catch (error) {
+          await operation.cancel();
+          if (isInactiveCancelTarget(error)) return { status: "no_active_turn" };
+          throw error;
+        }
+        return (await operation.wait()) === "allow"
+          ? { status: "accepted" }
+          : { status: "no_active_turn" };
+      }
       return await requestWorkflowTurnCancellation(input);
     },
 
     async terminateSession(input: TerminateSessionInput): Promise<TerminateSessionResult> {
+      if (input.gate !== undefined && input.continuationToken !== undefined) {
+        const operation = await prepareChannelGateOperation({
+          auth: input.auth ?? null,
+          gate: input.gate,
+          sessionId: input.sessionId,
+        });
+        const payload: {
+          -readonly [Key in keyof TurnResetPayload]: TurnResetPayload[Key];
+        } = {
+          continuationToken: input.continuationToken,
+          gateOperation: operation.operation,
+          kind: "reset",
+        };
+        if (input.reason !== undefined) payload.reason = input.reason;
+        try {
+          await deliverResetOperation(input.sessionId, input.continuationToken, payload);
+        } catch (error) {
+          await operation.cancel();
+          if (isInactiveCancelTarget(error)) {
+            throw new RuntimeNoActiveSessionError(input.continuationToken);
+          }
+          throw error;
+        }
+        if ((await operation.wait()) === "no_active_session") {
+          throw new RuntimeNoActiveSessionError(input.continuationToken);
+        }
+        await getRun(input.sessionId).returnValue;
+        return { status: "terminated" };
+      }
+
       try {
         await cancelRun(await getWorld(), input.sessionId, {
           cancelReason: input.reason ?? "Session reset by channel",
@@ -201,6 +260,47 @@ export function createWorkflowRuntime(config: {
     },
 
     async deliver(input: DeliverInput): Promise<{ sessionId: string }> {
+      if (input.gate !== undefined) {
+        let hook;
+        try {
+          hook = await getHookByToken(input.continuationToken);
+        } catch (error) {
+          if (HookNotFoundError.is(error)) {
+            throw new RuntimeNoActiveSessionError(input.continuationToken);
+          }
+          throw error;
+        }
+        const operation = await prepareChannelGateOperation({
+          auth: input.auth ?? null,
+          gate: input.gate,
+          sessionId: hook.runId,
+        });
+        const hookPayload: Extract<HookPayload, { kind: "deliver" }> = {
+          auth: input.auth,
+          gateOperation: operation.operation,
+          kind: "deliver",
+          payloads: [input.payload],
+          requestId: input.requestId,
+        };
+        try {
+          const resumed = normalizeWorkflowHook(await resumeHook(hook, hookPayload));
+          if (resumed.runId !== hook.runId) {
+            await operation.cancel();
+            throw new RuntimeNoActiveSessionError(input.continuationToken);
+          }
+        } catch (error) {
+          await operation.cancel();
+          if (HookNotFoundError.is(error)) {
+            throw new RuntimeNoActiveSessionError(input.continuationToken);
+          }
+          throw error;
+        }
+        if ((await operation.wait()) === "no_active_session") {
+          throw new RuntimeNoActiveSessionError(input.continuationToken);
+        }
+        return { sessionId: hook.runId };
+      }
+
       const hookPayload: Extract<HookPayload, { kind: "deliver" }> = {
         auth: input.auth,
         kind: "deliver",
@@ -273,6 +373,31 @@ export async function requestWorkflowTurnCancellation(
       return { status: "no_active_turn" };
     }
     throw error;
+  }
+}
+
+async function deliverResetOperation(
+  sessionId: string,
+  continuationToken: string,
+  payload: TurnResetPayload,
+): Promise<void> {
+  try {
+    await resumeHook(sessionCancelHookToken(sessionId), payload);
+    return;
+  } catch (error) {
+    if (!HookNotFoundError.is(error)) throw error;
+  }
+
+  const resumed = normalizeWorkflowHook(
+    await resumeHook(continuationToken, {
+      continuationToken,
+      gateOperation: payload.gateOperation,
+      kind: "session-reset",
+      reason: payload.reason,
+    }),
+  );
+  if (resumed.runId !== sessionId) {
+    throw new RuntimeNoActiveSessionError(continuationToken);
   }
 }
 

@@ -1,6 +1,6 @@
 ---
 title: "Custom Channels"
-description: "Author custom HTTP and WebSocket channels with routes, events, metadata, continuation tokens, and file uploads."
+description: "Author custom HTTP and WebSocket channels with routes, gates, events, metadata, continuation tokens, and file uploads."
 ---
 
 When eve doesn't ship a channel for your surface, you build one. Custom channels expose HTTP or WebSocket endpoints, parse incoming requests, start or resume sessions, observe runtime events, and own delivery back to your platform.
@@ -47,15 +47,58 @@ export default defineChannel({
 Declare routes with the `POST()` and `GET()` helpers. Each route handler receives the raw `Request` and a helpers object:
 
 - `send(message, { auth, continuationToken, state?, title? })` starts or resumes a session. `title` overrides the new workflow session's display title without changing the model message. Returns a `Session`.
-- `cancel({ continuationToken, turnId? })` requests cancellation of the active turn on the session that owns the token. See [Cancel a turn](#cancel-a-turn).
-- `reset({ continuationToken, reason? })` retires the session that owns the token so the next `send()` starts a fresh session. See [Reset a session](#reset-a-session).
-- `getSession(sessionId)` looks up an existing session. The returned `Session` exposes `getEventStream({ startIndex? })` for streaming, `getStreamTailIndex()` for resolving the durable tail when a route wants to serve bounded reads, and `cancel({ turnId? })` for session-id-addressed cancellation.
+- `cancel({ auth, continuationToken, turnId? })` requests cancellation of the active turn on the session that owns the token. Pass the authenticated actor, or explicit `null` for an anonymous caller. See [Cancel a turn](#cancel-a-turn).
+- `reset({ auth, continuationToken, reason? })` retires the session that owns the token so the next `send()` starts a fresh session. See [Reset a session](#reset-a-session).
+- `getSession(sessionId)` looks up an existing session. The returned `Session` exposes `getEventStream({ startIndex? })` for streaming, `getStreamTailIndex()` for resolving the durable tail when a route wants to serve bounded reads, and `cancel({ auth, turnId? })` for session-id-addressed cancellation.
 - `receive(channel, ...)` hands inbound work to a different channel for cross-channel hand-off.
 - `params` holds route parameters extracted from the path pattern.
 - `waitUntil(promise)` extends the request lifetime for background work.
 - `requestIp` is the client IP, or `null` when the host cannot provide it.
 
 Event handlers like `"message.completed"` are declared under the `events` key. They receive `(eventData, channel, ctx)`, where `eventData` is the event payload, `channel` carries platform handles and session continuation operations, and `ctx` is the eve `SessionContext`. Every channel kind shares this signature. The one exception is `session.failed`, which receives only `(eventData, channel)` with no `ctx`.
+
+## Authorize channel operations with gates
+
+Use top-level `gates` for authorization that depends on the existing session, such as restricting HITL answers to the initiating user or consulting an application database. Gates run before the protected mutation and return an explicit `{ type: "allow" }` or `{ type: "deny", reason? }`.
+
+```ts
+import { defineChannel, POST } from "eve/channels";
+
+export default defineChannel({
+  gates: {
+    "input.response": (_input, _channel, ctx) =>
+      ctx.session.auth.current?.principalId === ctx.session.auth.initiator?.principalId
+        ? { type: "allow" }
+        : { type: "deny", reason: "Only the initiating user may respond." },
+
+    "session.resume": async (_input, _channel, ctx) =>
+      (await database.mayResume(ctx.session.auth.current, ctx.session.id))
+        ? { type: "allow" }
+        : { type: "deny" },
+  },
+  routes: [POST("/message", async () => new Response("ok"))],
+});
+```
+
+The available gates and their inputs are:
+
+| Gate              | Input                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------- |
+| `session.resume`  | The normalized `SendPayload`                                                                       |
+| `input.response`  | Pending requests plus an `answer` or `dismiss` resolution                                          |
+| `turn.cancel`     | The optional requested `turnId`                                                                    |
+| `session.reset`   | The optional reset `reason`                                                                        |
+| `channel.receive` | The target channel's receive input; the second argument identifies the calling channel or schedule |
+
+Existing-session delivery evaluates resume first, then input response when the delivery answers or dismisses pending HITL; the first denial stops delivery. `"channel.receive"` protects cross-channel and schedule hand-offs before the target's authored `receive` callback. It does not run for that channel's ordinary inbound webhook or initial session creation.
+
+Gate callbacks receive a cloned channel state/context and session projection (`id`, current and initiating auth, turn, and parent). Existing-session gates run inside the session workflow that owns the operation, against its authoritative state at the point it consumes the delivery, cancellation, or reset. Changes made during evaluation are always discarded, including continuation-token changes; external side effects are not reversible, so keep gates policy-oriented and idempotent.
+
+A configured gate that throws, returns anything other than a tagged decision, or cannot be rehydrated fails closed. A session records an immutable, versioned declaration of its configured gates before its first turn. Sessions created before that declaration existed, or before a newly requested gate was configured, must be restarted; eve does not fall back to an unprotected operation.
+
+Authentication and gates serve different purposes: authentication establishes who the actor is, while gates decide whether that actor may perform a particular operation. `events` are observational callbacks after lifecycle activity; they cannot safely replace a pre-operation gate.
+
+Programmatic callers can distinguish `ChannelGateDeniedError` from `ChannelGateUnavailableError`; both extend `ChannelGateError` and identify the gate. Generic HTTP routes map them to `403` and `503`, respectively.
 
 ## Cancel a turn
 
@@ -67,7 +110,7 @@ import { defineChannel, POST } from "eve/channels";
 export default defineChannel({
   routes: [
     POST("/threads/:threadId/stop", async (_req, { cancel, params }) => {
-      const result = await cancel({ continuationToken: params.threadId });
+      const result = await cancel({ auth: null, continuationToken: params.threadId });
       return Response.json(result);
     }),
   ],
@@ -84,7 +127,7 @@ Semantics:
 - Cancellation stops work without replacement input. Partial streamed output and completed side effects remain observable, and active local or remote subagents receive cancellation recursively.
 - The route owns authentication of the inbound stop request, exactly as for `send()`.
 
-When you already hold a `Session` — returned by `send()` or `getSession(sessionId)` — call `session.cancel({ turnId? })` to request the same cancellation addressed by session id.
+When you already hold a `Session` — returned by `send()` or `getSession(sessionId)` — call `session.cancel({ auth, turnId? })` to request the same cancellation addressed by session id.
 
 ## Reset a session
 
@@ -100,6 +143,7 @@ export default defineChannel({
 
       if (body.message.trim().toLowerCase() === "/new") {
         await reset({
+          auth: null,
           continuationToken: body.conversationId,
           reason: "User requested /new",
         });

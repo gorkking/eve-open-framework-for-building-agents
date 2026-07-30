@@ -1,7 +1,14 @@
 import { createHook, getWorkflowMetadata } from "#compiled/@workflow/core/index.js";
 
-import type { DeliverHookPayload } from "#channel/types.js";
+import type { DeliverHookPayload, SessionResetHookPayload } from "#channel/types.js";
+import { ChannelGateNamesKey } from "#context/keys.js";
 import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-step.js";
+import {
+  evaluateChannelDeliveryGatesStep,
+  evaluateSessionResetGateStep,
+  evaluateTurnCancelGateStep,
+  publishChannelGateAllowStep,
+} from "#execution/channel-gate-steps.js";
 import { sendTurnControlStep, type TurnInboxPayload } from "#execution/turn-control-protocol.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
@@ -18,6 +25,7 @@ import {
   createTurnCancellationControl,
   type TurnCancellationControl,
 } from "#execution/turn-cancellation-control.js";
+import type { TurnInterruptionPayload } from "#execution/turn-cancellation-token.js";
 import { TurnExecutionCursor } from "#execution/turn-execution-cursor.js";
 import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { normalizeSerializableError } from "#execution/workflow-errors.js";
@@ -68,6 +76,9 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
   const iterator = inbox[Symbol.asyncIterator]();
   const cursor = new TurnExecutionCursor({
     controlToken: input.completionToken,
+    ...(input.gateReceiptWritable === undefined
+      ? {}
+      : { gateReceiptWritable: input.gateReceiptWritable }),
     parentWritable: input.stepInput.parentWritable,
     serializedContext: input.stepInput.serializedContext,
     sessionState: input.stepInput.sessionState,
@@ -84,6 +95,11 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
   let cancellation: TurnCancellationControl | undefined;
 
   try {
+    if (nextStepInput?.kind === "session-reset") {
+      await handleParkedReset({ cursor, reset: nextStepInput });
+      return;
+    }
+
     try {
       await claimHookOwnership(inbox);
       ownsInbox = true;
@@ -94,14 +110,39 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
 
     // Claimed after the inbox claim so a losing duplicate run never
     // contends for the session cancel token.
-    if (
-      input.driverCapabilities?.cancelledTurnSettle === true &&
-      canSettleCancelledTurnAsPark(input)
-    ) {
+    const canCancel =
+      input.driverCapabilities?.cancelledTurnSettle === true && canSettleCancelledTurnAsPark(input);
+    const acceptsReset = configuredGateNames(input).includes("session.reset");
+    if (canCancel || acceptsReset) {
       cancellation = await createTurnCancellationControl({
+        acceptReset: acceptsReset,
+        authorize: async (payload, available) =>
+          await authorizeInterruption({
+            available,
+            cursor,
+            payload,
+          }),
+        canCancel,
         expectedTurnId: activeTurnId(input.stepInput.sessionState.emissionState),
         sessionId: input.stepInput.sessionState.sessionId,
       });
+    }
+
+    if (nextStepInput?.kind === "deliver") {
+      const prepared = await prepareDelivery({ cursor, delivery: nextStepInput });
+      if (prepared.kind === "block") {
+        await finishUnchangedPark(cursor);
+        return;
+      }
+      if (prepared.kind === "cancel-turn") {
+        await finishCancelledTurn({ bufferedDeliveries, cancellation, cursor });
+        return;
+      }
+      if (prepared.kind === "routed") {
+        await finishUnchangedPark(cursor);
+        return;
+      }
+      nextStepInput = prepared.delivery;
     }
 
     while (true) {
@@ -115,11 +156,25 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         // epilogue runs in the driver (`settleCancelledTurnStep`), not as
         // a step in this run, where queued cancel wakes could re-dispatch
         // it.
-        await finishCancelledTurn({ bufferedDeliveries, cancellation, cursor });
+        await finishInterruption({
+          bufferedDeliveries,
+          cancellation,
+          cursor,
+          kind: cancellation?.signal.aborted === true ? await cancellation.requested : "cancel",
+        });
         return;
       }
 
       if (result.action === "done") {
+        if (cancellation?.signal.aborted === true) {
+          await finishInterruption({
+            bufferedDeliveries,
+            cancellation,
+            cursor,
+            kind: await cancellation.requested,
+          });
+          return;
+        }
         await cancellation?.dispose();
         await cursor.finish(
           result,
@@ -177,6 +232,10 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
           await finishCancelledTurn({ bufferedDeliveries, cancellation, cursor });
           return;
         }
+        if (results === "reset") {
+          await finishResetTurn({ bufferedDeliveries, cancellation, cursor });
+          return;
+        }
         nextStepInput = { kind: "runtime-action-result", results };
         continue;
       }
@@ -218,6 +277,171 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
   }
 }
 
+type PreparedDelivery =
+  | { readonly kind: "block" }
+  | { readonly kind: "cancel-turn" }
+  | { readonly kind: "routed" }
+  | { readonly delivery: DeliverHookPayload; readonly kind: "delivery" };
+
+async function prepareDelivery(input: {
+  readonly cursor: TurnExecutionCursor;
+  readonly delivery: DeliverHookPayload;
+}): Promise<PreparedDelivery> {
+  const operation = input.delivery.gateOperation;
+  if (operation !== undefined) {
+    const evaluation = await evaluateChannelDeliveryGatesStep({
+      delivery: input.delivery,
+      operation,
+      receiptWritable: input.cursor.gateReceiptWritable,
+      serializedContext: input.cursor.serializedContext,
+      sessionState: input.cursor.sessionState,
+    });
+    if (evaluation.status === "block") return { kind: "block" };
+  }
+
+  if (!input.cursor.sessionState.hasProxyInputRequests) {
+    await acknowledgeAllowedOperation(input.cursor, operation?.id);
+    return {
+      delivery: {
+        auth: input.delivery.auth,
+        kind: "deliver",
+        payloads: input.delivery.payloads,
+        requestId: input.delivery.requestId,
+      },
+      kind: "delivery",
+    };
+  }
+
+  const routed = await routeDeliverToChildren({
+    auth: input.delivery.auth,
+    parentWritable: input.cursor.parentWritable,
+    payloads: input.delivery.payloads,
+    sessionState: input.cursor.sessionState,
+  });
+  await acknowledgeAllowedOperation(input.cursor, operation?.id);
+  if (routed.kind === "cancel-turn") return routed;
+  if (routed.remainder === undefined) return { kind: "routed" };
+
+  const delivery: DeliverHookPayload = {
+    auth: input.delivery.auth,
+    kind: "deliver",
+    payloads: [routed.remainder],
+    requestId: input.delivery.requestId,
+  };
+  return { delivery, kind: "delivery" };
+}
+
+async function handleParkedReset(input: {
+  readonly cursor: TurnExecutionCursor;
+  readonly reset: SessionResetHookPayload;
+}): Promise<void> {
+  const evaluation = await evaluateSessionResetGateStep({
+    continuationToken: input.reset.continuationToken,
+    operation: input.reset.gateOperation,
+    reason: input.reset.reason,
+    receiptWritable: input.cursor.gateReceiptWritable,
+    serializedContext: input.cursor.serializedContext,
+    sessionState: input.cursor.sessionState,
+  });
+  if (evaluation.status === "allow") {
+    await acknowledgeAllowedOperation(input.cursor, input.reset.gateOperation.id);
+    await finishResetTurn({ cancellation: undefined, cursor: input.cursor });
+  } else {
+    await finishUnchangedPark(input.cursor);
+  }
+}
+
+async function authorizeInterruption(input: {
+  readonly available: boolean;
+  readonly cursor: TurnExecutionCursor;
+  readonly payload: TurnInterruptionPayload;
+}): Promise<boolean> {
+  const operation = input.payload.gateOperation;
+  if (operation === undefined) return false;
+
+  const common = {
+    operation,
+    receiptWritable: input.cursor.gateReceiptWritable,
+    serializedContext: input.cursor.serializedContext,
+    sessionState: input.cursor.sessionState,
+  };
+  const evaluation =
+    input.payload.kind === "reset"
+      ? await evaluateSessionResetGateStep({
+          ...common,
+          continuationToken: input.payload.continuationToken,
+          reason: input.payload.reason,
+        })
+      : await evaluateTurnCancelGateStep({
+          ...common,
+          available: input.available,
+          continuationToken: input.payload.continuationToken,
+          turnId: input.payload.turnId,
+        });
+  if (evaluation.status !== "allow") return false;
+  await acknowledgeAllowedOperation(input.cursor, operation.id);
+  return true;
+}
+
+async function acknowledgeAllowedOperation(
+  cursor: TurnExecutionCursor,
+  operationId: string | undefined,
+): Promise<void> {
+  if (operationId === undefined) return;
+  await publishChannelGateAllowStep({
+    id: operationId,
+    writable: cursor.gateReceiptWritable,
+  });
+}
+
+function configuredGateNames(input: TurnWorkflowInput): readonly string[] {
+  const names = input.stepInput.serializedContext[ChannelGateNamesKey.name];
+  return Array.isArray(names)
+    ? names.filter((name): name is string => typeof name === "string")
+    : [];
+}
+
+async function finishInterruption(input: {
+  readonly bufferedDeliveries: readonly DeliverHookPayload[];
+  readonly cancellation: TurnCancellationControl | undefined;
+  readonly cursor: TurnExecutionCursor;
+  readonly kind: "cancel" | "reset";
+}): Promise<void> {
+  if (input.kind === "reset") {
+    await finishResetTurn(input);
+  } else {
+    await finishCancelledTurn(input);
+  }
+}
+
+async function finishUnchangedPark(cursor: TurnExecutionCursor): Promise<void> {
+  await cursor.finish(
+    {
+      serializedContext: cursor.serializedContext,
+      sessionState: cursor.sessionState,
+    },
+    { kind: "park" },
+    [],
+  );
+}
+
+async function finishResetTurn(input: {
+  readonly bufferedDeliveries?: readonly DeliverHookPayload[];
+  readonly cancellation: TurnCancellationControl | undefined;
+  readonly cursor: TurnExecutionCursor;
+}): Promise<void> {
+  await cancelDescendantTurnsStep({
+    serializedContext: input.cursor.serializedContext,
+    sessionState: input.cursor.sessionState,
+  });
+  await input.cancellation?.dispose();
+  await input.cursor.finish(
+    { sessionState: input.cursor.sessionState },
+    { kind: "park", reset: true },
+    [],
+  );
+}
+
 async function finishCancelledTurn(input: {
   readonly bufferedDeliveries: readonly DeliverHookPayload[];
   readonly cancellation: TurnCancellationControl | undefined;
@@ -247,7 +471,7 @@ async function waitForRuntimeActionResults(input: {
   readonly iterator: AsyncIterator<TurnInboxPayload>;
   readonly nextDeliveryRequestId: () => string;
   readonly pendingActionKeys: readonly string[];
-}): Promise<readonly RuntimeActionResult[] | "cancelled" | "cancel-turn"> {
+}): Promise<readonly RuntimeActionResult[] | "cancelled" | "cancel-turn" | "reset"> {
   let pendingDeliveryRequest: string | undefined;
   const results: RuntimeActionResult[] = [...input.initialResults];
 
@@ -297,6 +521,15 @@ async function waitForRuntimeActionResults(input: {
       }
       return "cancelled";
     }
+    if (next === "reset") {
+      if (pendingDeliveryRequest !== undefined) {
+        await input.cursor.send({
+          kind: "turn-delivery-cancelled",
+          requestId: pendingDeliveryRequest,
+        });
+      }
+      return "reset";
+    }
     if (next.done) throw new Error("Turn inbox closed before runtime actions completed.");
 
     const value = next.value;
@@ -324,17 +557,13 @@ async function waitForRuntimeActionResults(input: {
       await input.cursor.send({ kind: "turn-delivery-accepted", requestId: value.requestId });
       pendingDeliveryRequest = undefined;
 
-      const routed = await routeDeliverToChildren({
-        auth: value.delivery.auth,
-        parentWritable: input.cursor.parentWritable,
-        payloads: value.delivery.payloads,
-        sessionState: input.cursor.sessionState,
+      const prepared = await prepareDelivery({
+        cursor: input.cursor,
+        delivery: value.delivery,
       });
-      if (routed.kind === "cancel-turn") {
-        return routed.kind;
-      }
-      if (routed.remainder !== undefined) {
-        input.bufferedDeliveries.push({ ...value.delivery, payloads: [routed.remainder] });
+      if (prepared.kind === "cancel-turn") return prepared.kind;
+      if (prepared.kind === "delivery") {
+        input.bufferedDeliveries.push(prepared.delivery);
       }
     }
   }

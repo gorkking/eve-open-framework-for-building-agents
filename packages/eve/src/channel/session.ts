@@ -1,6 +1,9 @@
 import type { ContextAccessor } from "#context/key.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
 import type { CancelTurnResult, Runtime } from "#channel/types.js";
+import type { SessionAuthContext } from "#channel/types.js";
+import type { ChannelAdapter } from "#channel/adapter.js";
+import { executeGatedCancel } from "#channel/gated-operations.js";
 import type { SessionAuth } from "#context/keys.js";
 import { AuthKey, ContinuationTokenKey, InitiatorAuthKey, SessionIdKey } from "#context/keys.js";
 
@@ -22,7 +25,7 @@ export interface Session {
    * successful; confirmation is `turn.cancelled` followed by
    * `session.waiting` on the event stream.
    */
-  cancel(options?: { turnId?: string }): Promise<CancelTurnResult>;
+  cancel(options: { auth: SessionAuthContext | null; turnId?: string }): Promise<CancelTurnResult>;
   /**
    * Opens the durable event stream. Negative start indexes read relative to
    * the current tail (`-1` starts at the latest event).
@@ -49,12 +52,23 @@ export interface SessionHandle {
   setContinuationToken(rawToken: string): void;
 }
 
-export function createSession(id: string, continuationToken: string, runtime: Runtime): Session {
+export function createSession(
+  id: string,
+  continuationToken: string,
+  runtime: Runtime,
+  adapter: ChannelAdapter = { kind: "channel" },
+): Session {
   return {
     id,
     continuationToken,
-    async cancel(options?: { turnId?: string }) {
-      return runtime.cancelTurn({ sessionId: id, turnId: options?.turnId });
+    async cancel(options) {
+      return await executeGatedCancel({
+        adapter,
+        auth: options.auth,
+        runtime,
+        sessionId: id,
+        turnId: options.turnId,
+      });
     },
     async getEventStream(options?: { startIndex?: number }) {
       return runtime.getEventStream(id, options);
@@ -65,8 +79,11 @@ export function createSession(id: string, continuationToken: string, runtime: Ru
   };
 }
 
-export function createGetSessionFn(runtime: Runtime): (sessionId: string) => Session {
-  return (sessionId: string) => createSession(sessionId, "", runtime);
+export function createGetSessionFn(
+  runtime: Runtime,
+  adapter: ChannelAdapter = { kind: "channel" },
+): (sessionId: string) => Session {
+  return (sessionId: string) => createSession(sessionId, "", runtime, adapter);
 }
 
 /**

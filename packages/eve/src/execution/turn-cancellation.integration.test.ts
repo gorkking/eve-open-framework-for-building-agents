@@ -447,7 +447,7 @@ describe("turn cancellation integration", () => {
     await fixture.runtime.run(async () => {
       // A token no session owns is the benign "nothing to cancel" success
       // and must never start a session.
-      await expect(cancel({ continuationToken: "no-such-thread" })).resolves.toEqual({
+      await expect(cancel({ auth: null, continuationToken: "no-such-thread" })).resolves.toEqual({
         status: "no_active_turn",
       });
 
@@ -467,7 +467,7 @@ describe("turn cancellation integration", () => {
         await waitForHookByToken(continuationToken);
         await fixture.toolStarted;
 
-        await expect(cancel({ continuationToken: rawToken })).resolves.toEqual({
+        await expect(cancel({ auth: null, continuationToken: rawToken })).resolves.toEqual({
           status: "accepted",
         });
 
@@ -489,7 +489,9 @@ describe("turn cancellation integration", () => {
         // settled and its cancel hook swept, it reports the benign status.
         await waitForHookSweep(sessionCancelHookToken(run.runId));
         const session = createSession(run.runId, rawToken, workflowRuntime);
-        await expect(session.cancel()).resolves.toEqual({ status: "no_active_turn" });
+        await expect(session.cancel({ auth: null })).resolves.toEqual({
+          status: "no_active_turn",
+        });
 
         await waitForHook({ runId: run.runId }, { token: continuationToken });
         await resumeHook(continuationToken, {

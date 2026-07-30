@@ -194,6 +194,27 @@ describe("createRuntimeAdapterRegistry", () => {
       expect(registry.adaptersByKind.get("slack")).toBe(customAdapter);
     });
 
+    it("rehydrates gate behavior with cloned durable adapter state", async () => {
+      const gate = async () => ({ type: "allow" as const });
+      const customAdapter: ChannelAdapter = {
+        gates: { "session.resume": gate },
+        kind: "channel:guarded",
+        state: { revision: 1 },
+      };
+      const registry = createRuntimeAdapterRegistry({
+        channels: [makeChannelDefinition(customAdapter)],
+      });
+
+      const rehydrated = deserializeRuntimeAdapter(registry, {
+        kind: "channel:guarded",
+        state: { revision: 2 },
+      });
+
+      expect(rehydrated.gates?.["session.resume"]).toBe(gate);
+      expect(rehydrated.state).toEqual({ revision: 2 });
+      expect(rehydrated.state).not.toBe(customAdapter.state);
+    });
+
     it("rejects a route-declared adapter missing a kind field", () => {
       // Simulate broken authored input that bypasses TypeScript typing.
       const bogusAdapter = {} as ChannelAdapter;

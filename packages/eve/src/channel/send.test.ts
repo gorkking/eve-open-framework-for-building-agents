@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
+import { ChannelGateDeniedError, ChannelGateUnavailableError } from "#channel/gate-errors.js";
 import { createSendFn } from "#channel/send.js";
 import type { RunHandle, Runtime } from "#channel/types.js";
 import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
@@ -74,6 +75,90 @@ describe("createSendFn", () => {
         { auth: null, continuationToken: "token" },
       ),
     ).rejects.toThrow(/Cannot deliver inputResponses/);
+    expect(runtime.run).not.toHaveBeenCalled();
+  });
+
+  it("routes existing sessions through configured gates with actor auth", async () => {
+    const actor = {
+      attributes: {},
+      authenticator: "test",
+      principalId: "user_1",
+      principalType: "user" as const,
+    };
+    const runtime = createRuntime(new Error("raw delivery must not run"));
+    runtime.deliver = vi.fn().mockResolvedValue({ sessionId: "sess_1" });
+    const adapter: ChannelAdapter = {
+      gates: {
+        "input.response": async () => ({ type: "allow" }),
+        "session.resume": async () => ({ type: "allow" }),
+      },
+      kind: "channel:test",
+    };
+
+    const session = await createSendFn(
+      runtime,
+      adapter,
+      "test",
+    )(
+      { inputResponses: [{ optionId: "approve", requestId: "req_1" }] },
+      { auth: actor, continuationToken: "token" },
+    );
+
+    expect(session.id).toBe("sess_1");
+    expect(runtime.deliver).toHaveBeenCalledWith({
+      auth: actor,
+      continuationToken: "test:token",
+      gate: {
+        adapterKind: "channel:test",
+        names: ["session.resume", "input.response"],
+      },
+      payload: {
+        context: undefined,
+        inputResponses: [{ optionId: "approve", requestId: "req_1" }],
+        message: undefined,
+        outputSchema: undefined,
+      },
+      requestId: undefined,
+    });
+    expect(runtime.run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "denied",
+      { gate: "input.response", reason: "Initiator only.", status: "denied" } as const,
+      ChannelGateDeniedError,
+    ],
+    [
+      "unavailable",
+      { gate: "session.resume", status: "unavailable" } as const,
+      ChannelGateUnavailableError,
+    ],
+  ])("fails closed when a gate is %s", async (_label, result, ErrorClass) => {
+    const runtime = createRuntime(new Error("raw delivery must not run"));
+    runtime.deliver = vi
+      .fn()
+      .mockRejectedValue(
+        result.status === "denied"
+          ? new ChannelGateDeniedError(result.gate, result.reason)
+          : new ChannelGateUnavailableError(result.gate),
+      );
+    const adapter: ChannelAdapter = {
+      gates: { "session.resume": async () => ({ type: "allow" }) },
+      kind: "channel:test",
+    };
+
+    await expect(
+      createSendFn(
+        runtime,
+        adapter,
+        "test",
+      )("continue", {
+        auth: null,
+        continuationToken: "token",
+      }),
+    ).rejects.toBeInstanceOf(ErrorClass);
+    expect(runtime.deliver).toHaveBeenCalledOnce();
     expect(runtime.run).not.toHaveBeenCalled();
   });
 

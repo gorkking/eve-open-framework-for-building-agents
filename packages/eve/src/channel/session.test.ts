@@ -22,7 +22,7 @@ describe("createSession#cancel", () => {
     const runtime = createRuntime();
     const session = createSession("sess_1", "C1:T1", runtime);
 
-    await expect(session.cancel()).resolves.toEqual({ status: "accepted" });
+    await expect(session.cancel({ auth: null })).resolves.toEqual({ status: "accepted" });
     expect(runtime.cancelTurn).toHaveBeenCalledWith({ sessionId: "sess_1", turnId: undefined });
   });
 
@@ -30,7 +30,7 @@ describe("createSession#cancel", () => {
     const runtime = createRuntime();
     const session = createSession("sess_1", "C1:T1", runtime);
 
-    await session.cancel({ turnId: "turn_2" });
+    await session.cancel({ auth: null, turnId: "turn_2" });
 
     expect(runtime.cancelTurn).toHaveBeenCalledWith({ sessionId: "sess_1", turnId: "turn_2" });
   });
@@ -39,7 +39,7 @@ describe("createSession#cancel", () => {
     const runtime = createRuntime();
     const session = createGetSessionFn(runtime)("sess_2");
 
-    await expect(session.cancel()).resolves.toEqual({ status: "accepted" });
+    await expect(session.cancel({ auth: null })).resolves.toEqual({ status: "accepted" });
     expect(runtime.cancelTurn).toHaveBeenCalledWith({ sessionId: "sess_2", turnId: undefined });
   });
 });

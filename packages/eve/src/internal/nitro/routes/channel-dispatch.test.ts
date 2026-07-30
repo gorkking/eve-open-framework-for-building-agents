@@ -2,6 +2,7 @@ import type { H3Event } from "nitro";
 import { describe, expect, it, vi } from "vitest";
 
 import { CHANNEL_SENTINEL, type CompiledChannel } from "#channel/compiled-channel.js";
+import { ChannelGateDeniedError, ChannelGateUnavailableError } from "#channel/gate-errors.js";
 import type { RouteHandlerArgs } from "#channel/routes.js";
 import type { CancelTurnInput, DeliverInput, RunInput, Runtime } from "#channel/types.js";
 import { readVercelProjectLink } from "#internal/vercel/project-link.js";
@@ -299,6 +300,7 @@ describe("dispatchChannelRequest", () => {
           handler: async (_req, args) =>
             Response.json(
               await args.reset({
+                auth: null,
                 continuationToken: "direct:+15551234567:+15557654321",
                 reason: "User requested /new",
               }),
@@ -404,9 +406,10 @@ describe("dispatchChannelRequest", () => {
       mode: "conversation",
     } satisfies RunInput);
     const cancelInput = Object.freeze({
+      auth: null,
       sessionId: "sess_run",
       turnId: "turn_1",
-    } satisfies CancelTurnInput);
+    } satisfies CancelTurnInput & { auth: null });
 
     mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
       channels: [
@@ -440,13 +443,17 @@ describe("dispatchChannelRequest", () => {
     expect(response.status).toBe(200);
     const deliveredInput = vi.mocked(runtimeForTest.deliver).mock.calls[0]?.[0];
     const startedInput = vi.mocked(runtimeForTest.run).mock.calls[0]?.[0];
-    expect(runtimeForTest.cancelTurn).toHaveBeenCalledWith(cancelInput);
+    expect(runtimeForTest.cancelTurn).toHaveBeenCalledWith({
+      sessionId: cancelInput.sessionId,
+      turnId: cancelInput.turnId,
+    });
     expect(deliveredInput).not.toBe(deliverInput);
     expect(startedInput).not.toBe(runInput);
     expect(deliveredInput?.requestId).toBe("iad1::abc123-1710000000000-deadbeef");
     expect(startedInput?.requestId).toBe("iad1::abc123-1710000000000-deadbeef");
     expect(deliverInput).not.toHaveProperty("requestId");
     expect(runInput).not.toHaveProperty("requestId");
+    expect(cancelInput).toHaveProperty("auth", null);
   });
 
   it("hands websocket route handlers the same route args", async () => {
@@ -553,6 +560,84 @@ describe("dispatchChannelRequest", () => {
     );
     expect(logged).toBeDefined();
     expect(logged![1]).toMatchObject({ channel: "slack", error: { errorId: body.errorId } });
+    errorSpy.mockRestore();
+  });
+
+  it("maps gate denial to 403 and returns only the author-declared reason", async () => {
+    mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
+      channels: [
+        {
+          fetch: async () => {
+            throw new ChannelGateDeniedError("input.response", "Only the initiator may answer.");
+          },
+          logicalPath: "agent/channels/eve.ts",
+          method: "POST",
+          name: "eve",
+          sourceId: "channel-eve",
+          sourceKind: "module",
+          urlPath: "/eve/v1/session/sess_1",
+        } satisfies ResolvedChannelDefinition,
+      ],
+      runtime,
+    });
+
+    const response = await dispatchChannelRequest(
+      createEvent({ waitUntil: vi.fn() }),
+      "POST /eve/v1/session/sess_1",
+      {} as never,
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Only the initiator may answer.",
+      gate: "input.response",
+      ok: false,
+    });
+  });
+
+  it("maps gate infrastructure failure to 503 with an opaque logged error id", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockedResolveNitroChannelRuntimeBundle.mockResolvedValue({
+      channels: [
+        {
+          fetch: async () => {
+            throw new ChannelGateUnavailableError("session.resume", {
+              cause: new Error("private database detail"),
+            });
+          },
+          logicalPath: "agent/channels/eve.ts",
+          method: "POST",
+          name: "eve",
+          sourceId: "channel-eve",
+          sourceKind: "module",
+          urlPath: "/eve/v1/session/sess_1",
+        } satisfies ResolvedChannelDefinition,
+      ],
+      runtime,
+    });
+
+    const response = await dispatchChannelRequest(
+      createEvent({ waitUntil: vi.fn() }),
+      "POST /eve/v1/session/sess_1",
+      {} as never,
+    );
+    const body = (await response.json()) as {
+      readonly error: string;
+      readonly errorId: string;
+      readonly ok: boolean;
+    };
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      error: "Channel policy is temporarily unavailable.",
+      errorId: expect.any(String),
+      ok: false,
+    });
+    expect(JSON.stringify(body)).not.toContain("private database detail");
+    const logged = errorSpy.mock.calls.find(([line]) =>
+      String(line).includes("channel gate unavailable"),
+    );
+    expect(logged?.[1]).toMatchObject({ error: { errorId: body.errorId } });
     errorSpy.mockRestore();
   });
 

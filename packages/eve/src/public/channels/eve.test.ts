@@ -46,6 +46,13 @@ const OVERRIDE_AUTH: SessionAuthContext = {
   principalType: "user",
 };
 
+const ANONYMOUS_AUTH: SessionAuthContext = {
+  attributes: {},
+  authenticator: "none",
+  principalId: "anonymous",
+  principalType: "anonymous",
+};
+
 /**
  * Creates a POST handler test harness for the create route (POST /eve/v1/session).
  * Returns a `fetch(req)` function and a `send` mock so tests can inspect
@@ -1394,6 +1401,7 @@ describe("eveChannel — cancel turn", () => {
     });
     expect(handler.cancelTurn).toHaveBeenCalledTimes(1);
     expect(handler.cancelTurn).toHaveBeenCalledWith({
+      auth: ANONYMOUS_AUTH,
       sessionId: "test-session-id",
       turnId: undefined,
     });
@@ -1406,6 +1414,7 @@ describe("eveChannel — cancel turn", () => {
 
     expect(response.status).toBe(202);
     expect(handler.cancelTurn).toHaveBeenCalledWith({
+      auth: ANONYMOUS_AUTH,
       sessionId: "test-session-id",
       turnId: undefined,
     });
@@ -1418,6 +1427,7 @@ describe("eveChannel — cancel turn", () => {
 
     expect(response.status).toBe(202);
     expect(handler.cancelTurn).toHaveBeenCalledWith({
+      auth: ANONYMOUS_AUTH,
       sessionId: "test-session-id",
       turnId: "turn_2",
     });
@@ -1487,6 +1497,7 @@ describe("eveChannel — reset session", () => {
       status: "reset",
     });
     expect(handler.reset).toHaveBeenCalledWith({
+      auth: ANONYMOUS_AUTH,
       continuationToken: "eve:token",
       reason: "Client requested session reset",
     });

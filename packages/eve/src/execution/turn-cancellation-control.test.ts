@@ -113,6 +113,31 @@ describe("createTurnCancellationControl", () => {
     expect(control!.signal.aborted).toBe(false);
   });
 
+  it("acknowledges a gated stale guard as unavailable without aborting", async () => {
+    const payload = {
+      gateOperation: {
+        adapterKind: "channel:test",
+        auth: null,
+        id: "operation-1",
+        names: ["turn.cancel"] as const,
+      },
+      kind: "cancel" as const,
+      turnId: "turn_99",
+    };
+    installCancelHook({ payloads: [payload] });
+    const authorize = vi.fn(async () => false);
+
+    const control = await createTurnCancellationControl({
+      authorize,
+      expectedTurnId: "turn_2",
+      sessionId: "session-1",
+    });
+
+    expect(await settles(control!.requested)).toBe(false);
+    expect(authorize).toHaveBeenCalledWith(payload, false);
+    expect(control!.signal.aborted).toBe(false);
+  });
+
   it("disposes idempotently", async () => {
     const { dispose } = installCancelHook({});
 

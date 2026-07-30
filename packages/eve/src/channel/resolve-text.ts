@@ -3,8 +3,8 @@ import type { InputOption, InputRequest, InputResponse } from "#runtime/input/ty
 /**
  * Maps freeform text to an {@link InputResponse} for a single request.
  *
- * Emitters import this utility to resolve text-based user input against
- * pending request options. The harness and runtime do not call it.
+ * Channels, gates, and the harness use this utility to resolve text-based
+ * user input against pending request options consistently.
  *
  * Resolution order:
  * 1. Exact option ID (case-insensitive)
