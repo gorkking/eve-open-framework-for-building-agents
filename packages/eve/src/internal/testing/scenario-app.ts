@@ -370,6 +370,14 @@ async function resolveOrPackScenarioEveTarball(): Promise<string> {
 async function packScenarioEveTarball(): Promise<string> {
   const cacheRoot = await resolveScenarioWorkerCacheDirectory();
   const tarballsRoot = join(cacheRoot, "tarballs");
+  const packageRoot = resolvePackageRoot();
+  const prebuiltEntryPath = join(packageRoot, "dist", "src", "index.js");
+
+  if (!(await isFilePresent(prebuiltEntryPath))) {
+    throw new Error(
+      `Scenario tests require a prebuilt eve package. Run "pnpm build" first. Missing: ${prebuiltEntryPath}`,
+    );
+  }
 
   await rm(tarballsRoot, {
     force: true,
@@ -379,10 +387,8 @@ async function packScenarioEveTarball(): Promise<string> {
     recursive: true,
   });
 
-  const packageRoot = resolvePackageRoot();
-
   await runPnpmCommand({
-    args: ["pack", "--pack-destination", tarballsRoot],
+    args: ["pack", "--config.ignore-scripts=true", "--pack-destination", tarballsRoot],
     cwd: packageRoot,
   });
 

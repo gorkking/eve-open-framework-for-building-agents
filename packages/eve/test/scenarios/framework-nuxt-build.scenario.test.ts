@@ -58,9 +58,9 @@ function isFilesystemHandle(route: unknown): boolean {
 }
 
 describe("framework-nuxt build", () => {
-  it("builds the Nuxt framework fixture after regenerating eve dist", async () => {
+  it("builds the Nuxt framework fixture against the prebuilt eve dist", async () => {
     await runPnpmCommand({
-      args: ["--filter", "framework-nuxt", "build"],
+      args: ["--filter", "framework-nuxt", "build:nuxt"],
       cwd: REPO_ROOT,
     });
   }, 300_000);
