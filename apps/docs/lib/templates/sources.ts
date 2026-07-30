@@ -23,10 +23,11 @@ export default defineAgent({
       "typescript",
       `import { eveChannel } from "eve/channels/eve";
 import { localDev, vercelOidc } from "eve/channels/auth";
-import { betterAuthEveAuth } from "@/lib/eve-auth";
+import { auth } from "@/lib/auth";
+import { fromBetterAuth } from "@/lib/better-auth/eve";
 
 export default eveChannel({
-  auth: [betterAuthEveAuth, localDev(), vercelOidc()],
+  auth: [...(auth ? [fromBetterAuth(auth)] : []), localDev(), vercelOidc()],
   uploadPolicy: "disabled",
 });
 `,

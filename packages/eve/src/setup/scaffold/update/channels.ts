@@ -17,6 +17,7 @@ import { getSupportedModuleBaseName, matchesSupportedModuleBaseName } from "./mo
 import { patchPackageJson, type PackageJsonPatch } from "./package-json.js";
 import {
   CURRENT_DIRECTORY_PROJECT_NAME,
+  DEFAULT_EVE_CHANNEL_TEMPLATE,
   DEFAULT_EVE_PACKAGE_CONTRACT,
   resolveEvePackageContract,
   type EvePackageContract,
@@ -553,8 +554,11 @@ async function ensureWebChannel(
     for (const [relPath, content] of Object.entries(WEB_APP_TEMPLATE_FILES)) {
       const filePath = join(options.projectRoot, relPath);
       if (relPath === WEB_CHANNEL_PATH && !options.force && (await pathExists(filePath))) {
-        filesSkipped.push(filePath);
-        continue;
+        const existingChannel = await readFile(filePath, "utf8");
+        if (existingChannel !== DEFAULT_EVE_CHANNEL_TEMPLATE) {
+          filesSkipped.push(filePath);
+          continue;
+        }
       }
 
       const existed = await pathExists(filePath);
