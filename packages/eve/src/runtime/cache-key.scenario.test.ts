@@ -124,6 +124,7 @@ async function writeCompileMetadata(input: {
         },
         kind: COMPILE_METADATA_KIND,
         status: "ready",
+        target: "development",
         version: COMPILE_METADATA_VERSION,
       },
       null,

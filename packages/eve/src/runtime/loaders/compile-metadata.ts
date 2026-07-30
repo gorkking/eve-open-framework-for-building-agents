@@ -44,6 +44,7 @@ const compileMetadataSchema: z.ZodType<CompileMetadata> = z
       .strict(),
     kind: z.literal(COMPILE_METADATA_KIND),
     status: z.union([z.literal("failed"), z.literal("ready")]),
+    target: z.union([z.literal("development"), z.literal("hosted")]),
     version: z.literal(COMPILE_METADATA_VERSION),
   })
   .strict();

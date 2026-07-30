@@ -25,6 +25,8 @@ export const DEFAULT_SANDBOX_SOURCE_ID = "eve:default-sandbox";
  * reads these files.
  */
 export interface RuntimeRegisteredSandbox {
+  readonly agentRoot?: string;
+  readonly appRoot?: string;
   readonly definition: ResolvedSandboxDefinition;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
 }
@@ -49,16 +51,24 @@ export interface RuntimeSandboxRegistry {
  * framework default.
  */
 export function createRuntimeSandboxRegistry(input: {
+  readonly agentRoot?: string;
+  readonly appRoot?: string;
   readonly authoredSandbox: ResolvedSandboxDefinition | null;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
 }): RuntimeSandboxRegistry {
   const definition = input.authoredSandbox ?? createFrameworkSandboxDefinition();
-  return {
-    sandbox: {
-      definition,
-      workspaceResourceRoot: input.workspaceResourceRoot,
-    },
+  const sandbox: {
+    agentRoot?: string;
+    appRoot?: string;
+    definition: ResolvedSandboxDefinition;
+    workspaceResourceRoot: CompiledWorkspaceResourceRoot;
+  } = {
+    definition,
+    workspaceResourceRoot: input.workspaceResourceRoot,
   };
+  if (input.agentRoot !== undefined) sandbox.agentRoot = input.agentRoot;
+  if (input.appRoot !== undefined) sandbox.appRoot = input.appRoot;
+  return { sandbox };
 }
 
 /**

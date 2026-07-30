@@ -201,6 +201,11 @@
       "import": "./dist/src/public/extension/index.js",
       "default": "./dist/src/public/extension/index.js"
     },
+    "./extensions/selfmod": {
+      "types": "./dist/src/public/extensions/selfmod.d.ts",
+      "import": "./dist/src/public/extensions/selfmod.js",
+      "default": "./dist/src/public/extensions/selfmod.js"
+    },
     "./instrumentation": {
       "types": "./dist/src/public/instrumentation/index.d.ts",
       "import": "./dist/src/public/instrumentation/index.js",

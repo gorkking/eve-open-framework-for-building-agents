@@ -11,6 +11,7 @@ import type { CompiledAgentManifest } from "#compiler/manifest.js";
 import { createCompiledModuleMapSource } from "#compiler/module-map.js";
 import { compileAgentManifest } from "#compiler/normalize-manifest.js";
 import { materializeWorkspaceResources } from "#compiler/workspace-resources.js";
+import type { CompileTarget } from "#compiler/target.js";
 
 /**
  * Stable diagnostics artifact kind emitted by the compiler.
@@ -30,7 +31,7 @@ export const COMPILE_METADATA_KIND = "eve-compile-metadata";
 /**
  * Current compile metadata schema version.
  */
-export const COMPILE_METADATA_VERSION = 5;
+export const COMPILE_METADATA_VERSION = 6;
 
 /**
  * Structured paths for compiler-owned artifacts under `.eve/`.
@@ -83,6 +84,7 @@ export interface CompileMetadata {
   };
   kind: typeof COMPILE_METADATA_KIND;
   status: "failed" | "ready";
+  target: CompileTarget;
   version: typeof COMPILE_METADATA_VERSION;
 }
 
@@ -99,6 +101,7 @@ interface WriteCompilerArtifactsInput {
   artifactLocations: CompilerArtifactLocations;
   diagnostics: readonly DiscoverDiagnostic[];
   manifest: AgentSourceManifest;
+  target?: CompileTarget;
 }
 
 /**
@@ -163,6 +166,7 @@ export function createCompileMetadata(input: {
   discoveryManifestJson: string;
   moduleMapSource: string;
   paths: CompilerArtifactPaths;
+  target?: CompileTarget;
 }): CompileMetadata {
   const generator = resolveInstalledPackageInfo();
   const manifestHash = createContentHash(input.discoveryManifestJson);
@@ -185,7 +189,9 @@ export function createCompileMetadata(input: {
         path: toArtifactRelativePath(input.appRoot, input.paths.discoveryManifestPath),
         sha256: manifestHash,
       },
-      sourceGraphHash: createContentHash(`${manifestHash}:${diagnosticsHash}:${moduleMapHash}`),
+      sourceGraphHash: createContentHash(
+        `${manifestHash}:${diagnosticsHash}:${moduleMapHash}:${input.target ?? "hosted"}`,
+      ),
       summary: input.diagnosticsSummary,
     },
     generator: {
@@ -194,6 +200,7 @@ export function createCompileMetadata(input: {
     },
     kind: COMPILE_METADATA_KIND,
     status: input.diagnosticsSummary.errors > 0 ? "failed" : "ready",
+    target: input.target ?? "hosted",
     version: COMPILE_METADATA_VERSION,
   };
 }
@@ -210,7 +217,7 @@ export async function writeCompilerArtifacts(
   const diagnosticsArtifact = createDiscoveryDiagnosticsArtifact(input.diagnostics);
   const compiledManifest = await materializeWorkspaceResources({
     compileDirectoryPath: paths.compileDirectoryPath,
-    manifest: await compileAgentManifest(input.manifest),
+    manifest: await compileAgentManifest(input.manifest, { target: input.target ?? "hosted" }),
   });
   const compiledManifestJson = serializeArtifactJson(compiledManifest);
   const discoveryManifestJson = serializeArtifactJson(input.manifest);
@@ -226,6 +233,7 @@ export async function writeCompilerArtifacts(
     discoveryManifestJson,
     moduleMapSource,
     paths: publishedPaths,
+    target: input.target ?? "hosted",
   });
   const metadataJson = serializeArtifactJson(metadata);
 

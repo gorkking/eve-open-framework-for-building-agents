@@ -14,6 +14,7 @@ import {
   writeCompilerArtifacts,
 } from "#compiler/artifacts.js";
 import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import type { CompileTarget } from "#compiler/target.js";
 
 /**
  * Input for compiling the current authored agent into framework-owned
@@ -26,6 +27,8 @@ export interface CompileAgentInput {
    */
   source?: ProjectSource;
   startPath?: string;
+  /** Compilation boundary for development-only framework capabilities. */
+  target?: CompileTarget;
 }
 
 /**
@@ -76,10 +79,14 @@ export class CompileAgentError extends Error {
 export async function compileAgent(input: CompileAgentInput = {}): Promise<CompileAgentResult> {
   const discovered = await discoverAgentForCompilation(input);
   const artifactsRoot = join(discovered.project.appRoot, ".eve");
-  const result = await writeAgentCompilation(discovered, {
-    publishedRoot: artifactsRoot,
-    writeRoot: artifactsRoot,
-  });
+  const result = await writeAgentCompilation(
+    discovered,
+    {
+      publishedRoot: artifactsRoot,
+      writeRoot: artifactsRoot,
+    },
+    input.target ?? "hosted",
+  );
 
   return finishAgentCompilation(result, CompileAgentError.fromDurableArtifacts);
 }
@@ -92,9 +99,14 @@ export async function compileAgent(input: CompileAgentInput = {}): Promise<Compi
 export async function compileAgentInWorkspace(input: {
   readonly artifactLocations: CompilerArtifactLocations;
   readonly startPath: string;
+  readonly target?: CompileTarget;
 }): Promise<CompileAgentResult> {
   const discovered = await discoverAgentForCompilation({ startPath: input.startPath });
-  const result = await writeAgentCompilation(discovered, input.artifactLocations);
+  const result = await writeAgentCompilation(
+    discovered,
+    input.artifactLocations,
+    input.target ?? "hosted",
+  );
 
   return finishAgentCompilation(result, CompileAgentError.fromTransientArtifacts);
 }
@@ -122,12 +134,14 @@ async function discoverAgentForCompilation(
 async function writeAgentCompilation(
   discovered: DiscoveredAgentCompilation,
   artifactLocations: CompilerArtifactLocations,
+  target: CompileTarget,
 ): Promise<CompileAgentResult> {
   const writtenArtifacts = await writeCompilerArtifacts({
     appRoot: discovered.project.appRoot,
     artifactLocations,
     diagnostics: discovered.diagnostics,
     manifest: discovered.manifest,
+    target,
   });
 
   return {

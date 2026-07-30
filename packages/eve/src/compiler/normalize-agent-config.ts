@@ -179,7 +179,8 @@ function normalizeExperimentalDefinition(
   return compiledExperimental;
 }
 
-async function normalizeAuthoredModelReference(input: {
+/** Compiles one static model reference for framework-owned agent nodes. */
+export async function normalizeAuthoredModelReference(input: {
   readonly modelCatalog: ManifestCompileContext["modelCatalog"];
   readonly purpose: string;
   readonly contextWindowTokens?: number;

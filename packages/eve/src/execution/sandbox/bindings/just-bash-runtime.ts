@@ -76,8 +76,10 @@ export async function createBashSandbox(input: {
   readonly autoInstall: boolean;
   readonly rootPath: string;
   readonly sessionKey: string;
+  /** Real directory exposed at `/workspace` instead of the file-backed cache. */
+  readonly workspaceRootPath?: string;
 }): Promise<BashSandbox> {
-  const { ReadWriteFs, Sandbox } = await loadJustBashModule({
+  const { InMemoryFs, MountableFs, ReadWriteFs, Sandbox } = await loadJustBashModule({
     appRoot: input.appRoot,
     autoInstall: input.autoInstall,
   });
@@ -87,11 +89,18 @@ export async function createBashSandbox(input: {
 
   await mkdir(filesystemRootPath, { recursive: true });
 
-  const filesystem = new ReadWriteFs({
+  const writableFilesystem = new ReadWriteFs({
     allowSymlinks: true,
     maxFileReadSize: Number.MAX_SAFE_INTEGER,
-    root: filesystemRootPath,
+    root: input.workspaceRootPath ?? filesystemRootPath,
   });
+  const filesystem: IFileSystem =
+    input.workspaceRootPath === undefined
+      ? writableFilesystem
+      : new MountableFs({
+          base: new InMemoryFs(),
+          mounts: [{ filesystem: writableFilesystem, mountPoint: WORKSPACE_ROOT }],
+        });
 
   await ensureLocalSandboxDirectories(filesystem);
 

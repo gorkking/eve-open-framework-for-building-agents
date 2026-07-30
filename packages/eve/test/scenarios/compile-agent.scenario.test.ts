@@ -74,6 +74,40 @@ describe("compiler artifacts", () => {
     );
   });
 
+  it("includes selfmod only in development compilations", async () => {
+    const { agentRoot, appRoot } = await createAppRoot("eve-compiler-selfmod-", APP_ROOT_OPTIONS);
+    await mkdir(join(agentRoot, "subagents"), { recursive: true });
+    await writeFile(join(agentRoot, "instructions.md"), "You are a precise assistant.");
+    await writeFile(
+      join(agentRoot, "subagents", "selfmod.mjs"),
+      'export default { description: "Handle source changes immediately.", development: true, kind: "selfmod" };\n',
+    );
+
+    const hosted = await compileAgent({ startPath: appRoot, target: "hosted" });
+    expect(hosted.manifest.subagents).toEqual([]);
+    expect(hosted.manifest.instructions?.markdown).not.toContain("Source modification delegation");
+    expect(hosted.metadata.target).toBe("hosted");
+    expect(await readFile(hosted.paths.moduleMapPath, "utf8")).not.toContain("subagents/selfmod");
+
+    const development = await compileAgent({ startPath: appRoot, target: "development" });
+    expect(development.metadata.target).toBe("development");
+    expect(development.manifest.instructions?.markdown).toContain(
+      "Do not use the root agent's bash, read_file, write_file, glob, or grep tools",
+    );
+    expect(development.manifest.subagents).toHaveLength(1);
+    expect(development.manifest.subagents[0]).toMatchObject({
+      description: "Handle source changes immediately.",
+      name: "selfmod",
+      agent: {
+        disabledFrameworkTools: ["ask_question", "load_skill", "todo", "web_fetch", "web_search"],
+        sandbox: { backendName: "eve-selfmod" },
+      },
+    });
+    expect(await readFile(development.paths.moduleMapPath, "utf8")).toContain(
+      "subagents/selfmod.mjs",
+    );
+  });
+
   it("writes stable discovery artifacts under .eve", async () => {
     const { agentRoot, appRoot } = await createAppRoot("eve-compiler-artifacts-", APP_ROOT_OPTIONS);
 
@@ -282,7 +316,8 @@ describe("compiler artifacts", () => {
       },
       kind: "eve-compile-metadata",
       status: "ready",
-      version: 5,
+      target: "hosted",
+      version: COMPILE_METADATA_VERSION,
     });
     expect(moduleMapText).toContain('"nodes": Object.freeze({');
     expect(moduleMapText).toContain(`"${ROOT_COMPILED_AGENT_NODE_ID}": Object.freeze({`);

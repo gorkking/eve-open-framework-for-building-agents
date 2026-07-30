@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
 import type { SandboxSession } from "#public/definitions/sandbox.js";
 import type {
   SandboxBackend,
@@ -12,6 +14,7 @@ import {
   type RuntimeCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
 import { trackActiveSandboxHandle } from "#execution/sandbox/active-handles.js";
+import { SELFMOD_SANDBOX_BACKEND_NAME } from "#shared/selfmod-definition.js";
 import { waitForDevelopmentSandboxPrewarm } from "#execution/sandbox/development-prewarm.js";
 import { prewarmAppSandboxes } from "#execution/sandbox/prewarm.js";
 import { waitForSandboxTemplatePrewarmLock } from "#execution/sandbox/template-prewarm-lock.js";
@@ -119,9 +122,17 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
       initialized = false;
     }
 
+    const agentRoot =
+      backend.name === SELFMOD_SANDBOX_BACKEND_NAME
+        ? resolveStableAgentRoot({
+            agentRoot: registered.agentRoot,
+            appRoot,
+            compiledAppRoot: registered.appRoot,
+          })
+        : undefined;
     const createInput: SandboxBackendCreateInput = {
       existingMetadata: reattachSession?.metadata,
-      runtimeContext: { appRoot },
+      runtimeContext: agentRoot === undefined ? { appRoot } : { agentRoot, appRoot },
       sessionKey: keys.sessionKey,
       tags: input.tags,
       templateKey: keys.templateKey,
@@ -181,6 +192,28 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
       return handle?.session ?? null;
     },
   };
+}
+
+/** Maps a generation-snapshot agent root back onto the stable authored app root. */
+export function resolveStableAgentRoot(input: {
+  readonly agentRoot?: string;
+  readonly appRoot: string;
+  readonly compiledAppRoot?: string;
+}): string | undefined {
+  if (input.agentRoot === undefined || input.compiledAppRoot === undefined) {
+    return undefined;
+  }
+  const relativeAgentRoot = relative(input.compiledAppRoot, input.agentRoot);
+  if (
+    relativeAgentRoot === ".." ||
+    relativeAgentRoot.startsWith(`..${sep}`) ||
+    isAbsolute(relativeAgentRoot)
+  ) {
+    throw new Error(
+      `Compiled agent root must be contained by the compiled application root: ${input.agentRoot}`,
+    );
+  }
+  return resolve(input.appRoot, relativeAgentRoot);
 }
 
 async function createBackendHandleWithPrewarmRetry(input: {

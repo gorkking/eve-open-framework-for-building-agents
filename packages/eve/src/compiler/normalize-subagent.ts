@@ -4,12 +4,15 @@ import {
   type LocalSubagentSourceRef,
 } from "#discover/manifest.js";
 import {
+  type CompiledAgentDefinition,
   type CompiledAgentNodeManifest,
   type CompiledRemoteAgentNode,
   type CompiledSubagentEdge,
   type CompiledSubagentNode,
   createCompiledSubagentNodeId,
 } from "#compiler/manifest.js";
+import { normalizeSelfmodSubagent } from "#compiler/normalize-selfmod-subagent.js";
+import type { CompileTarget } from "#compiler/target.js";
 import {
   loadModuleBackedDefinition,
   type ManifestCompileContext,
@@ -52,8 +55,10 @@ export async function compileSubagentGraph(input: {
   readonly compileAgentNodeManifest: CompileAgentNodeManifestFn;
   readonly context: ManifestCompileContext;
   readonly externalDependencies?: readonly string[];
+  readonly parentConfig: CompiledAgentDefinition;
   readonly parentNodeId: string;
   readonly subagents: readonly LocalSubagentSourceRef[];
+  readonly target: CompileTarget;
 }): Promise<{
   readonly edges: readonly CompiledSubagentEdge[];
   readonly nodes: readonly CompiledSubagentNode[];
@@ -69,10 +74,15 @@ export async function compileSubagentGraph(input: {
       compileAgentNodeManifest: input.compileAgentNodeManifest,
       context: input.context,
       externalDependencies: input.externalDependencies,
+      parentConfig: input.parentConfig,
       parentNodeId: input.parentNodeId,
       source: subagentSource,
+      target: input.target,
     });
 
+    if (compiledSubagent.kind === "omitted") {
+      continue;
+    }
     if (compiledSubagent.kind === "remote") {
       compiledRemoteAgents.push(compiledSubagent.node);
       continue;
@@ -100,9 +110,14 @@ async function compileSubagentDefinition(input: {
   readonly compileAgentNodeManifest: CompileAgentNodeManifestFn;
   readonly context: ManifestCompileContext;
   readonly externalDependencies?: readonly string[];
+  readonly parentConfig: CompiledAgentDefinition;
   readonly parentNodeId: string;
   readonly source: LocalSubagentSourceRef;
+  readonly target: CompileTarget;
 }): Promise<
+  | {
+      readonly kind: "omitted";
+    }
   | {
       readonly kind: "local";
       readonly descendants: {
@@ -132,7 +147,23 @@ async function compileSubagentDefinition(input: {
     source: configModule,
   });
 
-  if (readAgentDefinitionKind(definition) === "remote") {
+  const definitionKind = readAgentDefinitionKind(definition);
+  if (definitionKind === "selfmod") {
+    const node = await normalizeSelfmodSubagent({
+      ...input,
+      moduleSource: configModuleSource,
+      value: definition,
+    });
+    return node === null
+      ? { kind: "omitted" }
+      : {
+          kind: "local",
+          descendants: { edges: [], nodes: [], remoteAgents: [] },
+          node,
+        };
+  }
+
+  if (definitionKind === "remote") {
     return {
       kind: "remote",
       node: compileRemoteAgent({
@@ -153,8 +184,10 @@ async function compileSubagent(input: {
   readonly compileAgentNodeManifest: CompileAgentNodeManifestFn;
   readonly context: ManifestCompileContext;
   readonly externalDependencies?: readonly string[];
+  readonly parentConfig: CompiledAgentDefinition;
   readonly parentNodeId: string;
   readonly source: LocalSubagentSourceRef;
+  readonly target: CompileTarget;
 }): Promise<{
   readonly descendants: {
     readonly edges: readonly CompiledSubagentEdge[];
@@ -187,8 +220,10 @@ async function compileSubagent(input: {
     compileAgentNodeManifest: input.compileAgentNodeManifest,
     context: input.context,
     externalDependencies: agent.config.build?.externalDependencies,
+    parentConfig: agent.config,
     parentNodeId: nodeId,
     subagents: input.source.manifest.subagents,
+    target: input.target,
   });
 
   return {
@@ -276,12 +311,13 @@ function createSubagentConfigModuleSourceRef(
   return moduleSource;
 }
 
-function readAgentDefinitionKind(value: unknown): "local" | "remote" {
+function readAgentDefinitionKind(value: unknown): "local" | "remote" | "selfmod" {
   if (value === null || typeof value !== "object") {
     return "local";
   }
 
-  return (value as { readonly kind?: unknown }).kind === "remote" ? "remote" : "local";
+  const kind = (value as { readonly kind?: unknown }).kind;
+  return kind === "remote" || kind === "selfmod" ? kind : "local";
 }
 
 function normalizeRemoteAgentDefinition(

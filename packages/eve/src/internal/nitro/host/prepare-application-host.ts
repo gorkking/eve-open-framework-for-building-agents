@@ -59,6 +59,7 @@ export async function prepareDevelopmentApplicationHost(
         writeRoot: workspace.compilerArtifactsDir,
       },
       startPath: appRoot,
+      target: "development",
     });
     const schedules = await resolveSchedules({ manifest: compileResult.manifest });
     generation = await stageDevelopmentGeneration(compileResult);
@@ -114,6 +115,7 @@ export async function prepareProductionApplicationHost(
       writeRoot: workspace.compiler.artifactsDir,
     },
     startPath: workspace.appRoot,
+    target: "hosted",
   });
   const schedules = await resolveSchedules({ manifest: compileResult.manifest });
 

@@ -10,6 +10,7 @@ import {
   pruneJustBashSandboxTemplates,
 } from "#execution/sandbox/bindings/just-bash.js";
 import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";
+import { createSelfModifyingSandboxBackend } from "#execution/sandbox/bindings/selfmod.js";
 
 const createScratchDirectory = useTemporaryDirectories();
 
@@ -64,6 +65,30 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string
 }
 
 describe("just-bash sandbox file API", () => {
+  it("mounts the selfmod workspace over the live agent root", async () => {
+    const appRoot = await createTemporaryCacheDirectory("selfmod-live-tree");
+    await mkdir(join(appRoot, "agent"), { recursive: true });
+    await writeFile(join(appRoot, "agent", "instructions.md"), "before");
+    await writeFile(join(appRoot, "package.json"), "{}");
+    const handle = await createSelfModifyingSandboxBackend().create({
+      runtimeContext: { agentRoot: join(appRoot, "agent"), appRoot },
+      sessionKey: "selfmod-session",
+      templateKey: null,
+    });
+
+    try {
+      expect(await handle.session.readTextFile({ path: "instructions.md" })).toBe("before");
+      await handle.session.writeTextFile({
+        content: "after",
+        path: "instructions.md",
+      });
+      expect(await readFile(join(appRoot, "agent", "instructions.md"), "utf8")).toBe("after");
+      expect(await handle.session.readTextFile({ path: "../package.json" })).toBeNull();
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
   it("writes a file via the public session and reads it back", async () => {
     const cacheDirectory = await createTemporaryCacheDirectory("file-api");
     const handle = await createPrewarmedLocalHandle({

@@ -34,6 +34,7 @@ function createMetadataFixture(generatorVersion: string): CompileMetadata {
     generator: { name: "eve", version: generatorVersion },
     kind: COMPILE_METADATA_KIND,
     status: "ready",
+    target: "hosted",
     version: COMPILE_METADATA_VERSION,
   };
 }

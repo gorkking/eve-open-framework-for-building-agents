@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
@@ -21,7 +23,7 @@ import {
   countActiveSandboxHandles,
   shutdownActiveSandboxHandles,
 } from "#execution/sandbox/active-handles.js";
-import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
+import { ensureSandboxAccess, resolveStableAgentRoot } from "#execution/sandbox/ensure.js";
 import type { SandboxState } from "#sandbox/state.js";
 
 const mocks = vi.hoisted(() => ({
@@ -115,6 +117,32 @@ function createSession(): Session {
   };
 }
 
+describe("resolveStableAgentRoot", () => {
+  it("maps a development snapshot agent root onto the stable authored app root", () => {
+    expect(
+      resolveStableAgentRoot({
+        agentRoot: "/snapshot/source/apps/weather/agent",
+        appRoot: "/repo/apps/weather",
+        compiledAppRoot: "/snapshot/source/apps/weather",
+      }),
+    ).toBe("/repo/apps/weather/agent");
+  });
+
+  it("returns undefined when compiled root metadata is unavailable", () => {
+    expect(resolveStableAgentRoot({ appRoot: "/repo/apps/weather" })).toBeUndefined();
+  });
+
+  it("rejects an agent root outside the compiled application root", () => {
+    expect(() =>
+      resolveStableAgentRoot({
+        agentRoot: "/snapshot/source/apps/other/agent",
+        appRoot: "/repo/apps/weather",
+        compiledAppRoot: "/snapshot/source/apps/weather",
+      }),
+    ).toThrow("must be contained");
+  });
+});
+
 describe("ensureSandboxAccess", () => {
   beforeEach(() => {
     mocks.prewarmAppSandboxes.mockReset();
@@ -123,6 +151,53 @@ describe("ensureSandboxAccess", () => {
     mocks.waitForSandboxTemplatePrewarmLock.mockResolvedValue(undefined);
     mocks.waitForDevelopmentSandboxPrewarm.mockReset();
     mocks.waitForDevelopmentSandboxPrewarm.mockResolvedValue(undefined);
+  });
+
+  it("passes the stable authored agent root only to the selfmod backend", async () => {
+    const backend = { ...createBackend(), name: "eve-selfmod" };
+    const registry = createTestRegistry({}, backend);
+    const rootedRegistry: RuntimeSandboxRegistry = {
+      sandbox: {
+        ...registry.sandbox,
+        agentRoot: "/snapshot/app/agent",
+        appRoot: "/snapshot/app",
+      },
+    };
+
+    const stableAppRoot = process.cwd();
+    const access = await ensure({
+      compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource("/snapshot/app", {
+        sandboxAppRoot: stableAppRoot,
+      }),
+      registry: rootedRegistry,
+    });
+    await access.get();
+
+    expect(backend.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeContext: { agentRoot: resolve(stableAppRoot, "agent"), appRoot: stableAppRoot },
+      }),
+    );
+
+    const ordinaryBackend = createBackend();
+    const ordinaryRegistry = createTestRegistry({}, ordinaryBackend);
+    const ordinaryAccess = await ensure({
+      compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource("/snapshot/app", {
+        sandboxAppRoot: stableAppRoot,
+      }),
+      registry: {
+        sandbox: {
+          ...ordinaryRegistry.sandbox,
+          agentRoot: "/snapshot/app/agent",
+          appRoot: "/snapshot/app",
+        },
+      },
+    });
+    await ordinaryAccess.get();
+
+    expect(ordinaryBackend.create).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeContext: { appRoot: stableAppRoot } }),
+    );
   });
 
   it("waits for background dev prewarm before creating a templated sandbox", async () => {

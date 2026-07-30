@@ -63,7 +63,10 @@ export type SandboxBackendTags = Readonly<Record<string, string>>;
  * here may ignore the field entirely.
  */
 export interface SandboxBackendRuntimeContext {
+  /** Stable root of the containing application. */
   readonly appRoot: string;
+  /** Authored root for the graph node that owns this sandbox. */
+  readonly agentRoot?: string;
 }
 
 /**

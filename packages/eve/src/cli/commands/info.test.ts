@@ -130,6 +130,7 @@ function makeCompiledState(
       generator: { name: "eve", version: "0.0.0-test" },
       kind: COMPILE_METADATA_KIND,
       status: "ready",
+      target: "hosted",
       version: COMPILE_METADATA_VERSION,
     },
     paths: {

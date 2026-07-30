@@ -4,6 +4,7 @@ import { lazyBackend } from "#execution/sandbox/lazy-backend.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
 import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";
 import { defaultSandbox } from "#public/sandbox/backends/default.js";
+import { readSelfModifyingSandboxDefinition } from "#shared/selfmod-definition.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
@@ -30,7 +31,7 @@ export async function resolveSandboxDefinition(
       nodeId,
     });
     const resolvedRecord = expectObjectRecord(
-      resolvedExportValue,
+      readSelfModifyingSandboxDefinition(resolvedExportValue),
       `Expected the sandbox export "${definition.exportName ?? "default"}" from "${definition.logicalPath}" to return an object.`,
     );
     const sandboxDefinition: {

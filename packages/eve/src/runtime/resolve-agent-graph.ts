@@ -211,6 +211,8 @@ async function resolveRuntimeAgentNode(
   ];
 
   const sandboxRegistry = createRuntimeSandboxRegistry({
+    agentRoot: agent.metadata.agentRoot,
+    appRoot: agent.metadata.appRoot,
     authoredSandbox: agent.sandbox,
     workspaceResourceRoot: agent.workspaceResourceRoot,
   });

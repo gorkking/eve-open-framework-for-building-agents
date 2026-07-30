@@ -17,6 +17,7 @@ import {
 } from "#compiler/manifest.js";
 import { createCompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import { compileAgentConfig } from "#compiler/normalize-agent-config.js";
+import type { CompileTarget } from "#compiler/target.js";
 import { compileChannelDefinition } from "#compiler/normalize-channel.js";
 import { compileConnectionDefinition } from "#compiler/normalize-connection.js";
 import { compileExtensionContributions } from "#compiler/normalize-extension.js";
@@ -34,6 +35,7 @@ import { compileToolEntry } from "#compiler/normalize-tool.js";
  */
 export async function compileAgentManifest(
   manifest: AgentSourceManifest,
+  options: { readonly target?: CompileTarget } = {},
 ): Promise<CompiledAgentManifest> {
   const context: ManifestCompileContext = {
     modelCatalog: createCompiledRuntimeModelCatalogLoader(manifest.appRoot),
@@ -44,9 +46,19 @@ export async function compileAgentManifest(
     compileAgentNodeManifest,
     context,
     externalDependencies: compiledNode.config.build?.externalDependencies ?? [],
+    parentConfig: compiledNode.config,
     parentNodeId: ROOT_COMPILED_AGENT_NODE_ID,
     subagents: manifest.subagents,
+    target: options.target ?? "hosted",
   });
+
+  const selfmodNames = subagentGraph.nodes
+    .filter((node) => node.agent.sandbox?.backendName === "eve-selfmod")
+    .map((node) => node.name);
+  const rootNode =
+    selfmodNames.length === 0
+      ? compiledNode
+      : appendSelfmodParentInstructions(compiledNode, selfmodNames);
 
   const extensionMounts: CompiledExtensionMount[] = manifest.resolvedExtensions.map((mount) => {
     const mountRef = manifest.extensions.find(
@@ -63,12 +75,35 @@ export async function compileAgentManifest(
   });
 
   return createCompiledAgentManifest({
-    ...compiledNode,
+    ...rootNode,
     extensionMounts,
     remoteAgents: subagentGraph.remoteAgents,
     subagentEdges: subagentGraph.edges,
     subagents: subagentGraph.nodes,
   });
+}
+
+function appendSelfmodParentInstructions(
+  node: CompiledAgentNodeManifest,
+  selfmodNames: readonly string[],
+): CompiledAgentNodeManifest {
+  const names = selfmodNames.map((name) => `\`${name}\``).join(", ");
+  const routingInstructions = `Source modification delegation: When the developer asks to change this agent or its authored source, immediately delegate the complete request to ${names}. Only the selfmod subagent has the live authored agent tree. Do not use the root agent's bash, read_file, write_file, glob, or grep tools to inspect or verify source before or after delegation. After selfmod completes, report its summary; successfully rebuilt changes become active on the next turn.`;
+  const markdown =
+    node.instructions === undefined
+      ? routingInstructions
+      : `${node.instructions.markdown}\n\n${routingInstructions}`;
+
+  return {
+    ...node,
+    instructions: {
+      logicalPath: node.instructions?.logicalPath ?? "eve:extensions/selfmod/parent-instructions",
+      markdown,
+      name: node.instructions?.name ?? "instructions",
+      sourceId: node.instructions?.sourceId ?? "eve:selfmod-parent-instructions",
+      sourceKind: "module",
+    },
+  };
 }
 
 async function compileAgentNodeManifest(
