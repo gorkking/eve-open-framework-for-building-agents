@@ -1,4 +1,4 @@
-import type { LocalSubagentSourceRef } from "#discover/manifest.js";
+import type { AgentSourceManifest, LocalSubagentSourceRef } from "#discover/manifest.js";
 import {
   type CompiledAgentDefinition,
   type CompiledSubagentNode,
@@ -28,6 +28,36 @@ You cannot access application files outside the authored agent directory or run 
 interface SelfmodModuleSource {
   readonly logicalPath: string;
   readonly sourceId: string;
+}
+
+/** Creates the framework-owned source editor requested by the development CLI. */
+export async function createFrameworkSelfmodSubagent(input: {
+  readonly appRoot: string;
+  readonly context: ManifestCompileContext;
+  readonly manifest: AgentSourceManifest;
+  readonly parentConfig: CompiledAgentDefinition;
+  readonly parentNodeId: string;
+}): Promise<CompiledSubagentNode> {
+  const sourceId = "eve:framework/selfmod";
+  const result = await normalizeSelfmodSubagent({
+    appRoot: input.appRoot,
+    context: input.context,
+    moduleSource: { logicalPath: sourceId, sourceId },
+    parentConfig: input.parentConfig,
+    parentNodeId: input.parentNodeId,
+    source: {
+      entryPath: input.manifest.agentRoot,
+      logicalPath: sourceId,
+      manifest: input.manifest,
+      rootPath: input.manifest.agentRoot,
+      sourceId,
+      subagentId: "selfmod",
+    },
+    target: "development",
+    value: { development: true, kind: "selfmod" },
+  });
+  if (result === null) throw new Error("The framework source editor was unexpectedly omitted.");
+  return result;
 }
 
 /** Normalizes a development-only selfmod declaration into a compiled agent node. */

@@ -1,10 +1,14 @@
 import type { CompiledSandboxDefinition } from "#compiler/manifest.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
+import { createSelfModifyingSandboxBackend } from "#execution/sandbox/bindings/selfmod.js";
 import { lazyBackend } from "#execution/sandbox/lazy-backend.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
 import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";
 import { defaultSandbox } from "#public/sandbox/backends/default.js";
-import { readSelfModifyingSandboxDefinition } from "#shared/selfmod-definition.js";
+import {
+  readSelfModifyingSandboxDefinition,
+  SELFMOD_SANDBOX_BACKEND_NAME,
+} from "#shared/selfmod-definition.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
@@ -23,6 +27,19 @@ export async function resolveSandboxDefinition(
   moduleMap: CompiledModuleMap,
   nodeId: string | undefined,
 ): Promise<ResolvedSandboxDefinition> {
+  if (definition.backendName === SELFMOD_SANDBOX_BACKEND_NAME) {
+    return {
+      backend: createSelfModifyingSandboxBackend(),
+      description: definition.description,
+      exportName: definition.exportName,
+      logicalPath: definition.logicalPath,
+      revalidationKey: definition.revalidationKey,
+      sourceHash: definition.sourceHash,
+      sourceId: definition.sourceId,
+      sourceKind: "module",
+    };
+  }
+
   try {
     const resolvedExportValue = await loadResolvedModuleExport({
       definition,

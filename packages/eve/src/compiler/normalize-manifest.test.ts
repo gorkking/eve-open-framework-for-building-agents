@@ -79,6 +79,32 @@ describe("compileAgentManifest", () => {
     );
   });
 
+  it("adds the framework source editor only when a development compile allows it", async () => {
+    const manifest = createAgentSourceManifest({
+      agentId: "root",
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+    });
+    mocks.compileAgentConfig.mockResolvedValue(createConfig({ name: "root" }));
+
+    const enabled = await compileAgentManifest(manifest, {
+      allowSourceEditing: true,
+      target: "development",
+    });
+    const hosted = await compileAgentManifest(manifest, {
+      allowSourceEditing: true,
+      target: "hosted",
+    });
+
+    expect(enabled.subagents).toHaveLength(1);
+    expect(enabled.subagents[0]).toMatchObject({
+      name: "selfmod",
+      agent: { sandbox: { backendName: "eve-selfmod" } },
+    });
+    expect(enabled.instructions?.markdown).toContain("selfmod");
+    expect(hosted.subagents).toHaveLength(0);
+  });
+
   it("compiles experimental Workflow tool configuration", async () => {
     const manifest = createAgentSourceManifest({
       agentId: "root",

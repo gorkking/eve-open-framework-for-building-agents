@@ -60,6 +60,7 @@ export interface DevelopmentServer<H extends DevelopmentServerHandle = Developme
 }
 
 export interface DevelopmentServerOptions {
+  readonly allowSourceEditing?: boolean;
   readonly existing?: "attach-if-unconfigured" | "reject";
   readonly host?: string;
   readonly onBootProgress?: DevBootProgressReporter;

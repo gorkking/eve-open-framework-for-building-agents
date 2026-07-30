@@ -58,10 +58,12 @@ export interface DevelopmentAuthoredRebuildCoordinator {
 }
 
 export async function createDevelopmentAuthoredRebuildCoordinator(input: {
+  readonly allowSourceEditing?: boolean;
   readonly devServer: DrainedNitroDevServer;
   readonly initialHost: PreparedDevelopmentApplicationHost;
 }): Promise<DevelopmentAuthoredRebuildCoordinator> {
   return new TransactionalDevelopmentAuthoredRebuildCoordinator({
+    allowSourceEditing: input.allowSourceEditing === true,
     currentHostFingerprint: await computeDevelopmentHostFingerprint(input.initialHost),
     currentRuntimeFingerprint: input.initialHost.generation.fingerprint,
     devServer: input.devServer,
@@ -80,6 +82,7 @@ export async function createDevelopmentAuthoredRebuildCoordinator(input: {
  * never travel the discard path — see {@link PostCommitDevelopmentRebuildError}.
  */
 class TransactionalDevelopmentAuthoredRebuildCoordinator implements DevelopmentAuthoredRebuildCoordinator {
+  readonly #allowSourceEditing: boolean;
   #currentHost: PreparedDevelopmentApplicationHost;
   #currentHostFingerprint: string;
   #currentRuntimeFingerprint: string;
@@ -87,11 +90,13 @@ class TransactionalDevelopmentAuthoredRebuildCoordinator implements DevelopmentA
   readonly #usesParentWorkflowWorld: boolean;
 
   constructor(input: {
+    readonly allowSourceEditing?: boolean;
     readonly currentHostFingerprint: string;
     readonly currentRuntimeFingerprint: string;
     readonly devServer: DrainedNitroDevServer;
     readonly initialHost: PreparedDevelopmentApplicationHost;
   }) {
+    this.#allowSourceEditing = input.allowSourceEditing === true;
     this.#currentHost = input.initialHost;
     this.#currentHostFingerprint = input.currentHostFingerprint;
     this.#currentRuntimeFingerprint = input.currentRuntimeFingerprint;
@@ -113,10 +118,14 @@ class TransactionalDevelopmentAuthoredRebuildCoordinator implements DevelopmentA
     let nextHost: PreparedDevelopmentApplicationHost | undefined;
 
     try {
-      nextHost = await prepareDevelopmentApplicationHost(previousHost.appRoot, {
+      let preparationOptions: Parameters<typeof prepareDevelopmentApplicationHost>[1] = {
         changedPaths: input.changedPaths,
         previousExtensions: previousHost.workspaceExtensions,
-      });
+      };
+      if (this.#allowSourceEditing) {
+        preparationOptions = { ...preparationOptions, allowSourceEditing: true };
+      }
+      nextHost = await prepareDevelopmentApplicationHost(previousHost.appRoot, preparationOptions);
       if (
         usesParentDevelopmentWorkflowWorld(
           nextHost.compileResult.manifest.config.experimental?.workflow?.world,

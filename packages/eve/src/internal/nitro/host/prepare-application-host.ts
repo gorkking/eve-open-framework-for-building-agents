@@ -33,6 +33,7 @@ import type {
 export async function prepareDevelopmentApplicationHost(
   appRoot: string,
   options: {
+    readonly allowSourceEditing?: boolean;
     readonly changedPaths?: readonly string[];
     readonly previousExtensions?: readonly DevelopmentWorkspaceExtension[];
   } = {},
@@ -54,6 +55,7 @@ export async function prepareDevelopmentApplicationHost(
 
   try {
     const compileResult = await compileAgentInWorkspace({
+      allowSourceEditing: options.allowSourceEditing,
       artifactLocations: {
         publishedRoot: join(appRoot, ".eve"),
         writeRoot: workspace.compilerArtifactsDir,

@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Add an explicit development-only selfmod subagent that can propose and apply changes to an agent's live authored directory while `eve dev` is running. Every proposal has a scrollable, file-by-file diff viewer for required human approval before writing; hosted builds omit the capability entirely.
+Add an approval-gated development source editor for an agent's live authored directory. Declare a selfmod subagent or enable the framework-owned default with `eve dev --allow-source-editing`; hosted builds omit the capability entirely.

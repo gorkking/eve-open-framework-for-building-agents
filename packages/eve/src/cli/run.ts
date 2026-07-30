@@ -51,6 +51,7 @@ interface CliLogger {
 }
 
 interface DevelopmentCliOptions {
+  allowSourceEditing?: boolean;
   assistantResponseStats?: AssistantResponseStatsMode;
   connectionAuth?: TerminalPartDisplayMode;
   contextSize?: number;
@@ -383,6 +384,10 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
       parseDevelopmentHeaderOption,
     )
     .option("--no-ui", "Start the server without an interactive UI")
+    .option(
+      "--allow-source-editing",
+      "Add a development-only source-editing subagent without changing the project",
+    )
     .option("--name <name>", "Title shown in the terminal UI (defaults to the app folder name)")
     .option("--input <text>", "Pre-fill the prompt input, or start onboarding with /model")
     .option(
@@ -427,6 +432,11 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
     .action(async (positionalUrl: string | undefined, options: DevelopmentCliOptions) => {
       const remoteTarget = resolveDevelopmentUrlTarget(options, positionalUrl);
       const remoteServerUrl = remoteTarget?.serverUrl;
+      if (remoteServerUrl !== undefined && options.allowSourceEditing === true) {
+        throw new InvalidArgumentError(
+          "--allow-source-editing can only start a local development server.",
+        );
+      }
       const interactive = hasInteractiveTerminal();
       const mode = resolveDevUiMode({ options, interactive });
       if (options.input !== undefined && mode === "headless") {
@@ -526,12 +536,16 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
 
       try {
         const startHost = runtime.startHost ?? (await loadStartHost());
-        server = startHost(appRoot, {
+        let serverOptions: DevelopmentServerOptions = {
           existing: mode === "tui" ? "attach-if-unconfigured" : "reject",
           host: options.host,
           onBootProgress,
           port: options.port,
-        });
+        };
+        if (options.allowSourceEditing === true) {
+          serverOptions = { ...serverOptions, allowSourceEditing: true };
+        }
+        server = startHost(appRoot, serverOptions);
         const outcome = await Promise.race([
           server.start().then((handle) => ({ handle })),
           lifecycle.stopped.then(() => ({ handle: undefined })),

@@ -7,6 +7,7 @@ import type {
 } from "#compiler/manifest.js";
 import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import { normalizeEsmImportSpecifier } from "#internal/application/import-specifier.js";
+import { SELFMOD_SANDBOX_BACKEND_NAME } from "#shared/selfmod-definition.js";
 
 /**
  * Compiled module ownership for one runtime graph node.
@@ -244,7 +245,7 @@ export function collectModuleRefsForManifest(
     });
   }
 
-  if (manifest.sandbox !== null) {
+  if (manifest.sandbox !== null && manifest.sandbox.backendName !== SELFMOD_SANDBOX_BACKEND_NAME) {
     moduleSourceRefs.set(manifest.sandbox.sourceId, {
       exportName: manifest.sandbox.exportName,
       sourceKind: "module",

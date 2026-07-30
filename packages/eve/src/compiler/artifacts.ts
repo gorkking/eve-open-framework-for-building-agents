@@ -97,6 +97,7 @@ export interface CompilerArtifactLocations {
  * Input for writing compiler-owned discovery artifacts.
  */
 interface WriteCompilerArtifactsInput {
+  allowSourceEditing?: boolean;
   appRoot: string;
   artifactLocations: CompilerArtifactLocations;
   diagnostics: readonly DiscoverDiagnostic[];
@@ -160,6 +161,7 @@ function createDiscoveryDiagnosticsArtifact(
  * payloads.
  */
 export function createCompileMetadata(input: {
+  allowSourceEditing?: boolean;
   appRoot: string;
   diagnosticsArtifactJson: string;
   diagnosticsSummary: DiscoverDiagnosticsSummary;
@@ -190,7 +192,7 @@ export function createCompileMetadata(input: {
         sha256: manifestHash,
       },
       sourceGraphHash: createContentHash(
-        `${manifestHash}:${diagnosticsHash}:${moduleMapHash}:${input.target ?? "hosted"}`,
+        `${manifestHash}:${diagnosticsHash}:${moduleMapHash}:${input.target ?? "hosted"}${input.allowSourceEditing === true ? ":source-editing" : ""}`,
       ),
       summary: input.diagnosticsSummary,
     },
@@ -217,7 +219,10 @@ export async function writeCompilerArtifacts(
   const diagnosticsArtifact = createDiscoveryDiagnosticsArtifact(input.diagnostics);
   const compiledManifest = await materializeWorkspaceResources({
     compileDirectoryPath: paths.compileDirectoryPath,
-    manifest: await compileAgentManifest(input.manifest, { target: input.target ?? "hosted" }),
+    manifest: await compileAgentManifest(input.manifest, {
+      allowSourceEditing: input.allowSourceEditing,
+      target: input.target ?? "hosted",
+    }),
   });
   const compiledManifestJson = serializeArtifactJson(compiledManifest);
   const discoveryManifestJson = serializeArtifactJson(input.manifest);
@@ -227,6 +232,7 @@ export async function writeCompilerArtifacts(
     moduleMapPath: publishedPaths.moduleMapPath,
   });
   const metadata = createCompileMetadata({
+    allowSourceEditing: input.allowSourceEditing,
     appRoot: input.appRoot,
     diagnosticsArtifactJson,
     diagnosticsSummary: diagnosticsArtifact.summary,

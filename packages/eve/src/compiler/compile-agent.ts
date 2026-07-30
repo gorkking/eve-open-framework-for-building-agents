@@ -21,6 +21,8 @@ import type { CompileTarget } from "#compiler/target.js";
  * discovery artifacts.
  */
 export interface CompileAgentInput {
+  /** Adds eve's framework-owned source editor to development compilations. */
+  allowSourceEditing?: boolean;
   /**
    * Optional {@link ProjectSource} used for discovery reads. Defaults to a
    * disk-backed source so production callers keep their current behaviour.
@@ -85,7 +87,10 @@ export async function compileAgent(input: CompileAgentInput = {}): Promise<Compi
       publishedRoot: artifactsRoot,
       writeRoot: artifactsRoot,
     },
-    input.target ?? "hosted",
+    {
+      allowSourceEditing: input.allowSourceEditing,
+      target: input.target ?? "hosted",
+    },
   );
 
   return finishAgentCompilation(result, CompileAgentError.fromDurableArtifacts);
@@ -97,16 +102,16 @@ export async function compileAgent(input: CompileAgentInput = {}): Promise<Compi
  * `publishedRoot` where the caller will expose them.
  */
 export async function compileAgentInWorkspace(input: {
+  readonly allowSourceEditing?: boolean;
   readonly artifactLocations: CompilerArtifactLocations;
   readonly startPath: string;
   readonly target?: CompileTarget;
 }): Promise<CompileAgentResult> {
   const discovered = await discoverAgentForCompilation({ startPath: input.startPath });
-  const result = await writeAgentCompilation(
-    discovered,
-    input.artifactLocations,
-    input.target ?? "hosted",
-  );
+  const result = await writeAgentCompilation(discovered, input.artifactLocations, {
+    allowSourceEditing: input.allowSourceEditing,
+    target: input.target ?? "hosted",
+  });
 
   return finishAgentCompilation(result, CompileAgentError.fromTransientArtifacts);
 }
@@ -134,14 +139,18 @@ async function discoverAgentForCompilation(
 async function writeAgentCompilation(
   discovered: DiscoveredAgentCompilation,
   artifactLocations: CompilerArtifactLocations,
-  target: CompileTarget,
+  options: {
+    readonly allowSourceEditing?: boolean;
+    readonly target: CompileTarget;
+  },
 ): Promise<CompileAgentResult> {
   const writtenArtifacts = await writeCompilerArtifacts({
+    allowSourceEditing: options.allowSourceEditing,
     appRoot: discovered.project.appRoot,
     artifactLocations,
     diagnostics: discovered.diagnostics,
     manifest: discovered.manifest,
-    target,
+    target: options.target,
   });
 
   return {

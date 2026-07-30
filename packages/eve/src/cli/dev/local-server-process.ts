@@ -91,6 +91,7 @@ export function createDevelopmentServer(
       childPath,
       [
         JSON.stringify({
+          allowSourceEditing: options.allowSourceEditing,
           existing: options.existing,
           host: options.host,
           port: options.port,

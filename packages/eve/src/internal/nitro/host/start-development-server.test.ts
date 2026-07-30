@@ -419,6 +419,22 @@ describe("createDevelopmentServer", () => {
     expect(mocks.worldInstance.close).toHaveBeenCalledOnce();
   });
 
+  it("preserves source-editing authority across development rebuilds", async () => {
+    const startDevelopmentServer = await loadStartDevelopmentServer();
+
+    const server = await startDevelopmentServer("/tmp/eve-test", {
+      allowSourceEditing: true,
+    });
+
+    expect(mocks.prepareDevelopmentApplicationHost).toHaveBeenCalledWith("/tmp/eve-test", {
+      allowSourceEditing: true,
+    });
+    expect(mocks.createDevelopmentAuthoredRebuildCoordinator).toHaveBeenCalledWith(
+      expect.objectContaining({ allowSourceEditing: true }),
+    );
+    await server.close();
+  });
+
   it("serves the parent World for an explicitly local Workflow World", async () => {
     const preparedHost = await mocks.prepareDevelopmentApplicationHost();
     mocks.prepareDevelopmentApplicationHost.mockClear();

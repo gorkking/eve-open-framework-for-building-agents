@@ -27,6 +27,7 @@ import { compileSandboxDefinition } from "#compiler/normalize-sandbox.js";
 import { compileInstructionsEntry } from "#compiler/normalize-instructions.js";
 import { compileScheduleDefinition } from "#compiler/normalize-schedule.js";
 import { compileSkillSource } from "#compiler/normalize-skill.js";
+import { createFrameworkSelfmodSubagent } from "#compiler/normalize-selfmod-subagent.js";
 import { compileSubagentGraph } from "#compiler/normalize-subagent.js";
 import { compileToolEntry } from "#compiler/normalize-tool.js";
 
@@ -35,7 +36,10 @@ import { compileToolEntry } from "#compiler/normalize-tool.js";
  */
 export async function compileAgentManifest(
   manifest: AgentSourceManifest,
-  options: { readonly target?: CompileTarget } = {},
+  options: {
+    readonly allowSourceEditing?: boolean;
+    readonly target?: CompileTarget;
+  } = {},
 ): Promise<CompiledAgentManifest> {
   const context: ManifestCompileContext = {
     modelCatalog: createCompiledRuntimeModelCatalogLoader(manifest.appRoot),
@@ -52,7 +56,34 @@ export async function compileAgentManifest(
     target: options.target ?? "hosted",
   });
 
-  const selfmodNames = subagentGraph.nodes
+  const authoredSelfmod = subagentGraph.nodes.some(
+    (node) => node.agent.sandbox?.backendName === "eve-selfmod",
+  );
+  const frameworkSelfmod =
+    options.allowSourceEditing === true && options.target === "development" && !authoredSelfmod
+      ? await createFrameworkSelfmodSubagent({
+          appRoot: manifest.appRoot,
+          context,
+          manifest,
+          parentConfig: compiledNode.config,
+          parentNodeId: ROOT_COMPILED_AGENT_NODE_ID,
+        })
+      : undefined;
+  const subagentNodes =
+    frameworkSelfmod === undefined
+      ? subagentGraph.nodes
+      : [...subagentGraph.nodes, frameworkSelfmod];
+  const subagentEdges =
+    frameworkSelfmod === undefined
+      ? subagentGraph.edges
+      : [
+          ...subagentGraph.edges,
+          {
+            childNodeId: frameworkSelfmod.nodeId,
+            parentNodeId: ROOT_COMPILED_AGENT_NODE_ID,
+          },
+        ];
+  const selfmodNames = subagentNodes
     .filter((node) => node.agent.sandbox?.backendName === "eve-selfmod")
     .map((node) => node.name);
   const rootNode =
@@ -78,8 +109,8 @@ export async function compileAgentManifest(
     ...rootNode,
     extensionMounts,
     remoteAgents: subagentGraph.remoteAgents,
-    subagentEdges: subagentGraph.edges,
-    subagents: subagentGraph.nodes,
+    subagentEdges,
+    subagents: subagentNodes,
   });
 }
 

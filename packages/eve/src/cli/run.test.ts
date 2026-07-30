@@ -465,6 +465,35 @@ describe("eve eval --url protocol", () => {
   });
 });
 
+describe("eve dev --allow-source-editing", () => {
+  it("forwards the capability to a local development server", async () => {
+    const startHost = vi.fn(() => ({
+      start: async () => ({
+        kind: "started" as const,
+        appRoot: "/canonical/app",
+        url: "http://127.0.0.1:4321/",
+      }),
+      close: async () => {},
+    }));
+
+    await runInteractiveDev(["dev", "--allow-source-editing"], { startHost });
+
+    expect(startHost).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ allowSourceEditing: true }),
+    );
+  });
+
+  it("rejects the flag for a remote server", async () => {
+    await expect(
+      runCli(["dev", "--url", "https://example.com", "--allow-source-editing"], {
+        error: () => {},
+        log: () => {},
+      }),
+    ).rejects.toThrow("only start a local development server");
+  });
+});
+
 describe("eve dev --logs", () => {
   it("accepts sandbox as the initial TUI log mode", async () => {
     const runDevelopmentTui = await runInteractiveDev([

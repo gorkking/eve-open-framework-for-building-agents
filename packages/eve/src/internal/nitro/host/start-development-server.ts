@@ -367,7 +367,11 @@ async function startNitroDevelopmentServer(
     isLoopbackServerUrl(existingServerUrl) &&
     (await isEveServerHealthy(existingServerUrl))
   ) {
-    if (options.existing === "attach-if-unconfigured" && !hasExplicitEndpoint) {
+    if (
+      options.existing === "attach-if-unconfigured" &&
+      !hasExplicitEndpoint &&
+      options.allowSourceEditing !== true
+    ) {
       return {
         handle: { kind: "existing", appRoot: project.appRoot, url: existingServerUrl },
         close: undefined,
@@ -392,7 +396,10 @@ async function startNitroDevelopmentServer(
   try {
     const preparedHost = await devBootPhase(
       "compiling agent",
-      () => prepareDevelopmentApplicationHost(project.appRoot),
+      () =>
+        options.allowSourceEditing === true
+          ? prepareDevelopmentApplicationHost(project.appRoot, { allowSourceEditing: true })
+          : prepareDevelopmentApplicationHost(project.appRoot),
       options.onBootProgress,
     );
     preparedDevelopmentHost = preparedHost;
@@ -482,6 +489,7 @@ async function startNitroDevelopmentServer(
     });
 
     const rebuildCoordinator = await createDevelopmentAuthoredRebuildCoordinator({
+      allowSourceEditing: options.allowSourceEditing === true,
       devServer: activeDevServer,
       initialHost: preparedHost,
     });
