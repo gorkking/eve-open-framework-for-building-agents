@@ -6,19 +6,71 @@ last_updated: "2026-07-30"
 
 # Sandbox API: durable values and build-prewarmed templates
 
-## First principles
+A sandbox definition should answer one question: which `Sandbox` should this
+agent use? The author returns that value directly. It can be newly created,
+looked up by the application, reused from a parent agent, backed by the local
+filesystem, or implemented by another provider.
 
-The runtime abstraction is a durable `Sandbox`. An app definition chooses or
-creates one and returns it:
+eve persists the returned value and restores it on later runs. Build prewarming
+is an optional, separate concern: an exported provider template lets eve prepare
+a reusable base without changing what the sandbox definition returns.
+
+## Goals
+
+- Let an app return any implementation of the `Sandbox` contract.
+- Let the definition choose dynamically from session and runtime context.
+- Restore the same sandbox across runs instead of invoking author code again.
+- Allow deliberate sharing across sessions or between parent and child agents.
+- Prewarm provider templates during build, including a future adjacent
+  Dockerfile, without executing session-dependent definitions.
+- Keep persistence identities, build references, cache keys, and provider
+  reconstruction inside eve and the sandbox implementation.
+
+## Authoring API
+
+The core app-facing shape is:
 
 ```ts
-export default defineSandbox(async (ctx) => {
-  return sandbox;
-});
+defineSandbox((ctx) => Sandbox | Promise<Sandbox>)
+
+VercelSandbox.create(options)
+VercelSandbox.template({ prepare? })
+DockerSandbox.create(options)
+DockerSandbox.template({ prepare? })
+
+template.create(options)
+template.getOrCreate(options) // when the provider supports named resources
+
+LocalFilesystemSandbox.open(options)
+
+ctx.parent?.sandbox
+ctx.root?.sandbox
 ```
 
-It does not return a backend, provider, factory, or binding. eve does not call
-it later with an id to reconstruct the sandbox.
+Provider methods produce `Sandbox` values. A provider template produces them
+from a build-prewarmed base. Returning `parent.sandbox` or `root.sandbox`
+reuses that exact durable value. Custom providers participate by adapting their
+native handle to `Sandbox`; they do not add another layer to `defineSandbox`.
+
+The common case remains small:
+
+```ts
+export const template = VercelSandbox.template({
+  async prepare(sandbox) {
+    await sandbox.run({ command: "pnpm install --frozen-lockfile" });
+  },
+});
+
+export default defineSandbox(() => template.create());
+```
+
+Apps that do not need build prewarming return a sandbox directly:
+
+```ts
+export default defineSandbox(() => VercelSandbox.create());
+```
+
+## Core model
 
 ```ts
 type SandboxDefinition = (ctx: SandboxDefinitionContext) => Sandbox | Promise<Sandbox>;
@@ -35,9 +87,7 @@ type SandboxDefinitionContext = {
 There is no sandbox id, definition key, template key, or revalidation key in
 this context.
 
-An optional `SandboxTemplate` is a different value with a different lifetime.
-It describes a provider-specific base that can be prepared during build. It is
-not the sandbox definition and is not returned as the agent's sandbox.
+The proposal has three values with distinct lifetimes:
 
 | Value               | Purpose                                | Evaluated                     |
 | ------------------- | -------------------------------------- | ----------------------------- |
@@ -175,12 +225,6 @@ export default defineSandbox(({ session }) => {
     resources: { vcpus: 4 },
   });
 });
-```
-
-An app that does not need a reusable base creates a sandbox directly:
-
-```ts
-export default defineSandbox(() => VercelSandbox.create());
 ```
 
 ## Vercel authoring cases
