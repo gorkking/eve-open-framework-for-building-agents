@@ -32,7 +32,7 @@ export default eveChannel({
     // Open on localhost for \`eve dev\` and the REPL; ignored in production.
     localDev(),
     // This placeholder will not allow browser requests in production.
-    // Replace it with your app's auth provider, like Better Auth or Clerk,
+    // Replace it with your app's auth provider, like Better Auth, Auth.js, or Clerk,
     // or use none() for a public demo.
     placeholderAuth(),
   ],

@@ -85,7 +85,7 @@ Before exposing an agent to real traffic:
 - [ ] If your app includes Web Chat, configure its default
       `EVE_ACCESS_PASSWORD` and `BETTER_AUTH_SECRET`, or replace the app's
       default sign-in with your own provider and wire that provider into the
-      channel. Verify a signed-out production request gets `401`.
+      channel. Verify an unauthenticated eve channel request gets `401`.
 - [ ] If your app does not include Web Chat, replace `placeholderAuth()` with a real
       `AuthFn`. Verify an unauthenticated production request gets `401`.
 - [ ] Verify channel signatures. Each platform channel needs its signing

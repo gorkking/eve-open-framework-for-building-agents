@@ -1,6 +1,6 @@
 ---
 title: "Ship It"
-description: "Part 9 of the Build an Agent tutorial. Put a password-protected web dashboard on the agent with useEveAgent and deploy it to Vercel."
+description: "Part 9 of the Build an Agent tutorial. Put an authenticated web dashboard on the agent with useEveAgent and deploy it to Vercel."
 ---
 
 The analytics assistant runs fine in the TUI. Now ship it for real, as a web dashboard your team logs into, behind actual auth, deployed on Vercel. There are three pieces to wire up. A React UI, the channel's auth, and the deploy itself.
@@ -63,52 +63,32 @@ export function AgentChat() {
 }
 ```
 
-The generated `app/page.tsx` opens the chat directly during local development.
-In production it checks the Better Auth session on the server and renders this
-`AgentChat` export after sign-in, so no other wiring is needed:
-
-```tsx title="app/page.tsx"
-import { headers } from "next/headers";
-import { AgentChat } from "@/app/_components/agent-chat";
-import { AccessForm } from "@/app/_components/access-form";
-import { AuthSetup } from "@/app/_components/auth-setup";
-import { auth } from "@/lib/auth";
-
-export default async function Page() {
-  const isDevelopment = process.env.NODE_ENV === "development";
-  const requiresLogin = !isDevelopment || process.env.EVE_REQUIRE_LOCAL_AUTH === "1";
-
-  if (!requiresLogin) return <AgentChat />;
-
-  if (!auth) return <AuthSetup />;
-
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return <AccessForm />;
-  }
-  return <AgentChat />;
-}
-```
+The generated page already renders this component behind the starter's sign-in.
+You do not need to reproduce its development and missing-configuration
+fallbacks here.
 
 `agent.data.messages` and `agent.status` cover most chat UIs. The hook also surfaces HITL prompts (the spend approval from [Step 8](./guard-the-spend)), so the dashboard can render approve/deny controls. For the full API, see [Frontend](../guides/frontend/overview).
 
-## Configure the access password
+## Connect app auth to eve
 
-The Web Chat starter includes a simple shared-password sign-in powered by
-Better Auth. Configure its access password and a separate session secret:
+The Web Chat starter begins with a shared-password Better Auth setup so a new
+deployment is closed by default. Keep it for a preview or single-user demo by
+setting `EVE_ACCESS_PASSWORD` and `BETTER_AUTH_SECRET`; the
+[Web Chat channel guide](../channels/eve) covers that setup.
 
-```bash
-vercel env add EVE_ACCESS_PASSWORD
-vercel env add BETTER_AUTH_SECRET
-```
+This tutorial uses per-user warehouse OAuth and team-specific behavior, so its
+production version needs your app's real login. Configure that in the app's auth
+layer and use the same session to protect the page. If you keep Better Auth,
+replace the starter's static credential configuration and password form with a
+real provider and user store. Better Auth documents its
+[sign-in providers](https://better-auth.com/docs/basic-usage) and
+[database-backed users](https://better-auth.com/docs/concepts/database).
+`BETTER_AUTH_SECRET` remains required; `EVE_ACCESS_PASSWORD` does not.
 
-Generate `BETTER_AUTH_SECRET` as a random value of at least 32 characters and
-rotate it to revoke existing sessions. Local development skips login by
-default. Run with `EVE_REQUIRE_LOCAL_AUTH=1` to test it using the
-development-only default password `eve`.
-
-Adding Web Chat replaces the untouched base channel placeholder with eve's
-Better Auth adapter:
+Store team membership as server-owned application data and include it on the
+authenticated user. The channel's only job is to turn that app session into an
+eve `AuthFn`. Step 7 customized this tutorial's channel, so replace
+`agent/channels/eve.ts` with:
 
 ```ts title="agent/channels/eve.ts"
 import { eveChannel } from "eve/channels/eve";
@@ -116,19 +96,33 @@ import { localDev, vercelOidc } from "eve/channels/auth";
 import { auth } from "@/lib/auth";
 import { fromBetterAuth } from "@/lib/better-auth/eve";
 
+// Better Auth is the starter default; any AuthFn can fill this role.
+const appAuth = fromBetterAuth(auth, {
+  attributes: ({ user }) => ({ team: user.team }),
+});
+
 export default eveChannel({
-  auth: [...(auth ? [fromBetterAuth(auth)] : []), vercelOidc(), localDev()],
+  auth: [appAuth, vercelOidc(), localDev()],
 });
 ```
 
-The default shared password only controls how the user signs in. The channel
-accepts any valid Better Auth session, so you can later add a per-user provider
-without changing the channel. Pass an `attributes` callback to `fromBetterAuth`
-to add the user's `team` claim so the dynamic playbook from
-[Step 7](./team-playbooks) can read it from `ctx.session.auth`.
+Here `auth` is the app's production Better Auth configuration, and `appAuth`
+adapts its user to eve. Each user gets their own eve principal, Vercel Connect
+credentials, and team playbook.
 
-If you use a different auth library, replace `fromBetterAuth(auth)` in the
-channel with that provider's `AuthFn`.
+Better Auth is not required by eve. If the app uses Auth.js, Clerk, or a custom
+session, export an `AuthFn<Request>` from that integration and put it in the same
+slot:
+
+```ts title="agent/channels/eve.ts"
+import { eveChannel } from "eve/channels/eve";
+import { localDev, vercelOidc } from "eve/channels/auth";
+import { appAuth } from "@/lib/app-auth";
+
+export default eveChannel({
+  auth: [appAuth, vercelOidc(), localDev()],
+});
+```
 
 ## Deploy to Vercel
 
