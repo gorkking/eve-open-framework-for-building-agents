@@ -622,15 +622,12 @@ function findRelevantTool(
   // `load_skill` is reachable only through skill-relevance selection
   // (createSkillLoadResult); matching it by name here would re-call it on
   // every step, because its results are invisible to the tool-result check.
-  const explicitTool = tools.find(
-    (tool) =>
-      tool.name !== "agent" &&
-      tool.name !== LOAD_SKILL_TOOL_NAME &&
-      normalizedMessage.includes(normalizeText(tool.name)),
-  );
-  if (explicitTool !== undefined) {
-    return explicitTool;
-  }
+  const explicitTool = tools
+    .filter((tool) => tool.name !== "agent" && tool.name !== LOAD_SKILL_TOOL_NAME)
+    .map((tool) => ({ index: normalizedMessage.indexOf(normalizeText(tool.name)), tool }))
+    .filter((candidate) => candidate.index >= 0)
+    .sort((left, right) => left.index - right.index)[0]?.tool;
+  if (explicitTool !== undefined) return explicitTool;
 
   if (!/\b(forecast|temperature|weather|wind|rain|snow)\b/u.test(normalizedMessage)) {
     return null;

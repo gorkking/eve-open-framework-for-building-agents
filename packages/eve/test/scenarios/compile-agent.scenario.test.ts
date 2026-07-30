@@ -99,7 +99,15 @@ describe("compiler artifacts", () => {
       description: "Handle source changes immediately.",
       name: "selfmod",
       agent: {
-        disabledFrameworkTools: ["ask_question", "load_skill", "todo", "web_fetch", "web_search"],
+        disabledFrameworkTools: [
+          "ask_question",
+          "bash",
+          "load_skill",
+          "todo",
+          "web_fetch",
+          "web_search",
+          "write_file",
+        ],
         sandbox: { backendName: "eve-selfmod" },
       },
     });

@@ -58,6 +58,22 @@ const DEV_SERVER_AGENT_DESCRIPTOR: ScenarioAppDescriptor = {
     ].join("\n"),
   },
 };
+const SELFMOD_DEV_SERVER_DESCRIPTOR: ScenarioAppDescriptor = {
+  ...DEV_SERVER_AGENT_DESCRIPTOR,
+  dependencies: {
+    ...DEV_SERVER_AGENT_DESCRIPTOR.dependencies,
+    "just-bash": "3.1.0",
+  },
+  files: {
+    ...DEV_SERVER_AGENT_DESCRIPTOR.files,
+    "agent/subagents/self-edit.ts": [
+      'import { defineSelfModifyingAgent } from "eve/extensions/selfmod";',
+      "export default defineSelfModifyingAgent({ development: true });",
+      "",
+    ].join("\n"),
+  },
+  name: "weather-agent-selfmod",
+};
 const WEBSOCKET_DEV_SERVER_DESCRIPTOR: ScenarioAppDescriptor = {
   ...DEV_SERVER_AGENT_DESCRIPTOR,
   files: {
@@ -1014,6 +1030,27 @@ describe("eve dev server", () => {
           method: "POST",
         });
         expect(unknown.status).toBe(404);
+        expect(hasKnownDevServerFailure(`${server.stdout()}\n${server.stderr()}`)).toBe(false);
+      } finally {
+        await server.stop();
+      }
+    },
+    DEV_SERVER_SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "mounts the live agent tree for selfmod tools in the development runtime",
+    async () => {
+      const app = await scenarioApp(SELFMOD_DEV_SERVER_DESCRIPTOR);
+      const server = await startEveDev(app.appRoot);
+
+      try {
+        const messageResult = await sendDevelopmentMessage({
+          message: `Call self-edit with message: 'glob pattern "**/*"'`,
+          session: createDevelopmentSessionState(),
+          serverUrl: server.url,
+        });
+        expect(readCompletedMessages(messageResult.events)).toContain("tools/get_weather.ts");
         expect(hasKnownDevServerFailure(`${server.stdout()}\n${server.stderr()}`)).toBe(false);
       } finally {
         await server.stop();

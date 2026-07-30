@@ -4,6 +4,7 @@ import { BASH_TOOL_DEFINITION } from "#runtime/framework-tools/bash.js";
 import { GLOB_TOOL_DEFINITION } from "#runtime/framework-tools/glob.js";
 import { GREP_TOOL_DEFINITION } from "#runtime/framework-tools/grep.js";
 import { READ_FILE_TOOL_DEFINITION } from "#runtime/framework-tools/read-file.js";
+import { SELFMOD_EDIT_TOOL_DEFINITIONS } from "#runtime/framework-tools/selfmod-edits.js";
 import {
   createSkillToolDefinition,
   SKILL_TOOL_DEFINITION,
@@ -36,6 +37,7 @@ const REGISTERED_FRAMEWORK_TOOLS: readonly ResolvedToolDefinition[] = [
 
 const ALL_FRAMEWORK_TOOLS: readonly ResolvedToolDefinition[] = [
   ...REGISTERED_FRAMEWORK_TOOLS,
+  ...SELFMOD_EDIT_TOOL_DEFINITIONS,
   AGENT_TOOL_DEFINITION,
 ];
 
@@ -49,11 +51,16 @@ const ALL_FRAMEWORK_TOOLS: readonly ResolvedToolDefinition[] = [
 export function getFrameworkToolDefinitions(config?: {
   readonly authoredSkills?: readonly ResolvedSkillDefinition[];
   readonly hasConnections?: boolean;
+  readonly selfModifying?: boolean;
 }): readonly ResolvedToolDefinition[] {
   const authoredSkills = config?.authoredSkills;
-  if (authoredSkills === undefined) return REGISTERED_FRAMEWORK_TOOLS;
+  const tools =
+    config?.selfModifying === true
+      ? [...REGISTERED_FRAMEWORK_TOOLS, ...SELFMOD_EDIT_TOOL_DEFINITIONS]
+      : REGISTERED_FRAMEWORK_TOOLS;
+  if (authoredSkills === undefined) return tools;
 
-  return REGISTERED_FRAMEWORK_TOOLS.map((definition) =>
+  return tools.map((definition) =>
     definition.name === SKILL_TOOL_DEFINITION.name
       ? createSkillToolDefinition(authoredSkills)
       : definition,

@@ -21,7 +21,9 @@ const SELFMOD_DESCRIPTION =
   "Immediately delegate here when the developer asks to change this eve agent or its source. Only this subagent has the live agent tree; do not use the root agent's shell or file tools to inspect or verify source before or after delegation.";
 const SELFMOD_INSTRUCTIONS = `You are a development-only source editor for an eve application.
 
-The live authored agent directory is mounted at /workspace. Inspect relevant files before editing them, keep changes minimal, and modify only what the developer requested. Existing files must be read before they are overwritten. You cannot access application files outside the authored agent directory or run host binaries such as git, node, pnpm, or tsc; eve's development watcher validates authored changes and keeps the previous generation active when compilation fails. Return a concise summary of files changed and any validation limitations.`;
+The live authored agent directory is mounted read-only for your model-visible tools at /workspace. Inspect relevant files, keep changes minimal, and modify only what the developer requested. To make changes, call propose_edits once with the complete set of create, replace, and delete operations. It records the proposal without writing files. Then pass the returned proposalId to finalize_edits; eve will show those edits to the developer and require approval before writing anything. Never claim edits were applied unless finalize_edits succeeds. If approval is denied or a file changed after proposal, do not work around the decision.
+
+You cannot access application files outside the authored agent directory or run host binaries such as git, node, pnpm, or tsc; eve's development watcher validates approved changes and keeps the previous generation active when compilation fails. Return a concise summary of approved files changed and any validation limitations.`;
 
 interface SelfmodModuleSource {
   readonly logicalPath: string;
@@ -96,7 +98,15 @@ export async function normalizeSelfmodSubagent(input: {
     agentRoot: input.source.manifest.agentRoot,
     appRoot: input.appRoot,
     config,
-    disabledFrameworkTools: ["ask_question", "load_skill", "todo", "web_fetch", "web_search"],
+    disabledFrameworkTools: [
+      "ask_question",
+      "bash",
+      "load_skill",
+      "todo",
+      "web_fetch",
+      "web_search",
+      "write_file",
+    ],
     instructions: {
       logicalPath: "eve:extensions/selfmod/instructions",
       markdown:
@@ -111,7 +121,7 @@ export async function normalizeSelfmodSubagent(input: {
       backendName: SELFMOD_SANDBOX_BACKEND_NAME,
       description: "Development-only live eve application source tree.",
       logicalPath: input.moduleSource.logicalPath,
-      sourceHash: "eve-selfmod-v1",
+      sourceHash: "eve-selfmod-v2",
       sourceId: input.moduleSource.sourceId,
       sourceKind: "module",
     },

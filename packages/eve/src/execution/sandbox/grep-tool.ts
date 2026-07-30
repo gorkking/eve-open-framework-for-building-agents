@@ -69,7 +69,7 @@ export async function executeGrepOnSandbox(
         normalizedPath,
         pattern: args.pattern,
       })
-    : buildPosixGrepCommand({
+    : buildFallbackGrepCommand({
         contextLines,
         effectiveLimit,
         glob: args.glob,
@@ -88,7 +88,7 @@ export async function executeGrepOnSandbox(
   // Any other exit code (e.g. 127 from bash when the tool is missing)
   // indicates a real failure. Surface these as structured errors
   // rather than silently pretending the search returned zero matches.
-  if (result.exitCode !== 0 && result.exitCode !== 1) {
+  if (result.exitCode !== 0 && (result.exitCode !== 1 || result.stderr.trim().length > 0)) {
     throw buildGrepExecutionError(command, result.exitCode, result.stderr);
   }
 
@@ -159,11 +159,11 @@ function buildRipgrepCommand(input: BuildCommandInput): string {
   return parts.join(" ");
 }
 
-/**
- * Builds the POSIX fallback form of the grep command using `grep -rn`.
- */
-function buildPosixGrepCommand(input: BuildCommandInput): string {
-  const parts: string[] = ["grep", "-r", "-n", "--color=never", "--exclude-dir=.git"];
+function buildFallbackGrepCommand(input: BuildCommandInput): string {
+  // Keep this compatible with small implementations such as just-bash: no
+  // `--color` or `--` separator. `-e` below safely marks the pattern even
+  // when it starts with a dash.
+  const parts: string[] = ["grep", "-r", "-n", "--exclude-dir=.git"];
 
   if (input.ignoreCase) {
     parts.push("-i");
@@ -187,7 +187,7 @@ function buildPosixGrepCommand(input: BuildCommandInput): string {
 
   // `-m` limits matches per file, analogous to ripgrep's `--max-count`.
   parts.push(`-m ${input.effectiveLimit}`);
-  parts.push("--");
+  parts.push("-e");
   parts.push(shellQuote(input.pattern));
   parts.push(shellQuote(input.normalizedPath));
 

@@ -21,6 +21,8 @@ describe("framework-tools/index", () => {
     expect(names.has("load_skill")).toBe(true);
     expect(names.has("ask_question")).toBe(true);
     expect(names.has("agent")).toBe(true);
+    expect(names.has("propose_edits")).toBe(true);
+    expect(names.has("finalize_edits")).toBe(true);
     // connection_search is now a dynamic tool resolver, not a framework tool
     expect(names.has("connection_search")).toBe(false);
   });
@@ -68,5 +70,17 @@ describe("framework-tools/index", () => {
     expect(withConnections.map((tool) => tool.name)).toEqual(
       withoutConnections.map((tool) => tool.name),
     );
+  });
+
+  it("registers edit proposal tools only for self-modifying agents", () => {
+    const ordinaryNames = getFrameworkToolDefinitions().map((tool) => tool.name);
+    const selfmodNames = getFrameworkToolDefinitions({ selfModifying: true }).map(
+      (tool) => tool.name,
+    );
+
+    expect(ordinaryNames).not.toContain("propose_edits");
+    expect(ordinaryNames).not.toContain("finalize_edits");
+    expect(selfmodNames).toContain("propose_edits");
+    expect(selfmodNames).toContain("finalize_edits");
   });
 });

@@ -1,20 +1,11 @@
 import type { SandboxSession } from "#public/definitions/sandbox.js";
 
-/**
- * Memoizes the result of probing for `rg` (ripgrep) once per sandbox
- * session. The probe runs exactly one `command -v rg` per distinct
- * session object, regardless of how many grep/glob tool calls happen.
- */
 const probes = new Map<string, Promise<boolean>>();
 
-/**
- * Returns `true` when `rg` is on PATH in the given sandbox session,
- * `false` otherwise. Result is cached per session.
- *
- * Framework `grep` and `glob` tools call this to decide whether to use
- * ripgrep or the POSIX `grep`/`find` fallback.
- */
-export async function ripgrepIsAvailable(session: SandboxSession): Promise<boolean> {
+/** Reports whether `rg` supports eve's search flags, cached by sandbox session. */
+export async function ripgrepIsAvailable(
+  session: Pick<SandboxSession, "id" | "run">,
+): Promise<boolean> {
   const existing = probes.get(session.id);
   if (existing !== undefined) {
     return existing;
@@ -35,7 +26,19 @@ export async function ripgrepIsAvailable(session: SandboxSession): Promise<boole
   }
 }
 
-async function runProbe(session: SandboxSession): Promise<boolean> {
-  const result = await session.run({ command: "command -v rg >/dev/null 2>&1" });
-  return result.exitCode === 0;
+async function runProbe(session: Pick<SandboxSession, "id" | "run">): Promise<boolean> {
+  const located = await session.run({ command: "command -v rg >/dev/null 2>&1" });
+  if (located.exitCode !== 0) return false;
+
+  // just-bash provides `rg` but not every flag used by eve's search tools.
+  for (const command of [
+    "rg --files --hidden --glob '__eve_capability_probe_no_match__' -- /workspace",
+    "rg --line-number --color=never --hidden --ignore-case --fixed-strings --glob '!.git/*' --glob '*.ts' --context 1 --max-count 1 -- '__eve_capability_probe_no_match__' /workspace",
+  ]) {
+    const capability = await session.run({ command });
+    if ((capability.exitCode !== 0 && capability.exitCode !== 1) || capability.stderr.length > 0) {
+      return false;
+    }
+  }
+  return true;
 }

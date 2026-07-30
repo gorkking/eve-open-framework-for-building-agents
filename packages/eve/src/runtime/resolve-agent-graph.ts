@@ -13,6 +13,7 @@ import {
   getAllFrameworkChannelNames,
   getFrameworkChannelDefinitions,
 } from "#runtime/framework-channels/index.js";
+import { SELFMOD_SANDBOX_BACKEND_NAME } from "#shared/selfmod-definition.js";
 import { createConnectionSearchResolver } from "#runtime/framework-tools/connection-search-dynamic.js";
 import {
   getAllFrameworkToolNames,
@@ -138,6 +139,7 @@ async function resolveRuntimeAgentNode(
   const frameworkTools = getFrameworkToolDefinitions({
     authoredSkills: agent.skills,
     hasConnections,
+    selfModifying: agent.sandbox?.backend.name === SELFMOD_SANDBOX_BACKEND_NAME,
   });
   const frameworkToolNames = new Set(frameworkTools.map((t) => t.name));
   const allFrameworkToolNames = getAllFrameworkToolNames();
