@@ -3241,6 +3241,48 @@ describe("TerminalRenderer (inline scrollback)", () => {
     expect(snapshot).toContain("→ denied");
   });
 
+  it("reviews selfmod edits file by file before approval", async () => {
+    const { screen, input, renderer } = makeRenderer();
+    const approval = renderer.readToolApproval({
+      approvalId: "a-selfmod",
+      toolCallId: "c-selfmod",
+      toolName: "apply_edits",
+      sourceDiff: {
+        changedBytes: 20,
+        files: [
+          {
+            after: "new instructions\n",
+            before: "old instructions\n",
+            path: "instructions.md",
+            status: "modify",
+          },
+          {
+            after: "# Skill\n",
+            before: null,
+            path: "skills/new.md",
+            status: "create",
+          },
+        ],
+        kind: "source-diff",
+      },
+      input: {},
+    });
+
+    expect(screen.snapshot()).toContain("y approve / p preview / n reject");
+    expect(screen.snapshot()).not.toContain("- old instructions");
+    input.type("p");
+    expect(screen.snapshot()).toContain("instructions.md");
+    expect(screen.snapshot()).toContain("- old instructions");
+    expect(screen.snapshot()).toContain("Space page");
+    input.type(" ");
+    expect(screen.snapshot()).toContain("skills/new.md");
+    expect(screen.snapshot()).toContain("+ # Skill");
+    input.type("y");
+
+    await expect(approval).resolves.toEqual({ approved: true });
+    renderer.shutdown();
+  });
+
   it("stops the turn ticker while a later human-input request is open", async () => {
     vi.useFakeTimers();
     try {

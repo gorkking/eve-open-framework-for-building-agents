@@ -4,6 +4,8 @@ import {
   extractQuestionInputRequests,
   extractToolApprovalInputRequests,
 } from "#harness/input-extraction.js";
+import { setApprovalPresentation } from "#harness/approval-presentation.js";
+import { decodeSourceDiffApproval } from "#shared/source-diff-presentation.js";
 
 describe("extractQuestionInputRequests", () => {
   it("extracts a question request from an ask_question tool call", () => {
@@ -92,6 +94,39 @@ describe("extractQuestionInputRequests", () => {
 });
 
 describe("extractToolApprovalInputRequests", () => {
+  it("uses trusted host copy for an approval preview", () => {
+    setApprovalPresentation("session-preview", "call-preview", {
+      prompt: "Review proposed edits",
+      sourceDiff: {
+        changedBytes: 2,
+        files: [{ after: "b", before: "a", path: "a.md", status: "modify" }],
+        kind: "source-diff",
+      },
+    });
+
+    const [request] = extractToolApprovalInputRequests({
+      content: [
+        {
+          approvalId: "approval-preview",
+          toolCall: {
+            input: {},
+            toolCallId: "call-preview",
+            toolName: "apply_edits",
+            type: "tool-call",
+          },
+          type: "tool-approval-request",
+        },
+      ],
+      presentationScope: "session-preview",
+    });
+
+    expect(decodeSourceDiffApproval(request!.prompt)).toMatchObject({
+      changedBytes: 2,
+      files: [{ path: "a.md", status: "modify" }],
+      kind: "source-diff",
+    });
+  });
+
   it("extracts a tool approval request from content parts", () => {
     const result = extractToolApprovalInputRequests({
       content: [

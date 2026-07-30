@@ -5,6 +5,7 @@ import { z } from "#compiled/zod/index.js";
 import { loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
 import { requireSandboxSession } from "#execution/sandbox/require-sandbox.js";
+import { setApprovalPresentation } from "#harness/approval-presentation.js";
 import type { ApprovalContext, ApprovalStatus } from "#public/definitions/approval.js";
 import { normalizeModelPath } from "#runtime/framework-tools/file-state.js";
 import type { ResolvedToolDefinition } from "#runtime/types.js";
@@ -13,7 +14,7 @@ import type { SourceEditChange, SourceEditProposal } from "#shared/source-edit-p
 import type { ToolExecuteOptions } from "#shared/tool-definition.js";
 
 export const PROPOSE_EDITS_TOOL_NAME = "propose_edits";
-export const FINALIZE_EDITS_TOOL_NAME = "finalize_edits";
+export const APPLY_EDITS_TOOL_NAME = "apply_edits";
 
 const FILE_PATH_SCHEMA = z
   .string()
@@ -46,7 +47,7 @@ const PROPOSAL_REFERENCE_SCHEMA = z.strictObject({
   proposalId: z.string().uuid(),
 });
 
-const FINALIZE_EDITS_OUTPUT_SCHEMA = z.strictObject({
+const APPLY_EDITS_OUTPUT_SCHEMA = z.strictObject({
   changedFiles: z.array(z.string()),
   proposalId: z.string(),
 });
@@ -81,10 +82,27 @@ function requirePendingProposal(proposalId: string): SourceEditProposal {
   return proposal;
 }
 
-function requestFinalizeEditsApproval(ctx: ApprovalContext): ApprovalStatus {
+function requestApplyEditsApproval(ctx: ApprovalContext): ApprovalStatus {
   try {
     const { proposalId } = PROPOSAL_REFERENCE_SCHEMA.parse(ctx.toolInput);
-    requirePendingProposal(proposalId);
+    const proposal = requirePendingProposal(proposalId);
+    setApprovalPresentation(ctx.session.id, ctx.callId, {
+      prompt: "Review the proposed edits. Approve to apply these exact changes.",
+      sourceDiff: {
+        changedBytes: proposal.changes.reduce(
+          (total, [, before, after]) =>
+            total + Buffer.byteLength(before ?? "") + Buffer.byteLength(after ?? ""),
+          0,
+        ),
+        files: proposal.changes.map(([path, before, after]) => ({
+          after,
+          before,
+          path,
+          status: before === null ? "create" : after === null ? "delete" : "modify",
+        })),
+        kind: "source-diff",
+      },
+    });
     return "user-approval";
   } catch (error) {
     return {
@@ -161,10 +179,10 @@ function countOccurrences(content: string, search: string): number {
 }
 
 /** Applies a recorded proposal after its approval gate passes. */
-export async function finalizeEdits(
+export async function applyEdits(
   sandbox: SelfmodEditSandbox,
   proposalId: string,
-): Promise<z.infer<typeof FINALIZE_EDITS_OUTPUT_SCHEMA>> {
+): Promise<z.infer<typeof APPLY_EDITS_OUTPUT_SCHEMA>> {
   const proposal = requirePendingProposal(proposalId);
 
   const currentContents = await Promise.all(
@@ -208,17 +226,17 @@ async function executeProposeEdits(
   );
 }
 
-async function executeFinalizeEdits(
+async function executeApplyEdits(
   input: unknown,
   options?: ToolExecuteOptions,
-): Promise<z.infer<typeof FINALIZE_EDITS_OUTPUT_SCHEMA>> {
+): Promise<z.infer<typeof APPLY_EDITS_OUTPUT_SCHEMA>> {
   const { proposalId } = input as SourceEditProposalReference;
-  return await finalizeEdits(await requireSandboxSession(options?.abortSignal), proposalId);
+  return await applyEdits(await requireSandboxSession(options?.abortSignal), proposalId);
 }
 
 export const PROPOSE_EDITS_TOOL_DEFINITION: ResolvedToolDefinition = {
   description:
-    "Finalize source edits without writing files. Pass the returned proposalId to finalize_edits.",
+    "Finalize source edits without writing files. Pass the returned proposalId to apply_edits.",
   execute: executeProposeEdits,
   inputSchema: PROPOSE_EDITS_INPUT_SCHEMA,
   logicalPath: "eve:framework/selfmod/propose-edits",
@@ -228,20 +246,20 @@ export const PROPOSE_EDITS_TOOL_DEFINITION: ResolvedToolDefinition = {
   sourceKind: "module",
 };
 
-export const FINALIZE_EDITS_TOOL_DEFINITION: ResolvedToolDefinition = {
-  approval: requestFinalizeEditsApproval,
+export const APPLY_EDITS_TOOL_DEFINITION: ResolvedToolDefinition = {
+  approval: requestApplyEditsApproval,
   description:
     "Request human approval for a proposalId returned by propose_edits, then apply its exact edits.",
-  execute: executeFinalizeEdits,
+  execute: executeApplyEdits,
   inputSchema: PROPOSAL_REFERENCE_SCHEMA,
-  logicalPath: "eve:framework/selfmod/finalize-edits",
-  name: FINALIZE_EDITS_TOOL_NAME,
-  outputSchema: FINALIZE_EDITS_OUTPUT_SCHEMA,
-  sourceId: "eve:selfmod-finalize-edits-tool",
+  logicalPath: "eve:framework/selfmod/apply-edits",
+  name: APPLY_EDITS_TOOL_NAME,
+  outputSchema: APPLY_EDITS_OUTPUT_SCHEMA,
+  sourceId: "eve:selfmod-apply-edits-tool",
   sourceKind: "module",
 };
 
 export const SELFMOD_EDIT_TOOL_DEFINITIONS: readonly ResolvedToolDefinition[] = [
   PROPOSE_EDITS_TOOL_DEFINITION,
-  FINALIZE_EDITS_TOOL_DEFINITION,
+  APPLY_EDITS_TOOL_DEFINITION,
 ];

@@ -22,7 +22,7 @@ describe("framework-tools/index", () => {
     expect(names.has("ask_question")).toBe(true);
     expect(names.has("agent")).toBe(true);
     expect(names.has("propose_edits")).toBe(true);
-    expect(names.has("finalize_edits")).toBe(true);
+    expect(names.has("apply_edits")).toBe(true);
     // connection_search is now a dynamic tool resolver, not a framework tool
     expect(names.has("connection_search")).toBe(false);
   });
@@ -79,8 +79,8 @@ describe("framework-tools/index", () => {
     );
 
     expect(ordinaryNames).not.toContain("propose_edits");
-    expect(ordinaryNames).not.toContain("finalize_edits");
+    expect(ordinaryNames).not.toContain("apply_edits");
     expect(selfmodNames).toContain("propose_edits");
-    expect(selfmodNames).toContain("finalize_edits");
+    expect(selfmodNames).toContain("apply_edits");
   });
 });

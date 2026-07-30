@@ -169,6 +169,32 @@ describe("presentTool", () => {
     expect(presentTool("final_output", { anything: true }).title).toBe("Return final output");
   });
 
+  it("summarizes selfmod tools without rendering untrusted diffs", () => {
+    const input = {
+      edits: [
+        {
+          filePath: "/workspace/agent.ts",
+          kind: "replace",
+          newText: 'model: "new"',
+          oldText: 'model: "old"',
+        },
+        { filePath: "/workspace/old.ts", kind: "delete" },
+      ],
+      proposalId: "proposal-1",
+      summary: "Change the model",
+    };
+
+    const proposal = presentTool("propose_edits", input);
+    const application = presentTool("apply_edits", { proposalId: "proposal-1" });
+
+    expect(proposal).toMatchObject({
+      title: "Propose edits: Change the model",
+      subtitle: "2 files",
+    });
+    expect(proposal.detail).toBeUndefined();
+    expect(application).toMatchObject({ title: "Apply edits", subtitle: "" });
+  });
+
   it("covers every framework builtin with semantic copy", () => {
     const representativeInputs: Record<string, unknown> = {
       agent: { message: "audit the auth flow" },
@@ -176,7 +202,9 @@ describe("presentTool", () => {
       bash: { command: "ls" },
       glob: { pattern: "**/*.ts" },
       grep: { pattern: "useEve" },
+      apply_edits: { proposalId: "00000000-0000-4000-8000-000000000000" },
       load_skill: { skill: "commit" },
+      propose_edits: { edits: [], summary: "change files" },
       read_file: { filePath: "/workspace/a.ts" },
       todo: { todos: [] },
       web_fetch: { url: "https://example.com" },

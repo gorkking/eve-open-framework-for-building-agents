@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
 import type { InputRequest } from "#runtime/input/types.js";
+import { consumeApprovalPresentation } from "#harness/approval-presentation.js";
 import { createRuntimeToolCallActionFromToolCall } from "#harness/input-requests.js";
+import { encodeSourceDiffApproval } from "#shared/source-diff-presentation.js";
 
 // Persisted history parts lose AI SDK typing on the storage round trip. The
 // schemas are the single source for the runtime narrowing and the static
@@ -101,6 +103,7 @@ function extractQuestionRequests(input: {
 export function extractToolApprovalInputRequests(input: {
   readonly content: readonly ContentPart<ToolSet>[];
   readonly excludedCallIds?: ReadonlySet<string>;
+  readonly presentationScope?: string;
 }): InputRequest[] {
   return extractApprovalRequests(input);
 }
@@ -112,6 +115,7 @@ function extractApprovalRequests(input: {
   readonly content: readonly unknown[];
   readonly excludedCallIds?: ReadonlySet<string>;
   readonly includedRequestIds?: ReadonlySet<string>;
+  readonly presentationScope?: string;
 }): InputRequest[] {
   const requests: InputRequest[] = [];
   const toolCallsById = new Map<string, ToolCallDescriptor>();
@@ -154,6 +158,10 @@ function extractApprovalRequests(input: {
       continue;
     }
 
+    const presentation = consumeApprovalPresentation(
+      input.presentationScope ?? "",
+      toolCall.toolCallId,
+    );
     requests.push({
       action: createRuntimeToolCallActionFromToolCall({ toolCall }),
       allowFreeform: false,
@@ -163,7 +171,10 @@ function extractApprovalRequests(input: {
         { id: "approve", label: "Yes" },
         { id: "deny", label: "No" },
       ],
-      prompt: `Approve tool call: ${toolCall.toolName}`,
+      prompt:
+        presentation?.sourceDiff === undefined
+          ? (presentation?.prompt ?? `Approve tool call: ${toolCall.toolName}`)
+          : encodeSourceDiffApproval(presentation.sourceDiff),
       requestId: approval.approvalId,
     });
   }

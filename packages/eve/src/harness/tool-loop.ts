@@ -1934,6 +1934,7 @@ async function handleStepResult(input: {
   const approvalRequests = extractToolApprovalInputRequests({
     content: result.content ?? [],
     excludedCallIds: invalidInputToolCallIds,
+    presentationScope: baseSession.sessionId,
   });
   const approvalRequestCallIds = new Set(approvalRequests.map((request) => request.action.callId));
   const questionRequests = extractQuestionInputRequests({

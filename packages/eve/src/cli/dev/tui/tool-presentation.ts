@@ -60,6 +60,8 @@ interface BuiltinToolCopy {
 const WRITE_FILE_VERB = "Write";
 const DELEGATE_VERB = "Delegate";
 const FINAL_OUTPUT_TITLE = "Return final output";
+const PROPOSE_EDITS_TITLE = "Propose edits";
+const APPLY_EDITS_TITLE = "Apply edits";
 
 /**
  * Builtin tools whose calls read as one verb plus one argument. Runs group
@@ -214,6 +216,9 @@ export function presentTool(
   const baseName = toolBaseName(toolName);
   if (baseName === "todo") return presentTodoTool(input);
   if (baseName === "write_file") return presentWriteFileTool(toolName, input, context);
+  if (baseName === "propose_edits" || baseName === "apply_edits") {
+    return presentSelfmodEditsTool(baseName, input);
+  }
   if (context?.isSubagent === true) {
     // Named subagent dispatch: the tool name is the delegation target; the
     // message rides as the quiet subtitle. The block is transient — the
@@ -283,7 +288,14 @@ export function presentPreparingTool(
       summarizeResult: () => undefined,
     };
   }
-  const verb = baseName === "write_file" ? WRITE_FILE_VERB : BUILTIN_TOOL_COPY[baseName]?.verb;
+  const verb =
+    baseName === "write_file"
+      ? WRITE_FILE_VERB
+      : baseName === "propose_edits"
+        ? PROPOSE_EDITS_TITLE
+        : baseName === "apply_edits"
+          ? APPLY_EDITS_TITLE
+          : BUILTIN_TOOL_COPY[baseName]?.verb;
   return {
     title: verb === undefined ? toolName : `${verb} …`,
     subtitle: verb === undefined ? "preparing…" : "",
@@ -307,11 +319,26 @@ export function toolBaseName(toolName: string): string {
   return toolName.split(/[.:/]/u).at(-1) ?? toolName;
 }
 
-/**
- * `todo` writes the whole list (or reads it when `todos` is omitted), so its
- * call reads as list maintenance, not as one salient argument. The list body
- * stays behind the expanded `--tools full` view, like other builtin outputs.
- */
+function presentSelfmodEditsTool(toolName: string, input: unknown): ToolPresentation {
+  const proposing = toolName === "propose_edits";
+  const summary = proposing ? salientArg(input, "summary") : undefined;
+  const edits =
+    proposing && input !== null && typeof input === "object" && !Array.isArray(input)
+      ? (input as Record<string, unknown>)["edits"]
+      : undefined;
+  const fileCount = Array.isArray(edits) ? edits.length : undefined;
+  const title = proposing ? PROPOSE_EDITS_TITLE : APPLY_EDITS_TITLE;
+  const doneTitle = proposing ? "Proposed edits" : "Applied edits";
+  return {
+    title: summary === undefined ? title : `${title}: ${summary}`,
+    doneTitle:
+      summary === undefined ? doneTitle : `${proposing ? "Proposed" : "Applied"} edits: ${summary}`,
+    subtitle: fileCount === undefined ? "" : `${fileCount} file${fileCount === 1 ? "" : "s"}`,
+    summarizeResult: () => undefined,
+  };
+}
+
+/** Presents whole-list todo updates as one list operation. */
 function presentTodoTool(input: unknown): ToolPresentation {
   const todos =
     input !== null && typeof input === "object" && !Array.isArray(input)

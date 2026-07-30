@@ -135,6 +135,11 @@ import {
 import { FileContentCache } from "./file-content-cache.js";
 import { groupToolBlocksForDisplay } from "./tool-block-groups.js";
 import { renderQuestionPanel } from "./question-panel.js";
+import {
+  moveSourceDiffPanel,
+  renderSourceDiffPanel,
+  type SourceDiffPanelState,
+} from "./source-diff-panel.js";
 import { promptPlaceholder } from "./prompt-placeholder.js";
 import { TurnClock } from "./turn-clock.js";
 import {
@@ -504,6 +509,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
   #pendingEchoedPrompt?: string;
   /** The open HITL question overlay, painted above the input area. */
   #questionPanel?: (width: number) => string[];
+  #sourceDiffPanel?: SourceDiffPanelState;
   /** The active setup flow's bordered panel: progress, question, status. */
   #setupFlow?: SetupFlowState;
   /** The clearable setup attention line (`⚠ … · /vc:login`), rendered in the live footer. */
@@ -929,7 +935,11 @@ export class TerminalRenderer implements AgentTUIRenderer {
     this.#stopTicker();
     this.#inputActive = false;
     this.#turnIndicator = { kind: "idle" };
-    this.#status = `Approve ${formatToolApprovalTitle(request)}?  (y/n)`;
+    this.#sourceDiffPanel = undefined;
+    this.#status =
+      request.sourceDiff === undefined
+        ? `Approve ${formatToolApprovalTitle(request)}?  (y/n)`
+        : `Apply ${request.sourceDiff.files.length} edit${request.sourceDiff.files.length === 1 ? "" : "s"}?  (y approve / p preview / n reject)`;
     this.#interrupted = false;
     this.#paint();
 
@@ -942,13 +952,31 @@ export class TerminalRenderer implements AgentTUIRenderer {
             // accident; terminal framing is not an authentication signal.
             if (key.framing !== "unframed") break;
             const value = key.value.toLowerCase();
-            if (value === "y") {
+            if (value === " " && this.#sourceDiffPanel !== undefined) {
+              this.#sourceDiffPanel = moveSourceDiffPanel(
+                this.#sourceDiffPanel,
+                "page-down",
+                Math.max(1, this.#height() - 8),
+                this.#width(),
+              );
+              this.#paint();
+            } else if (value === "p" && request.sourceDiff !== undefined) {
+              this.#sourceDiffPanel = {
+                fileIndex: 0,
+                presentation: request.sourceDiff,
+                scroll: 0,
+              };
+              this.#status = "Review edits  (y approve / n reject)";
+              this.#paint();
+            } else if (value === "y") {
+              this.#sourceDiffPanel = undefined;
               this.#startWorking();
               this.#status = STATUS.processing;
               this.#detachInput();
               this.#paint();
               resolve({ approved: true });
             } else if (value === "n") {
+              this.#sourceDiffPanel = undefined;
               this.#startWorking();
               this.#status = STATUS.processing;
               this.#markToolDenied(request.toolCallId);
@@ -958,10 +986,38 @@ export class TerminalRenderer implements AgentTUIRenderer {
             }
             break;
           }
+          case "up":
+          case "down":
+          case "left":
+          case "right":
+          case "home":
+          case "end": {
+            const panel = this.#sourceDiffPanel;
+            if (panel === undefined) break;
+            const action =
+              key.type === "up"
+                ? "up"
+                : key.type === "down"
+                  ? "down"
+                  : key.type === "left"
+                    ? "previous-file"
+                    : key.type === "right"
+                      ? "next-file"
+                      : key.type;
+            this.#sourceDiffPanel = moveSourceDiffPanel(
+              panel,
+              action,
+              Math.max(1, this.#height() - 8),
+              this.#width(),
+            );
+            this.#paint();
+            break;
+          }
           case "ctrl-r":
             this.#paint();
             break;
           case "ctrl-c":
+            this.#sourceDiffPanel = undefined;
             this.#interrupted = true;
             this.#stop();
             reject(interruptedError());
@@ -3665,6 +3721,19 @@ export class TerminalRenderer implements AgentTUIRenderer {
   #footerRows(width: number): string[] {
     const c = this.#theme.colors;
     const rows: string[] = [""];
+
+    if (this.#sourceDiffPanel !== undefined) {
+      rows.push(
+        ...renderSourceDiffPanel(
+          this.#sourceDiffPanel,
+          this.#theme,
+          width,
+          Math.max(8, this.#height() - 3),
+        ),
+      );
+      this.#pushStatusLine(rows, width);
+      return rows;
+    }
 
     // The HITL question overlay owns the footer down to the status bar —
     // no indicator or hint row beneath it (the panel carries its own).

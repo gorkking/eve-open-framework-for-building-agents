@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
+import { consumeApprovalPresentation } from "#harness/approval-presentation.js";
 import {
-  FINALIZE_EDITS_TOOL_DEFINITION,
-  finalizeEdits,
+  APPLY_EDITS_TOOL_DEFINITION,
+  applyEdits,
   proposeEdits,
 } from "#runtime/framework-tools/selfmod-edits.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
@@ -60,7 +61,7 @@ describe("selfmod edit tools", () => {
       expect(removePath).not.toHaveBeenCalled();
       expect(files.get("/workspace/agent.ts")).toBe("model: 'old'\n");
 
-      await finalizeEdits(sandbox, proposal.proposalId);
+      await applyEdits(sandbox, proposal.proposalId);
 
       expect(files.get("/workspace/agent.ts")).toBe("model: 'new'\n");
       expect(files.get("/workspace/new.md")).toBe("hello\n");
@@ -77,12 +78,12 @@ describe("selfmod edit tools", () => {
         summary: "Change a.ts.",
       });
 
-      await expect(finalizeEdits(sandbox, "00000000-0000-4000-8000-000000000000")).rejects.toThrow(
+      await expect(applyEdits(sandbox, "00000000-0000-4000-8000-000000000000")).rejects.toThrow(
         "Unknown or expired",
       );
 
       files.set("/workspace/a.ts", "external change\n");
-      await expect(finalizeEdits(sandbox, proposal.proposalId)).rejects.toThrow(
+      await expect(applyEdits(sandbox, proposal.proposalId)).rejects.toThrow(
         "changed after the edits were proposed",
       );
     });
@@ -134,7 +135,7 @@ describe("selfmod edit tools", () => {
     });
   });
 
-  it("requires approval for a recorded proposal", async () => {
+  it("requires approval with the complete source diff", async () => {
     const { sandbox } = createSandbox({ "/workspace/a.ts": "old\n" });
 
     await withContext(async () => {
@@ -142,13 +143,25 @@ describe("selfmod edit tools", () => {
         edits: [{ filePath: "/workspace/a.ts", kind: "replace", newText: "new", oldText: "old" }],
         summary: "Change a.ts.",
       });
-      const approval = await FINALIZE_EDITS_TOOL_DEFINITION.approval?.({
+      const approval = await APPLY_EDITS_TOOL_DEFINITION.approval?.({
         callId: "call-1",
         session: { id: "session-1" },
         toolInput: proposal,
       } as never);
 
       expect(approval).toBe("user-approval");
+      expect(consumeApprovalPresentation("session-1", "call-1")?.sourceDiff).toEqual({
+        changedBytes: 8,
+        files: [
+          {
+            after: "new\n",
+            before: "old\n",
+            path: "/workspace/a.ts",
+            status: "modify",
+          },
+        ],
+        kind: "source-diff",
+      });
     });
   });
 });

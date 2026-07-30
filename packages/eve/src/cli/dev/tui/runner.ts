@@ -27,6 +27,10 @@ import {
   type DevelopmentRuntimeArtifactRefresher,
 } from "#services/dev-client.js";
 import { toErrorMessage } from "#shared/errors.js";
+import {
+  decodeSourceDiffApproval,
+  type SourceDiffPresentation,
+} from "#shared/source-diff-presentation.js";
 import { SubagentPump, type SubagentPumpOptions, type SubagentView } from "./subagent-pump.js";
 export type {
   SubagentRun,
@@ -191,6 +195,8 @@ export type AgentTUIToolApprovalRequest = {
   toolCallId: string;
   toolName: string;
   title?: string;
+  /** Trusted server-generated source changes shown in the approval viewer. */
+  sourceDiff?: SourceDiffPresentation;
   input: unknown;
 };
 
@@ -2079,12 +2085,14 @@ function upsertPendingApproval(state: AgentTUITurnState, request: InputRequest):
 }
 
 function toAgentTUIToolApprovalRequest(request: InputRequest): AgentTUIToolApprovalRequest {
-  return {
+  const base = {
     approvalId: request.requestId,
     toolCallId: request.action.callId,
     toolName: request.action.toolName,
     input: request.action.input,
   };
+  const sourceDiff = decodeSourceDiffApproval(request.prompt);
+  return sourceDiff === undefined ? base : { ...base, sourceDiff };
 }
 
 function upsertPendingQuestion(state: AgentTUITurnState, request: InputRequest): void {
