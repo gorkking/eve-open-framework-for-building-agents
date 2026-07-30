@@ -11,19 +11,17 @@ import {
 import { loadCompileMetadata } from "#runtime/loaders/compile-metadata.js";
 import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
-const RUNTIME_SANDBOX_CONTRACT_VERSION = 8;
+const RUNTIME_SANDBOX_CONTRACT_VERSION = 9;
 
 /**
  * Derives eve's private compatibility revision for one sandbox definition.
  */
 export async function createRuntimeSandboxDefinitionRevision(input: {
-  readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly nodeId: string;
   readonly sourceHash: string;
   readonly sourceId: string;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
 }): Promise<string> {
-  const sourceGraphHash = await resolveSourceGraphHash(input.compiledArtifactsSource);
   return createStableHash(
     [
       RUNTIME_SANDBOX_CONTRACT_VERSION,
@@ -31,7 +29,6 @@ export async function createRuntimeSandboxDefinitionRevision(input: {
       input.sourceId,
       input.sourceHash,
       input.workspaceResourceRoot.contentHash ?? "",
-      sourceGraphHash,
     ].join(":"),
   );
 }
@@ -77,16 +74,6 @@ export async function createRuntimeSandboxTemplateKey(input: {
     ].join(":"),
   ).slice(0, 20);
   return sanitizeRuntimeSandboxKey(`eve-sbx-tpl-${scope}-${hash}`);
-}
-
-async function resolveSourceGraphHash(
-  compiledArtifactsSource: RuntimeCompiledArtifactsSource,
-): Promise<string> {
-  const metadata = await loadCompileMetadataForKeys(compiledArtifactsSource);
-  return (
-    metadata?.discovery.sourceGraphHash ??
-    getRuntimeCompiledArtifactsCacheKey(compiledArtifactsSource)
-  );
 }
 
 async function loadCompileMetadataForKeys(compiledArtifactsSource: RuntimeCompiledArtifactsSource) {

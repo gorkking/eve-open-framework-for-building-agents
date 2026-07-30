@@ -1,3 +1,6 @@
+import { contextStorage } from "#context/container.js";
+import { SandboxProviderContextKey } from "#context/keys.js";
+import { withVirtualContextValue } from "#context/virtual-scope.js";
 import type { JsonValue } from "#shared/json.js";
 import { parseJsonValue } from "#shared/json.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
@@ -5,7 +8,8 @@ import type { SandboxSession } from "#shared/sandbox-session.js";
 const SANDBOX_VALUE = Symbol.for("eve.sandbox-value");
 const SANDBOX_ADAPTERS = Symbol.for("eve.sandbox-adapters");
 
-type SandboxAdapterRegistry = Map<string, SandboxAdapterDefinition<unknown, JsonValue>>;
+type RegisteredSandboxAdapter = SandboxAdapterDefinition<unknown, JsonValue>;
+type SandboxAdapterRegistry = Map<string, RegisteredSandboxAdapter>;
 
 type SandboxValueGlobal = typeof globalThis & {
   [SANDBOX_ADAPTERS]?: SandboxAdapterRegistry;
@@ -21,12 +25,32 @@ type SandboxValueGlobal = typeof globalThis & {
 export interface Sandbox extends SandboxSession {}
 
 /**
+ * Framework context supplied to a provider while it creates or restores a
+ * sandbox.
+ *
+ * App sandbox definitions do not construct or forward this context. The
+ * adapter returned by {@link defineSandboxAdapter} supplies it to provider
+ * implementation code.
+ */
+export interface SandboxProviderContext {
+  /** Absolute application root for providers that manage local resources. */
+  readonly appRoot: string;
+  /** Stable eve-owned identity for this durable sandbox resource. */
+  readonly resourceId: string;
+  /** Cancellation signal for the active sandbox access. */
+  readonly signal: AbortSignal;
+  /** Framework resource tags, when the active channel supplies them. */
+  readonly tags?: Readonly<Record<string, string>>;
+}
+
+/**
  * Serializable provider reference persisted with an eve session.
  */
 export interface SerializedSandbox {
   readonly adapterId: string;
   readonly id: string;
   readonly reference: JsonValue;
+  readonly resourceId: string;
 }
 
 /**
@@ -41,12 +65,17 @@ export interface SandboxAdapterDefinition<RawSandbox, Reference extends JsonValu
   readonly type: string;
   /**
    * Captures the provider reference needed to restore this sandbox later.
+   *
+   * The reference must identify stable provider state. If capturing a mutable
+   * checkpoint replaces an older checkpoint, the provider must keep that
+   * replacement behind the same durable identity so parent and child sessions
+   * holding an earlier serialized value still restore the current sandbox.
    */
   reference(sandbox: RawSandbox): Reference | Promise<Reference>;
   /**
    * Reconnects to a previously captured provider reference.
    */
-  restore(reference: Reference): RawSandbox | Promise<RawSandbox>;
+  restore(reference: Reference, context: SandboxProviderContext): RawSandbox | Promise<RawSandbox>;
   /**
    * Projects the provider handle onto eve's filesystem and process surface.
    */
@@ -56,6 +85,24 @@ export interface SandboxAdapterDefinition<RawSandbox, Reference extends JsonValu
    * durable provider state.
    */
   shutdown?(sandbox: RawSandbox): void | Promise<void>;
+}
+
+/**
+ * Provider adapter returned by {@link defineSandboxAdapter}.
+ */
+export interface SandboxAdapter<RawSandbox> {
+  /**
+   * Adapts an existing provider handle using the active sandbox resource
+   * context.
+   */
+  (sandbox: RawSandbox): Sandbox;
+  /**
+   * Creates and adapts a provider handle with eve's stable resource identity,
+   * cancellation signal, application root, and resource tags.
+   */
+  create(
+    factory: (context: SandboxProviderContext) => RawSandbox | Promise<RawSandbox>,
+  ): Promise<Sandbox>;
 }
 
 interface SandboxValueInternal {
@@ -69,24 +116,39 @@ type InternalSandbox = Sandbox & {
 };
 
 /**
- * Adapts a provider-native handle into a durable {@link Sandbox}.
+ * Defines the durable boundary for a provider-native sandbox.
  *
- * The returned adapter function is normally created once at module scope by a
- * provider package. The provider implementation owns its stable protocol
- * discriminator; app sandbox definitions do not provide persistence keys.
+ * Provider implementations normally call `adapter.create((context) => raw)`
+ * from their public creation methods. This keeps eve-owned resource identity
+ * and runtime context out of app sandbox definitions. The callable adapter is
+ * available for provider handles obtained by another provider-native method.
  */
 export function defineSandboxAdapter<RawSandbox, Reference extends JsonValue>(
   definition: SandboxAdapterDefinition<RawSandbox, Reference>,
-): (sandbox: RawSandbox) => Sandbox {
+): SandboxAdapter<RawSandbox> {
   const adapterId = expectSandboxAdapterType(definition.type);
-  registerSandboxAdapter(adapterId, definition);
+  const adapter = registerSandboxAdapter(adapterId, definition);
 
-  return (sandbox) =>
-    createSandboxValue({
+  function adapt(sandbox: RawSandbox, context = readSandboxProviderContext()): Sandbox {
+    const session = definition.session(sandbox);
+    return createSandboxValue({
+      adapter,
       adapterId,
-      id: definition.session(sandbox).id,
+      id: session.id,
+      providerContext: context ?? createFallbackProviderContext(session.id),
       rawSandbox: Promise.resolve(sandbox),
+      session: Promise.resolve(session),
     });
+  }
+
+  return Object.assign((sandbox: RawSandbox) => adapt(sandbox), {
+    async create(
+      factory: (context: SandboxProviderContext) => RawSandbox | Promise<RawSandbox>,
+    ): Promise<Sandbox> {
+      const context = requireSandboxProviderContext();
+      return adapt(await factory(context), context);
+    },
+  });
 }
 
 /**
@@ -111,12 +173,29 @@ export async function serializeSandbox(sandbox: Sandbox): Promise<SerializedSand
 /**
  * Restores a lazy sandbox handle from persisted provider state.
  */
-export function restoreSandbox(serialized: SerializedSandbox): Sandbox {
+export function restoreSandbox(
+  serialized: SerializedSandbox,
+  input: {
+    readonly appRoot?: string;
+    readonly signal?: AbortSignal;
+    readonly tags?: Readonly<Record<string, string>>;
+  } = {},
+): Sandbox {
   const adapter = getSandboxAdapter(serialized.adapterId);
+  const providerContext: SandboxProviderContext = {
+    appRoot: input.appRoot ?? process.cwd(),
+    resourceId: serialized.resourceId,
+    signal: input.signal ?? new AbortController().signal,
+    tags: input.tags,
+  };
   return createSandboxValue({
+    adapter,
     adapterId: serialized.adapterId,
     id: serialized.id,
-    rawSandbox: Promise.resolve().then(async () => await adapter.restore(serialized.reference)),
+    providerContext,
+    rawSandbox: Promise.resolve().then(
+      async () => await adapter.restore(serialized.reference, providerContext),
+    ),
   });
 }
 
@@ -134,17 +213,32 @@ export function getSandboxAdapterType(sandbox: Sandbox): string {
   return getSandboxInternal(sandbox).adapterId;
 }
 
+/**
+ * Runs provider creation inside one framework-owned sandbox resource context.
+ *
+ * Internal lifecycle primitive; app definitions receive the simpler
+ * `SandboxDefinitionContext` instead.
+ */
+export async function withSandboxProviderContext<T>(
+  context: SandboxProviderContext,
+  callback: () => T | Promise<T>,
+): Promise<T> {
+  return await withVirtualContextValue(SandboxProviderContextKey, context, callback);
+}
+
 function createSandboxValue(input: {
+  readonly adapter: RegisteredSandboxAdapter;
   readonly adapterId: string;
   readonly id: string;
+  readonly providerContext: SandboxProviderContext;
   readonly rawSandbox: Promise<unknown>;
+  readonly session?: Promise<SandboxSession>;
 }): Sandbox {
-  const adapter = getSandboxAdapter(input.adapterId);
-  let sessionPromise: Promise<SandboxSession> | undefined;
+  let sessionPromise = input.session;
   let shutdownPromise: Promise<void> | undefined;
 
   function session(): Promise<SandboxSession> {
-    sessionPromise ??= input.rawSandbox.then((rawSandbox) => adapter.session(rawSandbox));
+    sessionPromise ??= input.rawSandbox.then((rawSandbox) => input.adapter.session(rawSandbox));
     return sessionPromise;
   }
 
@@ -195,15 +289,16 @@ function createSandboxValue(input: {
         return {
           adapterId: input.adapterId,
           id: input.id,
-          reference: parseJsonValue(await adapter.reference(rawSandbox)),
+          reference: parseJsonValue(await input.adapter.reference(rawSandbox)),
+          resourceId: input.providerContext.resourceId,
         };
       },
       async shutdown() {
-        if (adapter.shutdown === undefined) {
+        if (input.adapter.shutdown === undefined) {
           return;
         }
         shutdownPromise ??= input.rawSandbox.then(async (rawSandbox) => {
-          await adapter.shutdown?.(rawSandbox);
+          await input.adapter.shutdown?.(rawSandbox);
         });
         await shutdownPromise;
       },
@@ -223,14 +318,14 @@ function getSandboxInternal(sandbox: Sandbox): SandboxValueInternal {
 function registerSandboxAdapter<RawSandbox, Reference extends JsonValue>(
   adapterId: string,
   definition: SandboxAdapterDefinition<RawSandbox, Reference>,
-): void {
-  getSandboxAdapterRegistry().set(adapterId, {
+): RegisteredSandboxAdapter {
+  const adapter: RegisteredSandboxAdapter = {
     type: adapterId,
     reference(sandbox) {
       return definition.reference(sandbox as RawSandbox);
     },
-    restore(reference) {
-      return definition.restore(reference as Reference);
+    restore(reference, context) {
+      return definition.restore(reference as Reference, context);
     },
     session(sandbox) {
       return definition.session(sandbox as RawSandbox);
@@ -239,10 +334,12 @@ function registerSandboxAdapter<RawSandbox, Reference extends JsonValue>(
       definition.shutdown === undefined
         ? undefined
         : (sandbox) => definition.shutdown?.(sandbox as RawSandbox),
-  });
+  };
+  getSandboxAdapterRegistry().set(adapterId, adapter);
+  return adapter;
 }
 
-function getSandboxAdapter(adapterId: string): SandboxAdapterDefinition<unknown, JsonValue> {
+function getSandboxAdapter(adapterId: string): RegisteredSandboxAdapter {
   const adapter = getSandboxAdapterRegistry().get(adapterId);
   if (adapter === undefined) {
     throw new Error(
@@ -256,6 +353,29 @@ function getSandboxAdapterRegistry(): SandboxAdapterRegistry {
   const container = globalThis as SandboxValueGlobal;
   container[SANDBOX_ADAPTERS] ??= new Map();
   return container[SANDBOX_ADAPTERS];
+}
+
+function readSandboxProviderContext(): SandboxProviderContext | undefined {
+  return contextStorage.getStore()?.get(SandboxProviderContextKey);
+}
+
+function requireSandboxProviderContext(): SandboxProviderContext {
+  const context = readSandboxProviderContext();
+  if (context === undefined) {
+    throw new Error(
+      "Sandbox provider creation requires an active sandbox definition. " +
+        "Call the provider from defineSandbox((ctx) => sandbox).",
+    );
+  }
+  return context;
+}
+
+function createFallbackProviderContext(resourceId: string): SandboxProviderContext {
+  return {
+    appRoot: process.cwd(),
+    resourceId,
+    signal: new AbortController().signal,
+  };
 }
 
 function expectSandboxAdapterType(type: string): string {

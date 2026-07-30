@@ -432,6 +432,7 @@ describe("dispatchRuntimeActionsStep", () => {
         adapterId: "eve/dispatch-test-sandbox",
         id: "parent-sandbox",
         reference: { id: "parent-sandbox" },
+        resourceId: expect.any(String),
       },
     };
     expect(startMock).toHaveBeenCalledWith(

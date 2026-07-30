@@ -4,7 +4,9 @@
 export {
   defineSandboxAdapter,
   type Sandbox,
+  type SandboxAdapter,
   type SandboxAdapterDefinition,
+  type SandboxProviderContext,
 } from "#shared/sandbox-value.js";
 export {
   defineSandboxTemplate,

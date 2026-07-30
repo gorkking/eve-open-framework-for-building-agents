@@ -42,7 +42,8 @@ export function isSandboxStateValue(value: unknown): value is SandboxStateValue 
     sandbox === null ||
     typeof sandbox !== "object" ||
     typeof sandbox.adapterId !== "string" ||
-    typeof sandbox.id !== "string"
+    typeof sandbox.id !== "string" ||
+    typeof sandbox.resourceId !== "string"
   ) {
     return false;
   }

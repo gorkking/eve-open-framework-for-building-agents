@@ -31,7 +31,6 @@ import {
   type SandboxTemplatePrewarmInput,
 } from "#shared/sandbox-template.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { withSandboxTemplateBuildContext } from "#execution/sandbox/creation-context.js";
 import { createSandboxHydrator } from "#execution/sandbox/builtin-template.js";
 import { withSandboxTemplatePrewarmLock } from "./template-prewarm-lock.js";
 
@@ -93,18 +92,7 @@ export async function prewarmSandboxes(
   input.log?.(`eve: initializing ${formatSandboxTemplateCount(targets.length)}...`);
   const bindings = await Promise.all(
     targets.map(async (target) => {
-      const runPrewarm = async () =>
-        await withSandboxTemplateBuildContext(
-          {
-            appRoot: input.appRoot,
-            log:
-              input.log === undefined
-                ? undefined
-                : (message) => input.log?.(`eve: sandbox template "${target.label}": ${message}`),
-            templateKey: target.templateKey,
-          },
-          async () => await target.template.prewarm(target.input),
-        );
+      const runPrewarm = async () => await target.template.prewarm(target.input);
 
       try {
         const reference = await withSandboxTemplatePrewarmLock(
@@ -121,7 +109,6 @@ export async function prewarmSandboxes(
                   templateKey: target.templateKey,
                 }),
         );
-        target.template.bind(reference);
         recordSandboxTemplateReference(target.templateKey, reference);
         return {
           exportName: target.exportName,
@@ -180,9 +167,11 @@ export async function prewarmAppSandboxes(input: {
 }
 
 async function collectPrewarmTargets(input: {
+  readonly appRoot: string;
   readonly compileDirectoryPath: string;
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly graph: ResolvedAgentGraphBundle;
+  readonly log?: (message: string) => void;
 }): Promise<readonly PrewarmTarget[]> {
   const targets: PrewarmTarget[] = [];
 
@@ -202,7 +191,6 @@ async function collectPrewarmTargets(input: {
       }
 
       const revision = await createRuntimeSandboxDefinitionRevision({
-        compiledArtifactsSource: input.compiledArtifactsSource,
         nodeId,
         sourceHash: definition.sourceHash,
         sourceId: definition.sourceId,
@@ -212,6 +200,7 @@ async function collectPrewarmTargets(input: {
       await Promise.all(
         definition.templates.map(async ({ exportName, template }) => {
           const internal = getSandboxTemplateInternal(template);
+          const label = `${formatLabel(nodeId)}:${exportName}`;
           const templateKey = await createRuntimeSandboxTemplateKey({
             compiledArtifactsSource: input.compiledArtifactsSource,
             exportName,
@@ -222,10 +211,18 @@ async function collectPrewarmTargets(input: {
           targets.push({
             exportName,
             input: {
+              appRoot: input.appRoot,
               assets: {},
               hydrate: createSandboxHydrator(seedFiles),
+              ...(input.log === undefined
+                ? {}
+                : {
+                    log: (message: string) =>
+                      input.log?.(`eve: sandbox template "${label}": ${message}`),
+                  }),
+              templateId: templateKey,
             },
-            label: `${formatLabel(nodeId)}:${exportName}`,
+            label,
             nodeId,
             signature: `${internal.implementationId}:${nodeId}:${exportName}:${templateKey}`,
             template: internal,

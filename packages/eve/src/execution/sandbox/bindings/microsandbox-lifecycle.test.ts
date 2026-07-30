@@ -10,6 +10,7 @@ import {
   MICROSANDBOX_DEFAULT_IMAGE,
   resolveMicrosandboxOptions,
 } from "#execution/sandbox/bindings/microsandbox-options.js";
+import type { MicrosandboxSessionMetadata } from "#execution/sandbox/bindings/microsandbox-metadata.js";
 
 const runtimeMocks = vi.hoisted(() => ({
   connectMicrosandbox: vi.fn(),
@@ -30,7 +31,7 @@ const fsMocks = vi.hoisted(() => ({
 }));
 
 const metadataMocks = vi.hoisted(() => ({
-  readSessionMetadata: vi.fn(async () => null),
+  readSessionMetadata: vi.fn<() => Promise<MicrosandboxSessionMetadata | null>>(async () => null),
   readSessionMetadataRecord: vi.fn((value: unknown) => value ?? null),
   readTemplateMetadata: vi.fn(async () => ({
     optionsHash: "options-hash",
@@ -109,6 +110,41 @@ describe("createMicrosandboxHandle", () => {
     );
     expect(secondHandle).toBe(firstHandle);
     expect(runtimeMocks.createPreparedMicrosandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers the provider-side session pointer over stale workflow metadata", async () => {
+    const currentMetadata = {
+      optionsHash: "options-hash",
+      sandboxName: "current-sandbox",
+      stateSnapshotName: "current-snapshot",
+      version: 2,
+    } as const;
+    const vm = createFakeMicrosandboxVm("session-key");
+    metadataMocks.readSessionMetadata.mockResolvedValue(currentMetadata);
+    runtimeMocks.snapshotExists.mockResolvedValue(true);
+    runtimeMocks.connectMicrosandbox.mockResolvedValue(vm);
+    const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
+
+    await createMicrosandboxHandle({
+      provider: "microsandbox",
+      createInput: {
+        context: { appRoot: "/tmp/eve-app" },
+        existingMetadata: {
+          optionsHash: "options-hash",
+          sandboxName: "stale-sandbox",
+          stateSnapshotName: "deleted-snapshot",
+          version: 2,
+        },
+        sessionKey: "session-key",
+        templateKey: "template-key",
+      },
+      options,
+      optionsHash: "options-hash",
+    });
+
+    expect(runtimeMocks.connectMicrosandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: currentMetadata }),
+    );
   });
 
   it("does not replace a persisted session whose provider state disappeared", async () => {
@@ -319,6 +355,7 @@ function createFakeMicrosandboxVm(sessionKey: string) {
       return {
         optionsHash,
         sandboxName: "active-sandbox",
+        stateSnapshotName: "active-snapshot",
         version: 2,
       };
     },

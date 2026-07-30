@@ -2,7 +2,6 @@ import type { SandboxEngine } from "#shared/sandbox-engine.js";
 import { parseJsonValue, type JsonObject } from "#shared/json.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
-import { requireSandboxTemplateBuildContext } from "#execution/sandbox/creation-context.js";
 import {
   createBuiltinSandbox,
   type BuiltinSandboxProvider,
@@ -40,21 +39,20 @@ export function createBuiltinSandboxTemplate<CreateOptions>(input: {
     BuiltinTemplateCreateRequest<CreateOptions>
   >({
     revision: parseJsonValue(input.revision ?? null),
-    async prewarm({ hydrate }) {
-      const context = requireSandboxTemplateBuildContext();
+    async prewarm({ appRoot, hydrate, log, templateId }) {
       const result = await input.templateEngine.prepare({
         prepare: async (sandbox) => {
           await hydrate(sandbox);
           await input.prepare?.(sandbox);
         },
-        log: context.log,
-        context: { appRoot: context.appRoot },
+        log,
+        context: { appRoot },
         seedFiles: [],
-        templateKey: context.templateKey,
+        templateKey: templateId,
       });
       return {
         provider: result.reference ?? null,
-        templateKey: context.templateKey,
+        templateKey: templateId,
       };
     },
     async create({ options: request, reference }) {
@@ -67,14 +65,12 @@ export function createBuiltinSandboxTemplate<CreateOptions>(input: {
       });
     },
   });
-  const createFromReference = internalTemplate.create.bind(internalTemplate);
-
   return Object.assign(internalTemplate, {
     async create(options?: CreateOptions): Promise<Sandbox> {
-      return await createFromReference({ options });
+      return await internalTemplate.create({ options });
     },
     async createWithSessionKey(options: CreateOptions, sessionKey: string): Promise<Sandbox> {
-      return await createFromReference({ options, sessionKey });
+      return await internalTemplate.create({ options, sessionKey });
     },
   });
 }

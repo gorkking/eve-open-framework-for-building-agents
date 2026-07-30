@@ -83,5 +83,13 @@ export const VercelSandbox = {
 };
 
 function createVercelTemplateOptionsRevision(options: VercelSandboxCreateOptions) {
-  return parseJsonObject(options);
+  const {
+    fetch: _fetch,
+    token: _token,
+    ...contentOptions
+  } = options as VercelSandboxCreateOptions & {
+    readonly fetch?: unknown;
+    readonly token?: unknown;
+  };
+  return parseJsonObject(contentOptions);
 }

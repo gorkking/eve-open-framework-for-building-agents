@@ -3,24 +3,14 @@ import type * as Vercel from "#compiled/@vercel/sandbox/index.js";
 type VercelCreateOptions = NonNullable<Parameters<typeof Vercel.Sandbox.create>[0]>;
 
 type VercelSandboxAuthorCreateOptions<T> = T extends unknown
-  ? Omit<
-      T,
-      | "fetch"
-      | "name"
-      | "onResume"
-      | "persistent"
-      | "projectId"
-      | "runtime"
-      | "signal"
-      | "teamId"
-      | "token"
-    >
+  ? Omit<T, "name" | "onResume" | "persistent" | "runtime" | "signal">
   : never;
 
 /**
  * Options accepted by `VercelSandbox.create()`, a Vercel template, or
  * `template.create()`. Durable restoration does not create a new provider
- * resource, so options are not re-applied.
+ * resource, so creation-only options are not re-applied. Provider credentials
+ * and transport must remain available to the runtime when it reconnects.
  *
  * `networkPolicy` is deferred until after framework-owned base setup
  * for fresh templates and template-less sessions, so eve can install
@@ -35,11 +25,10 @@ type VercelSandboxAuthorCreateOptions<T> = T extends unknown
  * `runtime` is excluded as well: eve always boots its sandboxes from the
  * published eve image, which is mutually exclusive with a stock runtime.
  *
- * `source` is honored only on the template create at prewarm time, so
- * an author-supplied snapshot, git revision, or tarball becomes the
- * base layer for the template. Framework setup, preparation, and managed
- * files all run on top, and the resulting
- * framework-owned snapshot is what every later session derives from,
- * so `source` is stripped from the session-create path.
+ * `source` is honored by direct creation and by template prewarming. For a
+ * template, an author-supplied snapshot, git revision, or tarball becomes the
+ * base layer. Framework setup, preparation, and managed files all run on top,
+ * and later template-backed sessions derive from eve's resulting snapshot
+ * instead of reapplying the original source.
  */
 export type VercelSandboxCreateOptions = VercelSandboxAuthorCreateOptions<VercelCreateOptions>;

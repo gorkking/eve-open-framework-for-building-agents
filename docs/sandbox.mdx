@@ -242,9 +242,11 @@ export default defineSandbox(({ runtime }) => {
 });
 ```
 
+Relative `LocalFilesystemSandbox` roots resolve from the eve application root.
+
 ## Custom providers
 
-Provider packages adapt their native handle with `defineSandboxAdapter`. The adapter owns serialization and restoration; app definitions still return only `Sandbox` values. The provider-owned `type` identifies its durable wire protocol and stays inside the provider implementation.
+Provider packages create and adapt native handles with `defineSandboxAdapter`. eve supplies the stable resource identity; the adapter maps it to provider creation, serialization, and restoration. App definitions still return only `Sandbox` values. The provider-owned `type` identifies its durable wire protocol and stays inside the provider implementation.
 
 ```ts
 import { defineSandboxAdapter } from "eve/sandbox/provider";
@@ -254,23 +256,37 @@ const asDevboxSandbox = defineSandboxAdapter<Devbox, { id: string }>({
   reference(devbox) {
     return { id: devbox.id };
   },
-  restore({ id }) {
-    return Devbox.get({ id });
+  restore({ id }, { signal }) {
+    return Devbox.get({ id, signal });
   },
   session(devbox) {
     return adaptDevboxSession(devbox);
   },
 });
 
-export default defineSandbox(async ({ session }) => {
-  const devbox = await Devbox.create({
+export const DevboxSandbox = {
+  create(options: { owner?: string } = {}) {
+    return asDevboxSandbox.create(({ resourceId, signal }) => {
+      return Devbox.getOrCreate({
+        id: resourceId,
+        owner: options.owner,
+        signal,
+      });
+    });
+  },
+};
+
+export default defineSandbox(({ session }) =>
+  DevboxSandbox.create({
     owner: session.auth.current?.principalId,
-  });
-  return asDevboxSandbox(devbox);
-});
+  }),
+);
 ```
 
-A provider that supports build prewarming can additionally expose a template using `defineSandboxTemplate` from `eve/sandbox/provider`. Its `prewarm({ assets, hydrate })` implementation returns a JSON-serializable provider reference; its `create({ options, reference })` implementation returns a durable `Sandbox`.
+`adapter.create()` supplies eve's stable resource id, cancellation signal, app root, and resource tags to provider implementation code. App definitions never forward that framework bookkeeping.
+The serialized provider reference must keep identifying the same durable resource. Providers that rotate snapshots or checkpoints keep the latest checkpoint behind that identity instead of invalidating handles already held by a parent or child session.
+
+A provider that supports build prewarming can additionally expose a template using `defineSandboxTemplate` from `eve/sandbox/provider`. Its `prewarm({ appRoot, assets, hydrate, log, templateId })` implementation returns a JSON-serializable provider reference; its `create({ options, reference })` implementation returns a durable `Sandbox`. References are scoped to the active definition invocation, so one immutable template value can be used safely by concurrent sessions.
 
 ## Network policy
 

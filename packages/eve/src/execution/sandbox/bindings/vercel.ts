@@ -38,7 +38,7 @@ import type {
   VercelModule,
   VercelSandbox,
 } from "#execution/sandbox/bindings/vercel-sdk-types.js";
-import type { JsonObject } from "#shared/json.js";
+import { parseJsonObject, type JsonObject } from "#shared/json.js";
 
 export interface CreateVercelSandboxInput {
   readonly createSandbox?: CreateVercelSandbox;
@@ -60,7 +60,7 @@ export function createVercelSandbox(input: CreateVercelSandboxInput = {}): Sandb
     timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
     ...input.createOptions,
   };
-  const configuration: JsonObject = {};
+  const configuration = createVercelRestorationConfiguration(createOptions);
   const createSandbox = input.createSandbox ?? createVercelEveImageSandbox;
   const prewarmedTemplates = new Map<string, VercelSandboxTemplateRecord>();
 
@@ -71,9 +71,10 @@ export function createVercelSandbox(input: CreateVercelSandboxInput = {}): Sandb
         createInput.signal === undefined
           ? createOptions
           : { ...createOptions, signal: createInput.signal };
-      // Resolve tags up-front so tag-count validation fails fast before
-      // we go to the network for the template snapshot.
-      const tags = resolveVercelSandboxTags(runtimeCreateOptions.tags, createInput.tags);
+      const tags =
+        createInput.existingMetadata === undefined || createInput.tags !== undefined
+          ? resolveVercelSandboxTags(runtimeCreateOptions.tags, createInput.tags)
+          : undefined;
 
       const template =
         createInput.templateKey === null
@@ -330,36 +331,41 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
     };
   }
 
-  input.log?.("preparing base runtime inside sandbox");
-  await ensureVercelSandboxBaseRuntime(sandbox);
-  await applyInitialVercelNetworkPolicy(sandbox, input.createOptions.networkPolicy);
+  try {
+    input.log?.("preparing base runtime inside sandbox");
+    await ensureVercelSandboxBaseRuntime(sandbox);
+    await applyInitialVercelNetworkPolicy(sandbox, input.createOptions.networkPolicy);
 
-  const templateSession = buildSandboxSession(
-    createVercelInternalSandboxSession(sandbox, input.templateKey),
-    createVercelNetworkPolicySetter(sandbox),
-  );
-
-  await writeSandboxSeedFiles(templateSession, input.seedFiles);
-
-  if (input.prepare !== undefined) {
-    input.log?.("running template preparation");
-    await input.prepare(
-      createLoggingSandboxSession({
-        log: input.log,
-        session: templateSession,
-      }),
+    const templateSession = buildSandboxSession(
+      createVercelInternalSandboxSession(sandbox, input.templateKey),
+      createVercelNetworkPolicySetter(sandbox),
     );
-  }
 
-  const snapshot = await sandbox.snapshot();
-  return {
-    reused: false,
-    template: {
-      sandboxName: sandbox.name,
-      snapshotId: snapshot.snapshotId,
-      templateKey: input.templateKey,
-    },
-  };
+    await writeSandboxSeedFiles(templateSession, input.seedFiles);
+
+    if (input.prepare !== undefined) {
+      input.log?.("running template preparation");
+      await input.prepare(
+        createLoggingSandboxSession({
+          log: input.log,
+          session: templateSession,
+        }),
+      );
+    }
+
+    const snapshot = await sandbox.snapshot();
+    return {
+      reused: false,
+      template: {
+        sandboxName: sandbox.name,
+        snapshotId: snapshot.snapshotId,
+        templateKey: input.templateKey,
+      },
+    };
+  } catch (error) {
+    await sandbox.delete().catch(() => {});
+    throw error;
+  }
 }
 
 interface EnsureSessionInput {
@@ -528,7 +534,7 @@ function hasImmutableTemplateBase(createOptions: VercelCreateOptions): boolean {
   const image = (createOptions as { readonly image?: string }).image;
 
   if (source === undefined && image === undefined) {
-    return true;
+    return false;
   }
 
   if (source?.type === "snapshot" && typeof source.snapshotId === "string") {
@@ -543,6 +549,20 @@ function hasImmutableTemplateBase(createOptions: VercelCreateOptions): boolean {
   }
 
   return typeof image === "string" && /@sha256:[a-f0-9]{64}$/i.test(image);
+}
+
+function createVercelRestorationConfiguration(createOptions: VercelCreateOptions): JsonObject {
+  const configuration: Record<string, unknown> = {};
+  for (const key of ["projectId", "teamId"] as const) {
+    const value = (createOptions as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      configuration[key] = value;
+    }
+  }
+  if (createOptions.tags !== undefined) {
+    configuration.tags = { ...createOptions.tags };
+  }
+  return parseJsonObject(configuration);
 }
 
 function readPersistedVercelSandboxIdentity(

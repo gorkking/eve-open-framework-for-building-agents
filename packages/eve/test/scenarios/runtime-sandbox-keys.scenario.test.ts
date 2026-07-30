@@ -32,11 +32,7 @@ describe("disk-backed runtime sandbox identities", () => {
   });
 
   it("uses the authored workspace digest in the compatibility revision", async () => {
-    const appRoot = await createTemporaryAppRoot();
-    const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
-
     const first = await createRuntimeSandboxDefinitionRevision({
-      compiledArtifactsSource,
       nodeId: "__root__",
       sourceHash: "source",
       sourceId: "agent/sandbox/sandbox",
@@ -47,7 +43,6 @@ describe("disk-backed runtime sandbox identities", () => {
       },
     });
     const second = await createRuntimeSandboxDefinitionRevision({
-      compiledArtifactsSource,
       nodeId: "__root__",
       sourceHash: "source",
       sourceId: "agent/sandbox/sandbox",

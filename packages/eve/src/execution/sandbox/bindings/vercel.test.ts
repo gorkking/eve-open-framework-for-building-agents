@@ -17,6 +17,8 @@ vi.mock("#compiled/@vercel/oidc/index.js", () => ({
   }),
 }));
 
+const IMMUTABLE_VERCEL_IMAGE = `vcr.vercel.com/eve/runtime@sha256:${"a".repeat(64)}`;
+
 function createMockCommandResult() {
   return {
     exitCode: 0,
@@ -241,6 +243,7 @@ describe("createVercelSandbox", () => {
 
     const provider = createTestVercelSandbox({
       createOptions: {
+        image: IMMUTABLE_VERCEL_IMAGE,
         projectId: "prj_123",
         teamId: "team_123",
         token: "vercel-token",
@@ -273,6 +276,42 @@ describe("createVercelSandbox", () => {
       }),
     );
     expect(sandboxModule.Sandbox.create).not.toHaveBeenCalled();
+  });
+
+  it("persists safe lookup options for restoration without persisting secrets", async () => {
+    const sessionSandbox = createMockSandbox({ name: "session-key" });
+    const sandboxModule = {
+      Sandbox: {
+        create: vi.fn().mockResolvedValueOnce(sessionSandbox),
+        get: vi.fn().mockResolvedValueOnce(null),
+      },
+    };
+    const provider = createTestVercelSandbox({
+      createOptions: {
+        projectId: "prj_123",
+        tags: { owner: "platform" },
+        teamId: "team_123",
+        token: "vercel-token",
+      } as never,
+      loadSandboxModule: async () => sandboxModule as never,
+    });
+
+    const handle = await provider.create({
+      context: { appRoot: "/tmp/test-app-root" },
+      sessionKey: "session-key",
+      templateKey: null,
+    });
+
+    const state = await handle.captureState();
+    expect(state).toMatchObject({
+      configuration: {
+        projectId: "prj_123",
+        tags: { owner: "platform" },
+        teamId: "team_123",
+      },
+    });
+    expect(state.configuration).not.toHaveProperty("token");
+    expect(state.configuration).not.toHaveProperty("fetch");
   });
 
   it("includes Vercel SDK error response bodies in provider errors", async () => {
@@ -323,6 +362,7 @@ describe("createVercelSandbox", () => {
     };
 
     const provider = createTestVercelSandbox({
+      createOptions: { image: IMMUTABLE_VERCEL_IMAGE },
       loadSandboxModule: async () => sandboxModule as never,
     });
 
@@ -475,6 +515,7 @@ describe("createVercelSandbox", () => {
     };
 
     const provider = createTestVercelSandbox({
+      createOptions: { image: IMMUTABLE_VERCEL_IMAGE },
       loadSandboxModule: async () => sandboxModule as never,
     });
 
@@ -494,6 +535,60 @@ describe("createVercelSandbox", () => {
     // Reuse must not re-snapshot or re-create the template sandbox.
     expect(existingTemplate.snapshot).not.toHaveBeenCalled();
     expect(sandboxModule.Sandbox.create).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds a cached template backed by eve's floating default image", async () => {
+    const existingTemplate = createMockSandbox({
+      name: "template-key",
+      snapshotId: "old-framework-snapshot",
+    });
+    const rebuiltTemplate = createMockSandbox({ name: "template-key" });
+    const sandboxModule = {
+      Sandbox: {
+        create: vi.fn().mockResolvedValueOnce(rebuiltTemplate),
+        get: vi.fn().mockResolvedValueOnce(existingTemplate),
+      },
+    };
+    const provider = createTestVercelSandbox({
+      loadSandboxModule: async () => sandboxModule as never,
+    });
+
+    const result = await provider.prepare({
+      context: { appRoot: "/tmp/test-app-root" },
+      seedFiles: [],
+      templateKey: "template-key",
+    });
+
+    expect(existingTemplate.delete).toHaveBeenCalledOnce();
+    expect(sandboxModule.Sandbox.create).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ reused: false });
+  });
+
+  it("deletes a partially prepared template before surfacing the failure", async () => {
+    const templateSandbox = createMockSandbox({ name: "template-key" });
+    const sandboxModule = {
+      Sandbox: {
+        create: vi.fn().mockResolvedValueOnce(templateSandbox),
+        get: vi.fn().mockResolvedValueOnce(null),
+      },
+    };
+    const provider = createTestVercelSandbox({
+      loadSandboxModule: async () => sandboxModule as never,
+    });
+
+    await expect(
+      provider.prepare({
+        prepare: async () => {
+          throw new Error("prepare failed");
+        },
+        context: { appRoot: "/tmp/test-app-root" },
+        seedFiles: [],
+        templateKey: "template-key",
+      }),
+    ).rejects.toThrow("prepare failed");
+
+    expect(templateSandbox.delete).toHaveBeenCalledOnce();
+    expect(templateSandbox.snapshot).not.toHaveBeenCalled();
   });
 
   it("rebuilds a cached template when a git base is not pinned to a commit", async () => {
@@ -1057,6 +1152,7 @@ describe("createVercelSandbox", () => {
     };
 
     const provider = createTestVercelSandbox({
+      createOptions: { image: IMMUTABLE_VERCEL_IMAGE },
       loadSandboxModule: async () => sandboxModule as never,
     });
 
@@ -1217,6 +1313,7 @@ describe("createVercelSandbox", () => {
     };
 
     const provider = createTestVercelSandbox({
+      createOptions: { image: IMMUTABLE_VERCEL_IMAGE },
       loadSandboxModule: async () => sandboxModule as never,
     });
 
@@ -1296,7 +1393,7 @@ describe("createVercelSandbox", () => {
     };
 
     const provider = createTestVercelSandbox({
-      createOptions: { networkPolicy: "deny-all" },
+      createOptions: { image: IMMUTABLE_VERCEL_IMAGE, networkPolicy: "deny-all" },
       loadSandboxModule: async () => sandboxModule as never,
     });
 
@@ -1552,6 +1649,7 @@ describe("createVercelSandbox", () => {
     };
 
     const provider = createTestVercelSandbox({
+      createOptions: { image: IMMUTABLE_VERCEL_IMAGE },
       loadSandboxModule: async () => sandboxModule as never,
     });
 
@@ -1580,6 +1678,35 @@ describe("createVercelSandbox", () => {
         sessionId: "session_123",
       },
     });
+  });
+
+  it("does not retag a persisted sandbox borrowed by a child", async () => {
+    const sessionSandbox = createMockSandbox({
+      name: "root-session",
+      tags: { agent: "root-agent", owner: "platform" },
+    });
+    const sandboxModule = {
+      Sandbox: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(sessionSandbox),
+      },
+    };
+    const provider = createTestVercelSandbox({
+      createOptions: { tags: { owner: "platform" } },
+      loadSandboxModule: async () => sandboxModule as never,
+    });
+
+    await provider.create({
+      context: { appRoot: "/tmp/test-app-root" },
+      existingMetadata: {
+        sandboxCreatedAt: sessionSandbox.createdAt.toISOString(),
+        sandboxName: "root-session",
+      },
+      sessionKey: "root-session",
+      templateKey: null,
+    });
+
+    expect(sessionSandbox.update).not.toHaveBeenCalled();
   });
 
   it("rejects merged Vercel sandbox tags over the platform limit", async () => {

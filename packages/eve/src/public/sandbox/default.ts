@@ -3,7 +3,6 @@ import {
   createBuiltinSandboxEngine,
   type BuiltinSandboxProvider,
 } from "#execution/sandbox/builtin-sandbox.js";
-import { requireSandboxTemplateBuildContext } from "#execution/sandbox/creation-context.js";
 import {
   createDefaultSandboxEngine,
   type DefaultSandboxOptions,
@@ -60,8 +59,7 @@ export const DefaultSandbox = {
    */
   template(options: DefaultSandboxTemplateOptions = {}): DefaultSandboxTemplate {
     return defineSandboxTemplate<DefaultTemplateReference, undefined>({
-      async prewarm({ hydrate }) {
-        const context = requireSandboxTemplateBuildContext();
+      async prewarm({ appRoot, hydrate, log, templateId }) {
         const engine = createDefaultSandboxEngine();
         const provider = expectBuiltinProvider(engine);
         const result = await engine.prepare({
@@ -69,15 +67,15 @@ export const DefaultSandbox = {
             await hydrate(sandbox);
             await options.prepare?.(sandbox);
           },
-          log: context.log,
-          context: { appRoot: context.appRoot },
+          log,
+          context: { appRoot },
           seedFiles: [],
-          templateKey: context.templateKey,
+          templateKey: templateId,
         });
         return {
           provider,
           providerReference: result.reference ?? null,
-          templateKey: context.templateKey,
+          templateKey: templateId,
         };
       },
       async create({ reference }) {

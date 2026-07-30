@@ -181,9 +181,13 @@ export async function createMicrosandboxHandle(input: {
   }
 
   const metadataPath = resolveMicrosandboxMetadataPath(sessionRootPath);
+  // The metadata file is the provider-owned stable pointer for this session.
+  // A borrowed parent sandbox may advance that pointer from a child workflow,
+  // so persisted workflow metadata is only a fallback when the provider-side
+  // pointer is unavailable.
   const existingMetadata =
-    readSessionMetadataRecord(input.createInput.existingMetadata) ??
-    (await readSessionMetadata(metadataPath));
+    (await readSessionMetadata(metadataPath)) ??
+    readSessionMetadataRecord(input.createInput.existingMetadata);
   const sessionTags = withDevelopmentSandboxMetadataPathTag(input.createInput.tags, metadataPath);
 
   if (
@@ -296,6 +300,8 @@ function createHandle(
   return {
     session,
     async captureState() {
+      // Keep this handle cached: parent and child workflow states may alias
+      // the same rotating checkpoint, so they must advance one VM object.
       const metadata = await sandbox.captureState(optionsHash);
       return {
         configuration,

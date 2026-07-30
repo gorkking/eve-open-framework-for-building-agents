@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
-import { withSandboxRuntimeCreationContext } from "#execution/sandbox/creation-context.js";
 import type {
   SandboxEngine,
   SandboxEngineCreateInput,
   SandboxEngineHandle,
 } from "#shared/sandbox-engine.js";
-import { getSandboxAdapterType, restoreSandbox, serializeSandbox } from "#shared/sandbox-value.js";
+import {
+  getSandboxAdapterType,
+  restoreSandbox,
+  serializeSandbox,
+  withSandboxProviderContext,
+} from "#shared/sandbox-value.js";
 
 const mocks = vi.hoisted(() => ({
   createJustBashSandboxEngine: vi.fn(),
@@ -27,10 +31,10 @@ import { createBuiltinSandbox } from "#execution/sandbox/builtin-sandbox.js";
 describe("built-in durable sandbox adapter", () => {
   it("uses a distinct durable protocol identity for each built-in provider", async () => {
     const create = async (provider: "docker" | "vercel") =>
-      await withSandboxRuntimeCreationContext(
+      await withSandboxProviderContext(
         {
           appRoot: "/tmp/eve-app",
-          sessionKey: `${provider}-session`,
+          resourceId: `${provider}-session`,
           signal: new AbortController().signal,
         },
         async () =>
@@ -67,10 +71,10 @@ describe("built-in durable sandbox adapter", () => {
     });
     mocks.createJustBashSandboxEngine.mockReturnValue(restoredEngine);
 
-    const sandbox = await withSandboxRuntimeCreationContext(
+    const sandbox = await withSandboxProviderContext(
       {
         appRoot: "/tmp/eve-app",
-        sessionKey: "framework-session-key",
+        resourceId: "framework-session-key",
         signal: new AbortController().signal,
       },
       async () =>
@@ -83,7 +87,7 @@ describe("built-in durable sandbox adapter", () => {
     );
     const serialized = await serializeSandbox(sandbox);
 
-    const restored = restoreSandbox(serialized);
+    const restored = restoreSandbox(serialized, { appRoot: "/tmp/eve-app" });
     await restored.run({ command: "true" });
 
     expect(mocks.createJustBashSandboxEngine).toHaveBeenCalledWith({
@@ -93,7 +97,7 @@ describe("built-in durable sandbox adapter", () => {
       context: { appRoot: "/tmp/eve-app" },
       existingMetadata: { rootPath: "/tmp/eve-session-root" },
       sessionKey: "provider-session-key",
-      signal: undefined,
+      signal: expect.any(AbortSignal),
       tags: undefined,
       templateKey: "template-key",
       templateReference: { image: "template-reference" },

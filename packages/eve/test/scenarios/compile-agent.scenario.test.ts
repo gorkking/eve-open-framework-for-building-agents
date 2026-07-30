@@ -1176,6 +1176,69 @@ describe("compileAgent", () => {
     });
   });
 
+  it("hashes the sandbox module dependency closure without unrelated agent source", async () => {
+    const { agentRoot, appRoot } = await createAppRoot(
+      "eve-compile-sandbox-dependencies-",
+      APP_ROOT_OPTIONS,
+    );
+    await linkEvePackage(appRoot);
+    await mkdir(join(agentRoot, "sandbox"), { recursive: true });
+    await writeFile(join(agentRoot, "agent.mjs"), 'export default { model: "openai/gpt-5.4" };\n');
+    await writeFile(join(agentRoot, "instructions.md"), "Version one.");
+    await writeFile(join(agentRoot, "sandbox", "options.mjs"), 'export const image = "node:24";\n');
+    await writeFile(
+      join(agentRoot, "sandbox", "sandbox.mjs"),
+      [
+        'import { defineSandbox } from "eve/sandbox";',
+        'import { image } from "./options.mjs";',
+        "export default defineSandbox(() => {",
+        "  throw new Error(`runtime only: ${image}`);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+
+    const first = await compileAgent({ startPath: appRoot });
+    await writeFile(join(agentRoot, "instructions.md"), "Unrelated instructions changed.");
+    const unrelated = await compileAgent({ startPath: appRoot });
+    await writeFile(join(agentRoot, "sandbox", "options.mjs"), 'export const image = "node:26";\n');
+    const dependencyChanged = await compileAgent({ startPath: appRoot });
+
+    expect(unrelated.manifest.sandbox?.sourceHash).toBe(first.manifest.sandbox?.sourceHash);
+    expect(dependencyChanged.manifest.sandbox?.sourceHash).not.toBe(
+      first.manifest.sandbox?.sourceHash,
+    );
+  });
+
+  it("rejects exporting the same sandbox template under multiple names", async () => {
+    const { agentRoot, appRoot } = await createAppRoot(
+      "eve-compile-duplicate-sandbox-template-",
+      APP_ROOT_OPTIONS,
+    );
+    await linkEvePackage(appRoot);
+    await mkdir(join(agentRoot, "sandbox"), { recursive: true });
+    await writeFile(join(agentRoot, "agent.mjs"), 'export default { model: "openai/gpt-5.4" };\n');
+    await writeFile(join(agentRoot, "instructions.md"), "You are a precise assistant.");
+    await writeFile(
+      join(agentRoot, "sandbox", "sandbox.mjs"),
+      [
+        'import { defineSandbox } from "eve/sandbox";',
+        'import { defineSandboxTemplate } from "eve/sandbox/provider";',
+        "const shared = defineSandboxTemplate({",
+        '  async prewarm() { return { snapshotId: "snapshot-v1" }; },',
+        '  async create() { throw new Error("runtime only"); },',
+        "});",
+        "export { shared as first, shared as second };",
+        'export default defineSandbox(() => { throw new Error("runtime only"); });',
+        "",
+      ].join("\n"),
+    );
+
+    await expect(compileAgent({ startPath: appRoot })).rejects.toThrow(
+      /reference the same template/,
+    );
+  });
+
   it("compiles a direct sandbox definition without a template", async () => {
     const { agentRoot, appRoot } = await createAppRoot(
       "eve-compile-sandbox-direct-",

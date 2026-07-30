@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+import { contextStorage } from "#context/container.js";
+import { SandboxTemplateBindingsKey } from "#context/keys.js";
+import { withVirtualContextValue } from "#context/virtual-scope.js";
 import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 
@@ -22,10 +25,17 @@ export interface SandboxTemplateAssets {
 
 /**
  * Input passed to a provider's build-time template implementation.
+ *
+ * The app author supplies only template options such as `prepare`. eve
+ * supplies the build identity, application root, assets, hydration, and log
+ * sink directly to the provider implementation.
  */
 export interface SandboxTemplatePrewarmInput {
+  readonly appRoot: string;
   readonly assets: SandboxTemplateAssets;
   hydrate(sandbox: Sandbox): Promise<void>;
+  readonly log?: (message: string) => void;
+  readonly templateId: string;
 }
 
 /**
@@ -64,7 +74,6 @@ export interface SandboxTemplate<CreateOptions = Record<string, never>> {
 
 export interface InternalSandboxTemplate {
   readonly implementationId: string;
-  bind(reference: unknown): void;
   prewarm(input: SandboxTemplatePrewarmInput): Promise<unknown>;
 }
 
@@ -74,34 +83,38 @@ type SandboxTemplateWithInternal<CreateOptions> = SandboxTemplate<CreateOptions>
 
 /**
  * Defines the provider lifecycle behind a build-prewarmed template.
+ *
+ * Runtime references are scoped to the active sandbox definition invocation;
+ * the template object is never mutated or process-globally bound.
  */
 export function defineSandboxTemplate<
   Reference extends JsonValue,
   CreateOptions = Record<string, never>,
 >(definition: SandboxTemplateDefinition<Reference, CreateOptions>): SandboxTemplate<CreateOptions> {
-  let reference: Reference | undefined;
   const implementationId = `template-${stableHash(
     stableJsonStringify(parseJsonValue(definition.revision ?? null)),
   )}`;
+  let internal: InternalSandboxTemplate;
 
   const template: SandboxTemplateWithInternal<CreateOptions> = {
     async create(options) {
+      const reference = readActiveSandboxTemplateReference(internal);
       if (reference === undefined) {
         throw new Error(
-          "Sandbox template is not bound to a build result. Export it from the sandbox module and run eve build.",
+          "Sandbox template has no prewarmed build result. Export it from the sandbox module and run eve build.",
         );
       }
-      return await definition.create({ options, reference });
+      return await definition.create({
+        options,
+        reference: parseJsonValue(reference) as Reference,
+      });
     },
-    [SANDBOX_TEMPLATE]: {
+    [SANDBOX_TEMPLATE]: (internal = {
       implementationId,
-      bind(value) {
-        reference = parseJsonValue(value) as Reference;
-      },
       async prewarm(input) {
         return await definition.prewarm(input);
       },
-    },
+    }),
   };
 
   return template;
@@ -127,6 +140,16 @@ export function getSandboxTemplateInternal<CreateOptions>(
 }
 
 /**
+ * Runs one sandbox definition with its exact exported template references.
+ */
+export async function withSandboxTemplateBindings<T>(
+  bindings: ReadonlyMap<InternalSandboxTemplate, unknown>,
+  callback: () => T | Promise<T>,
+): Promise<T> {
+  return await withVirtualContextValue(SandboxTemplateBindingsKey, bindings, callback);
+}
+
+/**
  * Records a prewarm result for runtime binding in the current process.
  */
 export function recordSandboxTemplateReference(templateKey: string, reference: unknown): void {
@@ -145,6 +168,12 @@ export function readSandboxTemplateReference(templateKey: string): unknown {
  */
 export function hasSandboxTemplateReference(templateKey: string): boolean {
   return getSandboxTemplateReferences().has(templateKey);
+}
+
+function readActiveSandboxTemplateReference(
+  template: InternalSandboxTemplate,
+): unknown | undefined {
+  return contextStorage.getStore()?.get(SandboxTemplateBindingsKey)?.get(template);
 }
 
 function getSandboxTemplateReferences(): Map<string, unknown> {

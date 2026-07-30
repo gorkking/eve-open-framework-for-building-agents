@@ -4,11 +4,10 @@ import {
   createJustBashSandboxEngine,
   createMicrosandboxSandboxEngine,
 } from "#execution/sandbox/bindings/local.js";
-import { requireSandboxRuntimeCreationContext } from "#execution/sandbox/creation-context.js";
 import type { SandboxEngine, SandboxEngineHandle } from "#shared/sandbox-engine.js";
 import type { JsonObject } from "#shared/json.js";
 import { parseJsonObject } from "#shared/json.js";
-import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
+import { defineSandboxAdapter, type Sandbox, type SandboxAdapter } from "#shared/sandbox-value.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
 import type { JustBashSandboxCreateOptions } from "#public/sandbox/just-bash-sandbox.js";
 import type { MicrosandboxSandboxCreateOptions } from "#public/sandbox/microsandbox-sandbox.js";
@@ -17,7 +16,6 @@ import type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.
 export type BuiltinSandboxProvider = "docker" | "just-bash" | "microsandbox" | "vercel";
 
 interface BuiltinSandboxHandle {
-  readonly appRoot: string;
   readonly handle: SandboxEngineHandle;
   readonly provider: BuiltinSandboxProvider;
   readonly templateKey: string | null;
@@ -25,7 +23,6 @@ interface BuiltinSandboxHandle {
 }
 
 interface BuiltinSandboxReference extends JsonObject {
-  readonly appRoot: string;
   readonly provider: BuiltinSandboxProvider;
   readonly session: JsonObject;
   readonly templateKey: string | null;
@@ -37,11 +34,11 @@ const adaptBuiltinSandbox = {
   "just-bash": createBuiltinSandboxAdapter("just-bash"),
   microsandbox: createBuiltinSandboxAdapter("microsandbox"),
   vercel: createBuiltinSandboxAdapter("vercel"),
-} satisfies Record<BuiltinSandboxProvider, (sandbox: BuiltinSandboxHandle) => Sandbox>;
+} satisfies Record<BuiltinSandboxProvider, SandboxAdapter<BuiltinSandboxHandle>>;
 
 function createBuiltinSandboxAdapter(
   provider: BuiltinSandboxProvider,
-): (sandbox: BuiltinSandboxHandle) => Sandbox {
+): SandboxAdapter<BuiltinSandboxHandle> {
   return defineSandboxAdapter<BuiltinSandboxHandle, BuiltinSandboxReference>({
     type: `eve/${provider}-sandbox`,
     async reference(sandbox) {
@@ -49,25 +46,26 @@ function createBuiltinSandboxAdapter(
         throw new TypeError("Built-in sandbox provider does not match its durable adapter.");
       }
       return {
-        appRoot: sandbox.appRoot,
         provider,
         session: parseJsonObject(await sandbox.handle.captureState()),
         templateKey: sandbox.templateKey,
         templateReference: sandbox.templateReference ?? null,
       };
     },
-    async restore(reference) {
+    async restore(reference, context) {
       const sessionState = parseBuiltinSandboxState(reference.session);
       if (reference.provider !== provider || sessionState.provider !== provider) {
         throw new TypeError("Persisted built-in sandbox provider does not match its adapter.");
       }
       const engine = createBuiltinSandboxEngine(provider, sessionState.configuration);
       return await createBuiltinSandboxHandle({
-        appRoot: reference.appRoot,
+        appRoot: context.appRoot,
         engine,
         provider,
         existingMetadata: sessionState.metadata,
         sessionKey: sessionState.sessionKey,
+        signal: context.signal,
+        tags: context.tags,
         templateKey: reference.templateKey,
         templateReference: reference.templateReference ?? undefined,
       });
@@ -114,18 +112,18 @@ export async function createBuiltinSandbox(input: {
   readonly templateKey: string | null;
   readonly templateReference?: JsonObject;
 }): Promise<Sandbox> {
-  const context = requireSandboxRuntimeCreationContext();
-  return adaptBuiltinSandbox[input.provider](
-    await createBuiltinSandboxHandle({
-      appRoot: context.appRoot,
-      engine: input.engine,
-      provider: input.provider,
-      sessionKey: input.sessionKey ?? context.sessionKey,
-      signal: context.signal,
-      tags: context.tags,
-      templateKey: input.templateKey,
-      templateReference: input.templateReference,
-    }),
+  return await adaptBuiltinSandbox[input.provider].create(
+    async (context) =>
+      await createBuiltinSandboxHandle({
+        appRoot: context.appRoot,
+        engine: input.engine,
+        provider: input.provider,
+        sessionKey: input.sessionKey ?? context.resourceId,
+        signal: context.signal,
+        tags: context.tags,
+        templateKey: input.templateKey,
+        templateReference: input.templateReference,
+      }),
   );
 }
 
@@ -179,7 +177,6 @@ async function createBuiltinSandboxHandle(input: {
     templateReference: input.templateReference,
   });
   return {
-    appRoot: input.appRoot,
     handle,
     provider: input.provider,
     templateKey: input.templateKey,

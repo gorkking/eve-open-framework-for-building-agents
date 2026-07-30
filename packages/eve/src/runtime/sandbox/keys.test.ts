@@ -72,7 +72,6 @@ async function definitionRevision(
   } = {},
 ): Promise<string> {
   return await createRuntimeSandboxDefinitionRevision({
-    compiledArtifactsSource,
     nodeId: input.nodeId ?? "__root__",
     sourceHash: input.sourceHash ?? "source-v1",
     sourceId: "agent/sandbox/sandbox",

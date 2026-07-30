@@ -206,6 +206,7 @@ describe("readSubagentSandboxAncestorStates", () => {
       adapterId: "example.com/sandbox",
       id: "sandbox-1",
       reference: { id: "sandbox-1" },
+      resourceId: "sandbox-1",
     },
   } as const;
 

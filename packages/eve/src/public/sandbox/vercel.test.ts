@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { VercelSandbox } from "#public/sandbox/vercel.js";
+import { VercelSandbox, type VercelSandboxCreateOptions } from "#public/sandbox/vercel.js";
 import { getSandboxTemplateInternal } from "#shared/sandbox-template.js";
 
 describe("VercelSandbox.template", () => {
@@ -26,5 +26,16 @@ describe("VercelSandbox.template", () => {
 
     expect(reordered.implementationId).toBe(first.implementationId);
     expect(changed.implementationId).not.toBe(first.implementationId);
+  });
+
+  it("accepts Vercel credential scope and transport options", () => {
+    const options = {
+      fetch: globalThis.fetch,
+      projectId: "prj_123",
+      teamId: "team_123",
+      token: "runtime-secret",
+    } satisfies VercelSandboxCreateOptions;
+
+    expect(() => VercelSandbox.template(options)).not.toThrow();
   });
 });

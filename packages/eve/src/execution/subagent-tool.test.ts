@@ -343,6 +343,7 @@ describe("buildSubagentRunInput", () => {
         adapterId: "test-adapter",
         id: "parent-child-sandbox",
         reference: { id: "parent-child-sandbox" },
+        resourceId: "parent-child-sandbox",
       },
     };
     const session = { ...makeSession(), sandboxState: parentSandboxState };
@@ -372,6 +373,7 @@ function createSandboxState() {
       adapterId: "test-adapter",
       id: "test-sandbox",
       reference: { id: "test-sandbox" },
+      resourceId: "test-sandbox",
     },
   } as const;
 }

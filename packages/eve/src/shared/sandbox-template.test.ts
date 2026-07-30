@@ -10,6 +10,7 @@ import {
   isSandboxTemplate,
   readSandboxTemplateReference,
   recordSandboxTemplateReference,
+  withSandboxTemplateBindings,
 } from "#shared/sandbox-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 
@@ -25,16 +26,21 @@ describe("defineSandboxTemplate", () => {
     });
 
     expect(isSandboxTemplate(template)).toBe(true);
-    await expect(template.create({ resources: 2 })).rejects.toThrow(/not bound to a build result/);
+    await expect(template.create({ resources: 2 })).rejects.toThrow(/no prewarmed build result/);
 
     const internal = getSandboxTemplateInternal(template);
-    internal.bind({ snapshotId: "snapshot_123" });
 
-    await expect(template.create({ resources: 2 })).resolves.toBe(sandbox.session);
+    await expect(
+      withSandboxTemplateBindings(
+        new Map([[internal, { snapshotId: "snapshot_123" }]]),
+        async () => await template.create({ resources: 2 }),
+      ),
+    ).resolves.toBe(sandbox.session);
     expect(create).toHaveBeenCalledWith({
       options: { resources: 2 },
       reference: { snapshotId: "snapshot_123" },
     });
+    await expect(template.create({ resources: 2 })).rejects.toThrow(/no prewarmed build result/);
   });
 
   it("includes provider-owned preparation options in its private implementation identity", () => {
@@ -61,6 +67,36 @@ describe("defineSandboxTemplate", () => {
 
     expect(reordered.implementationId).toBe(first.implementationId);
     expect(changed.implementationId).not.toBe(first.implementationId);
+  });
+
+  it("scopes references to concurrent definition invocations", async () => {
+    const seen: string[] = [];
+    const template = defineSandboxTemplate<{ snapshotId: string }, undefined>({
+      async prewarm() {
+        return { snapshotId: "unused" };
+      },
+      async create({ reference }) {
+        await Promise.resolve();
+        seen.push(reference.snapshotId);
+        return mockSandbox({ id: reference.snapshotId }).session as Sandbox;
+      },
+    });
+    const internal = getSandboxTemplateInternal(template);
+
+    const [first, second] = await Promise.all([
+      withSandboxTemplateBindings(
+        new Map([[internal, { snapshotId: "snapshot-a" }]]),
+        async () => await template.create(undefined),
+      ),
+      withSandboxTemplateBindings(
+        new Map([[internal, { snapshotId: "snapshot-b" }]]),
+        async () => await template.create(undefined),
+      ),
+    ]);
+
+    expect(first.id).toBe("snapshot-a");
+    expect(second.id).toBe("snapshot-b");
+    expect(seen).toEqual(expect.arrayContaining(["snapshot-a", "snapshot-b"]));
   });
 
   it("distinguishes a captured null reference from no captured reference", () => {

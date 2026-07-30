@@ -59,7 +59,7 @@ const adaptLocalFilesystem = defineSandboxAdapter<LocalFilesystemHandle, LocalFi
 export interface LocalFilesystemSandboxOpenOptions {
   /**
    * Directory exposed as `/workspace`. Relative paths resolve from the
-   * application process's current working directory.
+   * eve application root.
    */
   readonly root: string;
 }
@@ -72,13 +72,15 @@ export const LocalFilesystemSandbox = {
    * Opens a host directory as a durable sandbox.
    */
   async open(options: LocalFilesystemSandboxOpenOptions): Promise<Sandbox> {
-    const root = resolve(options.root);
-    await mkdir(root, { recursive: true });
-    const identity = await readDirectoryIdentity(root);
-    if (identity === null) {
-      throw new Error(`Local filesystem sandbox root "${root}" is not a directory.`);
-    }
-    return adaptLocalFilesystem({ ...identity, root });
+    return await adaptLocalFilesystem.create(async ({ appRoot }) => {
+      const root = resolve(appRoot, options.root);
+      await mkdir(root, { recursive: true });
+      const identity = await readDirectoryIdentity(root);
+      if (identity === null) {
+        throw new Error(`Local filesystem sandbox root "${root}" is not a directory.`);
+      }
+      return { ...identity, root };
+    });
   },
 };
 

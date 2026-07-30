@@ -22,7 +22,11 @@ import {
   type SandboxTemplate,
 } from "#shared/sandbox-template.js";
 import type { SandboxTemplatePrewarmLockInput } from "#execution/sandbox/template-prewarm-lock.js";
-import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
+import {
+  defineSandboxAdapter,
+  type Sandbox,
+  type SandboxProviderContext,
+} from "#shared/sandbox-value.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
 
 const mocks = vi.hoisted(() => ({
@@ -51,6 +55,7 @@ interface TestSandboxHandle {
 }
 
 const testSandboxes = new Map<string, TestSandboxHandle>();
+const restoreTestSandboxContexts: SandboxProviderContext[] = [];
 const restoreTestSandbox = vi.fn((reference: TestSandboxReference) => {
   const handle = testSandboxes.get(reference.id);
   if (handle === undefined) {
@@ -64,7 +69,8 @@ const asTestSandbox = defineSandboxAdapter<TestSandboxHandle, TestSandboxReferen
   reference(handle) {
     return { id: handle.id };
   },
-  restore(reference) {
+  restore(reference, context) {
+    restoreTestSandboxContexts.push(context);
     return restoreTestSandbox(reference);
   },
   session(handle) {
@@ -79,7 +85,8 @@ const asOtherTestSandbox = defineSandboxAdapter<TestSandboxHandle, TestSandboxRe
   reference(handle) {
     return { id: handle.id };
   },
-  restore(reference) {
+  restore(reference, context) {
+    restoreTestSandboxContexts.push(context);
     return restoreTestSandbox(reference);
   },
   session(handle) {
@@ -141,6 +148,7 @@ async function ensure(input: {
   readonly signal?: AbortSignal;
   readonly sessionId?: string;
   readonly state?: SandboxState | null;
+  readonly tags?: Readonly<Record<string, string>>;
 }) {
   const sessionId = input.sessionId ?? "session_1";
   return await ensureSandboxAccess({
@@ -154,6 +162,7 @@ async function ensure(input: {
     session: createSession(sessionId),
     sessionId,
     state: input.state ?? null,
+    tags: input.tags,
   });
 }
 
@@ -178,6 +187,7 @@ describe("ensureSandboxAccess", () => {
   beforeEach(() => {
     clearActiveSandboxHandlesForTest();
     testSandboxes.clear();
+    restoreTestSandboxContexts.length = 0;
     restoreTestSandbox.mockClear();
     shutdownTestSandbox.mockClear();
     mocks.prewarmAppSandboxes.mockClear();
@@ -222,6 +232,7 @@ describe("ensureSandboxAccess", () => {
     expect(state?.value).toMatchObject({
       id: "sandbox_1",
       reference: { id: "sandbox_1" },
+      resourceId: expect.any(String),
     });
 
     const second = await ensure({ registry, state });
@@ -286,11 +297,13 @@ describe("ensureSandboxAccess", () => {
     await root.get();
     const rootState = await root.captureState();
     expect(rootState).not.toBeNull();
+    clearActiveSandboxHandlesForTest();
 
     const childDefinition = vi.fn(async ({ parent, root: rootAncestor }) => {
-      expect((await parent?.sandbox)?.id).toBe("root-sandbox");
-      expect((await rootAncestor?.sandbox)?.id).toBe("root-sandbox");
-      return await parent!.sandbox;
+      const parentSandbox = await parent!.sandbox;
+      const rootSandbox = await rootAncestor!.sandbox;
+      expect(parentSandbox).toBe(rootSandbox);
+      return parentSandbox;
     });
     const child = await ensure({
       nodeId: "reviewer",
@@ -298,17 +311,25 @@ describe("ensureSandboxAccess", () => {
       registry: createTestRegistry({ definition: childDefinition }),
       rootState: rootState!,
       sessionId: "child-session",
+      tags: { agent: "child" },
     });
 
     await expect(child.get()).resolves.toMatchObject({ id: "root-sandbox" });
-    expect(await child.captureState()).toMatchObject({
+    const childState = await child.captureState();
+    expect(childState).toMatchObject({
       owner: {
         nodeId: "__root__",
         sessionId: "root-session",
       },
       root: rootState,
     });
+    expect(childState?.value.resourceId).toBe(rootState?.value.resourceId);
     expect(countActiveSandboxHandles()).toBe(1);
+    expect(restoreTestSandboxContexts).toHaveLength(1);
+    expect(restoreTestSandboxContexts[0]).toMatchObject({
+      resourceId: rootState?.value.resourceId,
+      tags: undefined,
+    });
   });
 
   it("keeps the original root sandbox distinct through nested children", async () => {
@@ -402,7 +423,7 @@ describe("ensureSandboxAccess", () => {
       }),
     });
 
-    await expect(access.get()).rejects.toThrow(/not bound to a build result/);
+    await expect(access.get()).rejects.toThrow(/no prewarmed build result/);
   });
 
   it("binds the exact reference produced by development prewarming before creation", async () => {
