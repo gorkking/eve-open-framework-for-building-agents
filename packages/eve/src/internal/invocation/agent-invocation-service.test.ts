@@ -114,6 +114,7 @@ describe("AgentInvocationService", () => {
       inputRequests: {
         question: {
           requestId: "question",
+          kind: "question",
           prompt: "Proceed?",
           options: [{ id: "yes", label: "Yes" }],
           action: { kind: "tool-call", toolName: "ask_question", callId: "call1", input: {} },

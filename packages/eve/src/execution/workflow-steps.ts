@@ -20,11 +20,7 @@ import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
 import { preserveSerializedAgentTraceState } from "#harness/agent-trace-context-store.js";
-import {
-  isSessionLimitDecline,
-  isTurnCancellation,
-  throwIfTurnAborted,
-} from "#harness/turn-cancellation.js";
+import { isTurnCancellation, throwIfTurnAborted } from "#harness/turn-cancellation.js";
 import { setChannelContext } from "#execution/channel-context.js";
 import { hasPendingInputBatch } from "#harness/input-requests.js";
 import { coalesceTurnInputs } from "#harness/messages.js";
@@ -44,8 +40,9 @@ import {
   createAuthorizationCompletedEvent,
   createSessionStartedEvent,
   encodeMessageStreamEvent,
-  type HandleMessageStreamEvent,
-  timestampHandleMessageStreamEvent,
+  type UnstampedMessageStreamEvent,
+  stampMessageStreamEvent,
+  type MessageStreamEvent,
 } from "#protocol/message.js";
 import {
   CallbackBaseUrlKey,
@@ -77,7 +74,6 @@ import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import {
   createWorkflowRuntime,
-  requestWorkflowTurnCancellation,
   startWorkflowPreferLatest,
   turnWorkflowReference,
 } from "#execution/workflow-runtime.js";
@@ -291,15 +287,17 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   const writer = input.parentWritable.getWriter();
 
-  const emit = async (event: HandleMessageStreamEvent): Promise<HandleMessageStreamEvent> => {
+  // Stamp once: the persisted chunk and the hooks below must agree on the id.
+  const emit = async (event: UnstampedMessageStreamEvent): Promise<MessageStreamEvent> => {
     const toEmit = await callAdapterEventHandler(adapter, event, adapterCtx);
     setChannelContext(ctx, { ...adapter, state: { ...adapterCtx.state } });
-    await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(toEmit)));
-    return toEmit;
+    const stamped = stampMessageStreamEvent(toEmit);
+    await writer.write(encodeMessageStreamEvent(stamped));
+    return stamped;
   };
 
   const handleEvent = async (
-    event: HandleMessageStreamEvent,
+    event: UnstampedMessageStreamEvent,
     messages?: readonly import("ai").ModelMessage[],
   ): Promise<void> => {
     const emitted = await emit(event);
@@ -403,19 +401,6 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   } catch (error) {
     if (!isTurnCancellation(error)) throw error;
     writer.releaseLock();
-    // A declined session-limit prompt stops the whole delegation tree: a
-    // delegated session cancels the root turn before settling itself, and
-    // the root's cancelled arm cascades back down to every descendant. Root
-    // sessions carry no parent lineage and need no upward call — their own
-    // cancelled park runs the cascade. Both `accepted` and `no_active_turn`
-    // are successful outcomes, and the cascade's redundant cancel back to
-    // this already-settling session is a benign no-op.
-    if (isSessionLimitDecline(error)) {
-      const rootSessionId = readRootSessionId(input.serializedContext);
-      if (rootSessionId !== undefined) {
-        await requestWorkflowTurnCancellation({ sessionId: rootSessionId });
-      }
-    }
     return {
       action: "cancelled",
       serializedContext: preserveSerializedAgentTraceState(
@@ -542,10 +527,15 @@ export function resolveEffectiveOutputSchema(input: {
   return session;
 }
 
-export interface RoutedDeliverResult {
-  /** `undefined` when the entire payload was routed to descendants. */
-  readonly remainder: DeliverPayload | undefined;
-}
+export type RoutedDeliverResult =
+  | {
+      readonly kind: "cancel-turn";
+    }
+  | {
+      readonly kind: "continue";
+      /** `undefined` when the entire payload was routed to descendants. */
+      readonly remainder: DeliverPayload | undefined;
+    };
 
 /**
  * Splits an inbound deliver payload into parent-local and
@@ -574,7 +564,7 @@ export async function routeProxiedDeliverStep(input: {
     });
   }
 
-  return { remainder: routed.forSelf };
+  return routed.parentAction ?? { kind: "continue", remainder: routed.forSelf };
 }
 
 /** Starts a per-turn child workflow for the current driver session. */

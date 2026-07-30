@@ -57,6 +57,7 @@ describe("compiledAgentManifestSchema", () => {
         limits: {
           maxInputTokensPerSession: 200_000,
           maxOutputTokensPerSession: 20_000,
+          sessionTimeoutMs: 86_400_000,
         },
         model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
         name: "app",
@@ -68,6 +69,7 @@ describe("compiledAgentManifestSchema", () => {
     expect(parsed.config.limits).toEqual({
       maxInputTokensPerSession: 200_000,
       maxOutputTokensPerSession: 20_000,
+      sessionTimeoutMs: 86_400_000,
     });
   });
 
@@ -157,6 +159,7 @@ describe("compiledAgentManifestSchema", () => {
         limits: {
           maxInputTokensPerSession: false,
           maxOutputTokensPerSession: false,
+          sessionTimeoutMs: false,
         },
         model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
         name: "app",
@@ -168,6 +171,7 @@ describe("compiledAgentManifestSchema", () => {
     expect(parsed.config.limits).toEqual({
       maxInputTokensPerSession: false,
       maxOutputTokensPerSession: false,
+      sessionTimeoutMs: false,
     });
   });
 

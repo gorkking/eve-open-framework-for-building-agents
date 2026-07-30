@@ -296,6 +296,46 @@ describe("turnWorkflow", () => {
     expect(resumeHookMock.mock.calls.filter((call) => call[1]?.kind === "turn-error")).toEqual([]);
   });
 
+  it("honors cancellation observed while a durable turn step returns", async () => {
+    const sessionState = createSessionState();
+    installInbox([], { cancelPayloads: [{}] });
+    vi.mocked(turnStep).mockImplementationOnce(async (stepInput) => {
+      await vi.waitFor(() => expect(stepInput.abortSignal?.aborted).toBe(true));
+      return {
+        action: "done",
+        output: "must not complete",
+        serializedContext: { state: "done" },
+        sessionState,
+      };
+    });
+
+    const { input } = createInput({
+      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
+      sessionState,
+    });
+    await turnWorkflow(input);
+
+    expect(cancelDescendantTurnsStep).toHaveBeenCalledWith({
+      serializedContext: { state: "start" },
+      sessionState,
+    });
+    expect(resumeHookMock).toHaveBeenCalledWith("turn-token", {
+      action: {
+        cancelled: true,
+        kind: "park",
+        serializedContext: { state: "start" },
+        sessionState,
+      },
+      kind: "turn-result",
+    });
+    expect(resumeHookMock).not.toHaveBeenCalledWith(
+      "turn-token",
+      expect.objectContaining({
+        action: expect.objectContaining({ kind: "done" }),
+      }),
+    );
+  });
+
   it("runs uncancellable when the session cancel token is claimed by another run", async () => {
     const sessionState = createSessionState();
     installInbox([], { cancelConflict: { runId: "wrun_stale_prior_turn" } });
@@ -680,7 +720,10 @@ describe("turnWorkflow", () => {
       serializedContext: { state: "proxied" },
       sessionState: proxyState,
     });
-    vi.mocked(routeDeliverToChildren).mockResolvedValue(undefined);
+    vi.mocked(routeDeliverToChildren).mockResolvedValue({
+      kind: "continue",
+      remainder: undefined,
+    });
     vi.mocked(turnStep)
       .mockResolvedValueOnce({
         action: "park",
@@ -721,6 +764,71 @@ describe("turnWorkflow", () => {
         sessionState: proxyState,
       }),
     );
+  });
+
+  it("lets the parent cancel after a descendant consumes a session-limit Stop response", async () => {
+    const pendingState = createSessionState();
+    const proxyState = createSessionState({ hasProxyInputRequests: true });
+    const requestId = "child-limit-request";
+    installInbox([
+      {
+        callId: "call-1",
+        childContinuationToken: "subagent:parent:call-1",
+        childSessionId: "child-session",
+        event: { requests: [], sequence: 0, stepIndex: 1, turnId: "turn_0" },
+        kind: "subagent-input-request",
+        subagentName: "delegate",
+      },
+      {
+        delivery: {
+          kind: "deliver",
+          payloads: [{ inputResponses: [{ optionId: "stop", requestId }] }],
+        },
+        kind: "driver-delivery",
+        requestId: "turn-token:inbox:delivery:0",
+      },
+    ]);
+    vi.mocked(dispatchRuntimeActionsStep).mockResolvedValue({
+      results: [],
+      sessionState: pendingState,
+    });
+    vi.mocked(runProxySubagentEventStep).mockResolvedValue({
+      serializedContext: { state: "proxied" },
+      sessionState: proxyState,
+    });
+    vi.mocked(routeDeliverToChildren).mockResolvedValue({
+      kind: "cancel-turn",
+    });
+    vi.mocked(turnStep).mockResolvedValueOnce({
+      action: "park",
+      hasPendingAuthorization: false,
+      hasPendingInputBatch: false,
+      pendingRuntimeActionKeys: ["subagent-call:delegate:call-1"],
+      serializedContext: { state: "pending" },
+      sessionState: pendingState,
+    });
+
+    const { input } = createInput({
+      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
+      mode: "conversation",
+      sessionState: pendingState,
+    });
+    await turnWorkflow(input);
+
+    expect(cancelDescendantTurnsStep).toHaveBeenCalledWith({
+      serializedContext: { state: "proxied" },
+      sessionState: proxyState,
+    });
+    expect(turnStep).toHaveBeenCalledOnce();
+    expect(resumeHookMock).toHaveBeenCalledWith("turn-token", {
+      action: {
+        cancelled: true,
+        kind: "park",
+        serializedContext: { state: "proxied" },
+        sessionState: proxyState,
+      },
+      kind: "turn-result",
+    });
   });
 
   it("proxies child authorization lifecycle events while continuing to await its result", async () => {
@@ -887,7 +995,10 @@ describe("turnWorkflow", () => {
       results: [],
       sessionState: pendingState,
     });
-    vi.mocked(routeDeliverToChildren).mockResolvedValue(undefined);
+    vi.mocked(routeDeliverToChildren).mockResolvedValue({
+      kind: "continue",
+      remainder: undefined,
+    });
     vi.mocked(turnStep)
       .mockResolvedValueOnce({
         action: "park",

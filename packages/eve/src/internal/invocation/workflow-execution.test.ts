@@ -91,7 +91,11 @@ describe("WorkflowAgentInvocationExecution", () => {
     runsGet.mockResolvedValue(run({ status: "running" }));
     getReadable.mockReturnValue(
       eventStream([
-        { type: "turn.started", data: { turnId: "turn_1" } } as HandleMessageStreamEvent,
+        {
+          type: "turn.started",
+          data: { turnId: "turn_1" },
+          meta: { at: "2026-07-20T00:00:00.000Z", id: "event_1" },
+        } as HandleMessageStreamEvent,
         {
           type: "input.requested",
           data: {
@@ -106,12 +110,14 @@ describe("WorkflowAgentInvocationExecution", () => {
                   kind: "tool-call",
                   toolName: "ask_question",
                 },
+                kind: "question",
                 options: [{ id: "yes", label: "Yes" }],
                 prompt: "Proceed?",
                 requestId: "question",
               },
             ],
           },
+          meta: { at: "2026-07-20T00:00:01.000Z", id: "event_2" },
         } as HandleMessageStreamEvent,
       ]),
     );
@@ -143,12 +149,14 @@ describe("WorkflowAgentInvocationExecution", () => {
                   kind: "tool-call",
                   toolName: "ask_question",
                 },
+                kind: "question",
                 options: [{ id: "yes", label: "Yes" }],
                 prompt: "Proceed?",
                 requestId: "question",
               },
             ],
           },
+          meta: { at: "2026-07-20T00:00:00.000Z", id: "event_1" },
         } as HandleMessageStreamEvent,
       ]),
     );
@@ -184,6 +192,7 @@ describe("WorkflowAgentInvocationExecution", () => {
         turnId: "turn_1",
         webhookUrl: "https://agent.example/connections/linear/callback/token",
       },
+      meta: { at: "2026-07-20T00:00:00.000Z", id: "event_1" },
     } as HandleMessageStreamEvent;
     getReadable.mockReturnValue(eventStream([required]));
 
@@ -216,6 +225,7 @@ describe("WorkflowAgentInvocationExecution", () => {
             stepIndex: 2,
             turnId: "turn_1",
           },
+          meta: { at: "2026-07-20T00:00:01.000Z", id: "event_2" },
         } as HandleMessageStreamEvent,
       ]),
     );
