@@ -1,0 +1,73 @@
+{
+  "modelAliases": {
+    "openai-sol": "openai/gpt-5.6-sol",
+    "anthropic-opus": "anthropic/claude-opus-5"
+  },
+  "fixtures": {
+    "e2e/fixtures/agent-basic-runtime": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-cancellation": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-channels": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-compaction-regressions": {
+      "suite": "models",
+      "models": ["openai-sol", "anthropic-opus"]
+    },
+    "e2e/fixtures/agent-model": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-openapi-swagger": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-prompt-cache": {
+      "suite": "models",
+      "models": ["anthropic-opus"]
+    },
+    "e2e/fixtures/agent-schedules": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-session-limits": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-session-timeout": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-skills": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-subagents": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-subagents-hitl": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-tools": {
+      "suite": "models",
+      "models": ["openai-sol", "anthropic-opus"]
+    },
+    "e2e/fixtures/agent-tools-hitl": {
+      "suite": "models",
+      "models": ["openai-sol", "anthropic-opus"]
+    },
+    "e2e/fixtures/agent-tools-hitl-openai": {
+      "suite": "models",
+      "models": ["openai-sol"]
+    },
+    "e2e/fixtures/agent-tools-sandbox": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/agent-workflow-stress": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/dist-extensions": {
+      "suite": "worlds"
+    },
+    "e2e/fixtures/extensions": {
+      "suite": "worlds"
+    }
+  }
+}

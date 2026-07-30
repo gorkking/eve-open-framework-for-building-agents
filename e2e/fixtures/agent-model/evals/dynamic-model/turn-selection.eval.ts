@@ -3,7 +3,7 @@ import { defineEval } from "eve/evals";
 /**
  * A marked turn selects an explicit reference to `EVE_E2E_MODEL`; the next
  * unmarked turn falls back to the same matrix-selected model. Both completing
- * proves the selection and fallback paths serve real model calls.
+ * proves the selection and fallback paths serve runtime model calls.
  */
 export default defineEval({
   description: "Dynamic model smoke: per-turn selection and null fallback in one session.",

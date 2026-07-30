@@ -14,6 +14,7 @@ export function createMockAuthoredToolInput(
   tool: AvailableBootstrapTool,
   message: string,
   city: string,
+  occurrence = 0,
 ): Record<string, unknown> {
   const inputPropertyNames = getToolInputPropertyNames(tool.inputSchema);
   if (tool.name === "ask_question" || hasProperties(inputPropertyNames, ["prompt", "options"])) {
@@ -21,7 +22,7 @@ export function createMockAuthoredToolInput(
   }
 
   if (inputPropertyNames.includes("command")) {
-    return { command: resolveShellCommand(message) };
+    return { command: resolveShellCommand(message, tool.name, occurrence) };
   }
 
   if (
@@ -31,9 +32,12 @@ export function createMockAuthoredToolInput(
     return { topic: resolveLookupTopic(message) };
   }
 
-  const anchored = extractAnchoredInputs(inputPropertyNames, message);
-  if (Object.keys(anchored).length > 0) {
-    return anchored;
+  const derived = {
+    ...extractSchemaDerivedInputs(tool.inputSchema, message),
+    ...extractAnchoredInputs(inputPropertyNames, message, occurrence),
+  };
+  if (Object.keys(derived).length > 0) {
+    return completeRequiredInputs(tool.inputSchema, derived);
   }
 
   if (inputPropertyNames.length === 1 && inputPropertyNames[0] === "message") {
@@ -57,15 +61,17 @@ export function createMockAuthoredToolInput(
 function extractAnchoredInputs(
   propertyNames: readonly string[],
   message: string,
+  occurrence: number,
 ): Record<string, string> {
   const inputs: Record<string, string> = {};
 
   for (const propertyName of propertyNames) {
     const pattern = new RegExp(
       `\\b${escapeRegExp(propertyName)}\\b\\s*(?:to|=|:)?\\s*(?:\`([^\`]+)\`|"([^"]+)"|'([^']+)')`,
-      "iu",
+      "giu",
     );
-    const match = pattern.exec(message);
+    const matches = [...message.matchAll(pattern)];
+    const match = matches[occurrence] ?? matches.at(-1);
     const value = match?.[1] ?? match?.[2] ?? match?.[3];
 
     if (value !== undefined) {
@@ -78,6 +84,129 @@ function extractAnchoredInputs(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
+}
+
+function extractSchemaDerivedInputs(schema: unknown, message: string): Record<string, unknown> {
+  const properties = getToolInputProperties(schema);
+  const inputs: Record<string, unknown> = {};
+
+  for (const [propertyName, propertySchema] of Object.entries(properties)) {
+    if (isNumericArraySchema(propertySchema)) {
+      const values = resolveNumericArray(message, propertyName);
+      if (values.length > 0) {
+        inputs[propertyName] = values;
+      }
+    }
+  }
+
+  if ("connection" in properties) {
+    const connection = /\bin\s+(?:the\s+)?[`"']?([A-Za-z0-9_-]+)[`"']?\s+connection\b/iu.exec(
+      message,
+    )?.[1];
+    if (connection !== undefined) {
+      inputs.connection = connection;
+    }
+  }
+
+  if ("keywords" in properties) {
+    const keywords = /\bfind\s+(?:the\s+)?(.+?)\s+(?:operation|tool)\b/iu.exec(message)?.[1];
+    if (keywords !== undefined) {
+      inputs.keywords = keywords.trim();
+    }
+  }
+
+  if ("filePath" in properties) {
+    const filePath =
+      /\b(?:create|write)\s+(?:the\s+)?file\s+(`([^`]+)`|"([^"]+)"|'([^']+)'|(\S+))/iu.exec(
+        message,
+      );
+    const value =
+      filePath?.[2] ?? filePath?.[3] ?? filePath?.[4] ?? filePath?.[5]?.replace(/[.,;:]$/u, "");
+    if (value !== undefined) {
+      inputs.filePath = value;
+    }
+  }
+
+  if ("content" in properties) {
+    const content = /\bcontent:\s*([^\r\n]+)/iu.exec(message)?.[1]?.trim();
+    if (content !== undefined) {
+      inputs.content = content;
+    }
+  }
+
+  if ("pattern" in properties) {
+    const pattern = /\bsearch\s+for\s+(`([^`]+)`|"([^"]+)"|'([^']+)'|([^\s.,;]+))/iu.exec(message);
+    const value = pattern?.[2] ?? pattern?.[3] ?? pattern?.[4] ?? pattern?.[5];
+    if (value !== undefined) {
+      inputs.pattern = value;
+    }
+  }
+
+  if ("path" in properties) {
+    const path = /\bunder\s+(`([^`]+)`|"([^"]+)"|'([^']+)'|([/][^\s.,;]+))/iu.exec(message);
+    const value = path?.[2] ?? path?.[3] ?? path?.[4] ?? path?.[5];
+    if (value !== undefined) {
+      inputs.path = value;
+    }
+  }
+
+  return inputs;
+}
+
+function completeRequiredInputs(
+  schema: unknown,
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!isRecord(schema) || !Array.isArray(schema.required)) {
+    return inputs;
+  }
+
+  const sample = createJsonSchemaSample(schema);
+  if (!isRecord(sample)) {
+    return inputs;
+  }
+
+  const completed = { ...inputs };
+  for (const propertyName of schema.required) {
+    if (
+      typeof propertyName === "string" &&
+      completed[propertyName] === undefined &&
+      sample[propertyName] !== undefined
+    ) {
+      completed[propertyName] = sample[propertyName];
+    }
+  }
+
+  return completed;
+}
+
+function getToolInputProperties(schema: unknown): Record<string, unknown> {
+  if (!isRecord(schema) || !isRecord(schema.properties)) {
+    return {};
+  }
+
+  return schema.properties;
+}
+
+function isNumericArraySchema(schema: unknown): boolean {
+  return (
+    isRecord(schema) &&
+    schema.type === "array" &&
+    isRecord(schema.items) &&
+    (schema.items.type === "integer" || schema.items.type === "number")
+  );
+}
+
+function resolveNumericArray(message: string, propertyName: string): number[] {
+  const marker = new RegExp(
+    `\\b(?:${escapeRegExp(propertyName)}|integers?|numbers?)\\b\\s*:?\\s*([^\\r\\n.]+)`,
+    "iu",
+  ).exec(message)?.[1];
+  if (marker === undefined) {
+    return [];
+  }
+
+  return [...marker.matchAll(/-?\d+(?:\.\d+)?/gu)].map((match) => Number(match[0]));
 }
 
 export function resolveMockFixtureToken(prompt: BootstrapPrompt): string | null {
@@ -100,6 +229,39 @@ export function resolveMockFixtureToken(prompt: BootstrapPrompt): string | null 
   for (const text of searchableTexts) {
     const fixtureReply = resolveExactFixtureReply(text);
     if (fixtureReply !== null) return fixtureReply;
+  }
+
+  return null;
+}
+
+/** Recalls a simple fact stated as `my <label> is <value>` in an earlier turn. */
+export function resolveMockConversationRecall(prompt: BootstrapPrompt): string | null {
+  const lastUserIndex = prompt.findLastIndex((message) => message.role === "user");
+  const lastUserMessage = prompt[lastUserIndex];
+  if (lastUserMessage === undefined) {
+    return null;
+  }
+
+  const question = /\bwhat\s+is\s+my\s+([^?]+)\?/iu.exec(
+    getPromptContentText(lastUserMessage.content),
+  )?.[1];
+  if (question === undefined) {
+    return null;
+  }
+
+  const factPattern = new RegExp(
+    `\\bmy\\s+${escapeRegExp(question.trim())}\\s+is\\s+([A-Za-z0-9_-]+)\\b`,
+    "iu",
+  );
+  for (const message of prompt.slice(0, lastUserIndex).reverse()) {
+    if (message.role !== "user") {
+      continue;
+    }
+
+    const value = factPattern.exec(getPromptContentText(message.content))?.[1];
+    if (value !== undefined) {
+      return value;
+    }
   }
 
   return null;
@@ -202,6 +364,14 @@ function resolveExactFixtureReply(text: string): string | null {
     }
   }
 
+  const exactReturn = matchExactValue(
+    /\breturn\s+exactly\s+(`([^`]+)`|"([^"]+)"|'([^']+)'|([A-Za-z0-9_=.-]+))/iu,
+    text,
+  );
+  if (exactReturn !== null) {
+    return exactReturn;
+  }
+
   return matchExactValue(
     /\binclude\s+the\s+exact\s+token\s+(`([^`]+)`|"([^"]+)"|'([^']+)'|([^\s.]+))\s+verbatim\b/iu,
     text,
@@ -273,10 +443,18 @@ function resolveQuestionPrompt(message: string): string {
   return askMatch?.[1]?.trim() || "Please choose an option.";
 }
 
-function resolveShellCommand(message: string): string {
-  const backtickMatch = /`([^`]+)`/u.exec(message);
-  if (backtickMatch?.[1]) {
-    return backtickMatch[1].trim();
+function resolveShellCommand(message: string, toolName: string, occurrence: number): string {
+  const backtickCommands = [...message.matchAll(/`([^`]+)`/gu)]
+    .map((match) => match[1]?.trim())
+    .filter(
+      (candidate): candidate is string =>
+        candidate !== undefined &&
+        candidate.length > 0 &&
+        normalizeText(candidate) !== normalizeText(toolName),
+    );
+  const backtickCommand = backtickCommands[occurrence] ?? backtickCommands.at(-1);
+  if (backtickCommand !== undefined) {
+    return backtickCommand;
   }
 
   const quotedCommand =

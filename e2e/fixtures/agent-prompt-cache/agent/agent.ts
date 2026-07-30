@@ -1,4 +1,3 @@
-import { e2eAgentConfig } from "@eve-e2e/config";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { type AgentDefinition, defineAgent } from "eve";
 import { vercelOidc } from "eve/agents/auth";
@@ -44,7 +43,6 @@ const anthropic = createAnthropic({
 });
 
 const agent: AgentDefinition = defineAgent({
-  ...e2eAgentConfig(),
   model: anthropic(promptCacheModel),
   modelContextWindowTokens: 200_000,
 });

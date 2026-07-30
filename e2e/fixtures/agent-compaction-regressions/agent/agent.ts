@@ -1,4 +1,3 @@
-import { e2eAgentConfig } from "@eve-e2e/config";
 import { defineAgent } from "eve";
 import { mockModel, type MockModelRequest } from "eve/evals";
 
@@ -224,7 +223,6 @@ const taskModel = mockModel({
 });
 
 export default defineAgent({
-  ...e2eAgentConfig(),
   model: taskModel,
   modelContextWindowTokens: TEST_CONTEXT_WINDOW_TOKENS,
   compaction: {

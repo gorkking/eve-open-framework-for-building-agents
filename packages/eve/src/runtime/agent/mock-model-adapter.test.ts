@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapGenerateResult } from "#runtime/agent/bootstrap-model-utils.js";
 import {
   createMockAuthoredRuntimeModel,
+  resolveMockAuthoredRuntimeModel,
   shouldMockAuthoredRuntimeModels,
 } from "#runtime/agent/mock-model-adapter.js";
+import { EMPTY_DELIVERY_SENTINEL } from "#shared/empty-delivery.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -35,6 +37,17 @@ describe("createMockAuthoredRuntimeModel", () => {
     vi.stubEnv("EVE_MOCK_AUTHORED_MODELS", "1");
 
     expect(shouldMockAuthoredRuntimeModels()).toBe(true);
+  });
+
+  it("preserves explicitly authored eve-mock models when the seam is active", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("EVE_MOCK_AUTHORED_MODELS", "1");
+
+    expect(
+      resolveMockAuthoredRuntimeModel({
+        id: "eve-mock/model",
+      } as never),
+    ).toBeNull();
   });
 
   it("activates a matching skill when the available skill line includes a skill path", async () => {
@@ -203,6 +216,70 @@ describe("createMockAuthoredRuntimeModel", () => {
       {
         text: "skill-echo-ok-V1",
         type: "text",
+      },
+    ]);
+  });
+
+  it("reads a relative resource referenced by a loaded packaged skill", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content:
+            "Available skills\n- toolkit__toolkit-guide: Packaged guide. (path: /workspace/.agents/skills/toolkit__toolkit-guide/SKILL.md)",
+          role: "system",
+        },
+        {
+          content: "Use the toolkit guide skill. Read the referenced script and report its token.",
+          role: "user",
+        },
+        {
+          content: [
+            {
+              input: JSON.stringify({ skill: "toolkit__toolkit-guide" }),
+              toolCallId: "call_load_skill",
+              toolName: "load_skill",
+              type: "tool-call",
+            },
+          ],
+          role: "assistant",
+        },
+        {
+          content: [
+            {
+              output: {
+                type: "text",
+                value:
+                  "For this smoke test, read `scripts/resource-token.js` relative to this SKILL.md and report its token.",
+              },
+              toolCallId: "call_load_skill",
+              toolName: "load_skill",
+              type: "tool-result",
+            },
+          ],
+          role: "tool",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: { filePath: { type: "string" } },
+            required: ["filePath"],
+            type: "object",
+          },
+          name: "read_file",
+          type: "function",
+        },
+      ],
+    );
+
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({
+          filePath: "/workspace/.agents/skills/toolkit__toolkit-guide/scripts/resource-token.js",
+        }),
+        toolCallId: "call_read_file",
+        toolName: "read_file",
+        type: "tool-call",
       },
     ]);
   });
@@ -559,6 +636,30 @@ describe("createMockAuthoredRuntimeModel", () => {
     ]);
   });
 
+  it("recalls a simple fact established in an earlier turn", async () => {
+    const result = await generateWithPrompt([
+      {
+        content: "My favorite word is marigold. Remember it.",
+        role: "user",
+      },
+      {
+        content: "Bootstrap reply: My favorite word is marigold. Remember it.",
+        role: "assistant",
+      },
+      {
+        content: "What is my favorite word? Reply with just the word.",
+        role: "user",
+      },
+    ]);
+
+    expect(result.content).toEqual([
+      {
+        text: "marigold",
+        type: "text",
+      },
+    ]);
+  });
+
   it("replies with exact string instructions from system context", async () => {
     const result = await generateWithPrompt([
       {
@@ -722,6 +823,332 @@ describe("createMockAuthoredRuntimeModel", () => {
         type: "tool-call",
       })),
     );
+  });
+
+  it("delegates directly to a named subagent with only its explicit message", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content:
+            "Use the echo-marker subagent with message 'ping'. Once it returns, include its output.",
+          role: "user",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: {
+              message: { type: "string" },
+              outputSchema: { type: "object" },
+            },
+            required: ["message"],
+            type: "object",
+          },
+          name: "echo-marker",
+          type: "function",
+        },
+      ],
+    );
+
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({ message: "ping" }),
+        toolCallId: "call_echo_marker",
+        toolName: "echo-marker",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("extracts a built-in subagent task without the parent follow-up", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content: [
+            "Use the built-in agent subagent exactly once.",
+            "Give the child this task: Return exactly CHILD-OK.",
+            "After the child returns, reply with its exact output.",
+          ].join(" "),
+          role: "user",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: { message: { type: "string" } },
+            required: ["message"],
+            type: "object",
+          },
+          name: "agent",
+          type: "function",
+        },
+      ],
+    );
+
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({ message: "Return exactly CHILD-OK." }),
+        toolCallId: "call_agent",
+        toolName: "agent",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("authors a Workflow Promise.all fan-out for explicit subagent messages", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content:
+            "Use the Workflow tool exactly once to fan out two echo-marker subagent calls with the messages 'workflow alpha' and 'workflow beta' inside one Promise.all.",
+          role: "user",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: { js: { type: "string" } },
+            required: ["js"],
+            type: "object",
+          },
+          name: "Workflow",
+          type: "function",
+        },
+        {
+          name: "echo-marker",
+          type: "function",
+        },
+      ],
+    );
+
+    const content = result.content[0];
+    expect(content?.type).toBe("tool-call");
+    if (content?.type !== "tool-call") return;
+    const input = JSON.parse(content.input) as { js: string };
+    expect(content.toolName).toBe("Workflow");
+    expect(input.js).toContain("Promise.all");
+    expect(input.js).toContain('tools["echo-marker"]');
+    expect(input.js).toContain("workflow alpha");
+    expect(input.js).toContain("workflow beta");
+  });
+
+  it("emits repeated Bash calls with distinct ids and commands in one step", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content: [
+            "Call the `bash` tool exactly 3 separate times in one tool-use step.",
+            "one: `printf one`",
+            "two: `printf two`",
+            "three: `printf three`",
+          ].join("\n"),
+          role: "user",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: { command: { type: "string" } },
+            required: ["command"],
+            type: "object",
+          },
+          name: "bash",
+          type: "function",
+        },
+      ],
+    );
+
+    expect(result.content).toEqual(
+      ["one", "two", "three"].map((value, index) => ({
+        input: JSON.stringify({ command: `printf ${value}` }),
+        toolCallId: index === 0 ? "call_bash" : `call_bash_${String(index + 1)}`,
+        toolName: "bash",
+        type: "tool-call",
+      })),
+    );
+  });
+
+  it("sequences repeated and follow-up tools with schema-derived inputs", async () => {
+    const tools = [
+      {
+        inputSchema: {
+          additionalProperties: false,
+          properties: {},
+          type: "object",
+        },
+        name: "counter",
+        type: "function",
+      },
+      {
+        inputSchema: {
+          properties: { label: { type: "string" } },
+          required: ["label"],
+          type: "object",
+        },
+        name: "report",
+        type: "function",
+      },
+    ];
+    const userMessage = {
+      content: "Call `counter` two times, then call `report` with label 'done'.",
+      role: "user",
+    };
+    const firstToolResult = {
+      content: [
+        {
+          output: { type: "json", value: { count: 1 } },
+          toolCallId: "call_counter",
+          toolName: "counter",
+          type: "tool-result",
+        },
+      ],
+      role: "tool",
+    };
+    const secondToolResult = {
+      content: [
+        {
+          output: { type: "json", value: { count: 2 } },
+          toolCallId: "call_counter_2",
+          toolName: "counter",
+          type: "tool-result",
+        },
+      ],
+      role: "tool",
+    };
+
+    const repeated = await generateWithPrompt([userMessage, firstToolResult], tools);
+    expect(repeated.content).toEqual([
+      {
+        input: JSON.stringify({}),
+        toolCallId: "call_counter_2",
+        toolName: "counter",
+        type: "tool-call",
+      },
+    ]);
+
+    const followUp = await generateWithPrompt(
+      [userMessage, firstToolResult, secondToolResult],
+      tools,
+    );
+    expect(followUp.content).toEqual([
+      {
+        input: JSON.stringify({ label: "done" }),
+        toolCallId: "call_report",
+        toolName: "report",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("derives numeric arrays and connection-search fields from fixture wording", async () => {
+    const numeric = await generateWithPrompt(
+      [
+        {
+          content: "Use run_python to compute the sum of these integers: 2, 3, and 4.",
+          role: "user",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: {
+              numbers: {
+                items: { type: "integer" },
+                type: "array",
+              },
+            },
+            required: ["numbers"],
+            type: "object",
+          },
+          name: "run_python",
+          type: "function",
+        },
+      ],
+    );
+    expect(numeric.content).toEqual([
+      {
+        input: JSON.stringify({ numbers: [2, 3, 4] }),
+        toolCallId: "call_run_python",
+        toolName: "run_python",
+        type: "tool-call",
+      },
+    ]);
+
+    const connection = await generateWithPrompt(
+      [
+        {
+          content:
+            "Use connection_search to find the TfL journey modes operation in the `tfl` connection.",
+          role: "user",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            properties: {
+              connection: { type: "string" },
+              keywords: { type: "string" },
+              limit: { type: "number" },
+            },
+            required: ["keywords"],
+            type: "object",
+          },
+          name: "connection_search",
+          type: "function",
+        },
+      ],
+    );
+    expect(connection.content).toEqual([
+      {
+        input: JSON.stringify({ connection: "tfl", keywords: "TfL journey modes" }),
+        toolCallId: "call_connection_search",
+        toolName: "connection_search",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("uses the empty-delivery sentinel after an explicitly conditional empty result", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content: [
+            "Call the `check-alerts` tool exactly once with an empty object.",
+            "Do not send a message when the returned alerts list is empty.",
+          ].join("\n"),
+          role: "user",
+        },
+        {
+          content: [
+            {
+              output: { type: "json", value: { alerts: [] } },
+              toolCallId: "call_check_alerts",
+              toolName: "check-alerts",
+              type: "tool-result",
+            },
+          ],
+          role: "tool",
+        },
+      ],
+      [
+        {
+          inputSchema: {
+            additionalProperties: false,
+            properties: {},
+            type: "object",
+          },
+          name: "check-alerts",
+          type: "function",
+        },
+      ],
+    );
+
+    expect(result.content).toEqual([
+      {
+        text: EMPTY_DELIVERY_SENTINEL,
+        type: "text",
+      },
+    ]);
   });
 
   it("calls final_output with a schema-shaped sample when the tool is offered", async () => {

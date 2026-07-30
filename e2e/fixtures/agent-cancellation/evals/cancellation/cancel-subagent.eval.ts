@@ -6,7 +6,9 @@ export default defineEval({
   timeoutMs: 240_000,
 
   async test(t) {
-    const parent = await t.start("Delegate a cancellation wait to the sleeper subagent.");
+    const parent = await t.start(
+      "Use the sleeper subagent exactly once with message 'Call the wait-for-cancellation tool exactly once and wait until this delegated turn is cancelled.'",
+    );
     const called = await parent.waitForEvent("subagent.called", {
       data: { name: "sleeper" },
     });

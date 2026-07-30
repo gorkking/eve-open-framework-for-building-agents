@@ -64,18 +64,28 @@ pnpm test:tui           # TUI smoke scripts (not e2e)
 E2E tests are fixture-owned evals. Run them from the fixture directory:
 
 ```bash
-cd e2e/fixtures/agent-basic-runtime
-pnpm exec eve eval --strict
+cd e2e/fixtures/agent-tools
+EVE_E2E_MODEL="openai/gpt-5.6-sol" pnpm exec eve eval --strict
 ```
 
-The fixture agents and judges run against real models (`openai/gpt-5.5`), so
-the environment must provide the corresponding model-provider credentials.
+CI splits e2e coverage by the dimension under test. Five provider-sensitive
+fixtures form eight live-model legs against the Local world; these require the
+credential for their assigned model. The other 15 fixtures run with
+deterministic models against the Local, Vercel, and Postgres worlds:
 
-Vercel e2e builds that same fixture directory with `VERCEL=1`, deploys the
-fixture's prebuilt Vercel output, and runs evals against the immutable
-deployment URL. All fixture deployments link to the same Vercel project id; the
-shared project's Preview env must provide those same model-provider
-credentials.
+```bash
+cd e2e/fixtures/agent-basic-runtime
+EVE_MOCK_AUTHORED_MODELS=1 \
+  AI_GATEWAY_API_KEY="invalid-e2e-world-suite-key" \
+  pnpm exec eve eval --strict
+```
+
+World fixtures cannot use live providers or model judges. The invalid Gateway
+credential makes an accidental provider path fail, and CI propagates mock mode
+through Vercel deployments and redeployments. Fixture ownership and meaningful
+provider assignments live in [`e2e/suites.json`](./e2e/suites.json); see
+[`e2e/README.md`](./e2e/README.md) for the complete Local, Vercel, and Postgres
+commands. CI intentionally has no full fixture × model × world matrix.
 
 Do not commit fixture trees under `packages/eve/test/fixtures/` — scenario app content is defined inline as `ScenarioAppDescriptor` objects under `packages/eve/src/internal/testing/scenario-apps/` (CI enforces this).
 
