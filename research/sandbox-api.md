@@ -291,6 +291,98 @@ Sharing live compute means both sessions see the same files and processes,
 commands can race, and per-user credentials or network policy cannot safely
 differ. The provider or application owns retention and deletion.
 
+## Minimal Vercel provider implementation
+
+The eve-owned Vercel integration only needs to adapt live SDK handles and
+describe how a build produces a reusable snapshot:
+
+```ts
+import { Sandbox as SdkSandbox } from "@vercel/sandbox";
+import {
+  defineSandboxAdapter,
+  defineSandboxTemplate,
+  type Sandbox,
+  type SandboxSession,
+  type SandboxTemplateAssets,
+} from "eve/sandbox/provider";
+
+type Reference = { name: string };
+type TemplateReference = { snapshotId: string };
+type CreateOptions = {
+  name?: string;
+  resources?: { vcpus: number };
+};
+type TemplateOptions = {
+  prepare?(sandbox: Sandbox): Promise<void>;
+};
+
+declare function adaptVercelSession(sandbox: SdkSandbox): SandboxSession;
+declare function createVercelTemplateSandbox(input: {
+  assets: SandboxTemplateAssets;
+}): Promise<SdkSandbox>;
+
+const asVercelSandbox = defineSandboxAdapter<SdkSandbox, Reference>({
+  reference(sandbox) {
+    return { name: sandbox.name };
+  },
+  restore({ name }) {
+    return SdkSandbox.get({ name });
+  },
+  session(sandbox) {
+    return adaptVercelSession(sandbox);
+  },
+});
+
+export const VercelSandbox = {
+  async create(options: CreateOptions = {}) {
+    const sandbox = await SdkSandbox.create({
+      ...options,
+      persistent: true,
+    });
+
+    return asVercelSandbox(sandbox);
+  },
+
+  template(options: TemplateOptions = {}) {
+    return defineSandboxTemplate<TemplateReference, CreateOptions>({
+      async prewarm({ assets, hydrate }) {
+        const raw = await createVercelTemplateSandbox({ assets });
+        const sandbox = asVercelSandbox(raw);
+
+        await hydrate(sandbox);
+        await options.prepare?.(sandbox);
+
+        const snapshot = await raw.snapshot();
+        return { snapshotId: snapshot.snapshotId };
+      },
+
+      async create({ options, reference }) {
+        const raw = await SdkSandbox.create({
+          ...options,
+          persistent: true,
+          source: {
+            type: "snapshot",
+            snapshotId: reference.snapshotId,
+          },
+        });
+
+        return asVercelSandbox(raw);
+      },
+    });
+  },
+};
+```
+
+`defineSandboxAdapter()` owns durable serialization and restoration.
+`defineSandboxTemplate()` owns build-result binding: eve supplies compiled
+assets and workspace hydration to `prewarm()`, freezes its returned reference,
+and supplies that reference to `create()` at runtime. The app-facing methods
+still return only `Sandbox` values.
+
+This sketch omits option forwarding, base-runtime setup, network policy,
+provider tagging, cleanup, retry behavior, and `getOrCreate()`. Those are
+Vercel integration details layered around the two required boundaries.
+
 ## Docker authoring cases
 
 ### Direct Docker sandbox
