@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateMcpHttpRequest } from "#internal/mcp/http-security.js";
+import { validateMcpHttpRequest, validateMcpMetadataRequest } from "#internal/mcp/http-security.js";
 
 describe("MCP HTTP security", () => {
   it("accepts secure non-browser requests and exact same-origin browser requests", () => {
@@ -36,6 +36,24 @@ describe("MCP HTTP security", () => {
     expect(
       validateMcpHttpRequest(
         request("https://agent.example/mcp", { origin: "https://agent.example:444" }),
+      )?.status,
+    ).toBe(403);
+  });
+
+  it("allows cross-origin OAuth metadata discovery while retaining base guards", () => {
+    expect(
+      validateMcpMetadataRequest(
+        request("https://agent.example/.well-known/oauth-protected-resource", {
+          origin: "https://client.example",
+        }),
+      ),
+    ).toBeUndefined();
+    expect(
+      validateMcpMetadataRequest(
+        request("https://agent.example/.well-known/oauth-protected-resource", {
+          host: "attacker.example",
+          origin: "https://client.example",
+        }),
       )?.status,
     ).toBe(403);
   });

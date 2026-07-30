@@ -230,6 +230,8 @@ describe("mcpChannel", () => {
     });
     expect(channel.routes.map((route) => `${route.method} ${route.path}`)).toEqual([
       "GET /.well-known/oauth-protected-resource",
+      "HEAD /.well-known/oauth-protected-resource",
+      "OPTIONS /.well-known/oauth-protected-resource",
       "GET /delegate",
       "POST /delegate",
       "DELETE /delegate",
@@ -246,8 +248,9 @@ describe("mcpChannel", () => {
       resource: "https://agent.example/delegate",
       scopes_supported: ["agent:invoke"],
     });
+    expect(metadata.headers.get("access-control-allow-origin")).toBe("*");
 
-    const route = channel.routes[2]!;
+    const route = channel.routes[4]!;
     if (route.transport === "websocket") throw new Error("expected HTTP route");
     const response = await route.handler(
       requestWithHost("https://private.example/delegate", { method: "POST" }),
@@ -272,7 +275,7 @@ describe("mcpChannel", () => {
         { issuer: "https://issuer.example", scopes: ["agent:invoke"] },
       ),
     });
-    const genericRoute = genericChannel.routes[2]!;
+    const genericRoute = genericChannel.routes[4]!;
     if (genericRoute.transport === "websocket") throw new Error("expected HTTP route");
     const generic = await genericRoute.handler(
       requestWithHost("https://agent.example/mcp", { method: "POST" }),
@@ -296,7 +299,7 @@ describe("mcpChannel", () => {
         { issuer: "https://issuer.example", scopes: ["agent:invoke"] },
       ),
     });
-    const scopedRoute = scopedChannel.routes[2]!;
+    const scopedRoute = scopedChannel.routes[4]!;
     if (scopedRoute.transport === "websocket") throw new Error("expected HTTP route");
     const scoped = await scopedRoute.handler(
       requestWithHost("https://agent.example/mcp", { method: "POST" }),
@@ -311,6 +314,36 @@ describe("mcpChannel", () => {
       'resource_metadata="https://agent.example/.well-known/oauth-protected-resource"',
     );
     expect(scopedChallenge?.match(/\bBearer\b/g)).toHaveLength(1);
+  });
+
+  it("preserves invalid_token in the OAuth resource challenge", async () => {
+    const channel = mcpChannel({
+      auth: oauthResource(
+        withAuthChallenges(() => null, [{ scheme: "Bearer" }]),
+        {
+          issuer: "https://issuer.example",
+          scopes: ["agent:invoke"],
+        },
+      ),
+    });
+    const route = channel.routes[4]!;
+    if (route.transport === "websocket") throw new Error("expected HTTP route");
+    const response = await route.handler(
+      requestWithHost("https://agent.example/mcp", {
+        headers: { authorization: "Bearer expired-token" },
+        method: "POST",
+      }),
+      {} as never,
+    );
+
+    expect(response.status).toBe(401);
+    const challenge = response.headers.get("www-authenticate");
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).toContain('scope="agent:invoke"');
+    expect(challenge).toContain(
+      'resource_metadata="https://agent.example/.well-known/oauth-protected-resource"',
+    );
+    expect(challenge?.match(/\bBearer\b/g)).toHaveLength(1);
   });
 
   it("derives the protected resource from the public request origin", async () => {
@@ -328,6 +361,64 @@ describe("mcpChannel", () => {
       authorization_servers: ["https://issuer.example"],
       resource: "https://agent.example/delegate",
     });
+  });
+
+  it("serves protected-resource metadata to cross-origin browser clients", async () => {
+    const channel = mcpChannel({
+      auth: oauthResource(() => null, { issuer: "https://issuer.example" }),
+    });
+    const [getRoute, headRoute, optionsRoute] = channel.routes;
+    if (
+      getRoute?.transport === "websocket" ||
+      headRoute?.transport === "websocket" ||
+      optionsRoute?.transport === "websocket" ||
+      getRoute === undefined ||
+      headRoute === undefined ||
+      optionsRoute === undefined
+    ) {
+      throw new Error("expected HTTP metadata routes");
+    }
+
+    const origin = "https://client.example";
+    const get = await getRoute.handler(
+      requestWithHost("https://agent.example/.well-known/oauth-protected-resource", {
+        headers: { origin },
+      }),
+      {} as never,
+    );
+    expect(get.status).toBe(200);
+    expect(get.headers.get("access-control-allow-origin")).toBe("*");
+
+    const head = await headRoute.handler(
+      requestWithHost("https://agent.example/.well-known/oauth-protected-resource", {
+        headers: { origin },
+        method: "HEAD",
+      }),
+      {} as never,
+    );
+    expect(head.status).toBe(200);
+    expect(head.headers.get("access-control-allow-origin")).toBe("*");
+    expect(head.headers.get("content-type")).toContain("application/json");
+    expect(await head.text()).toBe("");
+
+    const options = await optionsRoute.handler(
+      requestWithHost("https://agent.example/.well-known/oauth-protected-resource", {
+        headers: {
+          "access-control-request-headers": "authorization, mcp-protocol-version",
+          "access-control-request-method": "GET",
+          origin,
+        },
+        method: "OPTIONS",
+      }),
+      {} as never,
+    );
+    expect(options.status).toBe(204);
+    expect(options.headers.get("access-control-allow-origin")).toBe("*");
+    expect(options.headers.get("access-control-allow-methods")).toBe("GET, HEAD, OPTIONS");
+    expect(options.headers.get("access-control-allow-headers")).toBe(
+      "authorization, mcp-protocol-version",
+    );
+    expect(options.headers.get("vary")).toBe("Access-Control-Request-Headers");
   });
 });
 

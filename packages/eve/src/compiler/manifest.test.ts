@@ -4,6 +4,35 @@ import { compiledAgentManifestSchema, createCompiledAgentManifest } from "#compi
 import { classifyModelRouting } from "#internal/classify-model-routing.js";
 
 describe("compiledAgentManifestSchema", () => {
+  it("accepts authored HEAD and OPTIONS channel routes", () => {
+    const channel = {
+      adapterKind: "mcp",
+      kind: "channel" as const,
+      logicalPath: "channels/mcp.ts",
+      name: "mcp",
+      sourceId: "channel-mcp",
+      sourceKind: "module" as const,
+      urlPath: "/.well-known/oauth-protected-resource",
+    };
+    const manifest = createCompiledAgentManifest({
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      channels: [
+        { ...channel, method: "HEAD" },
+        { ...channel, method: "OPTIONS" },
+      ],
+      config: {
+        model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
+        name: "app",
+      },
+    });
+
+    const parsed = compiledAgentManifestSchema.parse(manifest);
+    expect(
+      parsed.channels.map((entry) => (entry.kind === "channel" ? entry.method : null)),
+    ).toEqual(["HEAD", "OPTIONS"]);
+  });
+
   it("preserves reasoning configuration", () => {
     const manifest = createCompiledAgentManifest({
       agentRoot: "/app/agent",

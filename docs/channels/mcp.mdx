@@ -38,6 +38,14 @@ The `scopes` option advertises the scopes clients should request. Your
 underlying verifier remains responsible for signature or introspection,
 expiry, audience/resource, and scope enforcement.
 
+OAuth client registration remains between the MCP client and the authorization
+server. For MCP `2026-07-28`, prefer an authorization server that supports
+[Client ID Metadata Documents](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#client-id-metadata-documents)
+for URL-based client IDs, or pre-register the client ID. Dynamic Client
+Registration is a deprecated compatibility fallback. eve publishes the
+authorization-server location in protected-resource metadata; it does not
+implement client registration, CIMD hosting, or an authorization server.
+
 By default the resource is the request origin plus `/mcp`. Set `resource` when
 a public gateway fronts a private eve origin, or `metadataPath` when the
 well-known route must be mounted elsewhere. Issuer and resource identifiers
@@ -77,11 +85,20 @@ export default mcpChannel({
 });
 ```
 
-The endpoint validates `Host` and `Origin` before authentication. Browser
-requests must be exact same-origin, and plain HTTP is accepted only on
-loopback; remote endpoints must use HTTPS. The MCP channel does not enable
-cross-origin browser access. Put a same-origin backend or an authenticated
-server-side proxy in front of it when a browser application needs to connect.
+The `/mcp` endpoint validates `Host` and `Origin` before authentication.
+Browser protocol requests must be exact same-origin, and plain HTTP is accepted
+only on loopback; remote endpoints must use HTTPS. Put a same-origin backend or
+an authenticated server-side proxy in front of it when a browser application
+needs to connect. The public OAuth protected-resource metadata route is the
+exception: it serves cross-origin `GET`, `HEAD`, and `OPTIONS` requests so
+browser-hosted clients can discover the authorization server.
+
+When a protected request has no credentials, eve returns a bare Bearer
+challenge. A supplied Bearer token that every configured strategy rejects gets
+`error="invalid_token"`. Scope enforcement stays in the verifier; report a
+verified caller that lacks required scopes with a `ForbiddenError` carrying a
+Bearer `error="insufficient_scope"` challenge and the required `scope` value.
+`mcpChannel()` preserves that challenge and adds `resource_metadata`.
 
 The endpoint serves MCP `2026-07-28` directly and keeps a stateless
 `2025-11-25` compatibility path for existing Streamable HTTP clients. Current

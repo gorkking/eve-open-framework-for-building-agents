@@ -59,11 +59,137 @@ export function createMcpStreamableHttpServer(
     const auth = await options.authenticate(request);
     if (auth instanceof Response) return auth;
 
+    const preflight = await preflightModernRequest(request);
+    if (preflight.response !== undefined) return preflight.response;
+
     const handler = createMcpHandler(() => createServer(options, tools, auth), {
       legacy: "stateless",
     });
-    return await handler.fetch(request);
+    return await handler.fetch(
+      request,
+      preflight.parsedBody === undefined ? undefined : { parsedBody: preflight.parsedBody },
+    );
   };
+}
+
+interface ModernRequestPreflight {
+  readonly parsedBody?: unknown;
+  readonly response?: Response;
+}
+
+/**
+ * The SDK currently checks MCP-Protocol-Version only when the header is
+ * present. MCP 2026-07-28 requires it on every modern POST, so reject the
+ * missing-header case here until the upstream handler does:
+ * modelcontextprotocol/typescript-sdk#2589.
+ */
+async function preflightModernRequest(request: Request): Promise<ModernRequestPreflight> {
+  if (request.method.toUpperCase() !== "POST" || request.headers.has("mcp-protocol-version")) {
+    return {};
+  }
+
+  let parsedBody: unknown;
+  try {
+    parsedBody = await request.clone().json();
+  } catch {
+    return {};
+  }
+
+  if (!claimsCurrentProtocolVersion(parsedBody)) {
+    return { parsedBody };
+  }
+
+  const earlierFailure = await probeEarlierValidationFailure(request, parsedBody);
+  if (earlierFailure !== undefined) {
+    return { parsedBody, response: earlierFailure };
+  }
+
+  return {
+    parsedBody,
+    response: headerMismatchResponse(parsedBody),
+  };
+}
+
+function claimsCurrentProtocolVersion(body: unknown): boolean {
+  return (
+    isPlainRecord(body) &&
+    isPlainRecord(body.params) &&
+    isPlainRecord(body.params._meta) &&
+    body.params._meta["io.modelcontextprotocol/protocolVersion"] === MCP_PROTOCOL_VERSION
+  );
+}
+
+function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Ask a side-effect-free SDK handler to apply the validation rungs that
+ * precede required standard-header presence. Preserve those errors; otherwise
+ * the valid current-revision envelope is ready for the missing-header error.
+ */
+async function probeEarlierValidationFailure(
+  request: Request,
+  parsedBody: unknown,
+): Promise<Response | undefined> {
+  const headers = new Headers(request.headers);
+  headers.set("mcp-protocol-version", MCP_PROTOCOL_VERSION);
+  const probeRequest = new Request(request.clone(), { headers });
+  const probe = createMcpHandler(() => new McpServer({ name: "eve-mcp-preflight", version: "0" }), {
+    legacy: "reject",
+  });
+  try {
+    const response = await probe.fetch(probeRequest, { parsedBody });
+    if (response.status === 406 || response.status === 415) {
+      return response;
+    }
+    if (response.status === 400) {
+      const body = (await response
+        .clone()
+        .json()
+        .catch(() => undefined)) as { readonly error?: { readonly code?: unknown } } | undefined;
+      if (
+        body?.error?.code === -32_700 ||
+        body?.error?.code === -32_600 ||
+        body?.error?.code === -32_602 ||
+        body?.error?.code === -32_022
+      ) {
+        return response;
+      }
+    }
+    await response.body?.cancel();
+    return undefined;
+  } finally {
+    await probe.close().catch(() => {});
+  }
+}
+
+function headerMismatchResponse(body: unknown): Response {
+  const mismatchBody =
+    "the body carries a modern MCP envelope but the required MCP-Protocol-Version header is absent";
+  return Response.json(
+    {
+      error: {
+        code: -32_020,
+        data: {
+          mismatch: {
+            body: mismatchBody,
+            header: "(missing)",
+          },
+        },
+        message: `Bad Request: the request headers and body disagree: ${mismatchBody}`,
+      },
+      id: readJsonRpcRequestId(body),
+      jsonrpc: "2.0",
+    },
+    { status: 400 },
+  );
+}
+
+function readJsonRpcRequestId(body: unknown): string | number | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const id = Reflect.get(body, "id");
+  return typeof id === "string" || typeof id === "number" ? id : null;
 }
 
 function createServer(

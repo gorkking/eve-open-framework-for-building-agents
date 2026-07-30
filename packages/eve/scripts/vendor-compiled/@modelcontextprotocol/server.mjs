@@ -76,7 +76,8 @@ export interface McpRequestContext {
 }
 
 export interface McpHandler {
-  fetch(request: Request): Promise<Response>;
+  close(): Promise<void>;
+  fetch(request: Request, options?: { readonly parsedBody?: unknown }): Promise<Response>;
 }
 
 export declare function fromJsonSchema<T = unknown>(

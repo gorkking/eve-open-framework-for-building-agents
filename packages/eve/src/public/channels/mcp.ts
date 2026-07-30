@@ -1,6 +1,14 @@
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import { z } from "#compiled/zod/index.js";
-import { defineChannel, DELETE, GET, POST, type Channel } from "#public/definitions/channel.js";
+import {
+  defineChannel,
+  DELETE,
+  GET,
+  HEAD,
+  OPTIONS,
+  POST,
+  type Channel,
+} from "#public/definitions/channel.js";
 import type { RouteHandlerArgs } from "#channel/routes.js";
 import {
   AgentInvocationService,
@@ -8,7 +16,7 @@ import {
 } from "#internal/invocation/agent-invocation-service.js";
 import { WorkflowAgentInvocationExecution } from "#internal/invocation/workflow-execution.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
-import { validateMcpHttpRequest } from "#internal/mcp/http-security.js";
+import { validateMcpHttpRequest, validateMcpMetadataRequest } from "#internal/mcp/http-security.js";
 import {
   createMcpStreamableHttpServer,
   type McpCallToolResult,
@@ -69,29 +77,68 @@ export function mcpChannel(input: McpChannelInput): McpChannel {
     ),
   ];
   if (oauth !== undefined) {
-    routes.unshift(protectedResourceMetadataRoute(oauth, path));
+    routes.unshift(...protectedResourceMetadataRoutes(oauth, path));
   }
   return defineChannel({ routes });
 }
 
-function protectedResourceMetadataRoute(options: OAuthResourceOptions, resourcePath: string) {
+function protectedResourceMetadataRoutes(options: OAuthResourceOptions, resourcePath: string) {
   const metadataPath = options.metadataPath ?? "/.well-known/oauth-protected-resource";
-  return GET(metadataPath, async (request) => {
-    const securityFailure = validateMcpHttpRequest(request);
-    if (securityFailure !== undefined) return securityFailure;
-    const resource =
-      options.resource ?? new URL(resourcePath, new URL(request.url).origin).toString();
-    const authorizationServers =
-      options.issuer !== undefined ? [options.issuer] : options.authorizationServers;
-    return Response.json(
-      createMcpProtectedResourceMetadata({
-        authorizationServers,
-        resource,
-        scopesSupported: options.scopes,
-      }),
-      { headers: { "cache-control": "no-store" } },
-    );
+  return [
+    GET(metadataPath, async (request) =>
+      protectedResourceMetadataResponse(request, options, resourcePath, false),
+    ),
+    HEAD(metadataPath, async (request) =>
+      protectedResourceMetadataResponse(request, options, resourcePath, true),
+    ),
+    OPTIONS(metadataPath, async (request) => protectedResourceMetadataOptionsResponse(request)),
+  ] as const;
+}
+
+function protectedResourceMetadataResponse(
+  request: Request,
+  options: OAuthResourceOptions,
+  resourcePath: string,
+  head: boolean,
+): Response {
+  const securityFailure = validateMcpMetadataRequest(request);
+  if (securityFailure !== undefined) return securityFailure;
+  const resource =
+    options.resource ?? new URL(resourcePath, new URL(request.url).origin).toString();
+  const authorizationServers =
+    options.issuer !== undefined ? [options.issuer] : options.authorizationServers;
+  const response = Response.json(
+    createMcpProtectedResourceMetadata({
+      authorizationServers,
+      resource,
+      scopesSupported: options.scopes,
+    }),
+    {
+      headers: {
+        "access-control-allow-origin": "*",
+        "cache-control": "no-store",
+      },
+    },
+  );
+  return head
+    ? new Response(null, { headers: response.headers, status: response.status })
+    : response;
+}
+
+function protectedResourceMetadataOptionsResponse(request: Request): Response {
+  const securityFailure = validateMcpMetadataRequest(request);
+  if (securityFailure !== undefined) return securityFailure;
+  const headers = new Headers({
+    "access-control-allow-methods": "GET, HEAD, OPTIONS",
+    "access-control-allow-origin": "*",
+    "cache-control": "no-store",
   });
+  const requestedHeaders = request.headers.get("access-control-request-headers");
+  if (requestedHeaders !== null) {
+    headers.set("access-control-allow-headers", requestedHeaders);
+    headers.set("vary", "Access-Control-Request-Headers");
+  }
+  return new Response(null, { headers, status: 204 });
 }
 
 function addResourceChallenge(

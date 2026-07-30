@@ -43,6 +43,12 @@ export default eveChannel({
 
 If every entry skips, the request gets a `401` whose `WWW-Authenticate` header advertises the challenge scheme(s) the configured entries declare — `Basic` for `httpBasic()`, `Bearer` for the token-based helpers (`jwtHmac`, `jwtEcdsa`, `oidc`, `vercelOidc`), both when you mix them, and `Bearer` as a fallback for entries that don't declare a scheme (custom `AuthFn`s, or an empty array). See [`withAuthChallenges`](#custom-verifiers) to declare a scheme on a custom `AuthFn`.
 
+If the request supplied a Bearer credential and every declared Bearer strategy
+skips, the challenge includes `error="invalid_token"`. The error is added only
+after the complete walk, so another token strategy or a final `localDev()` /
+`none()` fallback can still accept the request. Missing credentials keep the
+bare Bearer challenge.
+
 ```ts
 import { type AuthFn, localDev, vercelOidc } from "eve/channels/auth";
 import { eveChannel } from "eve/channels/eve";
@@ -231,6 +237,11 @@ resource identifiers must be HTTPS URLs without credentials, query strings, or
 fragments. HTTP is accepted only for loopback development URLs. A custom
 `metadataPath` must be a same-origin absolute path; network-path references
 such as `//example.com/metadata` are rejected.
+
+When a verified caller lacks a required scope, throw `ForbiddenError` with a
+Bearer challenge whose parameters include `error: "insufficient_scope"` and a
+space-separated `scope`. Protocol-aware channels preserve that `403` challenge
+and can add their resource metadata.
 
 ## Network policy
 

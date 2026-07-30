@@ -722,9 +722,43 @@ export async function routeAuth(
   }
 
   const declaredChallenges = collectDeclaredChallenges(list);
+  const challenges =
+    declaredChallenges.length > 0
+      ? addInvalidBearerTokenError(request, declaredChallenges)
+      : [{ scheme: "Bearer" } satisfies UnauthorizedChallenge];
   return createUnauthorizedResponse({
-    challenges: declaredChallenges.length > 0 ? declaredChallenges : [{ scheme: "Bearer" }],
+    challenges,
   });
+}
+
+/**
+ * A supplied Bearer credential that every declared Bearer strategy declined
+ * is invalid, rather than absent. Add the RFC 6750 error only after the whole
+ * auth walk has exhausted so another Bearer strategy or a fallback such as
+ * localDev() still has a chance to accept the request.
+ */
+function addInvalidBearerTokenError(
+  request: Request,
+  challenges: readonly UnauthorizedChallenge[],
+): readonly UnauthorizedChallenge[] {
+  const authorization = request.headers.get("authorization");
+  if (authorization === null || !/^Bearer(?:\s|$)/i.test(authorization.trim())) {
+    return challenges;
+  }
+  if (!challenges.some((challenge) => challenge.scheme === "Bearer")) {
+    return challenges;
+  }
+  return challenges.map((challenge) =>
+    challenge.scheme !== "Bearer" || challenge.parameters?.error !== undefined
+      ? challenge
+      : {
+          ...challenge,
+          parameters: {
+            ...challenge.parameters,
+            error: "invalid_token",
+          },
+        },
+  );
 }
 
 /**

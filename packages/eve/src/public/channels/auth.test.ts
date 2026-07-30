@@ -611,6 +611,60 @@ describe("routeAuth", () => {
     }
   });
 
+  it("marks a supplied Bearer token as invalid after all Bearer strategies decline it", async () => {
+    const first = vi.fn(() => null);
+    const second = vi.fn(() => null);
+    const request = new Request(TEST_ROUTE_URL, {
+      headers: { authorization: "Bearer expired-or-malformed" },
+      method: "POST",
+    });
+    const result = await routeAuth(request, [
+      withAuthChallenges(first, [{ scheme: "Bearer" }]),
+      withAuthChallenges(second, [{ scheme: "Bearer" }]),
+    ]);
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.status).toBe(401);
+      expect(result.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"');
+    }
+  });
+
+  it("keeps a missing Bearer credential as a bare challenge", async () => {
+    const result = await routeAuth(
+      makeRequest(),
+      withAuthChallenges(() => null, [{ scheme: "Bearer" }]),
+    );
+
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      expect(result.headers.get("www-authenticate")).toBe("Bearer");
+    }
+  });
+
+  it("does not label a rejected Basic credential as an invalid Bearer token", async () => {
+    const result = await routeAuth(
+      new Request(TEST_ROUTE_URL, {
+        headers: { authorization: `Basic ${Buffer.from("ops:wrong").toString("base64")}` },
+        method: "POST",
+      }),
+      [
+        httpBasic({ password: "top-secret", username: "ops" }),
+        withAuthChallenges(() => null, [{ scheme: "Bearer" }]),
+      ],
+    );
+
+    expect(result).toBeInstanceOf(Response);
+    if (result instanceof Response) {
+      const challenge = result.headers.get("www-authenticate");
+      expect(challenge).toContain('Basic realm="eve"');
+      expect(challenge).toContain("Bearer");
+      expect(challenge).not.toContain("invalid_token");
+    }
+  });
+
   it("advertises both Basic and Bearer for a mixed httpBasic + jwtHmac route", async () => {
     const request = makeRequest();
     const result = await routeAuth(request, [

@@ -41,7 +41,7 @@ export const ROOT_COMPILED_AGENT_NODE_ID = "__root__";
 /**
  * Current compiled manifest schema version.
  */
-export const COMPILED_AGENT_MANIFEST_VERSION = 36;
+export const COMPILED_AGENT_MANIFEST_VERSION = 37;
 
 /**
  * Compiled channel entry preserved in the compiled manifest.
@@ -298,10 +298,12 @@ const compiledDynamicModelDefinitionSchema: z.ZodType<CompiledDynamicModelDefini
 
 const channelMethodSchema = z.union([
   z.literal("GET"),
+  z.literal("HEAD"),
   z.literal("POST"),
   z.literal("PUT"),
   z.literal("PATCH"),
   z.literal("DELETE"),
+  z.literal("OPTIONS"),
   z.literal("WEBSOCKET"),
 ]);
 

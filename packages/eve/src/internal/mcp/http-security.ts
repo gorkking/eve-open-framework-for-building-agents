@@ -12,23 +12,10 @@ import { isLoopbackHostname } from "#shared/loopback.js";
  * to the endpoint's exact origin. Plain HTTP is accepted only on loopback.
  */
 export function validateMcpHttpRequest(request: Request): Response | undefined {
-  let target: URL;
-  try {
-    target = new URL(request.url);
-  } catch {
-    return securityError("Invalid MCP request URL.", 400);
-  }
+  const baseFailure = validateMcpHttpRequestBase(request);
+  if (baseFailure !== undefined) return baseFailure;
 
-  if (
-    target.protocol !== "https:" &&
-    !(target.protocol === "http:" && isLoopbackHostname(target.hostname))
-  ) {
-    return securityError("MCP endpoints require HTTPS except on loopback.");
-  }
-
-  const hostFailure = hostHeaderValidationResponse(request, [target.hostname]);
-  if (hostFailure !== undefined) return hostFailure;
-
+  const target = new URL(request.url);
   const originFailure = originValidationResponse(request, [target.hostname]);
   if (originFailure !== undefined) return originFailure;
 
@@ -45,6 +32,34 @@ export function validateMcpHttpRequest(request: Request): Response | undefined {
     return securityError(`Invalid Origin: ${origin.origin}`);
   }
 
+  return undefined;
+}
+
+/**
+ * Applies transport and Host validation to the public OAuth discovery route
+ * without restricting its Origin. The route itself supplies permissive CORS.
+ */
+export function validateMcpMetadataRequest(request: Request): Response | undefined {
+  return validateMcpHttpRequestBase(request);
+}
+
+function validateMcpHttpRequestBase(request: Request): Response | undefined {
+  let target: URL;
+  try {
+    target = new URL(request.url);
+  } catch {
+    return securityError("Invalid MCP request URL.", 400);
+  }
+
+  if (
+    target.protocol !== "https:" &&
+    !(target.protocol === "http:" && isLoopbackHostname(target.hostname))
+  ) {
+    return securityError("MCP endpoints require HTTPS except on loopback.");
+  }
+
+  const hostFailure = hostHeaderValidationResponse(request, [target.hostname]);
+  if (hostFailure !== undefined) return hostFailure;
   return undefined;
 }
 

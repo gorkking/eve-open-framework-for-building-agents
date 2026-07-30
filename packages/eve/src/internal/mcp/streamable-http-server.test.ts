@@ -30,13 +30,19 @@ function request(body: unknown, headers: Record<string, string> = {}): Request {
   });
 }
 
-function modernRequest(body: {
-  readonly method: string;
-  readonly params?: Readonly<Record<string, unknown>>;
-  readonly [key: string]: unknown;
-}): Request {
-  const headers: Record<string, string> = { "mcp-method": body.method };
-  if (typeof body.params?.name === "string") headers["mcp-name"] = body.params.name;
+function modernRequest(
+  body: {
+    readonly method: string;
+    readonly params?: Readonly<Record<string, unknown>>;
+    readonly [key: string]: unknown;
+  },
+  headers: Record<string, string> = {},
+): Request {
+  const standardHeaders: Record<string, string> = {
+    "mcp-method": body.method,
+    "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+  };
+  if (typeof body.params?.name === "string") standardHeaders["mcp-name"] = body.params.name;
 
   return request(
     {
@@ -50,7 +56,7 @@ function modernRequest(body: {
         },
       },
     },
-    headers,
+    { ...standardHeaders, ...headers },
   );
 }
 
@@ -127,6 +133,84 @@ describe("stateless MCP Streamable HTTP server", () => {
     const listed = await handle(modernRequest({ id: 2, jsonrpc: "2.0", method: "tools/list" }));
     expect(await jsonRpcResponse(listed)).toMatchObject({
       result: { tools: [{ name: "echo" }] },
+    });
+  });
+
+  it("rejects a modern POST without MCP-Protocol-Version as HeaderMismatch", async () => {
+    const { handle } = server();
+    const response = await handle(
+      request(
+        {
+          id: "missing-version",
+          jsonrpc: "2.0",
+          method: "server/discover",
+          params: {
+            _meta: {
+              [MCP_CLIENT_CAPABILITIES_META_KEY]: {},
+              [MCP_CLIENT_INFO_META_KEY]: { name: "eve-test-client", version: "0.0.0" },
+              [MCP_PROTOCOL_VERSION_META_KEY]: MCP_PROTOCOL_VERSION,
+            },
+          },
+        },
+        { "mcp-method": "server/discover" },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: -32_020,
+        message: expect.stringContaining("MCP-Protocol-Version header is absent"),
+      },
+      id: "missing-version",
+      jsonrpc: "2.0",
+    });
+  });
+
+  it("leaves malformed and unsupported modern envelopes to earlier SDK validation rungs", async () => {
+    const { handle } = server();
+    const malformed = await handle(
+      request(
+        {
+          id: "malformed-envelope",
+          jsonrpc: "2.0",
+          method: "server/discover",
+          params: {
+            _meta: {
+              [MCP_PROTOCOL_VERSION_META_KEY]: MCP_PROTOCOL_VERSION,
+            },
+          },
+        },
+        { "mcp-method": "server/discover" },
+      ),
+    );
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toMatchObject({
+      error: { code: -32_602 },
+      id: "malformed-envelope",
+    });
+
+    const unsupported = await handle(
+      request(
+        {
+          id: "unsupported-version",
+          jsonrpc: "2.0",
+          method: "server/discover",
+          params: {
+            _meta: {
+              [MCP_CLIENT_CAPABILITIES_META_KEY]: {},
+              [MCP_CLIENT_INFO_META_KEY]: { name: "eve-test-client", version: "0.0.0" },
+              [MCP_PROTOCOL_VERSION_META_KEY]: "2027-01-01",
+            },
+          },
+        },
+        { "mcp-method": "server/discover" },
+      ),
+    );
+    expect(unsupported.status).toBe(400);
+    await expect(unsupported.json()).resolves.toMatchObject({
+      error: { code: -32_022 },
+      id: "unsupported-version",
     });
   });
 

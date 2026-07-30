@@ -267,9 +267,9 @@ export interface WebSocketRouteDefinition<TState = undefined> {
 
 /**
  * A single channel route: either an {@link HttpRouteDefinition} or a
- * {@link WebSocketRouteDefinition}. Produced by the {@link GET}, {@link POST},
- * {@link PUT}, {@link PATCH}, {@link DELETE}, and {@link WS} helpers and listed
- * in a channel's `routes` array.
+ * {@link WebSocketRouteDefinition}. Produced by the {@link GET}, {@link HEAD},
+ * {@link POST}, {@link PUT}, {@link PATCH}, {@link DELETE}, {@link OPTIONS},
+ * and {@link WS} helpers and listed in a channel's `routes` array.
  */
 export type RouteDefinition<TState = undefined> =
   | HttpRouteDefinition<TState>
@@ -284,6 +284,17 @@ export function GET<TState = undefined>(
   handler: RouteHandler<TState>,
 ): HttpRouteDefinition<TState> {
   return { transport: "http", method: "GET", path, handler };
+}
+
+/**
+ * Declares an HTTP `HEAD` route at `path`. See {@link GET} for the handler
+ * contract.
+ */
+export function HEAD<TState = undefined>(
+  path: string,
+  handler: RouteHandler<TState>,
+): HttpRouteDefinition<TState> {
+  return { transport: "http", method: "HEAD", path, handler };
 }
 
 /**
@@ -328,6 +339,17 @@ export function DELETE<TState = undefined>(
   handler: RouteHandler<TState>,
 ): HttpRouteDefinition<TState> {
   return { transport: "http", method: "DELETE", path, handler };
+}
+
+/**
+ * Declares an HTTP `OPTIONS` route at `path`. See {@link GET} for the handler
+ * contract.
+ */
+export function OPTIONS<TState = undefined>(
+  path: string,
+  handler: RouteHandler<TState>,
+): HttpRouteDefinition<TState> {
+  return { transport: "http", method: "OPTIONS", path, handler };
 }
 
 /**
