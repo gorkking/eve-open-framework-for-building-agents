@@ -22,7 +22,7 @@ export async function runChannelSetup(
     configureVercelServices: options.configureVercelServices,
     slackCredentials: options.slackCredentials,
     ensureLinkedProject: options.ensureLinkedProject,
-    skipDependencyMutation: context.skipDependencyMutation,
+    registryItemInstalled: context.registryItemInstalled,
     deps: context.deps,
   });
   const sink: OutputSink = { write: (line) => context.ui.prompter.log.message(line) };

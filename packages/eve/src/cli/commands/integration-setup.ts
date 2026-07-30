@@ -79,7 +79,7 @@ export async function runIntegrationSetupCommand(
       ui: createChannelSetupUi({ asker: interactiveAsker(prompter), prompter }),
       presetCreateSlackbot: options.yes ? true : undefined,
       presetPortableCredentials: options.yes ? true : undefined,
-      skipDependencyMutation: true,
+      registryItemInstalled: true,
       deps: dependencies.addChannelsDeps,
     });
     if (result.kind === "cancelled") {

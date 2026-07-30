@@ -308,6 +308,83 @@ describe("ensureChannel", () => {
     );
   });
 
+  test("reconciles the untouched base channel after the Web Chat registry item is installed", async () => {
+    const projectRoot = await createTempDir();
+    await mkdir(join(projectRoot, "agent/channels"), { recursive: true });
+    await mkdir(join(projectRoot, "app"), { recursive: true });
+    await writeFile(
+      join(projectRoot, "agent/channels/eve.ts"),
+      DEFAULT_EVE_CHANNEL_TEMPLATE,
+      "utf8",
+    );
+    await writeFile(join(projectRoot, "app/page.tsx"), "export default function Page() {}\n");
+    await writeFile(
+      join(projectRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "demo",
+          type: "module",
+          dependencies: { next: "16.3.0" },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await ensureChannel({
+      projectRoot,
+      kind: "web",
+      configureVercelServices: false,
+      registryItemInstalled: true,
+      webPackageVersions: TEST_WEB_PACKAGE_VERSIONS,
+    });
+
+    const channelPath = join(projectRoot, "agent/channels/eve.ts");
+    expect(result.action).toBe("overwritten");
+    expect(result.filesOverwritten).toContain(channelPath);
+    await expect(readFile(channelPath, "utf8")).resolves.toContain('from "@/lib/better-auth/eve"');
+  });
+
+  test("preserves a customized eve channel after the Web Chat registry item is installed", async () => {
+    const projectRoot = await createTempDir();
+    const channelPath = join(projectRoot, "agent/channels/eve.ts");
+    const customChannel = `import { eveChannel } from "eve/channels/eve";
+
+export default eveChannel({ auth: [] });
+`;
+    await mkdir(join(projectRoot, "agent/channels"), { recursive: true });
+    await mkdir(join(projectRoot, "app"), { recursive: true });
+    await writeFile(channelPath, customChannel, "utf8");
+    await writeFile(join(projectRoot, "app/page.tsx"), "export default function Page() {}\n");
+    await writeFile(
+      join(projectRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "demo",
+          type: "module",
+          dependencies: { next: "16.3.0" },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await ensureChannel({
+      projectRoot,
+      kind: "web",
+      configureVercelServices: false,
+      registryItemInstalled: true,
+      webPackageVersions: TEST_WEB_PACKAGE_VERSIONS,
+    });
+
+    expect(result.action).toBe("overwritten");
+    expect(result.filesSkipped).toContain(channelPath);
+    expect(result.filesOverwritten ?? []).not.toContain(channelPath);
+    await expect(readFile(channelPath, "utf8")).resolves.toBe(customChannel);
+  });
+
   test("overrides an incompatible node engine when adding Web Chat", async () => {
     const projectRoot = await createTempDir();
     await mkdir(join(projectRoot, "agent"), { recursive: true });

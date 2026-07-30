@@ -198,6 +198,23 @@ describe("addChannels box", () => {
     );
   });
 
+  it("reconciles registry-installed Web Chat without reinstalling dependencies", async () => {
+    const deps = createDeps();
+    const box = makeBox({
+      prompter: createPrompter(),
+      evePackage: TEST_EVE_PACKAGE,
+      registryItemInstalled: true,
+      deps,
+    });
+
+    await runHeadless([box], resolvedState(), silentSink, snapshot);
+
+    expect(deps.ensureChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "web", registryItemInstalled: true }),
+    );
+    expect(deps.runPackageManagerInstall).not.toHaveBeenCalled();
+  });
+
   it("scaffolds Web Chat without Vercel Services config when not deploying to Vercel", async () => {
     const deps = createDeps();
     const box = makeBox({ prompter: createPrompter(), evePackage: TEST_EVE_PACKAGE, deps });

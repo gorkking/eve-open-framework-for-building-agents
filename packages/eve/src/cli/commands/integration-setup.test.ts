@@ -67,7 +67,7 @@ describe("runIntegrationSetupCommand", () => {
     );
 
     expect(deps.ensureChannel).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "web", skipDependencyMutation: true }),
+      expect.objectContaining({ kind: "web", registryItemInstalled: true }),
     );
     expect(deps.runPackageManagerInstall).not.toHaveBeenCalled();
     expect(output.errors).toEqual([]);

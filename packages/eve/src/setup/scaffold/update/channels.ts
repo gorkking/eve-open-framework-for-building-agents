@@ -412,6 +412,27 @@ function renderWebAppTemplate(content: string, appName: string): string {
     .replaceAll("__EVE_INIT_WITH_EVE_OPTIONS__", "");
 }
 
+async function reconcileWebChannelAfterRegistryInstall(
+  projectRoot: string,
+  appName: string,
+): Promise<{ action: "created" | "overwritten" | "skipped"; filePath: string }> {
+  const filePath = join(projectRoot, WEB_CHANNEL_PATH);
+  const channelExists = await pathExists(filePath);
+  const existingChannel = channelExists ? await readFile(filePath, "utf8") : undefined;
+
+  // Exact equality is the ownership boundary: any user edit preserves the file.
+  if (existingChannel !== undefined && existingChannel !== DEFAULT_EVE_CHANNEL_TEMPLATE) {
+    return { action: "skipped", filePath };
+  }
+
+  await writeTextFile(
+    filePath,
+    renderWebAppTemplate(WEB_APP_TEMPLATE_FILES[WEB_CHANNEL_PATH], appName),
+    { force: true },
+  );
+  return { action: channelExists ? "overwritten" : "created", filePath };
+}
+
 /**
  * Ensure the Next.js web channel has a minimal `vercel.json`.
  *
@@ -471,8 +492,8 @@ export interface EnsureChannelOptions {
   /** When false, Web Chat leaves Vercel Services config unwritten for preview-only scaffolds. */
   configureVercelServices?: boolean;
   onWorkspaceRootMutation?: (mutation: WorkspaceRootMutation) => void | Promise<void>;
-  /** Dependencies are already owned and installed by a registry item. */
-  skipDependencyMutation?: boolean;
+  /** The channel's registry item already installed its files and dependencies. */
+  registryItemInstalled?: boolean;
 }
 
 export interface WebPackageVersions {
@@ -502,7 +523,11 @@ async function ensureWebChannel(
   const packageJsonPath = join(options.projectRoot, "package.json");
   const webEntryPath = join(options.projectRoot, "app/page.tsx");
   const webEntryAlreadyExists = await pathExists(webEntryPath);
-  if (!options.force && (await isNextJsProject(options.projectRoot))) {
+  if (
+    !options.registryItemInstalled &&
+    !options.force &&
+    (await isNextJsProject(options.projectRoot))
+  ) {
     return {
       kind: "web",
       action: "skipped",
@@ -522,7 +547,7 @@ async function ensureWebChannel(
     workspaceProbeRoot,
     webPackageVersions,
     options.onWorkspaceRootMutation,
-    !options.skipDependencyMutation,
+    !options.registryItemInstalled,
   );
   const filesWritten: string[] = [];
   const filesOverwritten: string[] = [];
@@ -550,7 +575,15 @@ async function ensureWebChannel(
   filesWritten.push(...packageManagerConfiguration.filesWritten);
   filesSkipped.push(...packageManagerConfiguration.filesSkipped);
 
-  if (!options.skipDependencyMutation) {
+  if (options.registryItemInstalled) {
+    const channel = await reconcileWebChannelAfterRegistryInstall(options.projectRoot, appName);
+    if (channel.action === "skipped") {
+      filesSkipped.push(channel.filePath);
+    } else {
+      filesWritten.push(channel.filePath);
+      if (channel.action === "overwritten") filesOverwritten.push(channel.filePath);
+    }
+  } else {
     for (const [relPath, content] of Object.entries(WEB_APP_TEMPLATE_FILES)) {
       const filePath = join(options.projectRoot, relPath);
       if (relPath === WEB_CHANNEL_PATH && !options.force && (await pathExists(filePath))) {
@@ -621,7 +654,7 @@ async function ensureSlackChannel(
   let envExampleRollback: { path: string; content?: string } | undefined;
 
   if (credentials === "vercel-connect") {
-    if (!options.skipDependencyMutation) {
+    if (!options.registryItemInstalled) {
       const connectPackageVersion = resolveVersionToken(
         "connectPackageVersion",
         options.connectPackageVersion ?? DEFAULT_CONNECT_PACKAGE_VERSION,

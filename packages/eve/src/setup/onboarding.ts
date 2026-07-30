@@ -195,7 +195,7 @@ export function composeOnboardingBoxes(options: OnboardingBoxesOptions): AnySetu
         // A failed slackbot must not abort onboarding: the agent still
         // scaffolds, deploys, and chats; Slack can be added later.
         slackbotFailure: "warn-and-continue",
-        skipDependencyMutation: true,
+        registryItemInstalled: true,
       }),
       addConnections({ prompter: options.prompter }),
     ].map(completeSetupOnly),

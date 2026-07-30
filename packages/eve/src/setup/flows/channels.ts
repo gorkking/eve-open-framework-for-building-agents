@@ -258,7 +258,7 @@ export async function runChannelsFlow(input: {
         state: { ...state, channelSelection: [pick] },
         ui: createChannelSetupUi({ asker: interactiveAsker(prompter), prompter }),
         signal,
-        skipDependencyMutation: true,
+        registryItemInstalled: true,
         deps: deps.addChannels,
       });
     } catch (error) {
