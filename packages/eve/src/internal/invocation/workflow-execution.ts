@@ -2,6 +2,7 @@ import type { UserContent } from "ai";
 import { RunExpiredError, WorkflowRunNotFoundError } from "#compiled/@workflow/errors/index.js";
 
 import type { SessionAuthContext } from "#channel/types.js";
+import { parseNdjsonStream } from "#execution/ndjson-stream.js";
 import type {
   AgentInvocation,
   AgentInvocationAuthorizationRequest,
@@ -19,7 +20,6 @@ import type { Agent } from "#public/definitions/channel.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import type { JsonObject, JsonValue } from "#shared/json.js";
 import { parseJsonValue } from "#shared/json.js";
-import { readNdjsonStream } from "#shared/ndjson.js";
 
 export class WorkflowAgentInvocationExecution implements AgentInvocationExecution {
   readonly #agent: Agent;
@@ -172,10 +172,17 @@ async function readRecentPersistedEvents(
   }
   const expectedEvents = Math.min(tailIndex + 1, INVOCATION_EVENT_WINDOW_SIZE);
 
+  const reader = parseNdjsonStream<HandleMessageStreamEvent>(() => readable).getReader();
   const events: HandleMessageStreamEvent[] = [];
-  for await (const event of readNdjsonStream<HandleMessageStreamEvent>(readable)) {
-    events.push(event);
-    if (events.length >= expectedEvents) break;
+  try {
+    while (events.length < expectedEvents) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      events.push(value);
+    }
+  } finally {
+    await reader.cancel("invocation event window read complete").catch(() => {});
+    reader.releaseLock();
   }
   return events;
 }
