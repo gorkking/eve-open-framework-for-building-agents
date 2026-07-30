@@ -1,4 +1,5 @@
 import type { MessageStreamEvent } from "#protocol/message.js";
+import { readNdjsonStream as readSharedNdjsonStream } from "#shared/ndjson.js";
 
 /**
  * Returns true when an error looks like a stream socket disconnection that
@@ -33,54 +34,8 @@ export function isStreamDisconnectError(error: unknown): boolean {
  * All read errors — including socket disconnections — propagate to the caller.
  * Use {@link isStreamDisconnectError} to classify them.
  */
-export async function* readNdjsonStream(
+export function readNdjsonStream(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<MessageStreamEvent> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let reachedEof = false;
-
-  try {
-    while (true) {
-      const result = await reader.read();
-
-      if (result.done) {
-        reachedEof = true;
-        // Flush any remaining bytes in the decoder.
-        buffer += decoder.decode();
-        break;
-      }
-
-      if (result.value) {
-        buffer += decoder.decode(result.value, { stream: true });
-      }
-
-      // Yield every complete line currently in the buffer.
-      let newlineIndex = buffer.indexOf("\n");
-      while (newlineIndex !== -1) {
-        const line = buffer.slice(0, newlineIndex).trim();
-        buffer = buffer.slice(newlineIndex + 1);
-
-        if (line.length > 0) {
-          yield JSON.parse(line) as MessageStreamEvent;
-        }
-
-        newlineIndex = buffer.indexOf("\n");
-      }
-    }
-
-    // Yield any trailing content without a final newline.
-    const trailing = buffer.trim();
-    if (trailing.length > 0) {
-      yield JSON.parse(trailing) as MessageStreamEvent;
-    }
-  } finally {
-    if (!reachedEof) {
-      // Breaking an async iteration must close the response body; releasing
-      // its lock alone leaves the server-side stream open.
-      await reader.cancel().catch(() => {});
-    }
-    reader.releaseLock();
-  }
+  return readSharedNdjsonStream<MessageStreamEvent>(body);
 }

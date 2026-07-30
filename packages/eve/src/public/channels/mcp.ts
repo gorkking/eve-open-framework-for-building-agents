@@ -37,6 +37,7 @@ import {
   readAgentInfoRouteResponse,
   readRouteAgent,
 } from "#internal/nitro/routes/channel-route-context.js";
+import { escapeAuthChallengeParameter } from "#shared/http-auth.js";
 
 export interface McpChannelInput {
   /** Existing eve route-auth policy. Use `none()` for explicit public access. */
@@ -245,11 +246,7 @@ function augmentBearerChallenge(
 
 function appendAuthParameter(challenge: string, name: string, value: string): string {
   const separator = challenge.trim().toLowerCase() === "bearer" ? " " : ", ";
-  return `${challenge}${separator}${name}="${escapeAuthParameter(value)}"`;
-}
-
-function escapeAuthParameter(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  return `${challenge}${separator}${name}="${escapeAuthChallengeParameter(value)}"`;
 }
 
 function hasAuthParameter(challenge: string, name: string, value?: string): boolean {

@@ -237,6 +237,56 @@ describe("WorkflowAgentInvocationExecution", () => {
     });
   });
 
+  it("does not project intermediate tool-call narration as a result", async () => {
+    runsGet.mockResolvedValue(run({ status: "running" }));
+    getReadable.mockReturnValue(
+      eventStream([
+        {
+          type: "message.completed",
+          data: {
+            finishReason: "tool-calls",
+            message: "I'll search for that.",
+            sequence: 0,
+            stepIndex: 0,
+            turnId: "turn_1",
+          },
+          meta: { at: "2026-07-20T00:00:00.000Z", id: "event_1" },
+        } as HandleMessageStreamEvent,
+      ]),
+    );
+
+    const invocation = await execution().read({ auth, invocationId: "wrun_invocation" });
+
+    expect(invocation).toMatchObject({ status: "working" });
+    expect(invocation?.result).toBeUndefined();
+  });
+
+  it("decodes a final persisted event without a trailing newline", async () => {
+    runsGet.mockResolvedValue(run({ status: "running" }));
+    getReadable.mockReturnValue(
+      eventStream(
+        [
+          {
+            type: "message.completed",
+            data: {
+              finishReason: "stop",
+              message: "Done.",
+              sequence: 0,
+              stepIndex: 0,
+              turnId: "turn_1",
+            },
+            meta: { at: "2026-07-20T00:00:00.000Z", id: "event_1" },
+          } as HandleMessageStreamEvent,
+        ],
+        { trailingNewline: false },
+      ),
+    );
+
+    await expect(
+      execution().read({ auth, invocationId: "wrun_invocation" }),
+    ).resolves.toMatchObject({ result: "Done.", status: "working" });
+  });
+
   it("uses workflow return value as terminal result", async () => {
     runsGet.mockResolvedValue(run({ status: "completed" }));
     getReadable.mockReturnValue(eventStream([{ type: "session.completed" }]));
@@ -278,9 +328,15 @@ function run(input: { status: string }) {
   };
 }
 
-function eventStream(events: readonly unknown[]): ReadableStream<Uint8Array> {
+function eventStream(
+  events: readonly unknown[],
+  options: { readonly trailingNewline?: boolean } = {},
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const chunks = events.map((event) => encoder.encode(`${JSON.stringify(event)}\n`));
+  const chunks = events.map((event, index) => {
+    const newline = options.trailingNewline === false && index === events.length - 1 ? "" : "\n";
+    return encoder.encode(`${JSON.stringify(event)}${newline}`);
+  });
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of chunks) controller.enqueue(chunk);

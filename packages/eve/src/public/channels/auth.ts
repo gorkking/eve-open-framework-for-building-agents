@@ -28,6 +28,7 @@ import {
   isRuntimeIpAllowed,
   type RuntimeIpAllowList,
 } from "#runtime/governance/network/ip-allow-list.js";
+import { escapeAuthChallengeParameter } from "#shared/http-auth.js";
 import { isLoopbackHostname } from "#shared/network-address.js";
 
 // ---------------------------------------------------------------------------
@@ -438,13 +439,9 @@ function formatChallenge(challenge: UnauthorizedChallenge): string {
     return challenge.scheme;
   }
   const renderedParameters = Object.entries(challenge.parameters)
-    .map(([key, value]) => `${key}="${escapeChallengeValue(value)}"`)
+    .map(([key, value]) => `${key}="${escapeAuthChallengeParameter(value)}"`)
     .join(", ");
   return `${challenge.scheme} ${renderedParameters}`;
-}
-
-function escapeChallengeValue(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
 function isValidOAuthIdentifierUrl(value: string): boolean {

@@ -19,6 +19,7 @@ import type { Agent } from "#public/definitions/channel.js";
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import type { JsonObject, JsonValue } from "#shared/json.js";
 import { parseJsonValue } from "#shared/json.js";
+import { readNdjsonStream } from "#shared/ndjson.js";
 
 export class WorkflowAgentInvocationExecution implements AgentInvocationExecution {
   readonly #agent: Agent;
@@ -171,24 +172,10 @@ async function readRecentPersistedEvents(
   }
   const expectedEvents = Math.min(tailIndex + 1, INVOCATION_EVENT_WINDOW_SIZE);
 
-  const reader = readable.getReader();
-  const decoder = new TextDecoder();
   const events: HandleMessageStreamEvent[] = [];
-  let buffer = "";
-  try {
-    while (events.length < expectedEvents) {
-      const next = await reader.read();
-      if (next.done) break;
-      buffer += decoder.decode(next.value, { stream: true });
-      for (let newline = buffer.indexOf("\n"); newline !== -1; newline = buffer.indexOf("\n")) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line.length > 0) events.push(JSON.parse(line) as HandleMessageStreamEvent);
-      }
-    }
-  } finally {
-    await reader.cancel("invocation event snapshot complete").catch(() => {});
-    reader.releaseLock();
+  for await (const event of readNdjsonStream<HandleMessageStreamEvent>(readable)) {
+    events.push(event);
+    if (events.length >= expectedEvents) break;
   }
   return events;
 }
@@ -230,7 +217,11 @@ function projectNonterminal(
       authorizations.set(event.data.name, authorization);
     } else if (event.type === "authorization.completed") {
       authorizations.delete(event.data.name);
-    } else if (event.type === "message.completed" && event.data.message !== null) {
+    } else if (
+      event.type === "message.completed" &&
+      event.data.finishReason !== "tool-calls" &&
+      event.data.message !== null
+    ) {
       result = safeJson(event.data.message);
     }
   }

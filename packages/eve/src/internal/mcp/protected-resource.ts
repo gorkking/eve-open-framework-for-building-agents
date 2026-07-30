@@ -1,3 +1,5 @@
+import { escapeAuthChallengeParameter } from "#shared/http-auth.js";
+
 export interface McpProtectedResourceMetadataOptions {
   readonly authorizationServers: readonly string[];
   readonly resource: string;
@@ -23,11 +25,9 @@ export function createMcpResourceChallenge(
   resourceMetadataUrl: string,
   scopes?: readonly string[],
 ): string {
-  const parameters = [`resource_metadata="${escapeChallenge(resourceMetadataUrl)}"`];
-  if (scopes?.length) parameters.push(`scope="${escapeChallenge(scopes.join(" "))}"`);
+  const parameters = [`resource_metadata="${escapeAuthChallengeParameter(resourceMetadataUrl)}"`];
+  if (scopes?.length) {
+    parameters.push(`scope="${escapeAuthChallengeParameter(scopes.join(" "))}"`);
+  }
   return `Bearer ${parameters.join(", ")}`;
-}
-
-function escapeChallenge(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
