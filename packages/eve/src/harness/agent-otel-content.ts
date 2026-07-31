@@ -22,15 +22,8 @@ const TRUNCATED_MESSAGES_KEY = "eve.truncated";
  */
 export function contentAttribute(value: unknown, strip = true): string | undefined {
   if (value === undefined) return undefined;
-  const prepared = strip ? stripContentNoise(value, 0) : value;
-  let json: string | undefined;
-  try {
-    json = JSON.stringify(prepared);
-  } catch {
-    return undefined;
-  }
-  if (json === undefined) return undefined;
-  return textContentAttribute(json);
+  const json = stringifyContent(strip ? stripContentNoise(value, 0) : value);
+  return json === undefined ? undefined : textContentAttribute(json);
 }
 
 /**

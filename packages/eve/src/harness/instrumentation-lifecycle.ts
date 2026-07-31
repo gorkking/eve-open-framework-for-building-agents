@@ -25,7 +25,6 @@ export interface InstrumentationAttemptStartedEvent {
 export interface InstrumentationSessionStartedEvent {
   readonly type: "session.started";
   readonly agentName?: string;
-  readonly channelKind?: string;
   readonly parentTraceContext?: InstrumentationTraceContext;
   readonly rootSessionId: string;
   readonly sessionId: string;

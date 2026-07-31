@@ -183,7 +183,6 @@ async function publishTurnStarted(input: {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
   await input.hooks.publish({
     agentName: "weather",
-    channelKind: "http",
     parentTraceContext: input.parentTraceContext,
     rootSessionId,
     sessionId: input.sessionId,
@@ -319,7 +318,6 @@ describe("createAgentOtelInstrumentation", () => {
     };
     await runtime.hooks.publish({
       agentName: "weather",
-      channelKind: "http",
       rootSessionId: "session-1",
       sessionId: "session-1",
       type: "session.started",

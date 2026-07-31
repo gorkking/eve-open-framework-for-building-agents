@@ -52,9 +52,20 @@ interface ToolSpanState extends SpanState {
 /** Sized so an ordinary session stays one trace and only an outsized one rolls. */
 export const SESSION_WINDOW_TURN_LIMIT = 200;
 
+/**
+ * What opening a session's trace state needs. A turn that arrives without a
+ * recorded session opens one from its own ids, so this is narrower than
+ * {@link InstrumentationSessionStartedEvent}.
+ */
+interface SessionContextInput {
+  readonly agentName?: string;
+  readonly parentTraceContext?: InstrumentationTraceContext;
+  readonly rootSessionId: string;
+  readonly sessionId: string;
+}
+
 export interface AgentSessionTraceState {
   readonly agentName?: string;
-  readonly channelKind?: string;
   readonly context: SpanContext;
   readonly rootSessionId: string;
   readonly turnsInWindow: number;
@@ -96,7 +107,7 @@ export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
   }
 
   deleteTurn(sessionId: string, turnId: string): void {
-    this.#turns.delete(turnKey(sessionId, turnId));
+    this.#turns.delete(agentTurnStateKey(sessionId, turnId));
   }
 
   getSession(sessionId: string): AgentSessionTraceState | undefined {
@@ -104,7 +115,7 @@ export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
   }
 
   getTurn(sessionId: string, turnId: string): AgentTurnTraceState | undefined {
-    return this.#turns.get(turnKey(sessionId, turnId));
+    return this.#turns.get(agentTurnStateKey(sessionId, turnId));
   }
 
   setSession(sessionId: string, state: AgentSessionTraceState): void {
@@ -112,7 +123,7 @@ export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
   }
 
   setTurn(sessionId: string, turnId: string, state: AgentTurnTraceState): void {
-    this.#turns.set(turnKey(sessionId, turnId), state);
+    this.#turns.set(agentTurnStateKey(sessionId, turnId), state);
   }
 }
 
@@ -139,10 +150,9 @@ export function createAgentOtelInstrumentation(
   input: AgentOtelInstrumentationInput,
 ): AgentOtelInstrumentation {
   const captureContent = input.captureContent ?? true;
-  const executionContexts = new WeakMap<
-    InstrumentationAttemptScope,
-    { readonly models: Map<string, Context>; readonly tools: Map<string, Context> }
-  >();
+  // Keyed by the operation id, which already encodes whether the operation is
+  // a model call or a tool call (see `ai-sdk-hook-bridge.ts`).
+  const executionContexts = new WeakMap<InstrumentationAttemptScope, Map<string, Context>>();
   // A serverless turn runs inside one `turnStep` "use step" invocation. If
   // that worker is lost, Workflow retries the whole step from entry rather
   // than resuming this callback sequence in a replacement process.
@@ -156,12 +166,9 @@ export function createAgentOtelInstrumentation(
     const session = advanceSessionWindow(
       event.sessionId,
       await ensureSessionContext({
-        agentName: undefined,
-        channelKind: undefined,
         parentTraceContext: event.parentTraceContext,
         rootSessionId: event.rootSessionId,
         sessionId: event.sessionId,
-        type: "session.started",
       }),
     );
     const span = input.tracer.startSpan(
@@ -323,12 +330,12 @@ export function createAgentOtelInstrumentation(
       if (system !== undefined) span.setAttribute("ai.prompt.system", system);
     }
     const state = { context: trace.setSpan(attempt.operation.context, span), span };
-    getExecutionContexts(event.scope).models.set(event.id, state.context);
+    executionContextsFor(event.scope).set(event.id, state.context);
     return state;
   };
 
   const afterModelCall = (event: InstrumentationModelCallTerminalEvent, state: unknown): void => {
-    executionContexts.get(event.scope)?.models.delete(event.id);
+    executionContexts.get(event.scope)?.delete(event.id);
     if (!isSpanState(state)) return;
     if (event.type === "model.call.failed") {
       recordError(state.span, event.error);
@@ -423,12 +430,12 @@ export function createAgentOtelInstrumentation(
       span: actionSpan,
       toolSpan,
     };
-    getExecutionContexts(event.scope).tools.set(event.id, state.context);
+    executionContextsFor(event.scope).set(event.id, state.context);
     return state;
   };
 
   const afterToolCall = (event: InstrumentationToolCallTerminalEvent, state: unknown): void => {
-    executionContexts.get(event.scope)?.tools.delete(event.id);
+    executionContexts.get(event.scope)?.delete(event.id);
     if (!isToolSpanState(state)) return;
     if (event.type === "tool.call.failed") {
       recordError(state.toolSpan, event.error);
@@ -473,13 +480,12 @@ export function createAgentOtelInstrumentation(
   };
 
   const ensureSessionContext = async (
-    event: InstrumentationSessionStartedEvent,
+    event: SessionContextInput,
   ): Promise<AgentSessionTraceState> => {
     let state = await input.stateStore.getSession(event.sessionId);
     if (state === undefined) {
       state = {
         agentName: event.agentName,
-        channelKind: event.channelKind,
         context:
           event.parentTraceContext === undefined
             ? openSessionWindow({
@@ -551,30 +557,27 @@ export function createAgentOtelInstrumentation(
       },
     },
     runInContext(operation, execute) {
-      const contexts = executionContexts.get(operation.scope);
-      const parent =
-        operation.type === "model.call"
-          ? contexts?.models.get(operation.id)
-          : contexts?.tools.get(operation.id);
+      const parent = executionContexts.get(operation.scope)?.get(operation.id);
       return parent === undefined ? execute() : context.with(parent, execute);
     },
   };
 
-  function getExecutionContexts(scope: InstrumentationAttemptScope): {
-    readonly models: Map<string, Context>;
-    readonly tools: Map<string, Context>;
-  } {
-    let state = executionContexts.get(scope);
-    if (state === undefined) {
-      state = { models: new Map(), tools: new Map() };
-      executionContexts.set(scope, state);
+  function executionContextsFor(scope: InstrumentationAttemptScope): Map<string, Context> {
+    let contexts = executionContexts.get(scope);
+    if (contexts === undefined) {
+      contexts = new Map();
+      executionContexts.set(scope, contexts);
     }
-    return state;
+    return contexts;
   }
 }
 
-function turnKey(sessionId: string, turnId: string): string {
-  return `${sessionId}:${turnId}`;
+/**
+ * Composite key for one turn's trace state. `\0` separates the parts because
+ * it cannot occur in either id, so no pair of ids can collide.
+ */
+export function agentTurnStateKey(sessionId: string, turnId: string): string {
+  return `${sessionId}\0${turnId}`;
 }
 
 function parentLineageAttributes(

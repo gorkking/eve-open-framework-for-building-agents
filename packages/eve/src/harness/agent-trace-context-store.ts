@@ -7,6 +7,7 @@ import type {
   AgentTraceStateStore,
   AgentTurnTraceState,
 } from "#harness/agent-otel-provider.js";
+import { agentTurnStateKey } from "#harness/agent-otel-provider.js";
 
 interface AgentTraceContextState {
   readonly sessions: Readonly<Record<string, AgentSessionTraceState>>;
@@ -58,7 +59,7 @@ export class ContextAgentTraceStateStore implements AgentTraceStateStore {
   deleteTurn(sessionId: string, turnId: string): void {
     updateState((state) => {
       const turns = { ...state.turns };
-      delete turns[turnKey(sessionId, turnId)];
+      delete turns[agentTurnStateKey(sessionId, turnId)];
       return { ...state, turns };
     });
   }
@@ -68,7 +69,9 @@ export class ContextAgentTraceStateStore implements AgentTraceStateStore {
   }
 
   getTurn(sessionId: string, turnId: string): AgentTurnTraceState | undefined {
-    return contextStorage.getStore()?.get(AgentTraceContextKey)?.turns[turnKey(sessionId, turnId)];
+    return contextStorage.getStore()?.get(AgentTraceContextKey)?.turns[
+      agentTurnStateKey(sessionId, turnId)
+    ];
   }
 
   setSession(sessionId: string, value: AgentSessionTraceState): void {
@@ -81,17 +84,13 @@ export class ContextAgentTraceStateStore implements AgentTraceStateStore {
   setTurn(sessionId: string, turnId: string, value: AgentTurnTraceState): void {
     updateState((state) => ({
       ...state,
-      turns: { ...state.turns, [turnKey(sessionId, turnId)]: value },
+      turns: { ...state.turns, [agentTurnStateKey(sessionId, turnId)]: value },
     }));
   }
 }
 
 function updateState(update: (state: AgentTraceContextState) => AgentTraceContextState): void {
   loadContext().set(AgentTraceContextKey, (state) => update(state ?? { sessions: {}, turns: {} }));
-}
-
-function turnKey(sessionId: string, turnId: string): string {
-  return `${sessionId}\0${turnId}`;
 }
 
 function serializeState(state: AgentTraceContextState): unknown {
@@ -127,7 +126,6 @@ function deserializeState(data: unknown): AgentTraceContextState {
     if (!isRecord(value) || !isSpanContext(value.context)) return undefined;
     return {
       agentName: typeof value.agentName === "string" ? value.agentName : undefined,
-      channelKind: typeof value.channelKind === "string" ? value.channelKind : undefined,
       context: value.context,
       rootSessionId: typeof value.rootSessionId === "string" ? value.rootSessionId : "",
       turnsInWindow: typeof value.turnsInWindow === "number" ? value.turnsInWindow : 0,
