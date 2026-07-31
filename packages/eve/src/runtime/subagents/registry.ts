@@ -3,6 +3,7 @@ import { z } from "#compiled/zod/index.js";
 import { RuntimeRegistry, RuntimeRegistryError } from "#internal/runtime-registry.js";
 import type { PreparedRuntimeDelegationTool } from "#runtime/sessions/turn.js";
 import type { ResolvedRuntimeDelegationNode } from "#runtime/types.js";
+import type { JsonObject } from "#shared/json.js";
 import { serializeInputSchema } from "#shared/tool-schema.js";
 
 /**
@@ -40,16 +41,49 @@ export const SUBAGENT_TOOL_INPUT_SCHEMA = z.strictObject({
     .optional(),
 });
 
+/**
+ * Extended subagent tool input schema for agents that opt into
+ * `experimental.subagentPersistentSessions`: adds the `agentId` field the
+ * model uses to continue a previous delegation.
+ */
+export const PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA = SUBAGENT_TOOL_INPUT_SCHEMA.extend({
+  agentId: z
+    .string()
+    .nullable()
+    .describe(
+      "Only pass this to continue a previous delegation: the id of an agent from the <agents> list. To start a new agent — the common case — omit this field entirely (or pass null or an empty string).",
+    )
+    .optional(),
+});
+
 const SUBAGENT_TOOL_INPUT_JSON_SCHEMA = serializeInputSchema(SUBAGENT_TOOL_INPUT_SCHEMA);
+
+const PERSISTENT_SUBAGENT_TOOL_INPUT_JSON_SCHEMA = serializeInputSchema(
+  PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA,
+);
+
+/** Selects the serialized subagent tool input schema for one agent's opt-in state. */
+export function getSubagentToolInputJsonSchema(persistentSessions: boolean): JsonObject {
+  return persistentSessions
+    ? PERSISTENT_SUBAGENT_TOOL_INPUT_JSON_SCHEMA
+    : SUBAGENT_TOOL_INPUT_JSON_SCHEMA;
+}
 
 /**
  * Builds the runtime-owned registry for the resolved subagents visible from one
  * runtime agent node.
  */
 export function createRuntimeSubagentRegistry(input: {
+  /**
+   * Whether the owning agent opted into
+   * `experimental.subagentPersistentSessions`. Adds the model-visible
+   * `agentId` continuation field to every lowered subagent tool schema.
+   */
+  readonly persistentSessions?: boolean;
   readonly reservedToolNames?: readonly string[];
   readonly subagents: readonly ResolvedRuntimeDelegationNode[];
 }): RuntimeSubagentRegistry {
+  const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions === true);
   const preparedTools: PreparedRuntimeDelegationTool[] = [];
   const registry = new RuntimeRegistry<RuntimeRegisteredSubagent>(
     "subagent",
@@ -71,7 +105,7 @@ export function createRuntimeSubagentRegistry(input: {
       );
     }
 
-    const prepared = createPreparedRuntimeSubagentTool(subagentDefinition);
+    const prepared = createPreparedRuntimeSubagentTool(subagentDefinition, inputSchema);
     const registeredSubagent: RuntimeRegisteredSubagent = {
       definition: subagentDefinition,
       prepared,
@@ -96,10 +130,11 @@ export function createRuntimeSubagentRegistry(input: {
 
 function createPreparedRuntimeSubagentTool(
   definition: ResolvedRuntimeDelegationNode,
+  inputSchema: JsonObject,
 ): PreparedRuntimeDelegationTool {
   return {
     description: definition.description,
-    inputSchema: SUBAGENT_TOOL_INPUT_JSON_SCHEMA,
+    inputSchema,
     kind: definition.kind,
     logicalPath: definition.logicalPath,
     name: definition.name,

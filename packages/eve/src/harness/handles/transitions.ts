@@ -60,7 +60,7 @@ export type PrepareAgentContinuationResult =
  * commit before the delivery side effect runs.
  *
  * `unknown`, `mismatch`, and `busy` do not change the session; the caller
- * maps them onto `AGENT_UNKNOWN`, `AGENT_MISMATCH`, and `AGENT_BUSY`
+ * maps them onto `AGENT_UNREACHABLE`, `AGENT_MISMATCH`, and `AGENT_BUSY`
  * results. Replaying the operation already recorded on a running handle
  * returns `ready` with the unchanged session.
  */
