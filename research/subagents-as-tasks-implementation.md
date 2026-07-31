@@ -194,4 +194,4 @@ deliberately; they get their own plans if anything nontrivial surfaces.
    carrying an error must be decided when `TaskOutput` lands in stage 1, since the transition
    function encodes it.
 
-[subagents-as-tasks design]: https://github.com/vercel/eve/pull/1482
+[subagents-as-tasks design]: ./tools-as-tasks.md
