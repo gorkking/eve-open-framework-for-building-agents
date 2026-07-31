@@ -1,17 +1,11 @@
 import {
-  createDockerSandboxEngine,
-  createJustBashSandboxEngine,
-  createMicrosandboxSandboxEngine,
   isDockerDaemonAvailableSync,
   isMicrosandboxPlatformSupported,
 } from "#execution/sandbox/bindings/local.js";
-import { createVercelSandbox } from "#execution/sandbox/bindings/vercel.js";
-import { lazyEngine } from "#execution/sandbox/lazy-engine.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
 import type { JustBashSandboxCreateOptions } from "#public/sandbox/just-bash-sandbox.js";
 import type { MicrosandboxSandboxCreateOptions } from "#public/sandbox/microsandbox-sandbox.js";
 import type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.js";
-import type { SandboxEngine } from "#shared/sandbox-engine.js";
 
 /**
  * Per-provider options used when `DefaultSandbox` selects an available
@@ -36,24 +30,23 @@ const PRODUCTION_PROBES: DefaultSandboxProbes = {
   isMicrosandboxSupported: () => isMicrosandboxPlatformSupported(),
 };
 
-export function createDefaultSandboxEngine(options?: DefaultSandboxOptions): SandboxEngine {
-  return lazyEngine(() => selectDefaultSandboxEngine(options, PRODUCTION_PROBES));
+export type DefaultSandboxProviderName = "docker" | "just-bash" | "microsandbox" | "vercel";
+
+export function selectAvailableDefaultSandboxProvider(): DefaultSandboxProviderName {
+  return selectDefaultSandboxProvider(PRODUCTION_PROBES);
 }
 
-export function selectDefaultSandboxEngine(
-  options: DefaultSandboxOptions | undefined,
+export function selectDefaultSandboxProvider(
   probes: DefaultSandboxProbes,
-): SandboxEngine {
+): DefaultSandboxProviderName {
   if (probes.isDeployedOnVercel()) {
-    return createVercelSandbox({ createOptions: options?.vercel });
+    return "vercel";
   }
   if (probes.isDockerAvailable()) {
-    return createDockerSandboxEngine({ createOptions: options?.docker });
+    return "docker";
   }
   if (probes.isMicrosandboxSupported()) {
-    return createMicrosandboxSandboxEngine({
-      createOptions: options?.microsandbox,
-    });
+    return "microsandbox";
   }
-  return createJustBashSandboxEngine({ createOptions: options?.justBash });
+  return "just-bash";
 }

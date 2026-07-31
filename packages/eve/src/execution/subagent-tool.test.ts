@@ -334,10 +334,6 @@ describe("buildSubagentRunInput", () => {
     const rootSandboxState = createSandboxState();
     const parentSandboxState = {
       ...createSandboxState(),
-      owner: {
-        nodeId: "reviewer",
-        sessionId: "parent-child-session",
-      },
       root: rootSandboxState,
       value: {
         adapterId: "test-adapter",
@@ -364,10 +360,6 @@ describe("buildSubagentRunInput", () => {
 
 function createSandboxState() {
   return {
-    owner: {
-      nodeId: "__root__",
-      sessionId: "parent-session",
-    },
     revision: "sandbox-revision",
     value: {
       adapterId: "test-adapter",

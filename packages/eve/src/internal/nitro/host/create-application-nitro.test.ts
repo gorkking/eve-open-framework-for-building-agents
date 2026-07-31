@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldPruneLocalSandboxEngines } from "#internal/nitro/host/create-application-nitro.js";
+import { shouldPruneLocalSandboxProviders } from "#internal/nitro/host/create-application-nitro.js";
 
-describe("shouldPruneLocalSandboxEngines", () => {
-  it("prunes local engines when no authored definition can select one", () => {
+describe("shouldPruneLocalSandboxProviders", () => {
+  it("prunes local providers when no authored definition can select one", () => {
     expect(
-      shouldPruneLocalSandboxEngines({
+      shouldPruneLocalSandboxProviders({
         configuredProviders: new Set(),
         preset: "vercel",
       }),
@@ -15,7 +15,7 @@ describe("shouldPruneLocalSandboxEngines", () => {
   it("keeps local backends when a local backend is configured explicitly", () => {
     for (const provider of ["docker", "microsandbox", "just-bash"]) {
       expect(
-        shouldPruneLocalSandboxEngines({
+        shouldPruneLocalSandboxProviders({
           configuredProviders: new Set([provider]),
           preset: "vercel",
         }),
@@ -25,7 +25,7 @@ describe("shouldPruneLocalSandboxEngines", () => {
 
   it("still prunes local backends when only Vercel or custom backends are configured", () => {
     expect(
-      shouldPruneLocalSandboxEngines({
+      shouldPruneLocalSandboxProviders({
         configuredProviders: new Set(["vercel", "custom"]),
         preset: "vercel",
       }),
@@ -34,7 +34,7 @@ describe("shouldPruneLocalSandboxEngines", () => {
 
   it("does not prune local backends for non-Vercel presets", () => {
     expect(
-      shouldPruneLocalSandboxEngines({
+      shouldPruneLocalSandboxProviders({
         configuredProviders: new Set(),
         preset: undefined,
       }),

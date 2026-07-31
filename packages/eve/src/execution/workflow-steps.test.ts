@@ -340,12 +340,11 @@ describe("dispatchRuntimeActionsStep", () => {
   it("materializes and captures the parent sandbox before starting a local child", async () => {
     const parentSandboxHandle = mockSandbox({ id: "parent-sandbox" });
     dispatchTestSandboxHandles.set(parentSandboxHandle.session.id, parentSandboxHandle);
-    const parentSandbox = asDispatchTestSandbox(parentSandboxHandle);
     const compiledArtifactsSource = createBundledRuntimeCompiledArtifactsSource();
     const sandboxRegistry = {
       sandbox: {
         definition: {
-          definition: () => parentSandbox,
+          definition: () => asDispatchTestSandbox(parentSandboxHandle),
           logicalPath: "agent/sandbox.ts",
           sourceHash: "parent-sandbox-source",
           sourceId: "agent/sandbox",
@@ -423,10 +422,6 @@ describe("dispatchRuntimeActionsStep", () => {
     });
 
     const expectedSandboxState = {
-      owner: {
-        nodeId: "__root__",
-        sessionId: "parent-session",
-      },
       revision: expect.any(String),
       value: {
         adapterId: "eve/dispatch-test-sandbox",

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createJustBashSandboxEngine } from "#execution/sandbox/bindings/just-bash.js";
+import { createJustBashSandboxProvider } from "#execution/sandbox/bindings/just-bash.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 
 // Simulate an application that configured the just-bash provider without
@@ -14,15 +14,17 @@ const createScratchDirectory = useTemporaryDirectories();
 describe("just-bash provider without the optional dependency installed", () => {
   it("fails with an actionable install hint outside eve dev", async () => {
     const appRoot = await createScratchDirectory("eve-just-bash-missing-");
-    const provider = createJustBashSandboxEngine();
+    const provider = createJustBashSandboxProvider();
 
     // Outside `eve dev` (no EVE_DEV flag) the loader must not attempt a
     // package-manager install — it fails actionably instead.
     await expect(
       provider.create({
-        context: { appRoot },
-        sessionKey: "session-missing-dependency",
-        templateKey: null,
+        context: {
+          appRoot,
+          resourceId: "session-missing-dependency",
+          signal: new AbortController().signal,
+        },
       }),
     ).rejects.toThrow(/pnpm add -D just-bash/);
   });
@@ -31,13 +33,15 @@ describe("just-bash provider without the optional dependency installed", () => {
     vi.stubEnv("EVE_DEV", "1");
     try {
       const appRoot = await createScratchDirectory("eve-just-bash-no-autoinstall-");
-      const provider = createJustBashSandboxEngine({ createOptions: { autoInstall: false } });
+      const provider = createJustBashSandboxProvider({ createOptions: { autoInstall: false } });
 
       await expect(
         provider.create({
-          context: { appRoot },
-          sessionKey: "session-no-autoinstall",
-          templateKey: null,
+          context: {
+            appRoot,
+            resourceId: "session-no-autoinstall",
+            signal: new AbortController().signal,
+          },
         }),
       ).rejects.toThrow(/pnpm add -D just-bash/);
     } finally {

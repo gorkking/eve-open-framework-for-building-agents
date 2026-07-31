@@ -33,11 +33,9 @@ describe("withVirtualContextValue", () => {
     expect(context.has(TestScopeKey)).toBe(false);
   });
 
-  it("creates one unified context when called outside an active scope", async () => {
-    await withVirtualContextValue(TestScopeKey, "standalone", async () => {
-      expect(contextStorage.getStore()?.get(TestScopeKey)).toBe("standalone");
-    });
-
-    expect(contextStorage.getStore()).toBeUndefined();
+  it("rejects calls outside an active eve context", async () => {
+    await expect(
+      withVirtualContextValue(TestScopeKey, "standalone", async () => {}),
+    ).rejects.toThrow(/No active eve context/);
   });
 });

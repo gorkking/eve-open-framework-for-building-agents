@@ -184,6 +184,8 @@ export default defineSandbox(({ session }) => {
 
 Both eve sessions persist their own handle to the same provider sandbox. They see the same files and processes, and their commands can race, so do not use this shape when credentials or network policies must differ.
 
+eve shutdown hooks may stop active compute, but they never delete durable provider state. Provider retention and deletion remain explicit provider or application operations, including when a child returns an ancestor sandbox.
+
 A child can deliberately return its parent's exact durable sandbox:
 
 ```ts title="agent/subagents/reviewer/sandbox.ts"
@@ -252,7 +254,7 @@ Provider packages create and adapt native handles with `defineSandboxAdapter`. e
 import { defineSandboxAdapter } from "eve/sandbox/provider";
 
 const asDevboxSandbox = defineSandboxAdapter<Devbox, { id: string }>({
-  type: "example.com/devbox",
+  type: "example.com/devbox/v1",
   reference(devbox) {
     return { id: devbox.id };
   },
@@ -286,7 +288,7 @@ export default defineSandbox(({ session }) =>
 `adapter.create()` supplies eve's stable resource id, cancellation signal, app root, and resource tags to provider implementation code. App definitions never forward that framework bookkeeping.
 The serialized provider reference must keep identifying the same durable resource. Providers that rotate snapshots or checkpoints keep the latest checkpoint behind that identity instead of invalidating handles already held by a parent or child session.
 
-A provider that supports build prewarming can additionally expose a template using `defineSandboxTemplate` from `eve/sandbox/provider`. Its `prewarm({ appRoot, assets, hydrate, log, templateId })` implementation returns a JSON-serializable provider reference; its `create({ options, reference })` implementation returns a durable `Sandbox`. References are scoped to the active definition invocation, so one immutable template value can be used safely by concurrent sessions.
+A provider that supports build prewarming can additionally expose a template using `defineSandboxTemplate` from `eve/sandbox/provider`. The template supplies its own stable, versioned `type`, such as `"example.com/devbox-template/v1"`. Its `prewarm({ appRoot, assets, hydrate, log, templateId })` implementation returns a JSON-serializable provider reference; its `create({ options, reference })` implementation returns a durable `Sandbox`. References are scoped to the active definition invocation, so one immutable template value can be used safely by concurrent sessions.
 
 ## Network policy
 

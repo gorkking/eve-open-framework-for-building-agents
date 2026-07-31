@@ -2,18 +2,9 @@ import { parseJsonValue } from "#shared/json.js";
 import type { Sandbox, SerializedSandbox } from "#shared/sandbox-value.js";
 
 /**
- * Owner of one durable sandbox value.
- */
-export interface SandboxOwner {
-  readonly nodeId: string;
-  readonly sessionId: string;
-}
-
-/**
  * Serializable sandbox value stored on the durable eve session.
  */
 export interface SandboxStateValue {
-  readonly owner: SandboxOwner;
   readonly revision: string;
   readonly value: SerializedSandbox;
 }
@@ -31,13 +22,8 @@ export function isSandboxStateValue(value: unknown): value is SandboxStateValue 
   }
 
   const state = value as Partial<SandboxStateValue>;
-  const owner = state.owner;
   const sandbox = state.value;
   if (
-    owner === null ||
-    typeof owner !== "object" ||
-    typeof owner.nodeId !== "string" ||
-    typeof owner.sessionId !== "string" ||
     typeof state.revision !== "string" ||
     sandbox === null ||
     typeof sandbox !== "object" ||

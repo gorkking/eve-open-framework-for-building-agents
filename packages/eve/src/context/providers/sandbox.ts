@@ -29,6 +29,7 @@ export const sandboxProvider: FrameworkContextProvider<SandboxAccess> = {
     return {
       value: await ensureSandboxAccess({
         compiledArtifactsSource: bundle.compiledArtifactsSource,
+        context: ctx,
         nodeId: node.nodeId,
         parentState,
         registry,

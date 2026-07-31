@@ -8,7 +8,7 @@ import { buildSandboxSession } from "#execution/sandbox/session.js";
 import type { JsonObject } from "#shared/json.js";
 import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
 import type { InternalSandboxSession } from "#shared/sandbox-session.js";
-import { SandboxResourceUnavailableError } from "#shared/sandbox-engine.js";
+import { SandboxResourceUnavailableError } from "#shared/sandbox-errors.js";
 
 interface LocalFilesystemHandle {
   readonly device: number;
@@ -23,7 +23,7 @@ interface LocalFilesystemReference extends JsonObject {
 }
 
 const adaptLocalFilesystem = defineSandboxAdapter<LocalFilesystemHandle, LocalFilesystemReference>({
-  type: "eve/local-filesystem-sandbox",
+  type: "eve/local-filesystem-sandbox/v1",
   reference(handle) {
     return {
       device: handle.device,

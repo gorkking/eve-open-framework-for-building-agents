@@ -13,36 +13,16 @@ import type {
   SandboxSpawnOptions,
   SandboxWriteFileOptions,
 } from "#shared/sandbox-session.js";
-import type { SandboxEngineHandle } from "#shared/sandbox-engine.js";
-import type { JsonObject } from "#shared/json.js";
+import type { SandboxSession } from "#shared/sandbox-session.js";
 
-export function createVercelSandboxHandle(
+export function createVercelSandboxSession(
   sandbox: VercelSandbox,
   sessionKey: string,
-  configuration: JsonObject,
-): SandboxEngineHandle {
-  return {
-    session: buildSandboxSession(
-      createVercelInternalSandboxSession(sandbox, sessionKey),
-      createVercelNetworkPolicySetter(sandbox),
-    ),
-    async captureState() {
-      return {
-        configuration,
-        provider: "vercel",
-        metadata: {
-          sandboxCreatedAt: sandbox.createdAt.toISOString(),
-          sandboxName: sandbox.name,
-        },
-        sessionKey,
-      };
-    },
-    // Session sandboxes are persistent, so the SDK resumes a stopped
-    // sandbox on the next command after reattach.
-    async shutdown() {
-      await stopVercelSandbox(sandbox);
-    },
-  };
+): SandboxSession {
+  return buildSandboxSession(
+    createVercelInternalSandboxSession(sandbox, sessionKey),
+    createVercelNetworkPolicySetter(sandbox),
+  );
 }
 
 export function createVercelNetworkPolicySetter(
@@ -96,7 +76,7 @@ export function createVercelInternalSandboxSession(
   };
 }
 
-async function stopVercelSandbox(sandbox: VercelSandbox): Promise<void> {
+export async function stopVercelSandbox(sandbox: VercelSandbox): Promise<void> {
   if (sandbox.status !== "running" && sandbox.status !== "pending") {
     return;
   }

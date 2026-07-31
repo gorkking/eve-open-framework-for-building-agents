@@ -1,15 +1,11 @@
-import { randomUUID } from "node:crypto";
-
 import { describe, expect, it, vi } from "vitest";
 
+import { ContextContainer, contextStorage } from "#context/container.js";
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import {
   defineSandboxTemplate,
   getSandboxTemplateInternal,
-  hasSandboxTemplateReference,
   isSandboxTemplate,
-  readSandboxTemplateReference,
-  recordSandboxTemplateReference,
   withSandboxTemplateBindings,
 } from "#shared/sandbox-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
@@ -19,6 +15,7 @@ describe("defineSandboxTemplate", () => {
     const sandbox = mockSandbox();
     const create = vi.fn(() => sandbox.session as Sandbox);
     const template = defineSandboxTemplate<{ snapshotId: string }, { resources: number }>({
+      type: "test.dev/template-reference/v1",
       async prewarm() {
         return { snapshotId: "snapshot_123" };
       },
@@ -31,9 +28,12 @@ describe("defineSandboxTemplate", () => {
     const internal = getSandboxTemplateInternal(template);
 
     await expect(
-      withSandboxTemplateBindings(
-        new Map([[internal, { snapshotId: "snapshot_123" }]]),
-        async () => await template.create({ resources: 2 }),
+      withTestContext(
+        async () =>
+          await withSandboxTemplateBindings(
+            new Map([[internal, { snapshotId: "snapshot_123" }]]),
+            async () => await template.create({ resources: 2 }),
+          ),
       ),
     ).resolves.toBe(sandbox.session);
     expect(create).toHaveBeenCalledWith({
@@ -47,6 +47,7 @@ describe("defineSandboxTemplate", () => {
     const createTemplate = (revision: { image: string; pullPolicy: string }) =>
       defineSandboxTemplate({
         revision,
+        type: "test.dev/template-revision/v1",
         async prewarm() {
           return { image: "built" };
         },
@@ -69,9 +70,28 @@ describe("defineSandboxTemplate", () => {
     expect(changed.implementationId).not.toBe(first.implementationId);
   });
 
+  it("includes the provider protocol in its private implementation identity", () => {
+    const createTemplate = (type: string) =>
+      defineSandboxTemplate({
+        type,
+        async prewarm() {
+          return { image: "built" };
+        },
+        async create() {
+          return mockSandbox().session as Sandbox;
+        },
+      });
+
+    const first = getSandboxTemplateInternal(createTemplate("test.dev/template/v1"));
+    const changed = getSandboxTemplateInternal(createTemplate("test.dev/template/v2"));
+
+    expect(changed.implementationId).not.toBe(first.implementationId);
+  });
+
   it("scopes references to concurrent definition invocations", async () => {
     const seen: string[] = [];
     const template = defineSandboxTemplate<{ snapshotId: string }, undefined>({
+      type: "test.dev/concurrent-template/v1",
       async prewarm() {
         return { snapshotId: "unused" };
       },
@@ -84,13 +104,19 @@ describe("defineSandboxTemplate", () => {
     const internal = getSandboxTemplateInternal(template);
 
     const [first, second] = await Promise.all([
-      withSandboxTemplateBindings(
-        new Map([[internal, { snapshotId: "snapshot-a" }]]),
-        async () => await template.create(undefined),
+      withTestContext(
+        async () =>
+          await withSandboxTemplateBindings(
+            new Map([[internal, { snapshotId: "snapshot-a" }]]),
+            async () => await template.create(undefined),
+          ),
       ),
-      withSandboxTemplateBindings(
-        new Map([[internal, { snapshotId: "snapshot-b" }]]),
-        async () => await template.create(undefined),
+      withTestContext(
+        async () =>
+          await withSandboxTemplateBindings(
+            new Map([[internal, { snapshotId: "snapshot-b" }]]),
+            async () => await template.create(undefined),
+          ),
       ),
     ]);
 
@@ -99,13 +125,31 @@ describe("defineSandboxTemplate", () => {
     expect(seen).toEqual(expect.arrayContaining(["snapshot-a", "snapshot-b"]));
   });
 
-  it("distinguishes a captured null reference from no captured reference", () => {
-    const templateKey = `nullable-template-${randomUUID()}`;
+  it("supports a JSON null provider reference without process-global state", async () => {
+    const template = defineSandboxTemplate<null, undefined>({
+      type: "test.dev/nullable-template/v1",
+      async prewarm() {
+        return null;
+      },
+      async create({ reference }) {
+        expect(reference).toBeNull();
+        return mockSandbox().session as Sandbox;
+      },
+    });
+    const internal = getSandboxTemplateInternal(template);
 
-    expect(hasSandboxTemplateReference(templateKey)).toBe(false);
-    recordSandboxTemplateReference(templateKey, null);
-
-    expect(hasSandboxTemplateReference(templateKey)).toBe(true);
-    expect(readSandboxTemplateReference(templateKey)).toBeNull();
+    await expect(
+      withTestContext(
+        async () =>
+          await withSandboxTemplateBindings(
+            new Map([[internal, null]]),
+            async () => await template.create(undefined),
+          ),
+      ),
+    ).resolves.toBeDefined();
   });
 });
+
+async function withTestContext<T>(callback: () => Promise<T>): Promise<T> {
+  return await contextStorage.run(new ContextContainer(), callback);
+}

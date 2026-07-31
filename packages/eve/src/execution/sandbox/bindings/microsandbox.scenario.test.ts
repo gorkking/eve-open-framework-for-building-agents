@@ -6,10 +6,13 @@ import { describe, expect, it } from "vitest";
 
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 import {
-  createMicrosandboxSandboxEngine,
+  createMicrosandboxSandboxProvider,
   pruneMicrosandboxTemplates,
+  referenceMicrosandboxResource,
 } from "#execution/sandbox/bindings/microsandbox.js";
+import { writeSandboxSeedFiles } from "#execution/sandbox/bindings/local-workspace-utils.js";
 import { isMicrosandboxPlatformSupported } from "#execution/sandbox/bindings/microsandbox-platform.js";
+import type { SandboxProviderContext } from "#shared/sandbox-value.js";
 
 // Microsandbox is unsupported on Windows (native bindings ship for
 // macOS Apple Silicon and glibc Linux only), so every suite in this
@@ -32,21 +35,28 @@ async function createTemporaryCacheDirectory(label: string): Promise<string> {
   return await createScratchDirectory(`eve-microsandbox-${label}-`);
 }
 
+function providerContext(appRoot: string, resourceId: string): SandboxProviderContext {
+  return {
+    appRoot,
+    resourceId,
+    signal: new AbortController().signal,
+  };
+}
+
 async function createPrewarmedHandle(input: {
   readonly appRoot: string;
   readonly sessionKey: string;
   readonly templateKey: string;
 }) {
-  const provider = createMicrosandboxSandboxEngine();
-  await provider.prepare({
-    context: { appRoot: input.appRoot },
-    seedFiles: [],
-    templateKey: input.templateKey,
+  const provider = createMicrosandboxSandboxProvider();
+  const template = await provider.prewarm({
+    appRoot: input.appRoot,
+    async prepare() {},
+    templateId: input.templateKey,
   });
   return await provider.create({
-    context: { appRoot: input.appRoot },
-    sessionKey: input.sessionKey,
-    templateKey: input.templateKey,
+    context: providerContext(input.appRoot, input.sessionKey),
+    template,
   });
 }
 
@@ -170,38 +180,34 @@ describe.runIf(runMicrosandboxVmScenarios)("microsandbox sandbox file API", () =
 
   it("preserves files across capture and reconnect", async () => {
     const appRoot = await createTemporaryCacheDirectory("file-api");
-    const provider = createMicrosandboxSandboxEngine();
+    const provider = createMicrosandboxSandboxProvider();
 
-    await provider.prepare({
-      context: { appRoot },
-      seedFiles: [],
-      templateKey: "tpl-reconnect",
+    const template = await provider.prewarm({
+      appRoot,
+      async prepare() {},
+      templateId: "tpl-reconnect",
     });
 
     const firstHandle = await provider.create({
-      context: { appRoot },
-      sessionKey: "session-reconnect",
-      templateKey: "tpl-reconnect",
+      context: providerContext(appRoot, "session-reconnect"),
+      template,
     });
     await firstHandle.session.writeTextFile({
       content: "survives reconnect",
       path: "persisted.txt",
     });
 
-    const state = await firstHandle.captureState();
+    const reference = await referenceMicrosandboxResource(firstHandle);
 
-    expect(state.provider).toBe("microsandbox");
-    expect(state.metadata).toMatchObject({
+    expect(reference.metadata).toMatchObject({
       optionsHash: expect.any(String),
       sandboxName: expect.any(String),
       version: 2,
     });
 
     const reconnectedHandle = await provider.create({
-      existingMetadata: state.metadata,
-      context: { appRoot },
-      sessionKey: "session-reconnect",
-      templateKey: "tpl-reconnect",
+      context: providerContext(appRoot, "session-reconnect"),
+      reference,
     });
     const content = await reconnectedHandle.session.readTextFile({ path: "persisted.txt" });
 
@@ -229,25 +235,27 @@ describe.runIf(runMicrosandboxVmScenarios)("microsandbox sandbox file API", () =
 
   it("reports a fresh build on first prewarm and a reuse on the second", async () => {
     const appRoot = await createTemporaryCacheDirectory("reuse-report");
-    const provider = createMicrosandboxSandboxEngine();
+    const provider = createMicrosandboxSandboxProvider();
 
-    const first = await provider.prepare({
-      context: { appRoot },
-      seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
-      templateKey: "tpl-reuse-report",
+    const first = await provider.prewarm({
+      appRoot,
+      async prepare(resource) {
+        await writeSandboxSeedFiles(resource.session, [
+          { content: "# Weather skill\n", path: "/workspace/skills/weather.md" },
+        ]);
+      },
+      templateId: "tpl-reuse-report",
     });
-    const second = await provider.prepare({
-      context: { appRoot },
-      seedFiles: [{ content: "# Weather skill\n", path: "/workspace/skills/weather.md" }],
-      templateKey: "tpl-reuse-report",
+    const second = await provider.prewarm({
+      appRoot,
+      async prepare() {},
+      templateId: "tpl-reuse-report",
     });
 
-    expect(first).toEqual({ reused: false });
-    expect(second).toEqual({ reused: true });
+    expect(first).toEqual(second);
     const handle = await provider.create({
-      context: { appRoot },
-      sessionKey: "session-reuse-report",
-      templateKey: "tpl-reuse-report",
+      context: providerContext(appRoot, "session-reuse-report"),
+      template: first,
     });
     await expect(
       handle.session.readTextFile({ path: "/workspace/skills/weather.md" }),

@@ -22,16 +22,17 @@ import {
 } from "#runtime/sandbox/keys.js";
 import type { RuntimeRegisteredSandbox } from "#runtime/sandbox/registry.js";
 import { materializeWorkspaceDirectory } from "#runtime/workspace/seed-files.js";
-import type { SandboxSeedFile } from "#shared/sandbox-engine.js";
+import {
+  writeSandboxSeedFiles,
+  type SandboxSeedFile,
+} from "#execution/sandbox/bindings/local-workspace-utils.js";
 import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import {
   getSandboxTemplateInternal,
-  recordSandboxTemplateReference,
   type InternalSandboxTemplate,
   type SandboxTemplatePrewarmInput,
 } from "#shared/sandbox-template.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { createSandboxHydrator } from "#execution/sandbox/builtin-template.js";
 import { withSandboxTemplatePrewarmLock } from "./template-prewarm-lock.js";
 
 interface PrewarmTarget {
@@ -44,10 +45,11 @@ interface PrewarmTarget {
   readonly templateKey: string;
 }
 
-interface SandboxTemplateBinding {
+export interface PrewarmedSandboxTemplateBinding {
   readonly exportName: string;
   readonly nodeId: string;
   readonly reference: JsonValue;
+  readonly templateKey: string;
 }
 
 interface NodeSandbox extends RuntimeRegisteredSandbox {
@@ -69,8 +71,13 @@ interface PrewarmSandboxesInput {
   readonly graph: ResolvedAgentGraphBundle;
   readonly log?: (message: string) => void;
   readonly dispatch?: SandboxTemplatePrewarmDispatch;
-  readonly onPrewarmSignature?: (signature: string) => void;
-  readonly shouldPrewarmSignature?: (signature: string) => boolean;
+  readonly onPrewarmSignature?: (
+    signature: string,
+    bindings: readonly PrewarmedSandboxTemplateBinding[],
+  ) => void;
+  readonly reusePrewarmSignature?: (
+    signature: string,
+  ) => readonly PrewarmedSandboxTemplateBinding[] | undefined;
 }
 
 /**
@@ -78,15 +85,16 @@ interface PrewarmSandboxesInput {
  */
 export async function prewarmSandboxes(
   input: PrewarmSandboxesInput,
-): Promise<readonly SandboxTemplateBinding[]> {
+): Promise<readonly PrewarmedSandboxTemplateBinding[]> {
   const targets = await collectPrewarmTargets(input);
   if (targets.length === 0) {
     return [];
   }
 
   const signature = createPrewarmSignature(targets);
-  if (input.shouldPrewarmSignature?.(signature) === false) {
-    return [];
+  const reusedBindings = input.reusePrewarmSignature?.(signature);
+  if (reusedBindings !== undefined) {
+    return reusedBindings;
   }
 
   input.log?.(`eve: initializing ${formatSandboxTemplateCount(targets.length)}...`);
@@ -109,11 +117,11 @@ export async function prewarmSandboxes(
                   templateKey: target.templateKey,
                 }),
         );
-        recordSandboxTemplateReference(target.templateKey, reference);
         return {
           exportName: target.exportName,
           nodeId: target.nodeId,
           reference: parseJsonValue(reference),
+          templateKey: target.templateKey,
         };
       } catch (error) {
         input.log?.(
@@ -124,7 +132,7 @@ export async function prewarmSandboxes(
     }),
   );
   input.log?.(`eve: initialized ${formatSandboxTemplateCount(targets.length)}.`);
-  input.onPrewarmSignature?.(signature);
+  input.onPrewarmSignature?.(signature, bindings);
   return bindings;
 }
 
@@ -136,9 +144,14 @@ export async function prewarmAppSandboxes(input: {
   }) => Promise<ResolvedAgentGraphBundle>;
   readonly log?: (message: string) => void;
   readonly dispatch?: SandboxTemplatePrewarmDispatch;
-  readonly onPrewarmSignature?: (signature: string) => void;
-  readonly shouldPrewarmSignature?: (signature: string) => boolean;
-}): Promise<void> {
+  readonly onPrewarmSignature?: (
+    signature: string,
+    bindings: readonly PrewarmedSandboxTemplateBinding[],
+  ) => void;
+  readonly reusePrewarmSignature?: (
+    signature: string,
+  ) => readonly PrewarmedSandboxTemplateBinding[] | undefined;
+}): Promise<readonly PrewarmedSandboxTemplateBinding[]> {
   const compiledArtifactsSource =
     input.compiledArtifactsSource ??
     createAuthoredSourceRuntimeCompiledArtifactsSource(input.appRoot);
@@ -158,12 +171,13 @@ export async function prewarmAppSandboxes(input: {
     graph,
     log: input.log,
     onPrewarmSignature: input.onPrewarmSignature,
-    shouldPrewarmSignature: input.shouldPrewarmSignature,
+    reusePrewarmSignature: input.reusePrewarmSignature,
   });
   await writeSandboxTemplateBindings({
     bindings,
     compiledArtifactsSource,
   });
+  return bindings;
 }
 
 async function collectPrewarmTargets(input: {
@@ -213,7 +227,7 @@ async function collectPrewarmTargets(input: {
             input: {
               appRoot: input.appRoot,
               assets: {},
-              hydrate: createSandboxHydrator(seedFiles),
+              hydrate: async (sandbox) => await writeSandboxSeedFiles(sandbox, seedFiles),
               ...(input.log === undefined
                 ? {}
                 : {
@@ -237,7 +251,7 @@ async function collectPrewarmTargets(input: {
 }
 
 async function writeSandboxTemplateBindings(input: {
-  readonly bindings: readonly SandboxTemplateBinding[];
+  readonly bindings: readonly PrewarmedSandboxTemplateBinding[];
   readonly compiledArtifactsSource: RuntimeDiskCompiledArtifactsSource;
 }): Promise<void> {
   if (input.bindings.length === 0) {
@@ -253,9 +267,9 @@ async function writeSandboxTemplateBindings(input: {
 
 function applySandboxTemplateBindings(
   manifest: CompiledAgentManifest,
-  bindings: readonly SandboxTemplateBinding[],
+  bindings: readonly PrewarmedSandboxTemplateBinding[],
 ): CompiledAgentManifest {
-  const byNodeId = new Map<string, SandboxTemplateBinding[]>();
+  const byNodeId = new Map<string, PrewarmedSandboxTemplateBinding[]>();
   for (const binding of bindings) {
     const existing = byNodeId.get(binding.nodeId);
     if (existing === undefined) {

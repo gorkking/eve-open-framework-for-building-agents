@@ -26,7 +26,7 @@ export interface DockerRunOptions {
 /**
  * Handle to one streaming `docker …` invocation (e.g. `docker exec`).
  * Mirrors the AI SDK `Experimental_SandboxProcess` stream/wait/kill
- * shape so the sandbox engine can adapt it directly.
+ * shape so the sandbox provider can adapt it directly.
  */
 export interface DockerProcess {
   readonly stdout: ReadableStream<Uint8Array>;
@@ -36,8 +36,8 @@ export interface DockerProcess {
 }
 
 /**
- * Minimal Docker CLI driver the local sandbox engine runs on. A thin
- * subprocess wrapper in production; injectable so engine logic is unit
+ * Minimal Docker CLI driver the local sandbox provider runs on. A thin
+ * subprocess wrapper in production; injectable so provider logic is unit
  * testable without a Docker daemon.
  */
 export interface DockerCli {
@@ -87,7 +87,7 @@ export class DockerDaemonUnavailableError extends Error {
 }
 
 /**
- * Verifies the Docker daemon answers before the engine performs its
+ * Verifies the Docker daemon answers before the provider performs its
  * first real operation, converting CLI/daemon failures into actionable
  * errors instead of letting individual commands fail obscurely.
  */

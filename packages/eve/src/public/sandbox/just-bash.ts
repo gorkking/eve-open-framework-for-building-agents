@@ -1,8 +1,13 @@
-import { createJustBashSandboxEngine } from "#execution/sandbox/bindings/local.js";
-import { createBuiltinSandbox } from "#execution/sandbox/builtin-sandbox.js";
-import { createBuiltinSandboxTemplate } from "#execution/sandbox/builtin-template.js";
-import type { Sandbox } from "#shared/sandbox-value.js";
-import type { SandboxTemplate } from "#shared/sandbox-template.js";
+import {
+  createJustBashSandboxProvider,
+  referenceJustBashSandboxResource,
+  restoreJustBashSandboxResource,
+  type JustBashSandboxReference,
+  type JustBashSandboxResource,
+  type JustBashSandboxTemplateReference,
+} from "#execution/sandbox/bindings/local.js";
+import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
+import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
 import type { JustBashSandboxCreateOptions } from "#public/sandbox/just-bash-sandbox.js";
 
 export type { JustBashSandboxCreateOptions } from "#public/sandbox/just-bash-sandbox.js";
@@ -24,6 +29,18 @@ export interface JustBashSandboxTemplate extends Omit<SandboxTemplate<undefined>
   create(): Promise<Sandbox>;
 }
 
+const asJustBashSandbox = defineSandboxAdapter<JustBashSandboxResource, JustBashSandboxReference>({
+  type: "just-bash.dev/sandbox/v1",
+  reference: referenceJustBashSandboxResource,
+  restore: restoreJustBashSandboxResource,
+  session(resource) {
+    return resource.session;
+  },
+  shutdown(resource) {
+    return resource.shutdown();
+  },
+});
+
 /**
  * just-bash sandbox creation and build-prewarming.
  */
@@ -32,10 +49,10 @@ export const JustBashSandbox = {
    * Creates the durable just-bash sandbox returned by an authored definition.
    */
   async create(options: JustBashSandboxCreateOptions = {}): Promise<Sandbox> {
-    return await createBuiltinSandbox({
-      engine: createJustBashSandboxEngine({ createOptions: options }),
-      provider: "just-bash",
-      templateKey: null,
+    return await asJustBashSandbox.create(async (context) => {
+      return await createJustBashSandboxProvider({
+        createOptions: options,
+      }).create({ context });
     });
   },
 
@@ -44,14 +61,33 @@ export const JustBashSandbox = {
    */
   template(options: JustBashSandboxTemplateOptions = {}): JustBashSandboxTemplate {
     const { prepare, ...createOptions } = options;
-    return createBuiltinSandboxTemplate<undefined>({
-      provider: "just-bash",
-      createEngine() {
-        return createJustBashSandboxEngine({ createOptions });
-      },
-      prepare,
+    const provider = createJustBashSandboxProvider({ createOptions });
+    const internalTemplate = defineSandboxTemplate<JustBashSandboxTemplateReference, undefined>({
       revision: createOptions,
-      templateEngine: createJustBashSandboxEngine({ createOptions }),
+      type: "just-bash.dev/sandbox-template/v1",
+      async prewarm({ appRoot, hydrate, log, templateId }) {
+        return await provider.prewarm({
+          appRoot,
+          log,
+          async prepare(resource) {
+            const sandbox = asJustBashSandbox(resource);
+            await hydrate(sandbox);
+            await prepare?.(sandbox);
+          },
+          templateId,
+        });
+      },
+      async create({ reference }) {
+        return await asJustBashSandbox.create(async (context) => {
+          return await provider.create({ context, template: reference });
+        });
+      },
+    });
+    const createFromReference = internalTemplate.create.bind(internalTemplate);
+    return Object.assign(internalTemplate, {
+      async create(): Promise<Sandbox> {
+        return await createFromReference(undefined);
+      },
     }) as JustBashSandboxTemplate;
   },
 };

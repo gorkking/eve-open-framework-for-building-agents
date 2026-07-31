@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { SandboxResourceTags } from "#shared/sandbox-engine.js";
+type SandboxResourceTags = Readonly<Record<string, string>>;
 
 export const EVE_DEVELOPMENT_SANDBOX_RUN_ID_ENV = "EVE_DEVELOPMENT_SANDBOX_RUN_ID";
 export const EVE_DEVELOPMENT_SANDBOX_METADATA_PATH_TAG = "eve.metadataPath";

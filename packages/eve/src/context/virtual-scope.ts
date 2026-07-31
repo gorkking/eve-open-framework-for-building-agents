@@ -1,4 +1,4 @@
-import { ContextContainer, contextStorage, type AlsContext } from "#context/container.js";
+import { loadContext, type AlsContext } from "#context/container.js";
 import type { ContextKey } from "#context/key.js";
 
 /**
@@ -9,16 +9,7 @@ export async function withVirtualContextValue<T, Value>(
   value: Value,
   callback: () => T | Promise<T>,
 ): Promise<T> {
-  const active = contextStorage.getStore();
-  if (active !== undefined) {
-    return await runWithValue(active, key, value, callback);
-  }
-
-  const context = new ContextContainer();
-  return await contextStorage.run(
-    context,
-    async () => await runWithValue(context, key, value, callback),
-  );
+  return await runWithValue(loadContext(), key, value, callback);
 }
 
 async function runWithValue<T, Value>(

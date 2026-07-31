@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createCompiledSandboxEnginePrunePlugin } from "./local-sandbox-provider-prune-plugin.js";
+import { createCompiledSandboxProviderPrunePlugin } from "./local-sandbox-provider-prune-plugin.js";
 
-describe("createCompiledSandboxEnginePrunePlugin", () => {
+describe("createCompiledSandboxProviderPrunePlugin", () => {
   it("keeps the hosted local-provider stub aligned with the local facade exports", () => {
-    const plugin = createCompiledSandboxEnginePrunePlugin();
+    const plugin = createCompiledSandboxProviderPrunePlugin();
     const resolved = plugin.resolveId?.(
       "/repo/packages/eve/dist/src/execution/sandbox/bindings/local.js",
       undefined,

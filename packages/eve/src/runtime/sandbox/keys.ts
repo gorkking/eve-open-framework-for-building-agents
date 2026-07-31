@@ -34,7 +34,7 @@ export async function createRuntimeSandboxDefinitionRevision(input: {
 }
 
 /**
- * Derives the internal provider resource name for one owning session.
+ * Derives the internal provider resource name for one agent session.
  */
 export async function createRuntimeSandboxSessionKey(input: {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;

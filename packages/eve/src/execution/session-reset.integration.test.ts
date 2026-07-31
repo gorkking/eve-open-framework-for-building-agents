@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ContextContainer } from "#context/container.js";
 import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
 import { sessionDeliveryHookWorkflow } from "#internal/testing/session-delivery-hook-workflow.js";
 import { waitForHook } from "#internal/testing/workflow-test-helpers.js";
@@ -105,6 +106,7 @@ function createSessionSandboxHarness() {
     async open(sessionId: string) {
       const access = await ensureSandboxAccess({
         compiledArtifactsSource: createBundledRuntimeCompiledArtifactsSource(),
+        context: new ContextContainer(),
         nodeId: "__root__",
         registry,
         session: {

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createDockerSandboxEngine,
-  createJustBashSandboxEngine,
-  createMicrosandboxSandboxEngine,
+  createDockerSandboxProvider,
+  createJustBashSandboxProvider,
+  createMicrosandboxSandboxProvider,
   DOCKER_PROVIDER,
   JUST_BASH_PROVIDER,
   MICROSANDBOX_PROVIDER,
@@ -11,11 +11,8 @@ import {
 
 describe("local sandbox provider factories", () => {
   it("expose distinct stable provider names", () => {
-    // Provider names participate in template/session key derivation and
-    // persisted reconnect state, so the engines must never collide.
-    expect(createDockerSandboxEngine().provider).toBe(DOCKER_PROVIDER);
-    expect(createJustBashSandboxEngine().provider).toBe(JUST_BASH_PROVIDER);
-    expect(createMicrosandboxSandboxEngine().provider).toBe(MICROSANDBOX_PROVIDER);
+    // Provider names participate in diagnostics and persisted reconnect
+    // state, so the protocols must never collide.
     expect(
       new Set([DOCKER_PROVIDER, JUST_BASH_PROVIDER, MICROSANDBOX_PROVIDER, "vercel"]).size,
     ).toBe(4);
@@ -25,14 +22,17 @@ describe("local sandbox provider factories", () => {
     // Construction must stay side-effect free: probing and installs are
     // deferred to first use so `defineSandbox` evaluation (including at
     // compile time) stays cheap on any host.
-    expect(createDockerSandboxEngine({ createOptions: { image: "alpine:3" } }).provider).toBe(
-      "docker",
-    );
-    expect(createMicrosandboxSandboxEngine({ createOptions: { cpus: 2 } }).provider).toBe(
-      "microsandbox",
-    );
-    expect(createJustBashSandboxEngine({ createOptions: { autoInstall: false } }).provider).toBe(
-      "just-bash",
-    );
+    expect(createDockerSandboxProvider({ createOptions: { image: "alpine:3" } })).toMatchObject({
+      create: expect.any(Function),
+      prewarm: expect.any(Function),
+    });
+    expect(createMicrosandboxSandboxProvider({ createOptions: { cpus: 2 } })).toMatchObject({
+      create: expect.any(Function),
+      prewarm: expect.any(Function),
+    });
+    expect(createJustBashSandboxProvider({ createOptions: { autoInstall: false } })).toMatchObject({
+      create: expect.any(Function),
+      prewarm: expect.any(Function),
+    });
   });
 });

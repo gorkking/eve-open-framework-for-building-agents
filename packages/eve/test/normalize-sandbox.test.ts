@@ -23,14 +23,11 @@ describe("normalizeSandboxDefinition", () => {
     },
   );
 
-  it("rejects the removed object-shaped lifecycle API", () => {
+  it("rejects object-shaped values", () => {
     expect(() =>
       normalizeSandboxDefinition(
         {
-          backend: "vercel",
-          bootstrap: async () => {},
-          onSession: async () => {},
-          revalidationKey: () => "removed",
+          create: async () => ({}) as Sandbox,
         },
         ERROR_MESSAGE,
       ),

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ContextContainer, contextStorage } from "#context/container.js";
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import type { JsonObject } from "#shared/json.js";
 import {
@@ -31,15 +32,30 @@ describe("defineSandboxAdapter", () => {
         return sandbox.session;
       },
     });
-    const sandbox = adapt(raw);
+    const transient = adapt(raw);
 
-    expect(isSandbox(sandbox)).toBe(true);
+    expect(isSandbox(transient)).toBe(true);
+    await transient.run({ command: "echo transient" });
+    await expect(serializeSandbox(transient)).rejects.toThrow(/Cannot persist transient sandbox/);
+    expect(raw.commandLog).toEqual(["echo transient"]);
+
+    const sandbox = await withTestContext(
+      async () =>
+        await withSandboxProviderContext(
+          {
+            appRoot: "/app",
+            resourceId: "eve-resource-1",
+            signal: new AbortController().signal,
+          },
+          async () => await adapt.create(() => raw),
+        ),
+    );
     const serialized = await serializeSandbox(sandbox);
     expect(serialized).toMatchObject({
       adapterId: "eve/test-sandbox-value-restore",
       id: "sandbox_1",
       reference: { id: "sandbox_1" },
-      resourceId: "sandbox_1",
+      resourceId: "eve-resource-1",
     });
 
     const signal = new AbortController().signal;
@@ -49,6 +65,7 @@ describe("defineSandboxAdapter", () => {
       tags: { agent: "reviewer" },
     });
     expect(restored.id).toBe("sandbox_1");
+    await Promise.resolve();
     expect(restore).not.toHaveBeenCalled();
 
     await restored.run({ command: "echo restored" });
@@ -56,12 +73,12 @@ describe("defineSandboxAdapter", () => {
       { id: "sandbox_1" },
       {
         appRoot: "/app",
-        resourceId: "sandbox_1",
+        resourceId: "eve-resource-1",
         signal,
         tags: { agent: "reviewer" },
       },
     );
-    expect(raw.commandLog).toEqual(["echo restored"]);
+    expect(raw.commandLog).toEqual(["echo transient", "echo restored"]);
   });
 
   it("supplies stable framework creation context without app-authored plumbing", async () => {
@@ -81,14 +98,17 @@ describe("defineSandboxAdapter", () => {
     });
     const signal = new AbortController().signal;
 
-    const sandbox = await withSandboxProviderContext(
-      {
-        appRoot: "/app",
-        resourceId: "eve-resource-1",
-        signal,
-        tags: { agent: "researcher" },
-      },
-      async () => await adapt.create(create),
+    const sandbox = await withTestContext(
+      async () =>
+        await withSandboxProviderContext(
+          {
+            appRoot: "/app",
+            resourceId: "eve-resource-1",
+            signal,
+            tags: { agent: "researcher" },
+          },
+          async () => await adapt.create(create),
+        ),
     );
 
     expect(create).toHaveBeenCalledWith({
@@ -119,9 +139,19 @@ describe("defineSandboxAdapter", () => {
       },
     });
 
-    await expect(serializeSandbox(adapt(raw))).rejects.toThrow(
-      /Expected a JSON-serializable value/,
+    const sandbox = await withTestContext(
+      async () =>
+        await withSandboxProviderContext(
+          {
+            appRoot: "/app",
+            resourceId: "eve-resource-invalid-reference",
+            signal: new AbortController().signal,
+          },
+          async () => await adapt.create(() => raw),
+        ),
     );
+
+    await expect(serializeSandbox(sandbox)).rejects.toThrow(/Expected a JSON-serializable value/);
   });
 
   it("runs provider shutdown at most once for one durable value", async () => {
@@ -181,3 +211,7 @@ describe("defineSandboxAdapter", () => {
     expect(secondRaw.commandLog).toEqual([]);
   });
 });
+
+async function withTestContext<T>(callback: () => Promise<T>): Promise<T> {
+  return await contextStorage.run(new ContextContainer(), callback);
+}

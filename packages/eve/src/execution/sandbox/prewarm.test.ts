@@ -5,7 +5,7 @@ import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID, type ResolvedAgentGraphBundle } from "#runtime/graph.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
-import type { SandboxSeedFile } from "#shared/sandbox-engine.js";
+import type { SandboxSeedFile } from "#execution/sandbox/bindings/local-workspace-utils.js";
 import { defineSandboxTemplate } from "#shared/sandbox-template.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 
@@ -31,6 +31,7 @@ describe("prewarmSandboxes", () => {
     const definition = vi.fn();
     const prewarm = vi.fn(async () => ({ snapshotId: "snapshot_123" }));
     const template = defineSandboxTemplate({
+      type: "test.dev/prewarm-template/v1",
       prewarm,
       async create() {
         throw new Error("runtime create must not run during prewarm");
@@ -54,6 +55,7 @@ describe("prewarmSandboxes", () => {
         exportName: "template",
         nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
         reference: { snapshotId: "snapshot_123" },
+        templateKey: expect.any(String),
       },
     ]);
   });
@@ -64,6 +66,7 @@ describe("prewarmSandboxes", () => {
     ]);
     const sandbox = mockSandbox();
     const template = defineSandboxTemplate({
+      type: "test.dev/hydration-template/v1",
       async prewarm({ hydrate }) {
         await hydrate(sandbox.session as Sandbox);
         return { image: "template-image" };
@@ -92,6 +95,7 @@ describe("prewarmSandboxes", () => {
 
   it("prewarms every exported template with a distinct private key", async () => {
     const first = defineSandboxTemplate({
+      type: "test.dev/distinct-template/v1",
       async prewarm() {
         return { snapshotId: "first" };
       },
@@ -100,6 +104,7 @@ describe("prewarmSandboxes", () => {
       },
     });
     const second = defineSandboxTemplate({
+      type: "test.dev/distinct-template/v1",
       async prewarm() {
         return { snapshotId: "second" };
       },
@@ -129,10 +134,19 @@ describe("prewarmSandboxes", () => {
     expect(bindings.map(({ exportName }) => exportName)).toEqual(["first", "second"]);
   });
 
-  it("skips a graph whose prewarm signature is already warm", async () => {
+  it("reuses bindings for a graph whose prewarm signature is already warm", async () => {
     const prewarm = vi.fn(async () => ({ snapshotId: "unused" }));
-    const signature = vi.fn(() => false);
+    const reused = [
+      {
+        exportName: "template",
+        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+        reference: { snapshotId: "existing" },
+        templateKey: "existing-template-key",
+      },
+    ] as const;
+    const reusePrewarmSignature = vi.fn(() => reused);
     const template = defineSandboxTemplate({
+      type: "test.dev/signature-template/v1",
       prewarm,
       async create() {
         throw new Error("runtime only");
@@ -146,11 +160,11 @@ describe("prewarmSandboxes", () => {
       graph: createGraph({
         templates: [{ exportName: "template", template }],
       }),
-      shouldPrewarmSignature: signature,
+      reusePrewarmSignature,
     });
 
-    expect(bindings).toEqual([]);
-    expect(signature).toHaveBeenCalledOnce();
+    expect(bindings).toEqual(reused);
+    expect(reusePrewarmSignature).toHaveBeenCalledOnce();
     expect(prewarm).not.toHaveBeenCalled();
   });
 

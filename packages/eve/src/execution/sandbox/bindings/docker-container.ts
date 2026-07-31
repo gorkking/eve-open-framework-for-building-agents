@@ -3,9 +3,10 @@ import type { DockerCli } from "#execution/sandbox/bindings/docker-cli.js";
 import type { ResolvedDockerSandboxOptions } from "#execution/sandbox/bindings/docker-options.js";
 import { expectDockerSuccess } from "#execution/sandbox/bindings/docker-utils.js";
 import { withDevelopmentSandboxTags } from "#execution/sandbox/development-run.js";
-import type { SandboxResourceTags } from "#shared/sandbox-engine.js";
 import type { DockerSandboxNetworkPolicy } from "#public/sandbox/docker-sandbox.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
+
+type SandboxResourceTags = Readonly<Record<string, string>>;
 
 export const DOCKER_SANDBOX_LABEL = "eve.sandbox";
 

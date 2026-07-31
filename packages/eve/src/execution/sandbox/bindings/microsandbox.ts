@@ -1,6 +1,10 @@
 import {
-  createMicrosandboxHandle,
+  createMicrosandboxResource,
   prewarmMicrosandboxTemplate,
+  referenceMicrosandboxResource,
+  type MicrosandboxReference,
+  type MicrosandboxResource,
+  type MicrosandboxTemplateReference,
 } from "#execution/sandbox/bindings/microsandbox-lifecycle.js";
 import { enrichMicrosandboxError } from "#execution/sandbox/bindings/microsandbox-create.js";
 import {
@@ -8,15 +12,9 @@ import {
   resolveMicrosandboxOptions,
 } from "#execution/sandbox/bindings/microsandbox-options.js";
 import { createStableHash } from "#execution/sandbox/bindings/microsandbox-runtime.js";
-import type {
-  SandboxEngine,
-  SandboxEngineCreateInput,
-  SandboxEngineHandle,
-  SandboxEnginePrepareInput,
-  SandboxEnginePrepareResult,
-} from "#shared/sandbox-engine.js";
 import type { MicrosandboxSandboxCreateOptions } from "#public/sandbox/microsandbox-sandbox.js";
 import { parseJsonObject } from "#shared/json.js";
+import type { SandboxProviderContext } from "#shared/sandbox-value.js";
 
 export { pruneMicrosandboxTemplates } from "#execution/sandbox/bindings/microsandbox-templates.js";
 
@@ -30,8 +28,28 @@ export const MICROSANDBOX_PROVIDER = "microsandbox";
  * Construction input for the internal microsandbox bridge behind
  * `MicrosandboxSandbox`.
  */
-export interface CreateMicrosandboxSandboxEngineInput {
+export type {
+  MicrosandboxReference,
+  MicrosandboxResource,
+  MicrosandboxTemplateReference,
+} from "#execution/sandbox/bindings/microsandbox-lifecycle.js";
+
+export interface CreateMicrosandboxSandboxProviderInput {
   readonly createOptions?: MicrosandboxSandboxCreateOptions;
+}
+
+export interface MicrosandboxSandboxProvider {
+  create(input: {
+    readonly context: SandboxProviderContext;
+    readonly reference?: MicrosandboxReference;
+    readonly template?: MicrosandboxTemplateReference;
+  }): Promise<MicrosandboxResource>;
+  prewarm(input: {
+    readonly appRoot: string;
+    readonly log?: (message: string) => void;
+    readonly prepare: (resource: MicrosandboxResource) => Promise<void>;
+    readonly templateId: string;
+  }): Promise<MicrosandboxTemplateReference>;
 }
 
 /**
@@ -39,9 +57,9 @@ export interface CreateMicrosandboxSandboxEngineInput {
  * snapshot-backed templates, running each command as the
  * `vercel-sandbox` user for parity with hosted Vercel Sandbox.
  */
-export function createMicrosandboxSandboxEngine(
-  input: CreateMicrosandboxSandboxEngineInput = {},
-): SandboxEngine {
+export function createMicrosandboxSandboxProvider(
+  input: CreateMicrosandboxSandboxProviderInput = {},
+): MicrosandboxSandboxProvider {
   const options = resolveMicrosandboxOptions(input.createOptions);
   const configuration = parseJsonObject(input.createOptions ?? {});
   const optionsHash = createStableHash(JSON.stringify(microsandboxOptionsForHash(options))).slice(
@@ -50,30 +68,46 @@ export function createMicrosandboxSandboxEngine(
   );
 
   return {
-    provider: MICROSANDBOX_PROVIDER,
-    async prepare(prewarmInput: SandboxEnginePrepareInput): Promise<SandboxEnginePrepareResult> {
+    async prewarm(prewarmInput): Promise<MicrosandboxTemplateReference> {
       try {
         return await prewarmMicrosandboxTemplate({
+          appRoot: prewarmInput.appRoot,
+          configuration,
+          log: prewarmInput.log,
           provider: MICROSANDBOX_PROVIDER,
           options,
           optionsHash,
-          prewarmInput,
+          prepare: prewarmInput.prepare,
+          templateId: prewarmInput.templateId,
         });
       } catch (error) {
         throw enrichMicrosandboxError({
-          context: `Failed to prewarm microsandbox template "${prewarmInput.templateKey}"`,
+          context: `Failed to prewarm microsandbox template "${prewarmInput.templateId}"`,
           error,
         });
       }
     },
-    async create(createInput: SandboxEngineCreateInput): Promise<SandboxEngineHandle> {
-      return await createMicrosandboxHandle({
+    async create(createInput): Promise<MicrosandboxResource> {
+      return await createMicrosandboxResource({
+        context: createInput.context,
         provider: MICROSANDBOX_PROVIDER,
         configuration,
-        createInput,
         options,
         optionsHash,
+        reference: createInput.reference,
+        template: createInput.template,
       });
     },
   };
+}
+
+export { referenceMicrosandboxResource };
+
+export async function restoreMicrosandboxResource(
+  reference: MicrosandboxReference,
+  context: SandboxProviderContext,
+): Promise<MicrosandboxResource> {
+  return await createMicrosandboxSandboxProvider({
+    createOptions: reference.configuration as MicrosandboxSandboxCreateOptions,
+  }).create({ context, reference });
 }

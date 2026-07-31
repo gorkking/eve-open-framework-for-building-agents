@@ -1,16 +1,20 @@
 import {
-  createBuiltinSandbox,
-  createBuiltinSandboxEngine,
-  type BuiltinSandboxProvider,
-} from "#execution/sandbox/builtin-sandbox.js";
-import {
-  createDefaultSandboxEngine,
+  selectAvailableDefaultSandboxProvider,
+  type DefaultSandboxProviderName,
   type DefaultSandboxOptions,
-} from "#execution/sandbox/default-engine.js";
-import type { SandboxEngine } from "#shared/sandbox-engine.js";
+} from "#execution/sandbox/default-provider.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
-import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
-import type { JsonObject } from "#shared/json.js";
+import {
+  defineSandboxTemplate,
+  getSandboxTemplateInternal,
+  withSandboxTemplateBindings,
+  type SandboxTemplate,
+} from "#shared/sandbox-template.js";
+import type { JsonObject, JsonValue } from "#shared/json.js";
+import { DockerSandbox } from "#public/sandbox/docker.js";
+import { JustBashSandbox } from "#public/sandbox/just-bash.js";
+import { MicrosandboxSandbox } from "#public/sandbox/microsandbox.js";
+import { VercelSandbox } from "#public/sandbox/vercel.js";
 
 export type { DefaultSandboxOptions };
 
@@ -32,9 +36,8 @@ export interface DefaultSandboxTemplate extends Omit<SandboxTemplate<undefined>,
 }
 
 interface DefaultTemplateReference extends JsonObject {
-  readonly provider: BuiltinSandboxProvider;
-  readonly providerReference: JsonObject | null;
-  readonly templateKey: string;
+  readonly provider: DefaultSandboxProviderName;
+  readonly reference: JsonValue;
 }
 
 /**
@@ -45,12 +48,16 @@ export const DefaultSandbox = {
    * Creates a durable sandbox using the best provider available at runtime.
    */
   async create(options?: DefaultSandboxOptions): Promise<Sandbox> {
-    const engine = createDefaultSandboxEngine(options);
-    return await createBuiltinSandbox({
-      engine,
-      provider: expectBuiltinProvider(engine),
-      templateKey: null,
-    });
+    switch (selectAvailableDefaultSandboxProvider()) {
+      case "docker":
+        return await DockerSandbox.create(options?.docker);
+      case "just-bash":
+        return await JustBashSandbox.create(options?.justBash);
+      case "microsandbox":
+        return await MicrosandboxSandbox.create(options?.microsandbox);
+      case "vercel":
+        return await VercelSandbox.create(options?.vercel);
+    }
   },
 
   /**
@@ -59,46 +66,40 @@ export const DefaultSandbox = {
    */
   template(options: DefaultSandboxTemplateOptions = {}): DefaultSandboxTemplate {
     return defineSandboxTemplate<DefaultTemplateReference, undefined>({
-      async prewarm({ appRoot, hydrate, log, templateId }) {
-        const engine = createDefaultSandboxEngine();
-        const provider = expectBuiltinProvider(engine);
-        const result = await engine.prepare({
-          prepare: async (sandbox) => {
-            await hydrate(sandbox);
-            await options.prepare?.(sandbox);
-          },
-          log,
-          context: { appRoot },
-          seedFiles: [],
-          templateKey: templateId,
-        });
+      type: "eve/default-sandbox-template/v2",
+      async prewarm(input) {
+        const provider = selectAvailableDefaultSandboxProvider();
+        const template = createProviderTemplate(provider, options);
         return {
           provider,
-          providerReference: result.reference ?? null,
-          templateKey: templateId,
+          reference: (await getSandboxTemplateInternal(template).prewarm(input)) as JsonValue,
         };
       },
       async create({ reference }) {
-        const engine = createBuiltinSandboxEngine(reference.provider);
-        return await createBuiltinSandbox({
-          engine,
-          provider: reference.provider,
-          templateKey: reference.templateKey,
-          templateReference: reference.providerReference ?? undefined,
-        });
+        const template = createProviderTemplate(reference.provider, options);
+        return await withSandboxTemplateBindings(
+          new Map([[getSandboxTemplateInternal(template), reference.reference]]),
+          async () => await template.create(undefined),
+        );
       },
     }) as DefaultSandboxTemplate;
   },
 };
 
-function expectBuiltinProvider(engine: SandboxEngine): BuiltinSandboxProvider {
-  if (
-    engine.provider === "docker" ||
-    engine.provider === "just-bash" ||
-    engine.provider === "microsandbox" ||
-    engine.provider === "vercel"
-  ) {
-    return engine.provider;
+function createProviderTemplate(
+  provider: DefaultSandboxProviderName,
+  options: DefaultSandboxTemplateOptions,
+): SandboxTemplate<undefined> {
+  switch (provider) {
+    case "docker":
+      return DockerSandbox.template(options);
+    case "just-bash":
+      return JustBashSandbox.template(options);
+    case "microsandbox":
+      return MicrosandboxSandbox.template(options);
+    case "vercel":
+      return VercelSandbox.template(
+        options as Parameters<typeof VercelSandbox.template>[0],
+      ) as SandboxTemplate<undefined>;
   }
-  throw new Error(`DefaultSandbox selected unsupported provider "${engine.provider}".`);
 }

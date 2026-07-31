@@ -116,7 +116,6 @@ export function buildSubagentRunInput(input: {
           : {
               parentSandboxState: session.sandboxState,
               rootSandboxState: session.sandboxState.root ?? {
-                owner: session.sandboxState.owner,
                 revision: session.sandboxState.revision,
                 value: session.sandboxState.value,
               },

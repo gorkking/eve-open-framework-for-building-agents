@@ -7,11 +7,6 @@ import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import type { Sandbox } from "#shared/sandbox-value.js";
 
 const SANDBOX_TEMPLATE = Symbol.for("eve.sandbox-template");
-const SANDBOX_TEMPLATE_REFERENCES = Symbol.for("eve.sandbox-template-references");
-
-type SandboxTemplateGlobal = typeof globalThis & {
-  [SANDBOX_TEMPLATE_REFERENCES]?: Map<string, unknown>;
-};
 
 /**
  * Build assets discovered beside an exported sandbox template.
@@ -42,6 +37,12 @@ export interface SandboxTemplatePrewarmInput {
  * Provider implementation behind one exported sandbox template.
  */
 export interface SandboxTemplateDefinition<Reference extends JsonValue, CreateOptions> {
+  /**
+   * Stable protocol discriminator owned by the provider implementation.
+   *
+   * App sandbox definitions never see or supply this value.
+   */
+  readonly type: string;
   /**
    * Provider-owned inputs that affect the prewarmed base.
    *
@@ -92,7 +93,10 @@ export function defineSandboxTemplate<
   CreateOptions = Record<string, never>,
 >(definition: SandboxTemplateDefinition<Reference, CreateOptions>): SandboxTemplate<CreateOptions> {
   const implementationId = `template-${stableHash(
-    stableJsonStringify(parseJsonValue(definition.revision ?? null)),
+    stableJsonStringify({
+      revision: parseJsonValue(definition.revision ?? null),
+      type: expectSandboxTemplateType(definition.type),
+    }),
   )}`;
   let internal: InternalSandboxTemplate;
 
@@ -149,41 +153,21 @@ export async function withSandboxTemplateBindings<T>(
   return await withVirtualContextValue(SandboxTemplateBindingsKey, bindings, callback);
 }
 
-/**
- * Records a prewarm result for runtime binding in the current process.
- */
-export function recordSandboxTemplateReference(templateKey: string, reference: unknown): void {
-  getSandboxTemplateReferences().set(templateKey, reference);
-}
-
-/**
- * Reads a prewarm result captured in the current process.
- */
-export function readSandboxTemplateReference(templateKey: string): unknown {
-  return getSandboxTemplateReferences().get(templateKey);
-}
-
-/**
- * Returns whether the current process captured a reference for a template.
- */
-export function hasSandboxTemplateReference(templateKey: string): boolean {
-  return getSandboxTemplateReferences().has(templateKey);
-}
-
 function readActiveSandboxTemplateReference(
   template: InternalSandboxTemplate,
 ): unknown | undefined {
   return contextStorage.getStore()?.get(SandboxTemplateBindingsKey)?.get(template);
 }
 
-function getSandboxTemplateReferences(): Map<string, unknown> {
-  const container = globalThis as SandboxTemplateGlobal;
-  container[SANDBOX_TEMPLATE_REFERENCES] ??= new Map();
-  return container[SANDBOX_TEMPLATE_REFERENCES];
-}
-
 function stableHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32);
+}
+
+function expectSandboxTemplateType(type: string): string {
+  if (type.trim() === "") {
+    throw new TypeError("Sandbox template type must be a non-empty provider protocol name.");
+  }
+  return type;
 }
 
 function stableJsonStringify(value: JsonValue): string {

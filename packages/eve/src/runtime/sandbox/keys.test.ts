@@ -46,7 +46,7 @@ describe("private runtime sandbox identities", () => {
     expect(fromToken).toBe(fromEnvironment);
   });
 
-  it("changes the session resource with the owner, node, or compatibility revision", async () => {
+  it("changes the session resource with the session, node, or compatibility revision", async () => {
     const baseline = await sessionKey();
 
     expect(await sessionKey({ sessionId: "session_2" })).not.toBe(baseline);

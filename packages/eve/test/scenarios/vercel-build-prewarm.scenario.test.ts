@@ -160,6 +160,7 @@ function sandboxModule(name: string): string {
     'import { defineSandbox } from "eve/sandbox";',
     'import { defineSandboxTemplate } from "eve/sandbox/provider";',
     "export const template = defineSandboxTemplate({",
+    '  type: "test.dev/vercel-build-template/v1",',
     `  async prewarm() { return { snapshotId: ${JSON.stringify(name)} }; },`,
     '  async create() { throw new Error("runtime only"); },',
     "});",

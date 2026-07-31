@@ -16,7 +16,7 @@ import {
   writeEveVersionedCacheMetadata,
 } from "#internal/application/cache-metadata.js";
 import { createProductionNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
-import { createCompiledSandboxEnginePrunePlugin } from "#internal/nitro/host/local-sandbox-provider-prune-plugin.js";
+import { createCompiledSandboxProviderPrunePlugin } from "#internal/nitro/host/local-sandbox-provider-prune-plugin.js";
 import { createExtensionScopePlugin } from "#internal/bundler/extension-scope-plugin.js";
 import {
   configureDevelopmentNitroRoutes,
@@ -25,9 +25,9 @@ import {
 import { applyEveCronHandlerRoute } from "#internal/nitro/host/cron-handler-route.js";
 import { createNitroBundlerConfig } from "#internal/nitro/host/nitro-bundler-config.js";
 import {
-  createOptionalEngineDependencyPlugin,
-  OPTIONAL_ENGINE_PACKAGES_BY_PROVIDER,
-} from "#internal/nitro/host/optional-engine-dependency-plugin.js";
+  createOptionalSandboxProviderDependencyPlugin,
+  OPTIONAL_SANDBOX_PROVIDER_PACKAGES,
+} from "#internal/nitro/host/optional-sandbox-provider-dependency-plugin.js";
 import { addNitroRoutingImportSpecifierPlugin } from "#internal/nitro/host/nitro-routing-import-specifier-plugin.js";
 import { registerScheduleTaskHandlers } from "#internal/nitro/host/schedule-task-routes.js";
 import type {
@@ -69,7 +69,7 @@ const WORKFLOW_CACHE_PATH_FRAGMENT = "/.eve/workflow-cache/";
 const FRAMEWORK_HOSTED_EXTERNAL_PACKAGES: readonly string[] = ["@napi-rs/keyring"];
 const LOCAL_SANDBOX_PROVIDERS = new Set([
   "docker",
-  ...Object.keys(OPTIONAL_ENGINE_PACKAGES_BY_PROVIDER),
+  ...Object.keys(OPTIONAL_SANDBOX_PROVIDER_PACKAGES),
 ]);
 
 function resolveWorkflowAliases(): Record<string, string> {
@@ -98,7 +98,7 @@ function manifestHasWebSocketChannel(manifest: CompiledAgentManifest): boolean {
 
 function collectHostedTraceDependencies(
   preparedHost: PreparedApplicationHost,
-  configuredOptionalEnginePackages: readonly string[],
+  configuredOptionalSandboxProviderPackages: readonly string[],
 ): string[] {
   const agentNodes = [
     preparedHost.compileResult.manifest,
@@ -112,32 +112,32 @@ function collectHostedTraceDependencies(
   // additions to that upstream policy.
   const merged = new Set<string>([
     ...FRAMEWORK_HOSTED_EXTERNAL_PACKAGES,
-    // Optional engine packages (just-bash, microsandbox) join the
+    // Optional sandbox provider packages (just-bash, microsandbox) join the
     // externalize-and-trace path only when the compiled sandbox config
     // selects their provider — the app's opt-in. Otherwise
-    // createOptionalEngineDependencyPlugin pins them as plain externals
+    // createOptionalSandboxProviderDependencyPlugin pins them as plain externals
     // so a resolvable-but-unrequested install adds nothing to hosted
     // output.
-    ...configuredOptionalEnginePackages,
+    ...configuredOptionalSandboxProviderPackages,
     ...configuredExternalDependencies,
   ]);
   return [...merged].filter((dependencyName) => dependencyName !== EVE_PACKAGE_NAME);
 }
 
 /**
- * Conservatively includes every local engine when an authored definition can
+ * Conservatively includes every local provider when an authored definition can
  * choose a sandbox dynamically at runtime.
  */
-function collectConfiguredSandboxEngineNames(manifest: CompiledAgentManifest): Set<string> {
+function collectConfiguredSandboxProviderNames(manifest: CompiledAgentManifest): Set<string> {
   const nodes = [manifest, ...manifest.subagents.map((subagent) => subagent.agent)];
   return nodes.some((node) => node.sandbox !== null) ? new Set(LOCAL_SANDBOX_PROVIDERS) : new Set();
 }
 
 /**
- * Hosted Vercel builds can prune local engines only when no authored sandbox
+ * Hosted Vercel builds can prune local providers only when no authored sandbox
  * definition can select one at runtime.
  */
-export function shouldPruneLocalSandboxEngines(input: {
+export function shouldPruneLocalSandboxProviders(input: {
   readonly configuredProviders: ReadonlySet<string>;
   readonly preset: "vercel" | undefined;
 }): boolean {
@@ -606,21 +606,21 @@ function createApplicationNitroBundlerConfiguration(
   preparedHost: PreparedApplicationHost,
   preset: "vercel" | undefined,
 ) {
-  const configuredProviders = collectConfiguredSandboxEngineNames(
+  const configuredProviders = collectConfiguredSandboxProviderNames(
     preparedHost.compileResult.manifest,
   );
-  const compiledSandboxEnginePrunePlugin = shouldPruneLocalSandboxEngines({
+  const compiledSandboxProviderPrunePlugin = shouldPruneLocalSandboxProviders({
     configuredProviders,
     preset,
   })
-    ? createCompiledSandboxEnginePrunePlugin()
+    ? createCompiledSandboxProviderPrunePlugin()
     : null;
-  const configuredOptionalEnginePackages: string[] = [];
-  const unconfiguredOptionalEnginePackages: string[] = [];
-  for (const [provider, packageName] of Object.entries(OPTIONAL_ENGINE_PACKAGES_BY_PROVIDER)) {
+  const configuredOptionalSandboxProviderPackages: string[] = [];
+  const unconfiguredOptionalSandboxProviderPackages: string[] = [];
+  for (const [provider, packageName] of Object.entries(OPTIONAL_SANDBOX_PROVIDER_PACKAGES)) {
     (configuredProviders.has(provider)
-      ? configuredOptionalEnginePackages
-      : unconfiguredOptionalEnginePackages
+      ? configuredOptionalSandboxProviderPackages
+      : unconfiguredOptionalSandboxProviderPackages
     ).push(packageName);
   }
   const extensionScopePlugin = createExtensionScopePlugin(
@@ -630,15 +630,15 @@ function createApplicationNitroBundlerConfiguration(
     })),
   );
   const nitroBundlerPlugins = [
-    compiledSandboxEnginePrunePlugin,
-    createOptionalEngineDependencyPlugin(unconfiguredOptionalEnginePackages),
+    compiledSandboxProviderPrunePlugin,
+    createOptionalSandboxProviderDependencyPlugin(unconfiguredOptionalSandboxProviderPackages),
     extensionScopePlugin,
   ].filter((plugin) => plugin !== null);
   const nitroRolldownConfig = createNitroBundlerConfig(nitroBundlerPlugins);
   const nitroRollupConfig = createNitroBundlerConfig(nitroBundlerPlugins);
   const tracedAppDependencies = collectHostedTraceDependencies(
     preparedHost,
-    configuredOptionalEnginePackages,
+    configuredOptionalSandboxProviderPackages,
   );
 
   return {

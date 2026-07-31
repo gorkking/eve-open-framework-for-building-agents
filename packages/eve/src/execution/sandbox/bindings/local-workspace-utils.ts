@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 import { bufferToStream, streamToBuffer } from "#execution/sandbox/stream-utils.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 import { resolveSandboxSeedFilePath } from "#shared/skill-paths.js";
-import type { SandboxSeedFile } from "#shared/sandbox-engine.js";
 import type {
   InternalSandboxSession,
   SandboxProcess,
@@ -13,6 +12,11 @@ import type {
   SandboxSession,
   SandboxSpawnOptions,
 } from "#shared/sandbox-session.js";
+
+export interface SandboxSeedFile {
+  readonly content: string | Buffer;
+  readonly path: string;
+}
 
 export interface FileBackedSandbox {
   readFileBytes(path: string): Promise<Buffer | null>;

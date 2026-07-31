@@ -24,12 +24,11 @@ import {
 } from "#execution/sandbox/bindings/microsandbox-platform.js";
 import { adaptMicrosandboxExecToSandboxProcess } from "#execution/sandbox/bindings/microsandbox-process.js";
 import {
-  importInstalledEnginePackage,
+  importInstalledProviderPackage,
   isEveDevEnvironment,
-  loadOptionalEnginePackage,
+  loadOptionalProviderPackage,
 } from "#internal/application/optional-package-install.js";
 import { withDevelopmentSandboxTags } from "#execution/sandbox/development-run.js";
-import type { SandboxResourceTags } from "#shared/sandbox-engine.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 import type {
@@ -37,6 +36,7 @@ import type {
   SandboxRemovePathOptions,
   SandboxSpawnOptions,
 } from "#shared/sandbox-session.js";
+
 import {
   isMicrosandboxNotFoundError,
   isMicrosandboxSnapshotSourceRunningError,
@@ -45,6 +45,8 @@ import {
   snapshotExists,
 } from "#execution/sandbox/bindings/microsandbox-provider-state.js";
 import type { Sandbox as MicrosandboxSandbox } from "microsandbox";
+
+type SandboxResourceTags = Readonly<Record<string, string>>;
 
 export {
   isMicrosandboxNotFoundError,
@@ -464,7 +466,7 @@ export async function loadMicrosandboxModule(input: {
   await assertMicrosandboxPlatformCandidate();
 
   const module = await withProgressHeartbeat("loading microsandbox npm package", input.log, () =>
-    loadOptionalEnginePackage<MicrosandboxModule>({
+    loadOptionalProviderPackage<MicrosandboxModule>({
       appRoot: input.appRoot,
       autoInstall: input.options.setup.autoInstall,
       importModule: async () => await import("microsandbox"),
@@ -524,7 +526,7 @@ export async function loadMicrosandboxWithoutInstall(
   appRoot: string,
 ): Promise<MicrosandboxModule | null> {
   try {
-    const module = await importInstalledEnginePackage<MicrosandboxModule>({
+    const module = await importInstalledProviderPackage<MicrosandboxModule>({
       appRoot,
       packageName: MICROSANDBOX_PACKAGE_NAME,
     });

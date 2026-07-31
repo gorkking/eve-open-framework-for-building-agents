@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { VercelSandbox, type VercelSandboxCreateOptions } from "#public/sandbox/vercel.js";
 import { getSandboxTemplateInternal } from "#shared/sandbox-template.js";
@@ -28,14 +28,14 @@ describe("VercelSandbox.template", () => {
     expect(changed.implementationId).not.toBe(first.implementationId);
   });
 
-  it("accepts Vercel credential scope and transport options", () => {
+  it("accepts serializable credential scope without persisting runtime credentials", () => {
     const options = {
-      fetch: globalThis.fetch,
       projectId: "prj_123",
       teamId: "team_123",
-      token: "runtime-secret",
     } satisfies VercelSandboxCreateOptions;
 
     expect(() => VercelSandbox.template(options)).not.toThrow();
+    expectTypeOf<VercelSandboxCreateOptions>().not.toHaveProperty("fetch");
+    expectTypeOf<VercelSandboxCreateOptions>().not.toHaveProperty("token");
   });
 });

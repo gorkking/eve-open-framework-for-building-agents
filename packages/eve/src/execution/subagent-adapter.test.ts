@@ -197,10 +197,6 @@ describe("SUBAGENT_ADAPTER input.requested handler", () => {
 
 describe("readSubagentSandboxAncestorStates", () => {
   const sandboxState = {
-    owner: {
-      nodeId: "__root__",
-      sessionId: "parent-session",
-    },
     revision: "sandbox-revision",
     value: {
       adapterId: "example.com/sandbox",

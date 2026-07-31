@@ -2,19 +2,10 @@ import {
   applyInitialVercelNetworkPolicy,
   ensureVercelSandboxBaseRuntime,
 } from "#execution/sandbox/bindings/vercel-base-runtime.js";
-import type {
-  SandboxEngine,
-  SandboxEngineCreateInput,
-  SandboxEngineHandle,
-  SandboxEnginePrepareInput,
-  SandboxEnginePrepareResult,
-  SandboxResourceTags,
-  SandboxSeedFile,
-} from "#shared/sandbox-engine.js";
 import {
   SandboxResourceUnavailableError,
   SandboxTemplateUnavailableError,
-} from "#shared/sandbox-engine.js";
+} from "#shared/sandbox-errors.js";
 import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
 import {
@@ -30,173 +21,203 @@ import { getNamedVercelSandbox } from "#execution/sandbox/bindings/vercel-lookup
 import {
   createVercelInternalSandboxSession,
   createVercelNetworkPolicySetter,
-  createVercelSandboxHandle,
+  createVercelSandboxSession,
+  stopVercelSandbox,
 } from "#execution/sandbox/bindings/vercel-session.js";
-import { writeSandboxSeedFiles } from "#execution/sandbox/bindings/local-workspace-utils.js";
 import type {
   VercelCreateOptions,
   VercelModule,
   VercelSandbox,
 } from "#execution/sandbox/bindings/vercel-sdk-types.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
+import type { SandboxProviderContext } from "#shared/sandbox-value.js";
+import type { SandboxSession } from "#shared/sandbox-session.js";
 
-export interface CreateVercelSandboxInput {
+export interface VercelSandboxDependencies {
   readonly createSandbox?: CreateVercelSandbox;
-  readonly createOptions?: VercelCreateOptions;
   readonly loadSandboxModule?: () => Promise<VercelModule>;
 }
-/**
- * Creates the Vercel-backed sandbox provider.
- *
- * Any author-supplied `createOptions` are forwarded to Vercel's sandbox
- * create API for every fresh sandbox the framework creates (template at
- * prewarm time, session at first-time session-create). On resume
- * (`Sandbox.get`) no create happens, so they are not re-applied.
- */
-export function createVercelSandbox(input: CreateVercelSandboxInput = {}): SandboxEngine {
-  const loadSandboxModule =
-    input.loadSandboxModule ?? (async () => await import("#compiled/@vercel/sandbox/index.js"));
-  const createOptions: VercelCreateOptions = {
-    timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-    ...input.createOptions,
-  };
-  const configuration = createVercelRestorationConfiguration(createOptions);
-  const createSandbox = input.createSandbox ?? createVercelEveImageSandbox;
-  const prewarmedTemplates = new Map<string, VercelSandboxTemplateRecord>();
 
-  return {
-    provider: "vercel",
-    async create(createInput: SandboxEngineCreateInput): Promise<SandboxEngineHandle> {
-      const runtimeCreateOptions =
-        createInput.signal === undefined
-          ? createOptions
-          : { ...createOptions, signal: createInput.signal };
-      const tags =
-        createInput.existingMetadata === undefined || createInput.tags !== undefined
-          ? resolveVercelSandboxTags(runtimeCreateOptions.tags, createInput.tags)
-          : undefined;
-
-      const template =
-        createInput.templateKey === null
-          ? null
-          : createInput.templateReference === undefined
-            ? await readTemplateForCreate({
-                createOptions: runtimeCreateOptions,
-                loadSandboxModule,
-                prewarmedTemplates,
-                templateKey: createInput.templateKey,
-              })
-            : parseVercelTemplateReference(createInput.templateReference, createInput.templateKey);
-
-      const sandboxModule = await loadSandboxModule();
-      let session: VercelSandboxSessionCreateResult;
-      try {
-        session = await ensureSession({
-          createOptions: runtimeCreateOptions,
-          createSandbox,
-          existingMetadata: createInput.existingMetadata,
-          sandboxModule,
-          sessionKey: createInput.sessionKey,
-          snapshotId: template?.snapshotId,
-          tags,
-        });
-      } catch (error) {
-        if (SandboxResourceUnavailableError.is(error)) {
-          throw error;
-        }
-        if (
-          template !== null &&
-          (isVercelSnapshotUnavailableError(error) || isVercelSandboxMissingError(error))
-        ) {
-          prewarmedTemplates.delete(template.templateKey);
-          const staleTemplate = await getNamedVercelSandbox({
-            createOptions,
-            sandboxModule,
-            sandboxName: template.sandboxName,
-          });
-          await staleTemplate?.delete();
-          throw new SandboxTemplateUnavailableError({
-            provider: "vercel",
-            templateKey: template.templateKey,
-          });
-        }
-        throw new Error(
-          `Failed to create sandbox session "${createInput.sessionKey}": ${errorMessage(error)}`,
-          { cause: error },
-        );
-      }
-
-      if (template === null && session.created) {
-        await ensureVercelSandboxBaseRuntime(session.sandbox);
-        await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
-      }
-
-      return createVercelSandboxHandle(session.sandbox, createInput.sessionKey, configuration);
-    },
-    async prepare(prewarmInput: SandboxEnginePrepareInput): Promise<SandboxEnginePrepareResult> {
-      let outcome: EnsureTemplateOutcome;
-      try {
-        outcome = await ensureTemplateWithUnavailableRetry({
-          prepare: prewarmInput.prepare,
-          createOptions,
-          createSandbox,
-          loadSandboxModule,
-          log: prewarmInput.log,
-          seedFiles: prewarmInput.seedFiles,
-          templateKey: prewarmInput.templateKey,
-        });
-      } catch (error) {
-        throw new Error(
-          `Failed to prewarm Vercel sandbox template "${prewarmInput.templateKey}": ${errorMessage(error)}`,
-          { cause: error },
-        );
-      }
-      prewarmedTemplates.set(prewarmInput.templateKey, outcome.template);
-      return {
-        reused: outcome.reused,
-        reference: outcome.template,
-      };
-    },
-  };
+export interface VercelSandboxResource {
+  readonly configuration: JsonObject;
+  readonly sandbox: VercelSandbox;
+  readonly session: SandboxSession;
+  readonly sessionKey: string;
 }
 
-interface VercelSandboxTemplateRecord extends JsonObject {
+export interface VercelSandboxReference extends JsonObject {
+  readonly configuration: JsonObject;
+  readonly createdAt: string;
+  readonly name: string;
+  readonly sessionKey: string;
+}
+
+export interface VercelSandboxTemplateReference extends JsonObject {
   readonly sandboxName: string;
   readonly snapshotId: string;
   readonly templateKey: string;
 }
 
-function parseVercelTemplateReference(
-  reference: Record<string, unknown>,
-  templateKey: string,
-): VercelSandboxTemplateRecord {
-  if (
-    typeof reference.sandboxName !== "string" ||
-    typeof reference.snapshotId !== "string" ||
-    reference.templateKey !== templateKey
-  ) {
-    throw new Error(`Invalid frozen Vercel sandbox template reference "${templateKey}".`);
-  }
-  return {
-    sandboxName: reference.sandboxName,
-    snapshotId: reference.snapshotId,
-    templateKey,
+/**
+ * Creates or reconnects to the persistent Vercel Sandbox selected by one
+ * authored provider call.
+ */
+export async function createVercelSandboxResource(input: {
+  readonly context: SandboxProviderContext;
+  readonly dependencies?: VercelSandboxDependencies;
+  readonly name?: string;
+  readonly options?: VercelCreateOptions;
+  readonly template?: VercelSandboxTemplateReference;
+}): Promise<VercelSandboxResource> {
+  const loadSandboxModule =
+    input.dependencies?.loadSandboxModule ??
+    (async () => await import("#compiled/@vercel/sandbox/index.js"));
+  const createOptions: VercelCreateOptions = {
+    timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+    ...input.options,
+    signal: input.context.signal,
   };
+  const configuration = createVercelRestorationConfiguration(createOptions);
+  const createSandbox = input.dependencies?.createSandbox ?? createVercelEveImageSandbox;
+  const sandboxModule = await loadSandboxModule();
+  const sessionKey = input.name ?? input.context.resourceId;
+  const tags = resolveVercelSandboxTags(createOptions.tags, input.context.tags);
+  let session: VercelSandboxSessionCreateResult;
+  try {
+    session = await ensureSession({
+      createOptions,
+      createSandbox,
+      sandboxModule,
+      sessionKey,
+      snapshotId: input.template?.snapshotId,
+      tags,
+    });
+  } catch (error) {
+    if (
+      input.template !== undefined &&
+      (isVercelSnapshotUnavailableError(error) || isVercelSandboxMissingError(error))
+    ) {
+      const staleTemplate = await getNamedVercelSandbox({
+        createOptions,
+        sandboxModule,
+        sandboxName: input.template.sandboxName,
+      });
+      await staleTemplate?.delete();
+      throw new SandboxTemplateUnavailableError({
+        provider: "vercel",
+        templateKey: input.template.templateKey,
+      });
+    }
+    throw new Error(`Failed to create sandbox session "${sessionKey}": ${errorMessage(error)}`, {
+      cause: error,
+    });
+  }
+
+  if (input.template === undefined && session.created) {
+    await ensureVercelSandboxBaseRuntime(session.sandbox);
+    await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
+  }
+
+  return createVercelResource(session.sandbox, sessionKey, configuration);
+}
+
+/**
+ * Restores exactly the Vercel Sandbox named by a durable provider reference.
+ */
+export async function restoreVercelSandboxResource(
+  reference: VercelSandboxReference,
+  context: SandboxProviderContext,
+  dependencies: VercelSandboxDependencies = {},
+): Promise<VercelSandboxResource> {
+  const loadSandboxModule =
+    dependencies.loadSandboxModule ??
+    (async () => await import("#compiled/@vercel/sandbox/index.js"));
+  const createOptions = {
+    ...reference.configuration,
+    signal: context.signal,
+  } as VercelCreateOptions;
+  const sandboxModule = await loadSandboxModule();
+  const sandbox = await getNamedVercelSandbox({
+    createOptions,
+    sandboxModule,
+    sandboxName: reference.name,
+  });
+  if (sandbox === null || sandbox.createdAt.toISOString() !== reference.createdAt) {
+    throw new SandboxResourceUnavailableError({
+      provider: "vercel",
+      sessionKey: reference.name,
+    });
+  }
+  await ensureVercelSandboxTags(
+    sandbox,
+    context.tags === undefined
+      ? undefined
+      : resolveVercelSandboxTags(createOptions.tags, context.tags),
+  );
+  return createVercelResource(sandbox, reference.sessionKey, reference.configuration);
+}
+
+export function referenceVercelSandboxResource(
+  resource: VercelSandboxResource,
+): VercelSandboxReference {
+  return {
+    configuration: resource.configuration,
+    createdAt: resource.sandbox.createdAt.toISOString(),
+    name: resource.sandbox.name,
+    sessionKey: resource.sessionKey,
+  };
+}
+
+export async function shutdownVercelSandboxResource(
+  resource: VercelSandboxResource,
+): Promise<void> {
+  await stopVercelSandbox(resource.sandbox);
+}
+
+export async function prewarmVercelSandboxTemplate(input: {
+  readonly dependencies?: VercelSandboxDependencies;
+  readonly log?: (message: string) => void;
+  readonly options?: VercelCreateOptions;
+  readonly prepare: (resource: VercelSandboxResource) => Promise<void>;
+  readonly templateId: string;
+}): Promise<VercelSandboxTemplateReference> {
+  const loadSandboxModule =
+    input.dependencies?.loadSandboxModule ??
+    (async () => await import("#compiled/@vercel/sandbox/index.js"));
+  const createOptions: VercelCreateOptions = {
+    timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+    ...input.options,
+  };
+  try {
+    return (
+      await ensureTemplateWithUnavailableRetry({
+        prepare: input.prepare,
+        createOptions,
+        createSandbox: input.dependencies?.createSandbox ?? createVercelEveImageSandbox,
+        loadSandboxModule,
+        log: input.log,
+        templateKey: input.templateId,
+      })
+    ).template;
+  } catch (error) {
+    throw new Error(
+      `Failed to prewarm Vercel sandbox template "${input.templateId}": ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 interface EnsureTemplateOutcome {
   readonly reused: boolean;
-  readonly template: VercelSandboxTemplateRecord;
+  readonly template: VercelSandboxTemplateReference;
 }
 
 interface EnsureTemplateInput {
-  readonly prepare?: SandboxEnginePrepareInput["prepare"];
+  readonly prepare: (resource: VercelSandboxResource) => Promise<void>;
   readonly createOptions: VercelCreateOptions;
   readonly createSandbox: CreateVercelSandbox;
   readonly loadSandboxModule: () => Promise<VercelModule>;
   readonly log?: (message: string) => void;
-  readonly seedFiles: ReadonlyArray<SandboxSeedFile>;
-  readonly tags?: SandboxResourceTags;
   readonly templateKey: string;
 }
 
@@ -214,62 +235,11 @@ async function ensureTemplateWithUnavailableRetry(
   }
 }
 
-async function readTemplate(input: {
-  readonly createOptions: VercelCreateOptions;
-  readonly loadSandboxModule: () => Promise<VercelModule>;
-  readonly prewarmedTemplates: ReadonlyMap<string, VercelSandboxTemplateRecord>;
-  readonly templateKey: string;
-}): Promise<VercelSandboxTemplateRecord> {
-  const prewarmed = input.prewarmedTemplates.get(input.templateKey);
-  if (prewarmed !== undefined) {
-    return prewarmed;
-  }
-
-  const sandboxModule = await input.loadSandboxModule();
-  const sandbox = await getNamedVercelSandbox({
-    createOptions: input.createOptions,
-    sandboxModule,
-    sandboxName: input.templateKey,
-  });
-
-  if (sandbox === null || typeof sandbox.currentSnapshotId !== "string") {
-    throw new SandboxTemplateUnavailableError({
-      provider: "vercel",
-      templateKey: input.templateKey,
-    });
-  }
-
-  return {
-    sandboxName: sandbox.name,
-    snapshotId: sandbox.currentSnapshotId,
-    templateKey: input.templateKey,
-  };
-}
-
-async function readTemplateForCreate(input: {
-  readonly createOptions: VercelCreateOptions;
-  readonly loadSandboxModule: () => Promise<VercelModule>;
-  readonly prewarmedTemplates: ReadonlyMap<string, VercelSandboxTemplateRecord>;
-  readonly templateKey: string;
-}): Promise<VercelSandboxTemplateRecord> {
-  try {
-    return await readTemplate(input);
-  } catch (error) {
-    if (SandboxTemplateUnavailableError.is(error)) {
-      throw error;
-    }
-    throw new Error(
-      `Failed to read sandbox template "${input.templateKey}": ${errorMessage(error)}`,
-      { cause: error },
-    );
-  }
-}
-
 /**
  * Creates or refreshes one named Vercel sandbox template and returns the
  * resulting snapshot metadata along with whether an existing snapshot
  * was reused. Internal — exposed only to the prewarm pipeline through
- * the provider engine's `prepare` method.
+ * the provider's build-prewarm entry point.
  */
 async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplateOutcome> {
   const sandboxModule = await input.loadSandboxModule();
@@ -278,7 +248,7 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
     sandboxModule,
     sandboxName: input.templateKey,
   });
-  const tags = resolveVercelSandboxTags(input.createOptions.tags, input.tags);
+  const tags = resolveVercelSandboxTags(input.createOptions.tags, undefined);
   const authorSnapshotId = extractAuthorSnapshotId(input.createOptions);
 
   if (
@@ -336,22 +306,23 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
     await ensureVercelSandboxBaseRuntime(sandbox);
     await applyInitialVercelNetworkPolicy(sandbox, input.createOptions.networkPolicy);
 
-    const templateSession = buildSandboxSession(
-      createVercelInternalSandboxSession(sandbox, input.templateKey),
-      createVercelNetworkPolicySetter(sandbox),
+    const templateSession = createLoggingSandboxSession({
+      log: input.log,
+      session: buildSandboxSession(
+        createVercelInternalSandboxSession(sandbox, input.templateKey),
+        createVercelNetworkPolicySetter(sandbox),
+      ),
+    });
+
+    input.log?.("running template preparation");
+    await input.prepare(
+      createVercelResource(
+        sandbox,
+        input.templateKey,
+        createVercelRestorationConfiguration(input.createOptions),
+        templateSession,
+      ),
     );
-
-    await writeSandboxSeedFiles(templateSession, input.seedFiles);
-
-    if (input.prepare !== undefined) {
-      input.log?.("running template preparation");
-      await input.prepare(
-        createLoggingSandboxSession({
-          log: input.log,
-          session: templateSession,
-        }),
-      );
-    }
 
     const snapshot = await sandbox.snapshot();
     return {
@@ -371,7 +342,6 @@ async function ensureTemplate(input: EnsureTemplateInput): Promise<EnsureTemplat
 interface EnsureSessionInput {
   readonly createOptions: VercelCreateOptions;
   readonly createSandbox: CreateVercelSandbox;
-  readonly existingMetadata?: Record<string, unknown>;
   readonly sandboxModule: VercelModule;
   readonly sessionKey: string;
   readonly snapshotId?: string;
@@ -384,8 +354,7 @@ interface VercelSandboxSessionCreateResult {
 }
 
 async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSessionCreateResult> {
-  const persistedIdentity = readPersistedVercelSandboxIdentity(input.existingMetadata);
-  const sandboxName = persistedIdentity?.name ?? input.sessionKey;
+  const sandboxName = input.sessionKey;
   const existing = await getNamedVercelSandbox({
     createOptions: input.createOptions,
     sandboxModule: input.sandboxModule,
@@ -393,23 +362,8 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
   });
 
   if (existing !== null) {
-    if (
-      persistedIdentity !== undefined &&
-      existing.createdAt.toISOString() !== persistedIdentity.createdAt
-    ) {
-      throw new SandboxResourceUnavailableError({
-        provider: "vercel",
-        sessionKey: sandboxName,
-      });
-    }
     await ensureVercelSandboxTags(existing, input.tags);
     return { created: false, sandbox: existing };
-  }
-  if (input.existingMetadata !== undefined) {
-    throw new SandboxResourceUnavailableError({
-      provider: "vercel",
-      sessionKey: sandboxName,
-    });
   }
 
   const createParams = createSessionCreateParams(input, sandboxName);
@@ -565,24 +519,23 @@ function createVercelRestorationConfiguration(createOptions: VercelCreateOptions
   return parseJsonObject(configuration);
 }
 
-function readPersistedVercelSandboxIdentity(
-  metadata: Record<string, unknown> | undefined,
-): { readonly createdAt: string; readonly name: string } | undefined {
-  if (metadata === undefined) {
-    return undefined;
-  }
-  if (typeof metadata.sandboxCreatedAt !== "string" || typeof metadata.sandboxName !== "string") {
-    throw new TypeError("Invalid persisted Vercel sandbox identity.");
-  }
+function createVercelResource(
+  sandbox: VercelSandbox,
+  sessionKey: string,
+  configuration: JsonObject,
+  session = createVercelSandboxSession(sandbox, sessionKey),
+): VercelSandboxResource {
   return {
-    createdAt: metadata.sandboxCreatedAt,
-    name: metadata.sandboxName,
+    configuration,
+    sandbox,
+    session,
+    sessionKey,
   };
 }
 
 function resolveVercelSandboxTags(
   userTags: VercelCreateOptions["tags"],
-  eveTags: SandboxResourceTags | undefined,
+  eveTags: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> | undefined {
   const tags: Record<string, string> = {};
 

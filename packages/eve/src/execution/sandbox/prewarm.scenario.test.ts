@@ -107,6 +107,7 @@ function sandboxModule(snapshotId: string): string {
     'import { defineSandbox } from "eve/sandbox";',
     'import { defineSandboxTemplate } from "eve/sandbox/provider";',
     "export const template = defineSandboxTemplate({",
+    '  type: "test.dev/scenario-template/v1",',
     "  async prewarm() {",
     `    return { snapshotId: ${JSON.stringify(snapshotId)} };`,
     "  },",

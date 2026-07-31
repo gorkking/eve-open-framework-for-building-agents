@@ -1,5 +1,6 @@
 import type { SessionContext } from "#public/definitions/callback-context.js";
-import { SandboxTemplateUnavailableError } from "#shared/sandbox-engine.js";
+import { contextStorage, type AlsContext } from "#context/container.js";
+import { SandboxTemplateUnavailableError } from "#shared/sandbox-errors.js";
 import { isEveDevEnvironment } from "#internal/application/optional-package-install.js";
 import {
   getRuntimeCompiledArtifactsSandboxAppRoot,
@@ -7,7 +8,10 @@ import {
 } from "#runtime/compiled-artifacts-source.js";
 import { waitForDevelopmentSandboxPrewarm } from "#execution/sandbox/development-prewarm.js";
 import { trackActiveSandboxHandle } from "#execution/sandbox/active-handles.js";
-import { prewarmAppSandboxes } from "#execution/sandbox/prewarm.js";
+import {
+  prewarmAppSandboxes,
+  type PrewarmedSandboxTemplateBinding,
+} from "#execution/sandbox/prewarm.js";
 import { waitForSandboxTemplatePrewarmLock } from "#execution/sandbox/template-prewarm-lock.js";
 import {
   createRuntimeSandboxDefinitionRevision,
@@ -15,15 +19,13 @@ import {
   createRuntimeSandboxTemplateKey,
 } from "#runtime/sandbox/keys.js";
 import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
-import type {
-  SandboxAccess,
-  SandboxOwner,
-  SandboxState,
-  SandboxStateValue,
-} from "#sandbox/state.js";
+import type { SandboxAccess, SandboxState, SandboxStateValue } from "#sandbox/state.js";
 import {
   getSandboxAdapterType,
+  getSandboxResourceId,
   isSandbox,
+  onSandboxActivated,
+  requiresSandboxShutdown,
   restoreSandbox,
   serializeSandbox,
   shutdownSandbox,
@@ -32,13 +34,12 @@ import {
 } from "#shared/sandbox-value.js";
 import {
   getSandboxTemplateInternal,
-  hasSandboxTemplateReference,
-  readSandboxTemplateReference,
   withSandboxTemplateBindings,
 } from "#shared/sandbox-template.js";
 
 export interface EnsureSandboxAccessInput {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
+  readonly context: AlsContext;
   readonly nodeId: string;
   readonly parentState?: SandboxStateValue;
   readonly registry: RuntimeSandboxRegistry;
@@ -49,8 +50,6 @@ export interface EnsureSandboxAccessInput {
   readonly state: SandboxState | null;
   readonly tags?: Readonly<Record<string, string>>;
 }
-
-const sandboxOwners = new WeakMap<Sandbox, SandboxOwner>();
 
 /**
  * Restores the persisted sandbox value or invokes the authored definition once
@@ -92,7 +91,7 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         nodeId: input.nodeId,
         revision,
       });
-      return { internal, reference, templateKey };
+      return { exportName, internal, reference, templateKey };
     }),
   );
 
@@ -101,12 +100,9 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
     unknown
   > {
     const bindings = new Map<ReturnType<typeof getSandboxTemplateInternal>, unknown>();
-    for (const { internal, reference, templateKey } of templateBindings) {
-      const exactReference = hasSandboxTemplateReference(templateKey)
-        ? readSandboxTemplateReference(templateKey)
-        : reference;
-      if (exactReference !== undefined) {
-        bindings.set(internal, exactReference);
+    for (const { internal, reference } of templateBindings) {
+      if (reference !== undefined) {
+        bindings.set(internal, reference);
       }
     }
     return bindings;
@@ -134,17 +130,18 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         signal: input.signal,
         tags: input.tags,
       });
-      sandboxOwners.set(sandbox, persistedState.owner);
       trackSandboxForShutdown(sandbox);
       return sandbox;
     }
 
     if (templateBindings.length > 0) {
-      await waitForDevelopmentSandboxPrewarm({
-        appRoot,
-        compiledArtifactsSource: input.compiledArtifactsSource,
-        log: logDevelopmentSandbox,
-      });
+      applyPrewarmedBindings(
+        await waitForDevelopmentSandboxPrewarm({
+          appRoot,
+          compiledArtifactsSource: input.compiledArtifactsSource,
+          log: logDevelopmentSandbox,
+        }),
+      );
       await Promise.all(
         templateBindings.map(async ({ internal, templateKey }) => {
           await waitForSandboxTemplatePrewarmLock({
@@ -171,12 +168,29 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         throw error;
       }
 
-      await prewarmAppSandboxes({
-        appRoot,
-        compiledArtifactsSource: input.compiledArtifactsSource,
-        log: logDevelopmentSandbox,
-      });
+      applyPrewarmedBindings(
+        await prewarmAppSandboxes({
+          appRoot,
+          compiledArtifactsSource: input.compiledArtifactsSource,
+          log: logDevelopmentSandbox,
+        }),
+      );
       return await invokeDefinition();
+    }
+  }
+
+  function applyPrewarmedBindings(bindings: readonly PrewarmedSandboxTemplateBinding[]): void {
+    const references = new Map(
+      bindings.map((binding) => [
+        createTemplateBindingKey(binding.nodeId, binding.exportName),
+        binding.reference,
+      ]),
+    );
+    for (const binding of templateBindings) {
+      const reference = references.get(createTemplateBindingKey(input.nodeId, binding.exportName));
+      if (reference !== undefined) {
+        binding.reference = reference;
+      }
     }
   }
 
@@ -193,38 +207,43 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         appRoot,
         signal,
       });
+      trackSandboxForShutdown(sandbox);
       ancestors.set(key, sandbox);
       return sandbox;
     };
-    const sandbox = await withSandboxProviderContext(
-      {
-        appRoot,
-        resourceId: sessionKey,
-        signal,
-        tags: input.tags,
-      },
+    const sandbox = await contextStorage.run(
+      input.context,
       async () =>
-        await withSandboxTemplateBindings(createTemplateBindings(), async () => {
-          return await registered.definition.definition({
-            parent:
-              input.parentState === undefined
-                ? null
-                : {
-                    sandbox: Promise.resolve(restoreAncestor(input.parentState)),
-                  },
-            root:
-              input.rootState === undefined
-                ? null
-                : {
-                    sandbox: Promise.resolve(restoreAncestor(input.rootState)),
-                  },
-            runtime: {
-              mode: isEveDevEnvironment() ? "development" : "production",
-            },
-            session: input.session,
+        await withSandboxProviderContext(
+          {
+            appRoot,
+            resourceId: sessionKey,
             signal,
-          });
-        }),
+            tags: input.tags,
+          },
+          async () =>
+            await withSandboxTemplateBindings(createTemplateBindings(), async () => {
+              return await registered.definition.definition({
+                parent:
+                  input.parentState === undefined
+                    ? null
+                    : {
+                        sandbox: Promise.resolve(restoreAncestor(input.parentState)),
+                      },
+                root:
+                  input.rootState === undefined
+                    ? null
+                    : {
+                        sandbox: Promise.resolve(restoreAncestor(input.rootState)),
+                      },
+                runtime: {
+                  mode: isEveDevEnvironment() ? "development" : "production",
+                },
+                session: input.session,
+                signal,
+              });
+            }),
+        ),
     );
 
     if (!isSandbox(sandbox)) {
@@ -233,26 +252,25 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
       );
     }
 
-    sandboxOwners.set(
-      sandbox,
-      sandboxOwners.get(sandbox) ?? {
-        nodeId: input.nodeId,
-        sessionId: input.sessionId,
-      },
-    );
+    getSandboxResourceId(sandbox);
     trackSandboxForShutdown(sandbox);
     return sandbox;
   }
 
   function trackSandboxForShutdown(sandbox: Sandbox): void {
-    trackActiveSandboxHandle({
-      provider: getSandboxAdapterType(sandbox),
-      handle: {
-        async shutdown() {
-          await shutdownSandbox(sandbox);
+    if (!requiresSandboxShutdown(sandbox)) {
+      return;
+    }
+    onSandboxActivated(sandbox, () => {
+      trackActiveSandboxHandle({
+        provider: getSandboxAdapterType(sandbox),
+        handle: {
+          async shutdown() {
+            await shutdownSandbox(sandbox);
+          },
         },
-      },
-      resourceId: sandbox.id,
+        resourceId: getSandboxResourceId(sandbox),
+      });
     });
   }
 
@@ -263,15 +281,10 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
       }
       const sandbox = await sandboxPromise;
       const state: {
-        owner: SandboxOwner;
         revision: string;
         root?: SandboxStateValue;
         value: Awaited<ReturnType<typeof serializeSandbox>>;
       } = {
-        owner: sandboxOwners.get(sandbox) ?? {
-          nodeId: input.nodeId,
-          sessionId: input.sessionId,
-        },
         revision,
         value: await serializeSandbox(sandbox),
       };
@@ -294,13 +307,15 @@ function restoreSandboxState(
     readonly signal: AbortSignal;
   },
 ): Sandbox {
-  const sandbox = restoreSandbox(state.value, input);
-  sandboxOwners.set(sandbox, state.owner);
-  return sandbox;
+  return restoreSandbox(state.value, input);
 }
 
 function logDevelopmentSandbox(message: string): void {
   if (isEveDevEnvironment()) {
     console.log(message);
   }
+}
+
+function createTemplateBindingKey(nodeId: string, exportName: string): string {
+  return `${nodeId}\0${exportName}`;
 }

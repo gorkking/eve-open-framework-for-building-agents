@@ -81,8 +81,8 @@ export interface SandboxAdapterDefinition<RawSandbox, Reference extends JsonValu
    */
   session(sandbox: RawSandbox): SandboxSession;
   /**
-   * Stops process-local compute during server shutdown without deleting
-   * durable provider state.
+   * Stops active compute during server shutdown without deleting durable
+   * provider state.
    */
   shutdown?(sandbox: RawSandbox): void | Promise<void>;
 }
@@ -107,6 +107,9 @@ export interface SandboxAdapter<RawSandbox> {
 
 interface SandboxValueInternal {
   readonly adapterId: string;
+  readonly requiresShutdown: boolean;
+  readonly resourceId: string | undefined;
+  onActivate(callback: () => void): void;
   serialize(): Promise<SerializedSandbox>;
   shutdown(): Promise<void>;
 }
@@ -135,8 +138,8 @@ export function defineSandboxAdapter<RawSandbox, Reference extends JsonValue>(
       adapter,
       adapterId,
       id: session.id,
-      providerContext: context ?? createFallbackProviderContext(session.id),
-      rawSandbox: Promise.resolve(sandbox),
+      providerContext: context,
+      rawSandbox: sandbox,
       session: Promise.resolve(session),
     });
   }
@@ -192,15 +195,13 @@ export function restoreSandbox(
     adapter,
     adapterId: serialized.adapterId,
     id: serialized.id,
+    loadRawSandbox: async () => await adapter.restore(serialized.reference, providerContext),
     providerContext,
-    rawSandbox: Promise.resolve().then(
-      async () => await adapter.restore(serialized.reference, providerContext),
-    ),
   });
 }
 
 /**
- * Stops the process-local compute behind a sandbox.
+ * Stops active compute behind a sandbox without deleting durable state.
  */
 export async function shutdownSandbox(sandbox: Sandbox): Promise<void> {
   await getSandboxInternal(sandbox).shutdown();
@@ -211,6 +212,33 @@ export async function shutdownSandbox(sandbox: Sandbox): Promise<void> {
  */
 export function getSandboxAdapterType(sandbox: Sandbox): string {
   return getSandboxInternal(sandbox).adapterId;
+}
+
+/**
+ * Reads the eve-owned durable resource identity attached during creation or
+ * restoration.
+ */
+export function getSandboxResourceId(sandbox: Sandbox): string {
+  const internal = getSandboxInternal(sandbox);
+  const resourceId = internal.resourceId;
+  if (resourceId === undefined) {
+    throw transientSandboxError(internal.adapterId);
+  }
+  return resourceId;
+}
+
+/**
+ * Registers work that should begin only after a lazy provider handle is used.
+ */
+export function onSandboxActivated(sandbox: Sandbox, callback: () => void): void {
+  getSandboxInternal(sandbox).onActivate(callback);
+}
+
+/**
+ * Returns whether the provider owns active compute that must stop.
+ */
+export function requiresSandboxShutdown(sandbox: Sandbox): boolean {
+  return getSandboxInternal(sandbox).requiresShutdown;
 }
 
 /**
@@ -230,15 +258,33 @@ function createSandboxValue(input: {
   readonly adapter: RegisteredSandboxAdapter;
   readonly adapterId: string;
   readonly id: string;
-  readonly providerContext: SandboxProviderContext;
-  readonly rawSandbox: Promise<unknown>;
+  readonly loadRawSandbox?: () => Promise<unknown>;
+  readonly providerContext?: SandboxProviderContext;
+  readonly rawSandbox?: unknown;
   readonly session?: Promise<SandboxSession>;
 }): Sandbox {
+  let rawSandboxPromise: Promise<unknown> | undefined =
+    input.rawSandbox === undefined ? undefined : Promise.resolve(input.rawSandbox);
   let sessionPromise = input.session;
   let shutdownPromise: Promise<void> | undefined;
+  const activationCallbacks = new Set<() => void>();
+
+  function rawSandbox(): Promise<unknown> {
+    if (rawSandboxPromise === undefined) {
+      if (input.loadRawSandbox === undefined) {
+        throw new Error(`Sandbox "${input.adapterId}" has no provider handle loader.`);
+      }
+      rawSandboxPromise = input.loadRawSandbox();
+      for (const callback of activationCallbacks) {
+        callback();
+      }
+      activationCallbacks.clear();
+    }
+    return rawSandboxPromise;
+  }
 
   function session(): Promise<SandboxSession> {
-    sessionPromise ??= input.rawSandbox.then((rawSandbox) => input.adapter.session(rawSandbox));
+    sessionPromise ??= rawSandbox().then((value) => input.adapter.session(value));
     return sessionPromise;
   }
 
@@ -284,21 +330,33 @@ function createSandboxValue(input: {
     },
     [SANDBOX_VALUE]: {
       adapterId: input.adapterId,
+      requiresShutdown: input.adapter.shutdown !== undefined,
+      resourceId: input.providerContext?.resourceId,
+      onActivate(callback) {
+        if (rawSandboxPromise !== undefined) {
+          callback();
+          return;
+        }
+        activationCallbacks.add(callback);
+      },
       async serialize() {
-        const rawSandbox = await input.rawSandbox;
+        if (input.providerContext === undefined) {
+          throw transientSandboxError(input.adapterId);
+        }
+        const value = await rawSandbox();
         return {
           adapterId: input.adapterId,
           id: input.id,
-          reference: parseJsonValue(await input.adapter.reference(rawSandbox)),
+          reference: parseJsonValue(await input.adapter.reference(value)),
           resourceId: input.providerContext.resourceId,
         };
       },
       async shutdown() {
-        if (input.adapter.shutdown === undefined) {
+        if (input.adapter.shutdown === undefined || rawSandboxPromise === undefined) {
           return;
         }
-        shutdownPromise ??= input.rawSandbox.then(async (rawSandbox) => {
-          await input.adapter.shutdown?.(rawSandbox);
+        shutdownPromise ??= rawSandboxPromise.then(async (value) => {
+          await input.adapter.shutdown?.(value);
         });
         await shutdownPromise;
       },
@@ -370,17 +428,16 @@ function requireSandboxProviderContext(): SandboxProviderContext {
   return context;
 }
 
-function createFallbackProviderContext(resourceId: string): SandboxProviderContext {
-  return {
-    appRoot: process.cwd(),
-    resourceId,
-    signal: new AbortController().signal,
-  };
-}
-
 function expectSandboxAdapterType(type: string): string {
   if (type.trim() === "") {
     throw new TypeError("Sandbox adapter type must be a non-empty provider protocol name.");
   }
   return type;
+}
+
+function transientSandboxError(adapterId: string): Error {
+  return new Error(
+    `Cannot persist transient sandbox "${adapterId}". ` +
+      "Create or adapt the provider handle inside an authored sandbox definition.",
+  );
 }

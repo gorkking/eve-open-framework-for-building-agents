@@ -15,6 +15,7 @@ import {
   ChannelInstrumentationKey,
   InitiatorAuthKey,
   ParentSessionKey,
+  TurnAbortSignalKey,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { deserializeContext } from "#context/serialize.js";
@@ -103,10 +104,12 @@ export async function dispatchRuntimeActionsStep(input: {
     const { parentState, rootState } = readSubagentSandboxAncestorStates(adapter);
     const sandboxAccess = await ensureSandboxAccess({
       compiledArtifactsSource: bundle.compiledArtifactsSource,
+      context: ctx,
       nodeId: node.nodeId,
       parentState,
       registry: node.sandboxRegistry,
       rootState,
+      signal: ctx.get(TurnAbortSignalKey),
       session: {
         auth: {
           current: auth,

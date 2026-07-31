@@ -13,11 +13,11 @@ interface BundlerPluginShape {
 /**
  * Creates the bundler plugin that prunes the local sandbox providers
  * (Docker, just-bash, microsandbox) from hosted Nitro server bundles.
- * Every local-engine export flows through `bindings/local.js`, so
+ * Every local-provider export flows through `bindings/local.js`, so
  * stubbing that one module removes all of them; the stub mirrors the
  * facade's export surface.
  */
-export function createCompiledSandboxEnginePrunePlugin(): BundlerPluginShape {
+export function createCompiledSandboxProviderPrunePlugin(): BundlerPluginShape {
   return {
     name: "eve-hosted-sandbox-provider-prune",
     load(id) {
@@ -29,9 +29,15 @@ export function createCompiledSandboxEnginePrunePlugin(): BundlerPluginShape {
         "function pruned() {",
         '  throw new Error("Local sandbox providers are pruned from hosted server bundles.");',
         "}",
-        "export const createDockerSandboxEngine = pruned;",
-        "export const createJustBashSandboxEngine = pruned;",
-        "export const createMicrosandboxSandboxEngine = pruned;",
+        "export const createDockerSandboxProvider = pruned;",
+        "export const createJustBashSandboxProvider = pruned;",
+        "export const createMicrosandboxSandboxProvider = pruned;",
+        "export const referenceDockerSandboxResource = pruned;",
+        "export const referenceJustBashSandboxResource = pruned;",
+        "export const referenceMicrosandboxResource = pruned;",
+        "export const restoreDockerSandboxResource = pruned;",
+        "export const restoreJustBashSandboxResource = pruned;",
+        "export const restoreMicrosandboxResource = pruned;",
         'export const DOCKER_PROVIDER = "docker";',
         'export const JUST_BASH_PROVIDER = "just-bash";',
         'export const MICROSANDBOX_PROVIDER = "microsandbox";',

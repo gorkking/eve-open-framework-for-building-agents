@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearActiveMicrosandboxSessionHandlesForTest,
-  createMicrosandboxHandle,
+  createMicrosandboxResource,
   prewarmMicrosandboxTemplate,
+  referenceMicrosandboxResource,
 } from "#execution/sandbox/bindings/microsandbox-lifecycle.js";
-import { SandboxTemplateUnavailableError } from "#shared/sandbox-engine.js";
+import { SandboxTemplateUnavailableError } from "#shared/sandbox-errors.js";
 import {
   MICROSANDBOX_DEFAULT_IMAGE,
   resolveMicrosandboxOptions,
@@ -56,7 +57,21 @@ vi.mock("#execution/sandbox/bindings/microsandbox-metadata.js", async (importOri
   ...metadataMocks,
 }));
 
-describe("createMicrosandboxHandle", () => {
+const TEMPLATE_REFERENCE = {
+  optionsHash: "options-hash",
+  snapshotName: "template-snapshot",
+  templateId: "template-key",
+} as const;
+
+function providerContext() {
+  return {
+    appRoot: "/tmp/eve-app",
+    resourceId: "session-key",
+    signal: new AbortController().signal,
+  };
+}
+
+describe("createMicrosandboxResource", () => {
   beforeEach(() => {
     clearActiveMicrosandboxSessionHandlesForTest();
     vi.clearAllMocks();
@@ -77,32 +92,27 @@ describe("createMicrosandboxHandle", () => {
     const vm = createFakeMicrosandboxVm("session-key");
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
-    const createInput = {
-      context: { appRoot: "/tmp/eve-app" },
-      sessionKey: "session-key",
-      templateKey: "template-key",
-    };
-
-    const firstHandle = await createMicrosandboxHandle({
+    const firstHandle = await createMicrosandboxResource({
+      configuration: {},
+      context: providerContext(),
       provider: "microsandbox",
-      createInput,
       options,
       optionsHash: "options-hash",
+      template: TEMPLATE_REFERENCE,
     });
     await firstHandle.session.writeTextFile({
       content: "survives active cache",
       path: "date.txt",
     });
-    const state = await firstHandle.captureState();
+    const reference = await referenceMicrosandboxResource(firstHandle);
 
-    const secondHandle = await createMicrosandboxHandle({
+    const secondHandle = await createMicrosandboxResource({
+      configuration: {},
+      context: providerContext(),
       provider: "microsandbox",
-      createInput: {
-        ...createInput,
-        existingMetadata: state.metadata,
-      },
       options,
       optionsHash: "options-hash",
+      reference,
     });
 
     await expect(secondHandle.session.readTextFile({ path: "date.txt" })).resolves.toBe(
@@ -125,18 +135,19 @@ describe("createMicrosandboxHandle", () => {
     runtimeMocks.connectMicrosandbox.mockResolvedValue(vm);
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
 
-    await createMicrosandboxHandle({
+    await createMicrosandboxResource({
+      configuration: {},
+      context: providerContext(),
       provider: "microsandbox",
-      createInput: {
-        context: { appRoot: "/tmp/eve-app" },
-        existingMetadata: {
+      reference: {
+        configuration: {},
+        metadata: {
           optionsHash: "options-hash",
           sandboxName: "stale-sandbox",
           stateSnapshotName: "deleted-snapshot",
           version: 2,
         },
         sessionKey: "session-key",
-        templateKey: "template-key",
       },
       options,
       optionsHash: "options-hash",
@@ -153,18 +164,19 @@ describe("createMicrosandboxHandle", () => {
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
 
     await expect(
-      createMicrosandboxHandle({
+      createMicrosandboxResource({
+        configuration: {},
+        context: providerContext(),
         provider: "microsandbox",
-        createInput: {
-          existingMetadata: {
+        reference: {
+          configuration: {},
+          metadata: {
             optionsHash: "options-hash",
             sandboxName: "deleted-sandbox",
             stateSnapshotName: "deleted-session-snapshot",
             version: 2,
           },
-          context: { appRoot: "/tmp/eve-app" },
           sessionKey: "session-key",
-          templateKey: "template-key",
         },
         options,
         optionsHash: "options-hash",
@@ -181,27 +193,25 @@ describe("createMicrosandboxHandle", () => {
     const vm = createFakeMicrosandboxVm("session-key");
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
-    const createInput = {
-      context: { appRoot: "/tmp/eve-app" },
-      sessionKey: "session-key",
-      templateKey: "template-key",
-    };
-
-    const handle = await createMicrosandboxHandle({
+    const handle = await createMicrosandboxResource({
+      configuration: {},
+      context: providerContext(),
       provider: "microsandbox",
-      createInput,
       options,
       optionsHash: "options-hash",
+      template: TEMPLATE_REFERENCE,
     });
     await handle.shutdown();
 
     expect(vm.shutdown).toHaveBeenCalledTimes(1);
 
-    const nextHandle = await createMicrosandboxHandle({
+    const nextHandle = await createMicrosandboxResource({
+      configuration: {},
+      context: providerContext(),
       provider: "microsandbox",
-      createInput,
       options,
       optionsHash: "options-hash",
+      template: TEMPLATE_REFERENCE,
     });
     expect(nextHandle).not.toBe(handle);
     expect(runtimeMocks.createPreparedMicrosandbox).toHaveBeenCalledTimes(2);
@@ -215,15 +225,13 @@ describe("createMicrosandboxHandle", () => {
     const options = resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE });
 
     await expect(
-      createMicrosandboxHandle({
+      createMicrosandboxResource({
+        configuration: {},
+        context: providerContext(),
         provider: "microsandbox",
-        createInput: {
-          context: { appRoot: "/tmp/eve-app" },
-          sessionKey: "session-key",
-          templateKey: "template-key",
-        },
         options,
         optionsHash: "options-hash",
+        template: TEMPLATE_REFERENCE,
       }),
     ).rejects.toBeInstanceOf(SandboxTemplateUnavailableError);
   });
@@ -243,21 +251,25 @@ describe("prewarmMicrosandboxTemplate", () => {
 
   it("reuses a cached snapshot when its base image is immutable", async () => {
     runtimeMocks.snapshotExists.mockResolvedValue(true);
+    metadataMocks.readTemplateMetadata.mockResolvedValue({
+      optionsHash: "options-hash",
+      snapshotName: "template-snapshot",
+      version: 2,
+    });
 
     const result = await prewarmMicrosandboxTemplate({
+      appRoot: "/tmp/eve-app",
+      configuration: {},
       provider: "microsandbox",
       options: resolveMicrosandboxOptions({
         image: `ghcr.io/vercel/eve@sha256:${"a".repeat(64)}`,
       }),
       optionsHash: "options-hash",
-      prewarmInput: {
-        context: { appRoot: "/tmp/eve-app" },
-        seedFiles: [],
-        templateKey: "template-key",
-      },
+      async prepare() {},
+      templateId: "template-key",
     });
 
-    expect(result).toEqual({ reused: true });
+    expect(result).toEqual(TEMPLATE_REFERENCE);
     expect(runtimeMocks.createPreparedMicrosandbox).not.toHaveBeenCalled();
   });
 
@@ -266,17 +278,20 @@ describe("prewarmMicrosandboxTemplate", () => {
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(createFakeMicrosandboxVm("template"));
 
     const result = await prewarmMicrosandboxTemplate({
+      appRoot: "/tmp/eve-app",
+      configuration: {},
       provider: "microsandbox",
       options: resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE }),
       optionsHash: "options-hash",
-      prewarmInput: {
-        context: { appRoot: "/tmp/eve-app" },
-        seedFiles: [],
-        templateKey: "template-key",
-      },
+      async prepare() {},
+      templateId: "template-key",
     });
 
-    expect(result).toEqual({ reused: false });
+    expect(result).toEqual({
+      optionsHash: "options-hash",
+      snapshotName: "eve-sbx-tpl-template-key",
+      templateId: "template-key",
+    });
     expect(runtimeMocks.createPreparedMicrosandbox).toHaveBeenCalledOnce();
   });
 
@@ -286,14 +301,13 @@ describe("prewarmMicrosandboxTemplate", () => {
     const templateRootPath = "/tmp/eve-app/.eve/sandbox-cache/microsandbox/templates/template-key";
 
     const result = await prewarmMicrosandboxTemplate({
+      appRoot,
+      configuration: {},
       provider: "microsandbox",
       options: resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE }),
       optionsHash: "options-hash",
-      prewarmInput: {
-        context: { appRoot },
-        seedFiles: [],
-        templateKey: "template-key",
-      },
+      async prepare() {},
+      templateId: "template-key",
     });
 
     const replaceCallIndex = fsMocks.rm.mock.calls.findIndex(([path]) => path === templateRootPath);
@@ -310,7 +324,11 @@ describe("prewarmMicrosandboxTemplate", () => {
       ),
       templateRootPath,
     );
-    expect(result).toEqual({ reused: false });
+    expect(result).toEqual({
+      optionsHash: "options-hash",
+      snapshotName: "eve-sbx-tpl-template-key",
+      templateId: "template-key",
+    });
   });
 
   it("writes seed files before preparation and snapshots preparation outputs", async () => {
@@ -318,23 +336,25 @@ describe("prewarmMicrosandboxTemplate", () => {
     runtimeMocks.createPreparedMicrosandbox.mockResolvedValue(vm);
 
     await prewarmMicrosandboxTemplate({
+      appRoot: "/tmp/eve-app",
+      configuration: {},
       provider: "microsandbox",
       options: resolveMicrosandboxOptions({ image: MICROSANDBOX_DEFAULT_IMAGE }),
       optionsHash: "options-hash",
-      prewarmInput: {
-        prepare: async (sandbox) => {
-          await expect(sandbox.readTextFile({ path: "/workspace/seed.txt" })).resolves.toBe(
-            "authored seed",
-          );
-          await sandbox.writeTextFile({
-            content: "preparation output",
-            path: "/workspace/preparation.txt",
-          });
-        },
-        context: { appRoot: "/tmp/eve-app" },
-        seedFiles: [{ content: "authored seed", path: "/workspace/seed.txt" }],
-        templateKey: "template-key",
+      prepare: async (resource) => {
+        await resource.session.writeTextFile({
+          content: "authored seed",
+          path: "/workspace/seed.txt",
+        });
+        await expect(resource.session.readTextFile({ path: "/workspace/seed.txt" })).resolves.toBe(
+          "authored seed",
+        );
+        await resource.session.writeTextFile({
+          content: "preparation output",
+          path: "/workspace/preparation.txt",
+        });
       },
+      templateId: "template-key",
     });
 
     await expect(vm.readFileBytes("/workspace/preparation.txt")).resolves.toEqual(

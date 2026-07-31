@@ -93,10 +93,6 @@ describe("sandboxProvider", () => {
     const ctx = new ContextContainer();
     const registry: RuntimeSandboxRegistry = createStubSandboxRegistry();
     const sandboxState = {
-      owner: {
-        nodeId: "__root__",
-        sessionId: "parent-session",
-      },
       revision: "sandbox-revision",
       value: {
         adapterId: "example.com/sandbox",

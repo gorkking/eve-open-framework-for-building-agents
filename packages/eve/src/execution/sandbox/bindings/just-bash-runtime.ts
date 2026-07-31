@@ -11,14 +11,12 @@ import {
 import { adaptMultiplexedCommandToSandboxProcess } from "#execution/sandbox/multiplexed-command.js";
 import { shellQuote } from "#execution/sandbox/shell-quote.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
-import { loadOptionalEnginePackage } from "#internal/application/optional-package-install.js";
-import { parseJsonObject } from "#shared/json.js";
-import type { JsonObject } from "#shared/json.js";
-import type { SandboxEngineHandle } from "#shared/sandbox-engine.js";
+import { loadOptionalProviderPackage } from "#internal/application/optional-package-install.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
 import type {
   SandboxProcess,
   SandboxRemovePathOptions,
+  SandboxSession,
   SandboxSpawnOptions,
 } from "#shared/sandbox-session.js";
 
@@ -60,7 +58,7 @@ async function loadJustBashModule(input: {
   readonly appRoot: string;
   readonly autoInstall: boolean;
 }): Promise<JustBashModule> {
-  justBashModulePromise ??= loadOptionalEnginePackage<JustBashModule>({
+  justBashModulePromise ??= loadOptionalProviderPackage<JustBashModule>({
     appRoot: input.appRoot,
     autoInstall: input.autoInstall,
     importModule: async () => await import("just-bash"),
@@ -181,7 +179,7 @@ export async function createBashSandbox(input: {
 }
 
 /**
- * The just-bash engine cannot honor a run-time network policy: just-bash takes
+ * The just-bash provider cannot honor a run-time network policy: just-bash takes
  * its `NetworkConfig` only at sandbox creation (no live update) and runs no
  * `git` or other binaries, so credential brokering has nothing to act on.
  * Throw rather than silently no-op so brokering code surfaces the gap instead
@@ -196,32 +194,11 @@ export async function justBashSetNetworkPolicyUnsupported(): Promise<never> {
   );
 }
 
-export function createJustBashHandle(
-  sandbox: BashSandbox,
-  provider: string,
-  configuration: JsonObject,
-): SandboxEngineHandle {
-  const session = buildSandboxSession(
+export function createJustBashSandboxSession(sandbox: BashSandbox): SandboxSession {
+  return buildSandboxSession(
     createFileBackedInternalSandboxSession({ id: sandbox.sessionKey, sandbox }),
     justBashSetNetworkPolicyUnsupported,
   );
-  return {
-    session,
-    async captureState() {
-      const metadata = (await sandbox.captureState()) ?? {};
-      return {
-        configuration,
-        provider,
-        metadata: parseJsonObject(metadata),
-        sessionKey: sandbox.sessionKey,
-      };
-    },
-    // The interpreter lives in this process, so stopping it is all the
-    // shutdown a just-bash sandbox needs.
-    async shutdown() {
-      await sandbox.dispose();
-    },
-  };
 }
 
 function resolveLocalSandboxFilesystemRootPath(rootPath: string): string {
