@@ -11,7 +11,8 @@ last_updated: "2026-07-31"
 Under an opt-in `experimental.tasks` mode, eve should represent long-running work as durable,
 addressable tasks. This plan applies that model only to local and remote subagents. A subagent call
 returns a task receipt after dispatch instead of keeping the parent turn blocked until the child
-finishes. The parent can inspect, await, message, or cancel the task with framework-owned tools.
+finishes. The parent can inspect, await, message, or cancel the task with framework-owned tools,
+and the child can intentionally report progress to its parent with one framework-owned tool.
 
 Without the flag, current tool and subagent behavior must remain unchanged.
 
@@ -52,6 +53,8 @@ cancel paths.
 
 - Let a parent continue its turn while delegated work runs.
 - Give the model explicit task controls instead of making every wait implicit.
+- Let a child intentionally report progress to its parent instead of leaving progress to
+  channel-layer guesswork.
 - Carry progress, input requests, authorization events, results, failures, and cancellation over
   one local and remote task contract.
 - Keep task state durable across turns and replay.
@@ -79,11 +82,19 @@ A **child session** is the resumable conversation owned by a delegated agent. A 
 the same child session creates a new task bound to the same `childSessionId`. This matches A2A's
 separation between immutable tasks and a longer-lived [`contextId`].
 
+A **runtime action** is today's framework-internal dispatch mechanism behind execute-less tools
+such as subagent calls. This plan changes how the runtime executes the two subagent kinds, not
+how authored files lower to them.
+
 A **synchronous invocation** runs inside the current harness step. Its result may trigger another
 model step in the same turn.
 
 A **background task** is owned by the parent session, not the originating turn. It may complete,
 request input, or emit progress after that turn ends.
+
+**Delegated execution** is a runtime execution mode, not a tool-authoring surface. A delegated
+dispatch returns once the executor acknowledges the work; the task stays `working`, and every
+later transition arrives over the task wire.
 
 `completed`, `failed`, and `cancelled` are terminal statuses. `input_required` is not terminal,
 but it is ready for parent action. `task_await` must return for either condition so a parent never
@@ -132,6 +143,26 @@ The controls have distinct behavior:
 - `task_cancel` requests cooperative cancellation. A committed terminal state is final, so a late
   child result cannot revive a cancelled task.
 - `task_sleep` durably pauses the current turn for paced checks. It does not poll or mutate a task.
+
+### Child task tools
+
+A child session dispatched as a task receives one framework-owned tool:
+
+```ts
+interface TaskChildTools {
+  task_message(input: { message: string }): Promise<TaskToolResult<boolean>>;
+}
+```
+
+`task_message` emits a `task.message` event through the task binding and updates the task's
+durable `statusMessage`. It returns after the update is durably recorded. It does not change the
+child's lifecycle and is not a substitute for the terminal result.
+
+No child-facing surface exists today: child-to-parent communication is entirely harness-level.
+The [local subagent adapter] forwards events as side effects the child model never sees, and the
+[remote callback route] accepts only terminal payloads. This tool is the model-facing half of the
+proposal's original motivation — letting a child report progress on purpose rather than having
+channels infer it.
 
 ### Task view
 
@@ -187,7 +218,7 @@ history append-only and leaves no dangling provider tool call.
 
 The mutable task record should live in a dedicated durable task run. That run is the single writer
 for lifecycle transitions and appends a full `TaskView` snapshot after each accepted command.
-Other paths address it through a command hook and read its stream.
+Other paths submit commands to that run and read its snapshots.
 
 The parent session stores only a live-task index:
 
@@ -223,6 +254,24 @@ completed, failed, and cancelled are final
 - Replayed creation for the same parent session and tool-call ID returns the same task and must not
   dispatch duplicate work.
 
+## Delegated execution
+
+Today the runtime parks subagent tool calls, dispatches them serially as a batch after the
+synchronous calls, and holds the turn until every action in the batch resolves (the
+[runtime-action park path], [serial dispatch loop], and [turn-level wait]). Delegated execution
+replaces the park-and-wait mechanism in the same dispatch codepath:
+
+1. The harness creates a durable `working` task for the subagent call.
+2. It dispatches the child with the task binding.
+3. The child acknowledges its `childSessionId`, which is persisted immediately.
+4. The originating call receives its receipt and the turn continues.
+
+Everything after acknowledgement — progress, input requests, authorization, terminal outcome —
+arrives over the task wire instead of resolving the dispatch. Delegated execution is an agent
+runtime change, not a `defineTool` change: authored tool contracts and the `runtimeAction`
+lowering stay as they are, and the mode lands inert until the experiment selects the two subagent
+kinds into it. A later phase can expose delegation to authored tools on top of the same mode.
+
 ## Parent and executor wire contract
 
 The parent-facing half of a task binding is passed to a local or remote child executor. Routing
@@ -250,6 +299,20 @@ An `input_required` transition carries the full outstanding request batch in its
 The parent emits those requests through the normal `input.requested` stream contract. Matching
 responses route back through `task_send`. Authorization uses the same task binding but remains a
 distinct event because it has different disclosure rules.
+
+The five flows that split across two transports today all converge on this one contract, for
+local and remote children alike:
+
+| Flow                              | Over the task wire                                            |
+| --------------------------------- | ------------------------------------------------------------- |
+| Terminal result or failure        | `task.update` with a terminal snapshot                        |
+| Input request, including approval | `task.update` with `input_required` and the outstanding batch |
+| Authorization event               | `task.authorization`                                          |
+| Input response                    | `task_send` addressed to the owning task                      |
+| Cancellation                      | `task_cancel`, committed then propagated to the executor      |
+
+Progress is the sixth flow, new in this plan: `task.message` from the child's `task_message`
+tool, durably recorded as the task's latest `statusMessage`.
 
 The proposed routing policy makes terminal updates and `input_required` wake a parked parent
 session. Progress updates change task state and emit client-visible lifecycle events, but do not
@@ -319,15 +382,20 @@ than MCP compatibility.
 
 ## Delivery
 
-1. Add the task types, transition rules, durable task run, session index, and inert task service.
-2. Add the parent task tools but keep them undiscoverable until the experiment is enabled.
+1. Land the task foundation inert: types, transition rules, durable task run, session index, and
+   the parent and child task tools, all undiscoverable without the experiment.
+2. Land delegated execution in the runtime, inert: dispatch acknowledges, the task stays
+   `working`, and nothing selects the mode yet.
 3. Land the A2A handle and inbox dependency needed to address an existing child session.
-4. Behind `experimental.tasks`, create a task for every local and remote subagent call, return its
-   receipt, and dispatch the child with a task binding.
-5. Carry all five child flows over the task wire: terminal outcome, input request, authorization,
-   input response, and cancellation.
-6. Normalize local and remote subagents onto the same lifecycle while preserving their authored
-   definitions.
+4. Behind `experimental.tasks`, run subagent runtime actions as tasks: create the task in the
+   runtime-action dispatch codepath, return its receipt, and dispatch the child with a task
+   binding.
+5. Carry all six child flows over the task wire: terminal outcome, input request, authorization,
+   input response, cancellation, and progress.
+6. Normalize local and remote subagents onto the same delegated execution path while preserving
+   their authored definitions.
+7. Make tasks the default subagent execution path and retire the flag once the acceptance
+   criteria hold.
 
 ## Acceptance criteria
 
@@ -337,7 +405,9 @@ than MCP compatibility.
   step before the child completes.
 - The original tool call has exactly one result in durable history. Later task output cannot be
   attached to that call a second time.
-- Local and remote subagents support the same five parent-child flows.
+- Local and remote subagents support the same six parent-child flows.
+- A child dispatched as a task can call `task_message`; the parent observes the durable latest
+  message through `task_peek` without a model turn starting on its own.
 - `task_await` returns on terminal status and `input_required`, including when the task was already
   ready before the call.
 - `task_peek` observes current state without waking or mutating the executor.
