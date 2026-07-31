@@ -1,7 +1,13 @@
 import type { UserContent } from "ai";
 
 import type { CrossChannelReceiveFn } from "#channel/cross-channel-receive.js";
-import type { CancelTurnResult, SessionAuthContext, SessionCallback } from "#channel/types.js";
+import type {
+  CancelTurnResult,
+  SessionAuthContext,
+  SessionCallback,
+  SessionCapabilities,
+  TurnCaller,
+} from "#channel/types.js";
 import type { InputResponse } from "#runtime/input/types.js";
 import type { Session } from "#channel/session.js";
 import type { RunMode } from "#shared/run-mode.js";
@@ -61,9 +67,8 @@ export interface SendPayload {
 
 /**
  * Starts or continues a session on this channel. Accepts a plain string,
- * `UserContent`, or a {@link SendPayload}, plus {@link SendOptions} (auth,
- * continuation token, run mode, and an optional seed `state` for stateful
- * channels). Resolves to the resulting {@link Session}.
+ * `UserContent`, or a {@link SendPayload}, plus {@link SendOptions}. Resolves
+ * to the resulting {@link Session}.
  */
 export type SendFn<TState = undefined> = (
   input: string | UserContent | SendPayload,
@@ -78,7 +83,15 @@ export type ResolveActiveSessionFn = (options: {
 type BaseSendOptions = {
   auth: SessionAuthContext | null;
   callback?: SessionCallback;
+  /** Framework-internal delegated caller waiting on this turn's settled result. */
+  caller?: TurnCaller;
+  capabilities?: SessionCapabilities;
   continuationToken: string;
+  /**
+   * `"resume"` requires an active session and propagates a typed no-active-session
+   * error. `"resume-or-start"` preserves the default channel behavior.
+   */
+  intent?: "resume" | "resume-or-start";
   /**
    * The original (top-level) caller's auth for a newly started session,
    * becoming `session.auth.initiator`. Defaults to {@link auth} when omitted

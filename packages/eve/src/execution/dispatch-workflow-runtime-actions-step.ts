@@ -18,7 +18,8 @@ import { createLogger } from "#internal/logging.js";
 import { BundleKey } from "#runtime/sessions/runtime-context-keys.js";
 import type {
   RuntimeActionRequest,
-  RuntimeSubagentResultActionResult,
+  RuntimeSubagentDispatchFailure,
+  RuntimeSubagentResult,
 } from "#runtime/actions/types.js";
 
 const log = createLogger("execution.dispatch-workflow-runtime-actions");
@@ -31,7 +32,7 @@ export async function dispatchWorkflowRuntimeActionsStep(input: {
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
 }): Promise<{
-  readonly results: readonly RuntimeSubagentResultActionResult[];
+  readonly results: readonly RuntimeSubagentResult[];
   readonly sessionState: DurableSessionState;
 }> {
   "use step";
@@ -104,7 +105,7 @@ export async function dispatchWorkflowRuntimeActionsStep(input: {
 function createWorkflowSubagentLimitResult(input: {
   readonly action: RuntimeActionRequest;
   readonly plan: WorkflowSubagentDispatchPlan;
-}): RuntimeSubagentResultActionResult {
+}): RuntimeSubagentDispatchFailure {
   const subagentName = isSubagentDelegationAction(input.action)
     ? getSubagentDelegationName(input.action)
     : input.action.kind;
