@@ -209,10 +209,8 @@ export async function createMicrosandboxResource(input: {
   }
 
   const metadataPath = resolveMicrosandboxMetadataPath(sessionRootPath);
-  // The metadata file is the provider-owned stable pointer for this session.
-  // A shared parent sandbox may advance that pointer from a child workflow,
-  // so persisted workflow metadata is only a fallback when the provider-side
-  // pointer is unavailable.
+  // Child workflows can advance a shared sandbox after parent state was serialized,
+  // so provider metadata must win over the workflow reference.
   const existingMetadata =
     (await readSessionMetadata(metadataPath)) ??
     readSessionMetadataRecord(input.reference?.metadata);

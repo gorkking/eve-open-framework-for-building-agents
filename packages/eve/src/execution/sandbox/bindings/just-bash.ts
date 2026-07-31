@@ -43,10 +43,6 @@ const JUST_BASH_CACHE_DIRECTORY_NAME = "just-bash";
  */
 export const JUST_BASH_PROVIDER = "just-bash";
 
-/**
- * Construction input for the internal just-bash bridge behind
- * `JustBashSandbox`.
- */
 export interface CreateJustBashSandboxProviderInput {
   readonly createOptions?: JustBashSandboxCreateOptions;
 }
@@ -292,8 +288,18 @@ export async function restoreJustBashSandboxResource(
   context: SandboxProviderContext,
 ): Promise<JustBashSandboxResource> {
   return await createJustBashSandboxProvider({
-    createOptions: reference.configuration as JustBashSandboxCreateOptions,
+    createOptions: decodeJustBashSandboxCreateOptions(reference.configuration),
   }).create({ context, reference });
+}
+
+function decodeJustBashSandboxCreateOptions(value: JsonObject): JustBashSandboxCreateOptions {
+  if (
+    Object.keys(value).some((key) => key !== "autoInstall") ||
+    (value.autoInstall !== undefined && typeof value.autoInstall !== "boolean")
+  ) {
+    throw new TypeError("Invalid just-bash sandbox configuration in durable state.");
+  }
+  return { autoInstall: value.autoInstall };
 }
 
 /**

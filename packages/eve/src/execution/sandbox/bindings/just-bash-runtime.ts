@@ -102,7 +102,7 @@ export async function createBashSandbox(input: {
 
   const sandbox = await Sandbox.create({
     cwd: WORKSPACE_ROOT,
-    env: metadata?.env as Record<string, string> | undefined,
+    env: metadata === null ? undefined : { ...metadata.env },
     fs: filesystem,
     network: {
       dangerouslyAllowFullInternetAccess: true,
@@ -147,11 +147,8 @@ export async function createBashSandbox(input: {
         options.workingDirectory !== undefined
           ? `( cd ${shellQuote(options.workingDirectory)} && ${options.command} )`
           : options.command;
-      // just-bash has no separate `bash` executable — it IS the bash
-      // interpreter. The `eval` builtin re-parses its single string
-      // argument as a shell line, which is the only way to feed an
-      // arbitrary shell command into the object-form `runCommand`
-      // (the only form that supports `detached`).
+      // Detached execution requires object-form `runCommand`; `eval` is
+      // just-bash's only way to parse an arbitrary command string there.
       const command = await sandbox.runCommand({
         args: [wrapped],
         cmd: "eval",
@@ -168,10 +165,7 @@ export async function createBashSandbox(input: {
       for (const file of files) {
         const dir = dirname(file.path);
         await filesystem.mkdir(dir, { recursive: true });
-        // Preserve Buffer content byte-for-byte so binary assets (for
-        // example images under a skill's `assets/` directory) survive
-        // the write. `Buffer` is a `Uint8Array` subclass, which the
-        // just-bash filesystem accepts directly alongside strings.
+        // Passing bytes directly avoids corrupting binary workspace assets.
         await filesystem.writeFile(file.path, file.content);
       }
     },
@@ -220,11 +214,10 @@ async function readLocalMetadata(metadataPath: string): Promise<LocalSandboxMeta
     return null;
   }
 
-  const metadata = JSON.parse(
-    await readFile(metadataPath, "utf8"),
-  ) as Partial<LocalSandboxMetadata>;
+  const metadata: unknown = JSON.parse(await readFile(metadataPath, "utf8"));
 
   if (
+    !isRecord(metadata) ||
     metadata.version !== LOCAL_SANDBOX_METADATA_VERSION ||
     !isStringRecord(metadata.env) ||
     typeof metadata.resourceId !== "string"
@@ -254,4 +247,8 @@ function isStringRecord(value: unknown): value is Readonly<Record<string, string
     !Array.isArray(value) &&
     Object.values(value).every((entry) => typeof entry === "string")
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

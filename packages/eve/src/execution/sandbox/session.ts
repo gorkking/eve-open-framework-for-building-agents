@@ -202,7 +202,7 @@ function decodeBytes(buf: Uint8Array, encoding: string): string {
     return new TextDecoder("utf-8", { fatal: true }).decode(buf);
   }
   return Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength).toString(
-    encoding as BufferEncoding,
+    expectBufferEncoding(encoding),
   );
 }
 
@@ -216,5 +216,23 @@ function encodeString(str: string, encoding: string): Uint8Array {
   if (encoding === "utf-8" || encoding === "utf8") {
     return new TextEncoder().encode(str);
   }
-  return Buffer.from(str, encoding as BufferEncoding);
+  return Buffer.from(str, expectBufferEncoding(encoding));
+}
+
+function expectBufferEncoding(encoding: string): BufferEncoding {
+  switch (encoding) {
+    case "ascii":
+    case "base64":
+    case "base64url":
+    case "binary":
+    case "hex":
+    case "latin1":
+    case "ucs-2":
+    case "ucs2":
+    case "utf-8":
+    case "utf16le":
+    case "utf8":
+      return encoding;
+  }
+  throw new TypeError(`Unsupported file encoding "${encoding}".`);
 }

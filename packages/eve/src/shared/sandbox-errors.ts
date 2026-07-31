@@ -19,9 +19,9 @@ export class SandboxTemplateUnavailableError extends Error {
       error instanceof SandboxTemplateUnavailableError ||
       (typeof error === "object" &&
         error !== null &&
-        (error as { readonly name?: unknown }).name === "SandboxTemplateUnavailableError" &&
-        typeof (error as { readonly provider?: unknown }).provider === "string" &&
-        typeof (error as { readonly templateKey?: unknown }).templateKey === "string")
+        Reflect.get(error, "name") === "SandboxTemplateUnavailableError" &&
+        typeof Reflect.get(error, "provider") === "string" &&
+        typeof Reflect.get(error, "templateKey") === "string")
     );
   }
 }
@@ -47,9 +47,9 @@ export class SandboxResourceUnavailableError extends Error {
       error instanceof SandboxResourceUnavailableError ||
       (typeof error === "object" &&
         error !== null &&
-        (error as { readonly name?: unknown }).name === "SandboxResourceUnavailableError" &&
-        typeof (error as { readonly provider?: unknown }).provider === "string" &&
-        typeof (error as { readonly sessionKey?: unknown }).sessionKey === "string")
+        Reflect.get(error, "name") === "SandboxResourceUnavailableError" &&
+        typeof Reflect.get(error, "provider") === "string" &&
+        typeof Reflect.get(error, "sessionKey") === "string")
     );
   }
 }

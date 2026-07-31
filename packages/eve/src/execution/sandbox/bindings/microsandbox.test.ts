@@ -7,6 +7,7 @@ import {
   serializeMicrosandboxNetworkPolicyJson,
 } from "#execution/sandbox/bindings/microsandbox-network.js";
 import {
+  decodeMicrosandboxCreateOptions,
   MICROSANDBOX_DEFAULT_IMAGE,
   resolveMicrosandboxOptions,
 } from "#execution/sandbox/bindings/microsandbox-options.js";
@@ -22,6 +23,30 @@ vi.mock("#execution/sandbox/bindings/microsandbox-lifecycle.js", () => lifecycle
 // The microsandbox native bindings ship for macOS (Apple Silicon) and
 // glibc Linux only; keep every microsandbox suite off Windows.
 const onWindows = process.platform === "win32";
+
+describe("decodeMicrosandboxCreateOptions", () => {
+  it("validates durable provider options", () => {
+    expect(
+      decodeMicrosandboxCreateOptions({
+        cpus: 2,
+        env: { TOKEN: "value" },
+        networkPolicy: { allow: ["api.example.com"] },
+        setup: { autoInstall: false },
+      }),
+    ).toEqual({
+      cpus: 2,
+      env: { TOKEN: "value" },
+      image: undefined,
+      memoryMiB: undefined,
+      networkPolicy: { allow: ["api.example.com"] },
+      pullPolicy: undefined,
+      setup: { autoInstall: false },
+    });
+    expect(() => decodeMicrosandboxCreateOptions({ networkPolicy: { allow: [42] } })).toThrow(
+      "Invalid microsandbox configuration",
+    );
+  });
+});
 
 describe.skipIf(onWindows)("createMicrosandboxSandboxProvider", () => {
   beforeEach(() => {

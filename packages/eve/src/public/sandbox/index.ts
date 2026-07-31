@@ -29,7 +29,3 @@ export {
   type DefaultSandboxTemplate,
   type DefaultSandboxTemplateOptions,
 } from "#public/sandbox/default.js";
-export {
-  LocalFilesystemSandbox,
-  type LocalFilesystemSandboxOpenOptions,
-} from "#public/sandbox/local-filesystem.js";

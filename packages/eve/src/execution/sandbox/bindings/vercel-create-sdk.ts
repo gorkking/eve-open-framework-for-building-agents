@@ -1,15 +1,10 @@
 import { getVercelSandboxFetch } from "#execution/sandbox/bindings/vercel-credentials.js";
-import type {
-  VercelCreateOptions,
-  VercelModule,
-  VercelSandbox,
-} from "#execution/sandbox/bindings/vercel-sdk-types.js";
+import type { VercelModule, VercelSandbox } from "#execution/sandbox/bindings/vercel-sdk-types.js";
+import type { VercelCreateOptions } from "#execution/sandbox/bindings/vercel-options.js";
 
 export type VercelSandboxCreateParams = VercelCreateOptions & {
   readonly name: string;
   readonly persistent: boolean;
-  readonly source?: VercelCreateOptions["source"];
-  tags?: Record<string, string> | undefined;
 } & VercelSandboxInternalCreateOptions;
 
 type VercelSandboxInternalCreateOptions = {

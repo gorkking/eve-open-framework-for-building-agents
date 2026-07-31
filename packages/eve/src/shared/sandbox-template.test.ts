@@ -13,7 +13,7 @@ import type { Sandbox } from "#shared/sandbox-value.js";
 describe("defineSandboxTemplate", () => {
   it("keeps provider references internal and supplies the bound build result to create", async () => {
     const sandbox = mockSandbox();
-    const create = vi.fn(() => sandbox.session as Sandbox);
+    const create = vi.fn(() => sandbox.session);
     const template = defineSandboxTemplate<{ snapshotId: string }, { resources: number }>({
       type: "test.dev/template-reference/v1",
       async prewarm() {
@@ -52,7 +52,7 @@ describe("defineSandboxTemplate", () => {
           return { image: "built" };
         },
         async create() {
-          return mockSandbox().session as Sandbox;
+          return mockSandbox().session;
         },
       });
 
@@ -70,6 +70,49 @@ describe("defineSandboxTemplate", () => {
     expect(changed.implementationId).not.toBe(first.implementationId);
   });
 
+  it("builds provider-specific author methods over one internal create operation", async () => {
+    const create = vi.fn(() => mockSandbox().session);
+    const template = defineSandboxTemplate<
+      { snapshotId: string },
+      { readonly name: string },
+      {
+        create(): Promise<Sandbox>;
+        getOrCreate(name: string): Promise<Sandbox>;
+      }
+    >(
+      {
+        type: "test.dev/custom-template-api/v1",
+        async prewarm() {
+          return { snapshotId: "snapshot_123" };
+        },
+        create,
+      },
+      (createFromTemplate) => ({
+        async create() {
+          return await createFromTemplate({ name: "new" });
+        },
+        async getOrCreate(name) {
+          return await createFromTemplate({ name });
+        },
+      }),
+    );
+    const internal = getSandboxTemplateInternal(template);
+
+    await withTestContext(
+      async () =>
+        await withSandboxTemplateBindings(
+          new Map([[internal, { snapshotId: "snapshot_123" }]]),
+          async () => await template.getOrCreate("shared"),
+        ),
+    );
+
+    expect(isSandboxTemplate(template)).toBe(true);
+    expect(create).toHaveBeenCalledWith({
+      options: { name: "shared" },
+      reference: { snapshotId: "snapshot_123" },
+    });
+  });
+
   it("includes the provider protocol in its private implementation identity", () => {
     const createTemplate = (type: string) =>
       defineSandboxTemplate({
@@ -78,7 +121,7 @@ describe("defineSandboxTemplate", () => {
           return { image: "built" };
         },
         async create() {
-          return mockSandbox().session as Sandbox;
+          return mockSandbox().session;
         },
       });
 
@@ -98,7 +141,7 @@ describe("defineSandboxTemplate", () => {
       async create({ reference }) {
         await Promise.resolve();
         seen.push(reference.snapshotId);
-        return mockSandbox({ id: reference.snapshotId }).session as Sandbox;
+        return mockSandbox({ id: reference.snapshotId }).session;
       },
     });
     const internal = getSandboxTemplateInternal(template);
@@ -133,7 +176,7 @@ describe("defineSandboxTemplate", () => {
       },
       async create({ reference }) {
         expect(reference).toBeNull();
-        return mockSandbox().session as Sandbox;
+        return mockSandbox().session;
       },
     });
     const internal = getSandboxTemplateInternal(template);

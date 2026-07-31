@@ -7,7 +7,7 @@ import {
   type MicrosandboxTemplateReference,
 } from "#execution/sandbox/bindings/local.js";
 import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
-import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
+import { defineSandboxTemplate } from "#shared/sandbox-template.js";
 import { parseJsonValue } from "#shared/json.js";
 import type { MicrosandboxSandboxCreateOptions } from "#public/sandbox/microsandbox-sandbox.js";
 
@@ -26,7 +26,7 @@ export interface MicrosandboxSandboxTemplateOptions extends MicrosandboxSandboxC
 /**
  * A build-prewarmed microsandbox base.
  */
-export interface MicrosandboxSandboxTemplate extends Omit<SandboxTemplate<undefined>, "create"> {
+export interface MicrosandboxSandboxTemplate {
   create(): Promise<Sandbox>;
 }
 
@@ -63,32 +63,37 @@ export const MicrosandboxSandbox = {
   template(options: MicrosandboxSandboxTemplateOptions = {}): MicrosandboxSandboxTemplate {
     const { prepare, ...createOptions } = options;
     const provider = createMicrosandboxSandboxProvider({ createOptions });
-    const internalTemplate = defineSandboxTemplate<MicrosandboxTemplateReference, undefined>({
-      revision: parseJsonValue(createOptions),
-      type: "microsandbox.dev/sandbox-template/v1",
-      async prewarm({ appRoot, hydrate, log, templateId }) {
-        return await provider.prewarm({
-          appRoot,
-          log,
-          async prepare(resource) {
-            const sandbox = asMicrosandbox(resource);
-            await hydrate(sandbox);
-            await prepare?.(sandbox);
-          },
-          templateId,
-        });
+    return defineSandboxTemplate<
+      MicrosandboxTemplateReference,
+      undefined,
+      MicrosandboxSandboxTemplate
+    >(
+      {
+        revision: parseJsonValue(createOptions),
+        type: "microsandbox.dev/sandbox-template/v1",
+        async prewarm({ appRoot, hydrate, log, templateId }) {
+          return await provider.prewarm({
+            appRoot,
+            log,
+            async prepare(resource) {
+              const sandbox = asMicrosandbox(resource);
+              await hydrate(sandbox);
+              await prepare?.(sandbox);
+            },
+            templateId,
+          });
+        },
+        async create({ reference }) {
+          return await asMicrosandbox.create(async (context) => {
+            return await provider.create({ context, template: reference });
+          });
+        },
       },
-      async create({ reference }) {
-        return await asMicrosandbox.create(async (context) => {
-          return await provider.create({ context, template: reference });
-        });
-      },
-    });
-    const createFromReference = internalTemplate.create.bind(internalTemplate);
-    return Object.assign(internalTemplate, {
-      async create(): Promise<Sandbox> {
-        return await createFromReference(undefined);
-      },
-    }) as MicrosandboxSandboxTemplate;
+      (create) => ({
+        async create(): Promise<Sandbox> {
+          return await create(undefined);
+        },
+      }),
+    );
   },
 };

@@ -154,6 +154,44 @@ describe("defineSandboxAdapter", () => {
     await expect(serializeSandbox(sandbox)).rejects.toThrow(/Expected a JSON-serializable value/);
   });
 
+  it("retries a lazy restore after a transient reconnect failure", async () => {
+    const raw = mockSandbox({ id: "sandbox_1" });
+    let failures = 1;
+    const restore = vi.fn((_reference: TestReference) => {
+      if (failures > 0) {
+        failures -= 1;
+        throw new Error("provider unreachable");
+      }
+      return raw;
+    });
+    defineSandboxAdapter<ReturnType<typeof mockSandbox>, TestReference>({
+      type: "eve/test-sandbox-value-restore-retry",
+      reference(sandbox) {
+        return { id: sandbox.session.id };
+      },
+      restore(reference) {
+        return restore(reference);
+      },
+      session(sandbox) {
+        return sandbox.session;
+      },
+    });
+    const restored = restoreSandbox(
+      {
+        adapterId: "eve/test-sandbox-value-restore-retry",
+        id: "sandbox_1",
+        reference: { id: "sandbox_1" },
+        resourceId: "eve-resource-1",
+      },
+      { appRoot: "/app" },
+    );
+
+    await expect(restored.run({ command: "echo one" })).rejects.toThrow("provider unreachable");
+    await expect(restored.run({ command: "echo two" })).resolves.toMatchObject({ exitCode: 0 });
+    expect(restore).toHaveBeenCalledTimes(2);
+    expect(raw.commandLog).toEqual(["echo two"]);
+  });
+
   it("runs provider shutdown at most once for one durable value", async () => {
     const raw = mockSandbox();
     const shutdown = vi.fn();

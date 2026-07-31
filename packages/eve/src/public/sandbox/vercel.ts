@@ -9,15 +9,18 @@ import {
   type VercelSandboxTemplateReference,
 } from "#execution/sandbox/bindings/vercel.js";
 import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
-import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
-import type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.js";
+import { defineSandboxTemplate } from "#shared/sandbox-template.js";
+import type {
+  VercelSandboxCreateOptions,
+  VercelSandboxSessionOptions,
+} from "#public/sandbox/vercel-sandbox.js";
 import { parseJsonObject } from "#shared/json.js";
 
-export type { VercelSandboxCreateOptions } from "#public/sandbox/vercel-sandbox.js";
-
-type VercelProviderCreateOptions = NonNullable<
-  Parameters<typeof createVercelSandboxResource>[0]["options"]
->;
+export type {
+  VercelSandboxCreateOptions,
+  VercelSandboxSessionOptions,
+  VercelSandboxSource,
+} from "#public/sandbox/vercel-sandbox.js";
 
 /**
  * Build-time options for a Vercel Sandbox template.
@@ -32,18 +35,15 @@ export type VercelSandboxTemplateOptions = VercelSandboxCreateOptions & {
 /**
  * Options for intentionally sharing a named Vercel Sandbox.
  */
-export type VercelSandboxGetOrCreateOptions = VercelSandboxCreateOptions & {
+export type VercelSandboxGetOrCreateOptions = VercelSandboxSessionOptions & {
   readonly name: string;
 };
 
 /**
  * A build-prewarmed Vercel Sandbox base.
  */
-export interface VercelSandboxTemplate extends Omit<
-  SandboxTemplate<VercelSandboxCreateOptions>,
-  "create"
-> {
-  create(options?: VercelSandboxCreateOptions): Promise<Sandbox>;
+export interface VercelSandboxTemplate {
+  create(options?: VercelSandboxSessionOptions): Promise<Sandbox>;
   getOrCreate(options: VercelSandboxGetOrCreateOptions): Promise<Sandbox>;
 }
 
@@ -78,51 +78,50 @@ export const VercelSandbox = {
    */
   template(options: VercelSandboxTemplateOptions = {}): VercelSandboxTemplate {
     const { prepare, ...templateCreateOptions } = options;
-    const internalTemplate = defineSandboxTemplate<
+    return defineSandboxTemplate<
       VercelSandboxTemplateReference,
-      { readonly name?: string; readonly options?: VercelSandboxCreateOptions }
-    >({
-      revision: createVercelTemplateOptionsRevision(templateCreateOptions),
-      type: "vercel.com/sandbox-template/v1",
-      async prewarm({ hydrate, log, templateId }) {
-        return await prewarmVercelSandboxTemplate({
-          log,
-          options: templateCreateOptions,
-          async prepare(resource) {
-            const sandbox = asVercelSandbox(resource);
-            await hydrate(sandbox);
-            await prepare?.(sandbox);
-          },
-          templateId,
-        });
-      },
-      async create({ options: request, reference }) {
-        return await asVercelSandbox.create(async (context) => {
-          return await createVercelSandboxResource({
-            context,
-            name: request.name,
-            options: {
-              ...templateCreateOptions,
-              ...request.options,
-            } as VercelProviderCreateOptions,
-            template: reference,
+      { readonly name?: string; readonly options?: VercelSandboxSessionOptions },
+      VercelSandboxTemplate
+    >(
+      {
+        revision: createVercelTemplateOptionsRevision(templateCreateOptions),
+        type: "vercel.com/sandbox-template/v1",
+        async prewarm({ hydrate, log, templateId }) {
+          return await prewarmVercelSandboxTemplate({
+            log,
+            options: templateCreateOptions,
+            async prepare(resource) {
+              const sandbox = asVercelSandbox(resource);
+              await hydrate(sandbox);
+              await prepare?.(sandbox);
+            },
+            templateId,
           });
-        });
+        },
+        async create({ options: request, reference }) {
+          return await asVercelSandbox.create(async (context) => {
+            return await createVercelSandboxResource({
+              context,
+              name: request.name,
+              options: templateCreateOptions,
+              sessionOptions: request.options,
+              template: reference,
+            });
+          });
+        },
       },
-    });
-    const createFromReference = internalTemplate.create.bind(internalTemplate);
-
-    return Object.assign(internalTemplate, {
-      async create(createOptions: VercelSandboxCreateOptions = {}): Promise<Sandbox> {
-        return await createFromReference({ options: createOptions });
-      },
-      async getOrCreate({
-        name,
-        ...createOptions
-      }: VercelSandboxGetOrCreateOptions): Promise<Sandbox> {
-        return await createFromReference({ name, options: createOptions });
-      },
-    }) as VercelSandboxTemplate;
+      (create) => ({
+        async create(createOptions: VercelSandboxSessionOptions = {}): Promise<Sandbox> {
+          return await create({ options: createOptions });
+        },
+        async getOrCreate({
+          name,
+          ...createOptions
+        }: VercelSandboxGetOrCreateOptions): Promise<Sandbox> {
+          return await create({ name, options: createOptions });
+        },
+      }),
+    );
   },
 };
 

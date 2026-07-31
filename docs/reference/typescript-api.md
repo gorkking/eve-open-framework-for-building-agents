@@ -85,7 +85,7 @@ A few non-`define*` helpers round out the set: `disableTool` and `experimental_w
 | `eve/skills`                                                | `defineSkill`, `defineDynamic`                                        |
 | `eve/instructions`                                          | `defineInstructions`, `defineDynamic`                                 |
 | `eve/context`                                               | `defineState`, session and state types                                |
-| `eve/sandbox`                                               | `defineSandbox`, `DefaultSandbox`, `LocalFilesystemSandbox`           |
+| `eve/sandbox`                                               | `defineSandbox`, `DefaultSandbox`                                     |
 | `eve/sandbox/{vercel,docker,microsandbox,just-bash}`        | Provider `create()` and `template()` APIs                             |
 | `eve/sandbox/provider`                                      | `defineSandboxAdapter`, `defineSandboxTemplate`                       |
 | `eve/instrumentation`                                       | `defineInstrumentation`, `isChannel`                                  |

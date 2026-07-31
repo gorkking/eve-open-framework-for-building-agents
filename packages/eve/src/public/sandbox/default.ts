@@ -10,7 +10,7 @@ import {
   withSandboxTemplateBindings,
   type SandboxTemplate,
 } from "#shared/sandbox-template.js";
-import type { JsonObject, JsonValue } from "#shared/json.js";
+import { parseJsonValue, type JsonObject, type JsonValue } from "#shared/json.js";
 import { DockerSandbox } from "#public/sandbox/docker.js";
 import { JustBashSandbox } from "#public/sandbox/just-bash.js";
 import { MicrosandboxSandbox } from "#public/sandbox/microsandbox.js";
@@ -31,7 +31,7 @@ export interface DefaultSandboxTemplateOptions {
 /**
  * A build-prewarmed base owned by the provider selected during build.
  */
-export interface DefaultSandboxTemplate extends Omit<SandboxTemplate<undefined>, "create"> {
+export interface DefaultSandboxTemplate {
   create(): Promise<Sandbox>;
 }
 
@@ -65,24 +65,31 @@ export const DefaultSandbox = {
    * time. The frozen reference records that provider for runtime creation.
    */
   template(options: DefaultSandboxTemplateOptions = {}): DefaultSandboxTemplate {
-    return defineSandboxTemplate<DefaultTemplateReference, undefined>({
-      type: "eve/default-sandbox-template/v2",
-      async prewarm(input) {
-        const provider = selectAvailableDefaultSandboxProvider();
-        const template = createProviderTemplate(provider, options);
-        return {
-          provider,
-          reference: (await getSandboxTemplateInternal(template).prewarm(input)) as JsonValue,
-        };
+    return defineSandboxTemplate<DefaultTemplateReference, undefined, DefaultSandboxTemplate>(
+      {
+        type: "eve/default-sandbox-template/v2",
+        async prewarm(input) {
+          const provider = selectAvailableDefaultSandboxProvider();
+          const template = createProviderTemplate(provider, options);
+          return {
+            provider,
+            reference: parseJsonValue(await getSandboxTemplateInternal(template).prewarm(input)),
+          };
+        },
+        async create({ reference }) {
+          const template = createProviderTemplate(reference.provider, options);
+          return await withSandboxTemplateBindings(
+            new Map([[getSandboxTemplateInternal(template), reference.reference]]),
+            async () => await template.create(undefined),
+          );
+        },
       },
-      async create({ reference }) {
-        const template = createProviderTemplate(reference.provider, options);
-        return await withSandboxTemplateBindings(
-          new Map([[getSandboxTemplateInternal(template), reference.reference]]),
-          async () => await template.create(undefined),
-        );
-      },
-    }) as DefaultSandboxTemplate;
+      (create) => ({
+        async create(): Promise<Sandbox> {
+          return await create(undefined);
+        },
+      }),
+    );
   },
 };
 
@@ -98,8 +105,6 @@ function createProviderTemplate(
     case "microsandbox":
       return MicrosandboxSandbox.template(options);
     case "vercel":
-      return VercelSandbox.template(
-        options as Parameters<typeof VercelSandbox.template>[0],
-      ) as SandboxTemplate<undefined>;
+      return VercelSandbox.template(options);
   }
 }

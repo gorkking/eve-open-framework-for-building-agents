@@ -106,6 +106,7 @@ export interface SandboxAdapter<RawSandbox> {
 }
 
 interface SandboxValueInternal {
+  readonly activated: boolean;
   readonly adapterId: string;
   readonly requiresShutdown: boolean;
   readonly resourceId: string | undefined;
@@ -160,12 +161,7 @@ export function defineSandboxAdapter<RawSandbox, Reference extends JsonValue>(
  * Returns whether a value is a durable eve sandbox.
  */
 export function isSandbox(value: unknown): value is Sandbox {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    SANDBOX_VALUE in value &&
-    typeof (value as Partial<InternalSandbox>)[SANDBOX_VALUE]?.serialize === "function"
-  );
+  return isInternalSandbox(value);
 }
 
 /**
@@ -237,6 +233,16 @@ export function onSandboxActivated(sandbox: Sandbox, callback: () => void): void
 }
 
 /**
+ * Returns whether a sandbox has loaded its provider handle.
+ *
+ * Restored sandboxes stay lazy until their first operation; a sandbox
+ * created from a live provider handle is active from the start.
+ */
+export function isSandboxActivated(sandbox: Sandbox): boolean {
+  return getSandboxInternal(sandbox).activated;
+}
+
+/**
  * Returns whether the provider owns active compute that must stop.
  */
 export function requiresSandboxShutdown(sandbox: Sandbox): boolean {
@@ -284,7 +290,12 @@ function createSandboxValue(input: {
       if (input.loadRawSandbox === undefined) {
         throw new Error(`Sandbox "${input.adapterId}" has no provider handle loader.`);
       }
-      rawSandboxPromise = input.loadRawSandbox();
+      // Reset on rejection so a transient reconnect failure does not poison
+      // every later operation on this handle.
+      rawSandboxPromise = input.loadRawSandbox().catch((error) => {
+        rawSandboxPromise = undefined;
+        throw error;
+      });
       for (const callback of activationCallbacks) {
         callback();
       }
@@ -294,7 +305,13 @@ function createSandboxValue(input: {
   }
 
   function session(): Promise<SandboxSession> {
-    sessionPromise ??= rawSandbox().then((value) => input.adapter.session(value));
+    sessionPromise ??= rawSandbox().then(
+      (value) => input.adapter.session(value),
+      (error) => {
+        sessionPromise = undefined;
+        throw error;
+      },
+    );
     return sessionPromise;
   }
 
@@ -339,6 +356,9 @@ function createSandboxValue(input: {
       await (await session()).writeTextFile(options);
     },
     [SANDBOX_VALUE]: {
+      get activated() {
+        return rawSandboxPromise !== undefined;
+      },
       adapterId: input.adapterId,
       requiresShutdown: input.adapter.shutdown !== undefined,
       resourceId: input.providerContext?.resourceId,
@@ -377,16 +397,31 @@ function createSandboxValue(input: {
 }
 
 function getSandboxInternal(sandbox: Sandbox): SandboxValueInternal {
-  if (!isSandbox(sandbox)) {
+  if (!isInternalSandbox(sandbox)) {
     throw new TypeError("Expected a durable Sandbox value.");
   }
-  return (sandbox as InternalSandbox)[SANDBOX_VALUE];
+  return sandbox[SANDBOX_VALUE];
+}
+
+function isInternalSandbox(value: unknown): value is InternalSandbox {
+  if (value === null || typeof value !== "object" || !(SANDBOX_VALUE in value)) {
+    return false;
+  }
+  const internal = value[SANDBOX_VALUE];
+  return (
+    internal !== null &&
+    typeof internal === "object" &&
+    "serialize" in internal &&
+    typeof internal.serialize === "function"
+  );
 }
 
 function registerSandboxAdapter<RawSandbox, Reference extends JsonValue>(
   adapterId: string,
   definition: SandboxAdapterDefinition<RawSandbox, Reference>,
 ): RegisteredSandboxAdapter {
+  // The global registry erases provider generics, but each closure remains paired
+  // with the definition that created its values.
   const adapter: RegisteredSandboxAdapter = {
     type: adapterId,
     reference(sandbox) {
@@ -418,6 +453,7 @@ function getSandboxAdapter(adapterId: string): RegisteredSandboxAdapter {
 }
 
 function getSandboxAdapterRegistry(): SandboxAdapterRegistry {
+  // Symbol.for keeps adapters visible across separately bundled copies of eve.
   const container = globalThis as SandboxValueGlobal;
   container[SANDBOX_ADAPTERS] ??= new Map();
   return container[SANDBOX_ADAPTERS];

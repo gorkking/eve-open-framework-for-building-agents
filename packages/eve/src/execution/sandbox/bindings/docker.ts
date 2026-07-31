@@ -14,6 +14,7 @@ import {
 import { setDockerNetworkPolicy } from "#execution/sandbox/bindings/docker-network.js";
 import {
   createDockerSandboxOptionsHash,
+  decodeDockerSandboxCreateOptions,
   resolveDockerSandboxOptions,
 } from "#execution/sandbox/bindings/docker-options.js";
 import { createDockerInternalSession } from "#execution/sandbox/bindings/docker-session.js";
@@ -47,10 +48,6 @@ export {
  */
 export const DOCKER_PROVIDER = "docker";
 
-/**
- * Construction input for the internal Docker bridge behind
- * `DockerSandbox`.
- */
 export interface CreateDockerSandboxProviderInput {
   readonly createOptions?: DockerSandboxCreateOptions;
   /** Injectable Docker driver so provider logic is testable without a daemon. */
@@ -92,19 +89,6 @@ export interface DockerSandboxProvider {
   }): Promise<DockerSandboxTemplateReference>;
 }
 
-/**
- * Creates the Docker sandbox provider.
- *
- * Two-phase lifecycle mapped onto Docker primitives:
- *
- * - `prewarm` runs the base image, applies base setup, runs the
- *   authored preparation, writes seed files, then `docker commit`s the
- *   container into a reusable template image.
- * - `create` starts (or restarts) one long-lived container per session
- *   key from the template image. The container's filesystem carries
- *   session state across reconnects, so `shutdown` only stops the
- *   container and the next `create` restarts it with state intact.
- */
 export function createDockerSandboxProvider(
   input: CreateDockerSandboxProviderInput = {},
 ): DockerSandboxProvider {
@@ -341,7 +325,7 @@ export async function restoreDockerSandboxResource(
   context: SandboxProviderContext,
 ): Promise<DockerSandboxResource> {
   return await createDockerSandboxProvider({
-    createOptions: reference.configuration as DockerSandboxCreateOptions,
+    createOptions: decodeDockerSandboxCreateOptions(reference.configuration),
   }).create({ context, reference });
 }
 

@@ -42,7 +42,7 @@ const PORTABILITY_CASES: readonly PortabilityCase[] = [
   {
     descriptor: {
       files: {
-        "agent/sandbox.ts": `import { DefaultSandbox, LocalFilesystemSandbox, defineSandbox } from "eve/sandbox";
+        "agent/sandbox.ts": `import { DefaultSandbox, defineSandbox } from "eve/sandbox";
 import { DockerSandbox } from "eve/sandbox/docker";
 import { JustBashSandbox } from "eve/sandbox/just-bash";
 import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
@@ -57,7 +57,6 @@ import {
 void DockerSandbox;
 void JustBashSandbox;
 void MicrosandboxSandbox;
-void LocalFilesystemSandbox;
 void defineSandboxAdapter;
 void defineSandboxTemplate;
 void ({} as Sandbox);

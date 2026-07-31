@@ -21,21 +21,21 @@ export function isSandboxStateValue(value: unknown): value is SandboxStateValue 
     return false;
   }
 
-  const state = value as Partial<SandboxStateValue>;
-  const sandbox = state.value;
+  const revision = Reflect.get(value, "revision");
+  const sandbox = Reflect.get(value, "value");
   if (
-    typeof state.revision !== "string" ||
+    typeof revision !== "string" ||
     sandbox === null ||
     typeof sandbox !== "object" ||
-    typeof sandbox.adapterId !== "string" ||
-    typeof sandbox.id !== "string" ||
-    typeof sandbox.resourceId !== "string"
+    typeof Reflect.get(sandbox, "adapterId") !== "string" ||
+    typeof Reflect.get(sandbox, "id") !== "string" ||
+    typeof Reflect.get(sandbox, "resourceId") !== "string"
   ) {
     return false;
   }
 
   try {
-    parseJsonValue(sandbox.reference);
+    parseJsonValue(Reflect.get(sandbox, "reference"));
     return true;
   } catch {
     return false;

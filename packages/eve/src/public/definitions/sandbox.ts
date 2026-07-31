@@ -45,10 +45,6 @@ export interface SandboxDefinitionContext {
  */
 export type SandboxDefinition = (context: SandboxDefinitionContext) => Sandbox | Promise<Sandbox>;
 
-type InternalSandboxDefinition = SandboxDefinition & {
-  readonly [SANDBOX_DEFINITION]: true;
-};
-
 /**
  * Defines how an agent obtains its sandbox.
  *
@@ -70,8 +66,5 @@ export function defineSandbox(definition: SandboxDefinition): SandboxDefinition 
  * Returns whether a module export was created with {@link defineSandbox}.
  */
 export function isSandboxDefinition(value: unknown): value is SandboxDefinition {
-  return (
-    typeof value === "function" &&
-    (value as Partial<InternalSandboxDefinition>)[SANDBOX_DEFINITION] === true
-  );
+  return typeof value === "function" && Reflect.get(value, SANDBOX_DEFINITION) === true;
 }

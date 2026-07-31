@@ -203,14 +203,13 @@ Nested children can return `root.sandbox` the same way. Declared subagents still
 
 ## Providers
 
-| Provider API             | Runs the sandbox                                                                  |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `VercelSandbox`          | Hosted [Vercel Sandbox](https://vercel.com/docs/sandbox)                          |
-| `DockerSandbox`          | A local container through the Docker CLI                                          |
-| `MicrosandboxSandbox`    | A lightweight local microsandbox VM                                               |
-| `JustBashSandbox`        | A pure-JavaScript shell and virtual filesystem; no real binaries                  |
-| `DefaultSandbox`         | Vercel when hosted, then Docker, microsandbox, or just-bash by local availability |
-| `LocalFilesystemSandbox` | A directory on the eve host; use only when that trust boundary is intentional     |
+| Provider API          | Runs the sandbox                                                                  |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `VercelSandbox`       | Hosted [Vercel Sandbox](https://vercel.com/docs/sandbox)                          |
+| `DockerSandbox`       | A local container through the Docker CLI                                          |
+| `MicrosandboxSandbox` | A lightweight local microsandbox VM                                               |
+| `JustBashSandbox`     | A pure-JavaScript shell and virtual filesystem; no real binaries                  |
+| `DefaultSandbox`      | Vercel when hosted, then Docker, microsandbox, or just-bash by local availability |
 
 Each provider exposes `create(options)` and, when it supports prewarming, `template(options)`.
 
@@ -228,23 +227,20 @@ export const template = DockerSandbox.template({
 export default defineSandbox(() => template.create());
 ```
 
-Development can deliberately use the local filesystem while production uses hosted compute:
+Development can deliberately use a local container while production uses hosted compute:
 
 ```ts
-import { LocalFilesystemSandbox, defineSandbox } from "eve/sandbox";
+import { defineSandbox } from "eve/sandbox";
+import { DockerSandbox } from "eve/sandbox/docker";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
 export default defineSandbox(({ runtime }) => {
   if (runtime.mode === "development") {
-    return LocalFilesystemSandbox.open({
-      root: ".eve/workspaces/development",
-    });
+    return DockerSandbox.create();
   }
   return VercelSandbox.create();
 });
 ```
-
-Relative `LocalFilesystemSandbox` roots resolve from the eve application root.
 
 ## Custom providers
 

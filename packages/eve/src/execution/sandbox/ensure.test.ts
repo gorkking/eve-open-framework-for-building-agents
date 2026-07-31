@@ -134,6 +134,7 @@ function createTestRegistry(input: {
     readonly reference?: unknown;
     readonly template: SandboxTemplate;
   }>;
+  readonly workspaceResourceRoot?: RuntimeSandboxRegistry["sandbox"]["workspaceResourceRoot"];
 }): RuntimeSandboxRegistry {
   return {
     sandbox: {
@@ -145,7 +146,7 @@ function createTestRegistry(input: {
         sourceKind: "module",
         templates: input.templates ?? [],
       },
-      workspaceResourceRoot: { logicalPath: "", rootEntries: [] },
+      workspaceResourceRoot: input.workspaceResourceRoot ?? { logicalPath: "", rootEntries: [] },
     },
   };
 }
@@ -268,6 +269,39 @@ describe("ensureSandboxAccess", () => {
     expect(restoreTestSandbox).toHaveBeenCalledWith({ id: "sandbox_1" });
   });
 
+  it("captures restored state without reconnecting when the sandbox went unused", async () => {
+    const definition = vi.fn(() => createTestSandbox("sandbox_1"));
+    const registry = createTestRegistry({ definition });
+    const first = await ensure({ registry });
+    await first.get();
+    const state = await first.captureState();
+    restoreTestSandbox.mockClear();
+
+    const second = await ensure({ registry, state });
+    await second.get();
+    const recaptured = await second.captureState();
+
+    expect(recaptured?.value).toEqual(state?.value);
+    expect(restoreTestSandbox).not.toHaveBeenCalled();
+  });
+
+  it("reserializes a restored sandbox once an operation has used it", async () => {
+    const definition = vi.fn(() => createTestSandbox("sandbox_1"));
+    const registry = createTestRegistry({ definition });
+    const first = await ensure({ registry });
+    await first.get();
+    const state = await first.captureState();
+    restoreTestSandbox.mockClear();
+
+    const second = await ensure({ registry, state });
+    const restored = await second.get();
+    await restored?.run({ command: "true" });
+    const recaptured = await second.captureState();
+
+    expect(recaptured?.value).toEqual(state?.value);
+    expect(restoreTestSandbox).toHaveBeenCalledTimes(1);
+  });
+
   it("invokes the definition again when its private compatibility revision changes", async () => {
     const firstDefinition = vi.fn(() => createTestSandbox("sandbox_1"));
     const first = await ensure({
@@ -331,6 +365,25 @@ describe("ensureSandboxAccess", () => {
     expect(countActiveSandboxHandles()).toBe(2);
   });
 
+  it("rejects a managed workspace whose definition exports no template", async () => {
+    const definition = vi.fn(() => createTestSandbox("sandbox_1"));
+    const access = await ensure({
+      registry: createTestRegistry({
+        definition,
+        workspaceResourceRoot: {
+          contentHash: "workspace-hash",
+          logicalPath: "agent/sandbox/workspace",
+          rootEntries: ["package.json"],
+        },
+      }),
+    });
+
+    await expect(access.get()).rejects.toThrow(
+      /has a managed workspace but exports no SandboxTemplate/,
+    );
+    expect(definition).not.toHaveBeenCalled();
+  });
+
   it("rejects a transient provider handle returned from outside the authored invocation", async () => {
     const transient = createTestSandbox("transient-sandbox");
     const access = await ensure({
@@ -375,6 +428,39 @@ describe("ensureSandboxAccess", () => {
     expect(childState).toMatchObject({
       root: rootState,
     });
+    expect(childState?.value).toEqual(rootState?.value);
+    expect(countActiveSandboxHandles()).toBe(0);
+    expect(restoreTestSandboxContexts).toHaveLength(0);
+  });
+
+  it("reserializes a returned ancestor once the definition has used it", async () => {
+    const root = await ensure({
+      registry: createTestRegistry({
+        definition: () => createTestSandbox("root-sandbox"),
+      }),
+      sessionId: "root-session",
+    });
+    await root.get();
+    const rootState = await root.captureState();
+    clearActiveSandboxHandlesForTest();
+
+    const child = await ensure({
+      nodeId: "reviewer",
+      parentState: rootState!,
+      registry: createTestRegistry({
+        async definition({ parent }) {
+          const sandbox = await parent!.sandbox;
+          await sandbox.run({ command: "true" });
+          return sandbox;
+        },
+      }),
+      rootState: rootState!,
+      sessionId: "child-session",
+      tags: { agent: "child" },
+    });
+
+    await child.get();
+    const childState = await child.captureState();
     expect(childState?.value.resourceId).toBe(rootState?.value.resourceId);
     expect(countActiveSandboxHandles()).toBe(1);
     expect(restoreTestSandboxContexts).toHaveLength(1);

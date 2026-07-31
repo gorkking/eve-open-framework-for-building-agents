@@ -73,6 +73,8 @@ export interface SandboxTemplate<CreateOptions = Record<string, never>> {
   create(options: CreateOptions): Promise<Sandbox>;
 }
 
+type SandboxTemplateCreate<CreateOptions> = (options: CreateOptions) => Promise<Sandbox>;
+
 export interface InternalSandboxTemplate {
   readonly implementationId: string;
   prewarm(input: SandboxTemplatePrewarmInput): Promise<unknown>;
@@ -86,49 +88,62 @@ type SandboxTemplateWithInternal<CreateOptions> = SandboxTemplate<CreateOptions>
  * Defines the provider lifecycle behind a build-prewarmed template.
  *
  * Runtime references are scoped to the active sandbox definition invocation;
- * the template object is never mutated or process-globally bound.
+ * the template is never process-globally bound. Providers may use the second
+ * argument to expose simpler author-facing methods over the internal
+ * `create(options)` operation.
  */
 export function defineSandboxTemplate<
   Reference extends JsonValue,
   CreateOptions = Record<string, never>,
->(definition: SandboxTemplateDefinition<Reference, CreateOptions>): SandboxTemplate<CreateOptions> {
+>(definition: SandboxTemplateDefinition<Reference, CreateOptions>): SandboxTemplate<CreateOptions>;
+export function defineSandboxTemplate<
+  Reference extends JsonValue,
+  CreateOptions,
+  AuthorApi extends object,
+>(
+  definition: SandboxTemplateDefinition<Reference, CreateOptions>,
+  defineAuthorApi: (create: SandboxTemplateCreate<CreateOptions>) => AuthorApi,
+): AuthorApi;
+export function defineSandboxTemplate<Reference extends JsonValue, CreateOptions>(
+  definition: SandboxTemplateDefinition<Reference, CreateOptions>,
+  defineAuthorApi?: (create: SandboxTemplateCreate<CreateOptions>) => object,
+): object {
   const implementationId = `template-${stableHash(
     stableJsonStringify({
       revision: parseJsonValue(definition.revision ?? null),
       type: expectSandboxTemplateType(definition.type),
     }),
   )}`;
-  let internal: InternalSandboxTemplate;
-
-  const template: SandboxTemplateWithInternal<CreateOptions> = {
-    async create(options) {
-      const reference = readActiveSandboxTemplateReference(internal);
-      if (reference === undefined) {
-        throw new Error(
-          "Sandbox template has no prewarmed build result. Export it from the sandbox module and run eve build.",
-        );
-      }
-      return await definition.create({
-        options,
-        reference: parseJsonValue(reference) as Reference,
-      });
+  const internal: InternalSandboxTemplate = {
+    implementationId,
+    async prewarm(input) {
+      return await definition.prewarm(input);
     },
-    [SANDBOX_TEMPLATE]: (internal = {
-      implementationId,
-      async prewarm(input) {
-        return await definition.prewarm(input);
-      },
-    }),
   };
-
-  return template;
+  const create: SandboxTemplateCreate<CreateOptions> = async (options) => {
+    const reference = readActiveSandboxTemplateReference(internal);
+    if (reference === undefined) {
+      throw new Error(
+        "Sandbox template has no prewarmed build result. Export it from the sandbox module and run eve build.",
+      );
+    }
+    // Compilation erases provider reference types; JSON validation is the shared boundary.
+    return await definition.create({
+      options,
+      reference: parseJsonValue(reference) as Reference,
+    });
+  };
+  const authorApi =
+    defineAuthorApi?.(create) ?? ({ create } satisfies SandboxTemplate<CreateOptions>);
+  Object.defineProperty(authorApi, SANDBOX_TEMPLATE, { value: internal });
+  return authorApi;
 }
 
 /**
  * Returns whether a module export is a build-prewarmable sandbox template.
  */
 export function isSandboxTemplate(value: unknown): value is SandboxTemplate {
-  return typeof value === "object" && value !== null && SANDBOX_TEMPLATE in value;
+  return isSandboxTemplateWithInternal(value);
 }
 
 /**
@@ -137,10 +152,16 @@ export function isSandboxTemplate(value: unknown): value is SandboxTemplate {
 export function getSandboxTemplateInternal<CreateOptions>(
   template: SandboxTemplate<CreateOptions>,
 ): InternalSandboxTemplate {
-  if (!isSandboxTemplate(template)) {
+  if (!isSandboxTemplateWithInternal(template)) {
     throw new TypeError("Expected a SandboxTemplate value.");
   }
-  return (template as SandboxTemplateWithInternal<unknown>)[SANDBOX_TEMPLATE];
+  return template[SANDBOX_TEMPLATE];
+}
+
+function isSandboxTemplateWithInternal(
+  value: unknown,
+): value is SandboxTemplateWithInternal<unknown> {
+  return typeof value === "object" && value !== null && SANDBOX_TEMPLATE in value;
 }
 
 /**

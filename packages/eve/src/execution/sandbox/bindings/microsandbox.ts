@@ -8,6 +8,7 @@ import {
 } from "#execution/sandbox/bindings/microsandbox-lifecycle.js";
 import { enrichMicrosandboxError } from "#execution/sandbox/bindings/microsandbox-create.js";
 import {
+  decodeMicrosandboxCreateOptions,
   microsandboxOptionsForHash,
   resolveMicrosandboxOptions,
 } from "#execution/sandbox/bindings/microsandbox-options.js";
@@ -24,10 +25,6 @@ export { pruneMicrosandboxTemplates } from "#execution/sandbox/bindings/microsan
  */
 export const MICROSANDBOX_PROVIDER = "microsandbox";
 
-/**
- * Construction input for the internal microsandbox bridge behind
- * `MicrosandboxSandbox`.
- */
 export type {
   MicrosandboxReference,
   MicrosandboxResource,
@@ -52,11 +49,6 @@ export interface MicrosandboxSandboxProvider {
   }): Promise<MicrosandboxTemplateReference>;
 }
 
-/**
- * Creates the microsandbox sandbox provider: lightweight local VMs with
- * snapshot-backed templates, running each command as the
- * `vercel-sandbox` user for parity with hosted Vercel Sandbox.
- */
 export function createMicrosandboxSandboxProvider(
   input: CreateMicrosandboxSandboxProviderInput = {},
 ): MicrosandboxSandboxProvider {
@@ -108,6 +100,6 @@ export async function restoreMicrosandboxResource(
   context: SandboxProviderContext,
 ): Promise<MicrosandboxResource> {
   return await createMicrosandboxSandboxProvider({
-    createOptions: reference.configuration as MicrosandboxSandboxCreateOptions,
+    createOptions: decodeMicrosandboxCreateOptions(reference.configuration),
   }).create({ context, reference });
 }

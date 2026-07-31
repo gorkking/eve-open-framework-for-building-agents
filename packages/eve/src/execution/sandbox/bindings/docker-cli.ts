@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { Readable } from "node:stream";
+
+import { nodeReadableToWebStream } from "#execution/sandbox/stream-utils.js";
 
 /**
  * Buffered result of one `docker …` invocation.
@@ -180,8 +181,8 @@ export function createDockerCli(): DockerCli {
       exit.catch(() => {});
 
       return {
-        stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-        stderr: Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>,
+        stdout: nodeReadableToWebStream(child.stdout),
+        stderr: nodeReadableToWebStream(child.stderr),
         async wait() {
           return { exitCode: await exit };
         },

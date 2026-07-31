@@ -1,5 +1,6 @@
 import type { DockerCli } from "#execution/sandbox/bindings/docker-cli.js";
 import { expectDockerSuccess } from "#execution/sandbox/bindings/docker-utils.js";
+import { parseJsonObject } from "#shared/json.js";
 import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 
 /**
@@ -29,7 +30,7 @@ export async function setDockerNetworkPolicy(
   ]);
   expectDockerSuccess(inspect, `inspect networks of sandbox container "${containerName}"`);
   const networks = Object.keys(
-    JSON.parse(inspect.stdout.trim() === "" ? "{}" : inspect.stdout) as object,
+    parseJsonObject(JSON.parse(inspect.stdout.trim() === "" ? "{}" : inspect.stdout)),
   );
 
   if (policy === "deny-all") {

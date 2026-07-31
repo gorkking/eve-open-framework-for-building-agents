@@ -3,10 +3,7 @@ import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createVercelEveImageSandbox } from "#execution/sandbox/bindings/vercel-create-sdk.js";
-import type {
-  VercelCreateOptions,
-  VercelModule,
-} from "#execution/sandbox/bindings/vercel-sdk-types.js";
+import type { VercelModule } from "#execution/sandbox/bindings/vercel-sdk-types.js";
 import {
   createVercelSandboxResource,
   prewarmVercelSandboxTemplate,
@@ -152,7 +149,7 @@ describe("prewarmVercelSandboxTemplate", () => {
         networkPolicy: "deny-all",
         ports: [3000],
         timeout: 123_000,
-      } as VercelCreateOptions,
+      },
       async prepare(resource) {
         await resource.session.writeTextFile({
           content: "prepared",
@@ -202,7 +199,7 @@ describe("prewarmVercelSandboxTemplate", () => {
 
     const reference = await prewarmVercelSandboxTemplate({
       dependencies: dependencies(sandboxModule),
-      options: { image: IMMUTABLE_VERCEL_IMAGE } as VercelCreateOptions,
+      options: { image: IMMUTABLE_VERCEL_IMAGE },
       prepare,
       templateId: "template-key",
     });
@@ -232,7 +229,7 @@ describe("prewarmVercelSandboxTemplate", () => {
 
     const reference = await prewarmVercelSandboxTemplate({
       dependencies: dependencies(sandboxModule),
-      options: { image: "vercel/eve:latest" } as VercelCreateOptions,
+      options: { image: "vercel/eve:latest" },
       async prepare() {},
       templateId: "template-key",
     });
@@ -435,7 +432,7 @@ describe("createVercelSandboxResource", () => {
     await createVercelSandboxResource({
       context: providerContext("session-key"),
       dependencies: dependencies(sandboxModule),
-      options: { networkPolicy: "deny-all" } as VercelCreateOptions,
+      options: { networkPolicy: "deny-all" },
     });
 
     expect(sessionSandbox.runCommand).toHaveBeenCalledOnce();
@@ -444,6 +441,38 @@ describe("createVercelSandboxResource", () => {
 
   it("invalidates a template reference when its provider snapshot disappears", async () => {
     const staleTemplate = createMockSandbox({ name: "template-key" });
+    const sandboxModule = {
+      Sandbox: {
+        create: vi.fn(),
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(staleTemplate),
+      },
+    };
+    const unavailable = Object.assign(new Error("snapshot expired"), { status: 410 });
+
+    await expect(
+      createVercelSandboxResource({
+        context: providerContext("session-key"),
+        dependencies: dependencies(sandboxModule, async () => {
+          throw unavailable;
+        }),
+        template: {
+          sandboxName: "template-key",
+          snapshotId: "expired-snapshot",
+          templateKey: "template-key",
+        },
+      }),
+    ).rejects.toBeInstanceOf(SandboxTemplateUnavailableError);
+
+    expect(staleTemplate.delete).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the template-unavailable signal when stale template cleanup fails", async () => {
+    const staleTemplate = createMockSandbox({ name: "template-key" });
+    staleTemplate.delete.mockRejectedValue(new Error("transient provider failure"));
     const sandboxModule = {
       Sandbox: {
         create: vi.fn(),
@@ -491,7 +520,7 @@ describe("createVercelSandboxResource", () => {
           two: "2",
         }),
         dependencies: dependencies(sandboxModule),
-        options: { tags: { owner: "ai" } } as VercelCreateOptions,
+        options: { tags: { owner: "ai" } },
       }),
     ).rejects.toThrow(/at most 5 tags/);
   });

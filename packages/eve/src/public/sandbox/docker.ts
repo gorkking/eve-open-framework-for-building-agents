@@ -7,7 +7,7 @@ import {
   type DockerSandboxTemplateReference,
 } from "#execution/sandbox/bindings/local.js";
 import { defineSandboxAdapter, type Sandbox } from "#shared/sandbox-value.js";
-import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
+import { defineSandboxTemplate } from "#shared/sandbox-template.js";
 import type { DockerSandboxCreateOptions } from "#public/sandbox/docker-sandbox.js";
 
 export type {
@@ -29,7 +29,7 @@ export interface DockerSandboxTemplateOptions extends DockerSandboxCreateOptions
 /**
  * A build-prewarmed Docker Sandbox base.
  */
-export interface DockerSandboxTemplate extends Omit<SandboxTemplate<undefined>, "create"> {
+export interface DockerSandboxTemplate {
   create(): Promise<Sandbox>;
 }
 
@@ -66,32 +66,33 @@ export const DockerSandbox = {
   template(options: DockerSandboxTemplateOptions = {}): DockerSandboxTemplate {
     const { prepare, ...createOptions } = options;
     const provider = createDockerSandboxProvider({ createOptions });
-    const internalTemplate = defineSandboxTemplate<DockerSandboxTemplateReference, undefined>({
-      revision: createOptions,
-      type: "docker.com/container-template/v1",
-      async prewarm({ appRoot, hydrate, log, templateId }) {
-        return await provider.prewarm({
-          appRoot,
-          log,
-          async prepare(resource) {
-            const sandbox = asDockerSandbox(resource);
-            await hydrate(sandbox);
-            await prepare?.(sandbox);
-          },
-          templateId,
-        });
+    return defineSandboxTemplate<DockerSandboxTemplateReference, undefined, DockerSandboxTemplate>(
+      {
+        revision: createOptions,
+        type: "docker.com/container-template/v1",
+        async prewarm({ appRoot, hydrate, log, templateId }) {
+          return await provider.prewarm({
+            appRoot,
+            log,
+            async prepare(resource) {
+              const sandbox = asDockerSandbox(resource);
+              await hydrate(sandbox);
+              await prepare?.(sandbox);
+            },
+            templateId,
+          });
+        },
+        async create({ reference }) {
+          return await asDockerSandbox.create(async (context) => {
+            return await provider.create({ context, template: reference });
+          });
+        },
       },
-      async create({ reference }) {
-        return await asDockerSandbox.create(async (context) => {
-          return await provider.create({ context, template: reference });
-        });
-      },
-    });
-    const createFromReference = internalTemplate.create.bind(internalTemplate);
-    return Object.assign(internalTemplate, {
-      async create(): Promise<Sandbox> {
-        return await createFromReference(undefined);
-      },
-    }) as DockerSandboxTemplate;
+      (create) => ({
+        async create(): Promise<Sandbox> {
+          return await create(undefined);
+        },
+      }),
+    );
   },
 };
