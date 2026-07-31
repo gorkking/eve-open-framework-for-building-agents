@@ -1,15 +1,15 @@
 ---
 issue: https://github.com/vercel/eve/issues/1406
-status: proposed
-last_updated: "2026-07-30"
+status: implemented
+last_updated: "2026-07-31"
 ---
 
 # Sandbox API: durable values and build-prewarmed templates
 
 A sandbox definition should answer one question: which `Sandbox` should this
 agent use? The author returns that value directly. It can be newly created,
-looked up by the application, reused from a parent agent, backed by the local
-filesystem, or implemented by another provider.
+looked up by the application, reused from a parent agent, or implemented by
+another provider.
 
 eve persists the returned value and restores it on later runs. Build prewarming
 is an optional, separate concern: an exported provider template lets eve prepare
@@ -40,8 +40,6 @@ DockerSandbox.template({ prepare? })
 
 template.create(options)
 template.getOrCreate(options) // when the provider supports named resources
-
-LocalFilesystemSandbox.open(options)
 
 ctx.parent?.sandbox
 ctx.root?.sandbox
@@ -491,33 +489,43 @@ export default defineSandbox(({ parent }) => {
 });
 ```
 
-A nested child can return `root.sandbox` in the same way. The durable boundary
-carries the serialized sandbox value plus an internal owner marker:
+A nested child can return `root.sandbox` in the same way. The child persists
+the exact same serialized provider value, including eve's stable resource
+identity:
 
 ```ts
-type BorrowedSandbox = {
-  ownerNodeId: string;
-  ownerSessionId: string;
-  value: Serialized<Sandbox>;
+type SerializedSandbox = {
+  adapterId: string;
+  id: string;
+  resourceId: string;
+  reference: JsonValue;
 };
 ```
 
-The child never constructs or interprets this record. The owner marker ensures
-that retiring the child does not delete or replace the parent's sandbox.
+Dispatching a subagent ensures the parent's durable sandbox value exists so
+`parent.sandbox` and `root.sandbox` can restore across the process boundary.
+A restored value that goes unused is carried forward as-is; eve does not
+reconnect to the provider just to persist it again.
 
-## Local filesystem and custom implementations
+There is no separate borrowing or ownership protocol. eve shutdown hooks may
+stop active compute, but they never delete durable provider state.
+Provider deletion and retention stay explicit provider or application
+operations. An implementation that uses rotating checkpoints keeps its latest
+checkpoint behind the stable resource identity, so a child capture cannot
+strand the parent's earlier serialized value.
+
+## Custom implementations
 
 The definition can return a different implementation by runtime mode:
 
 ```ts
-import { LocalFilesystemSandbox, defineSandbox } from "eve/sandbox";
+import { defineSandbox } from "eve/sandbox";
+import { DockerSandbox } from "eve/sandbox/docker";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
 export default defineSandbox(({ runtime }) => {
   if (runtime.mode === "development") {
-    return LocalFilesystemSandbox.open({
-      root: ".eve/workspaces/development",
-    });
+    return DockerSandbox.create();
   }
 
   return VercelSandbox.create();
@@ -736,8 +744,7 @@ VercelSandboxTemplate.create(options): Promise<Sandbox>
 VercelSandboxTemplate.getOrCreate(options): Promise<Sandbox>
 DockerSandbox.create(options): Promise<Sandbox>
 DockerSandbox.template(options): DockerSandboxTemplate
-DockerSandboxTemplate.create(options): Promise<Sandbox>
-LocalFilesystemSandbox.open(options): Sandbox | Promise<Sandbox>
+DockerSandboxTemplate.create(): Promise<Sandbox>
 ctx.parent.sandbox: Promise<Sandbox>
 ctx.root.sandbox: Promise<Sandbox>
 ```
