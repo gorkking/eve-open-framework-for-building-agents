@@ -173,15 +173,17 @@ build
   → write that reference into the deployment artifacts
 
 runtime
-  → bind the same template export to the built reference
+  → scope each exported template to its exact built reference
   → invoke the authored sandbox definition
   → template.create(...) returns a live Sandbox from that reference
   → persist the returned Sandbox
 ```
 
-The runtime loader binds the reference before invoking the definition. Because
-the definition closes over the same module-scoped template object, its
-`create()` call sees the result produced by that build.
+The runtime loader supplies references only for the active definition
+invocation. The module-scoped template object is immutable, so concurrent
+sessions and graph nodes cannot overwrite each other's build result. Exporting
+the same template object under multiple names is rejected because a later
+`create()` call could not identify which export the author intended.
 
 The export name is not a provider name or cache key. eve derives private
 identity from the compiled module and export. The deployment contains the exact
@@ -200,9 +202,9 @@ The implementation can use this revision to reuse provider state. If it cannot
 prove an external input is unchanged, it rebuilds instead of asking the app
 author for a revalidation key.
 
-A required prewarm failure fails the build. Runtime may use the same
-preparation path to repair provider state that disappeared after the build, but
-ordinary production startup does not depend on lazy preparation.
+A required prewarm failure fails the build. Runtime uses the exact reference
+frozen into the deployment; if that provider state disappears, restoration
+fails instead of rebuilding a different template under the same deployment.
 
 Template preparation is session-independent. Session-dependent options belong
 on `create()` or on the returned sandbox. If runtime can choose among multiple
@@ -348,10 +350,9 @@ import {
   type SandboxTemplateAssets,
 } from "eve/sandbox/provider";
 
-type Reference = { name: string };
+type Reference = { createdAt: string; name: string };
 type TemplateReference = { snapshotId: string };
 type CreateOptions = {
-  name?: string;
   resources?: { vcpus: number };
 };
 type TemplateOptions = {
@@ -364,11 +365,19 @@ declare function resolveVercelTemplateBase(input: {
 }): Promise<{} | { image: string }>;
 
 const asVercelSandbox = defineSandboxAdapter<SdkSandbox, Reference>({
+  type: "vercel.com/sandbox/v1",
   reference(sandbox) {
-    return { name: sandbox.name };
+    return {
+      createdAt: sandbox.createdAt.toISOString(),
+      name: sandbox.name,
+    };
   },
-  restore({ name }) {
-    return SdkSandbox.get({ name });
+  async restore({ createdAt, name }, { signal }) {
+    const sandbox = await SdkSandbox.get({ name, resume: false, signal });
+    if (sandbox.createdAt.toISOString() !== createdAt) {
+      throw new Error(`Vercel Sandbox "${name}" was replaced`);
+    }
+    return sandbox;
   },
   session(sandbox) {
     return adaptVercelSession(sandbox);
@@ -377,16 +386,20 @@ const asVercelSandbox = defineSandboxAdapter<SdkSandbox, Reference>({
 
 export const VercelSandbox = {
   async create(options: CreateOptions = {}) {
-    const sandbox = await SdkSandbox.create({
-      ...options,
-      persistent: true,
+    return asVercelSandbox.create(({ resourceId, signal, tags }) => {
+      return SdkSandbox.getOrCreate({
+        ...options,
+        name: resourceId,
+        persistent: true,
+        signal,
+        tags,
+      });
     });
-
-    return asVercelSandbox(sandbox);
   },
 
   template(options: TemplateOptions = {}) {
     return defineSandboxTemplate<TemplateReference, CreateOptions>({
+      type: "vercel.com/sandbox-template/v1",
       async prewarm({ assets, hydrate }) {
         const base = await resolveVercelTemplateBase({ assets });
         const raw = await SdkSandbox.create(base);
@@ -400,27 +413,34 @@ export const VercelSandbox = {
       },
 
       async create({ options, reference }) {
-        const raw = await SdkSandbox.create({
-          ...options,
-          persistent: true,
-          source: {
-            type: "snapshot",
-            snapshotId: reference.snapshotId,
-          },
+        return asVercelSandbox.create(({ resourceId, signal, tags }) => {
+          return SdkSandbox.getOrCreate({
+            ...options,
+            name: resourceId,
+            persistent: true,
+            signal,
+            tags,
+            source: {
+              type: "snapshot",
+              snapshotId: reference.snapshotId,
+            },
+          });
         });
-
-        return asVercelSandbox(raw);
       },
     });
   },
 };
 ```
 
-`defineSandboxAdapter()` owns durable serialization and restoration.
-`defineSandboxTemplate()` owns build-result binding: eve supplies compiled
+`defineSandboxAdapter()` owns durable serialization and restoration. Its
+`create()` method gives provider implementation code eve's stable resource
+identity, signal, application root, and tags; the app definition does not
+forward any of them. The provider-owned `type` is the protocol discriminator
+stored with the reference and never appears in an app's sandbox definition.
+`defineSandboxTemplate()` owns build-result scoping: eve supplies compiled
 assets and workspace hydration to `prewarm()`, freezes its returned reference,
-and supplies that reference to `create()` at runtime. The app-facing methods
-still return only `Sandbox` values.
+and supplies that exact reference to `create()` during the active definition
+invocation. The app-facing methods still return only `Sandbox` values.
 
 For ordinary templates, `resolveVercelTemplateBase()` returns the built-in
 Vercel runtime. When the compiler supplies a Dockerfile, it builds and pushes
@@ -532,41 +552,54 @@ export default defineSandbox(({ runtime }) => {
 });
 ```
 
-A provider package can adapt any raw handle into a durable sandbox:
+A provider package can create and adapt any raw handle into a durable sandbox:
 
 ```ts
 const asDevboxSandbox = defineSandboxAdapter<Devbox, { id: string }>({
+  type: "example.com/devbox/v1",
   reference(devbox) {
     return { id: devbox.id };
   },
-  restore({ id }) {
-    return Devbox.get({ id });
+  restore({ id }, { signal }) {
+    return Devbox.get({ id, signal });
   },
   session(devbox) {
     return adaptDevboxSession(devbox);
   },
 });
 
-export default defineSandbox(async ({ session }) => {
-  const devbox = await Devbox.create({
-    owner: session.auth.current?.principalId,
-  });
+export const DevboxSandbox = {
+  create(options: { owner?: string } = {}) {
+    return asDevboxSandbox.create(({ resourceId, signal }) => {
+      return Devbox.getOrCreate({
+        id: resourceId,
+        owner: options.owner,
+        signal,
+      });
+    });
+  },
+};
 
-  return asDevboxSandbox(devbox);
-});
+export default defineSandbox(({ session }) =>
+  DevboxSandbox.create({
+    owner: session.auth.current?.principalId,
+  }),
+);
 ```
 
-`asDevboxSandbox(raw)` is the durable value. The adapter, not the app
-definition, owns serialization and lazy restoration.
+The provider's `create()` method receives eve's stable resource identity and
+uses it for idempotent creation. The app definition still supplies only
+application options and returns the resulting `Sandbox`.
 
 A prewarm-capable implementation can additionally expose a branded template
 through `defineSandboxTemplate()`. Internally it implements two phases:
 
-- `prewarm({ assets, hydrate })` consumes compiled preparation assets, creates
-  a temporary provider sandbox, lets eve hydrate the managed workspace, and
-  returns a serializable provider reference; and
-- `bind(reference)` installs the build result so the template's public creation
-  methods can return live sandboxes from it.
+- `prewarm({ appRoot, assets, hydrate, log, templateId })` consumes
+  framework-supplied build context, creates a temporary provider sandbox, lets
+  eve hydrate the managed workspace, and returns a serializable provider
+  reference; and
+- `create({ options, reference })` receives the exact invocation-scoped build
+  result and returns a live durable sandbox.
 
 Neither method nor the reference appears in app definitions.
 
@@ -726,8 +759,13 @@ sandbox definition remains a plain function returning a sandbox.
   definition.
 - The template reference is opaque to app code and frozen into deployment
   artifacts.
-- Definitions run for creation or replacement, never routine restoration.
+- Definitions run when the owning session has no persisted sandbox, never
+  during routine restoration.
 - Sandbox implementations own serialization and restoration.
+- A missing or replaced persisted provider resource fails restoration instead
+  of silently substituting an empty sandbox.
+- Runtime shutdown may stop active compute but never deletes durable provider
+  state.
 - App definitions never receive framework identity or template keys.
 - Independent sessions share only when they return handles to the same
   provider resource.
@@ -750,5 +788,5 @@ ctx.root.sandbox: Promise<Sandbox>
 ```
 
 The app returns a sandbox. Sandbox implementations own provider preparation
-and durable restoration. eve owns build discovery, reference binding,
-persistence, compatibility, and ownership.
+and durable restoration. eve owns build discovery, invocation-scoped
+references, persistence, compatibility, and resource identity.
