@@ -12,3 +12,5 @@ Before using eve with non-public, sensitive, regulated, or production data, revi
 Require human approval or other safeguards for sensitive, irreversible, regulated, financial, healthcare, employment, housing, legal, safety-impacting, user-impacting, or external side-effecting actions.
 
 Unless you configure stricter controls, eve agents may operate with permissive settings, including tool execution without human approval where approval is omitted and sandbox network egress that is not deny-all. Do not rely on model behavior alone to prevent sensitive or irreversible actions.
+
+Treat messages, tool results, connected services, web content, files, and attachments as potential prompt injection. Follow [Prompt injection mitigation](./guides/prompt-injection) to reduce capabilities, mediate model-facing content, and test failure paths.

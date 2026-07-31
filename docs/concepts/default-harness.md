@@ -48,7 +48,7 @@ Notes:
 - **`connection_search`** surfaces a connection's tools by their qualified name (e.g. `linear__list_issues`), which the model can then call directly. It's registered only when the agent has connections.
 - **`web_search`** has no local executor; the provider runs it. To supply your own implementation, override it with `defineTool()`.
 
-Review these built-in tools before production use. Disable, wrap, restrict, or require approval for any tool that can access the filesystem, network, shell, or sensitive data.
+Review these built-in tools before production use. Disable, wrap, restrict, or require approval for any tool that can access the filesystem, network, shell, or sensitive data. Tools that read web pages, search results, files, or command output can return indirect prompt injection; follow [Prompt injection mitigation](../guides/prompt-injection) before exposing them to untrusted content.
 
 ## Override a default
 

@@ -94,8 +94,8 @@ Before exposing an agent to real traffic:
       reach hosts but never the model.
 - [ ] Set a sandbox network policy tighter than `allow-all` if the model
       shouldn't have open egress; use credential brokering for authenticated egress.
-- [ ] Don't surface untrusted text as markup. Model- or user-controlled
-      strings rendered into a channel UI should be escaped for that surface.
+- [ ] Treat user, tool, connection, web, file, and attachment content as potential prompt injection. Minimize model capabilities and mediate untrusted results before the next model call.
+- [ ] Don't surface untrusted text as markup. Escape model- or user-controlled strings for the channel UI that renders them.
 
 ## What to read next
 
@@ -103,3 +103,4 @@ Before exposing an agent to real traffic:
 - [Sandbox](../sandbox): backends, network policy, and brokering config
 - [Execution model and durability](./execution-model-and-durability): how durable sessions run
 - [Connections](../connections): static-token and OAuth connections
+- [Prompt injection mitigation](../guides/prompt-injection): model-facing boundaries, least privilege, and testing

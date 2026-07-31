@@ -3,6 +3,7 @@
   "pages": [
     "deployment",
     "auth-and-route-protection",
+    "prompt-injection",
     "instrumentation",
     "hooks",
     "session-context",
