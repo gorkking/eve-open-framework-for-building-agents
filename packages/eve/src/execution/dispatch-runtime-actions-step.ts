@@ -301,6 +301,7 @@ async function startSubagent(input: {
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
   readonly parentContinuationToken: string | undefined;
+  readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly session: RuntimeSession;
   readonly target: DispatchStartTarget;
 }): Promise<DispatchOutcome> {
@@ -317,6 +318,7 @@ async function startSubagent(input: {
         fanoutSize: input.fanoutSize,
         initiatorAuth: input.initiatorAuth,
         parentContinuationToken: input.parentContinuationToken,
+        parentTraceContext: input.parentTraceContext,
         session: input.session,
         source: input.target.source,
       });
@@ -382,6 +384,7 @@ async function startLocalSubagent(input: {
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
   readonly parentContinuationToken: string | undefined;
+  readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly session: RuntimeSession;
   readonly source: SubagentInputSource;
 }): Promise<DispatchOutcome> {
@@ -399,6 +402,7 @@ async function startLocalSubagent(input: {
     fanoutSize: input.fanoutSize,
     initiatorAuth: input.initiatorAuth,
     parentContinuationToken: input.parentContinuationToken,
+    parentTraceContext: input.parentTraceContext,
     session: input.session,
     source,
   });
