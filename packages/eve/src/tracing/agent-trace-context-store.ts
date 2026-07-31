@@ -6,8 +6,8 @@ import type {
   AgentSessionTraceState,
   AgentTraceStateStore,
   AgentTurnTraceState,
-} from "#harness/agent-otel-provider.js";
-import { agentTurnStateKey } from "#harness/agent-otel-provider.js";
+} from "#tracing/agent-otel-provider.js";
+import { agentTurnStateKey } from "#tracing/agent-otel-provider.js";
 
 interface AgentTraceContextState {
   readonly sessions: Readonly<Record<string, AgentSessionTraceState>>;
