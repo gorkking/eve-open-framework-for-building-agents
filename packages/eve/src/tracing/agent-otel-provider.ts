@@ -52,11 +52,7 @@ interface ToolSpanState extends SpanState {
 /** Sized so an ordinary session stays one trace and only an outsized one rolls. */
 export const SESSION_WINDOW_TURN_LIMIT = 200;
 
-/**
- * What opening a session's trace state needs. A turn that arrives without a
- * recorded session opens one from its own ids, so this is narrower than
- * {@link InstrumentationSessionStartedEvent}.
- */
+/** What opening a session's trace state needs, narrower than the start event. */
 interface SessionContextInput {
   readonly agentName?: string;
   readonly parentTraceContext?: InstrumentationTraceContext;
@@ -158,6 +154,17 @@ export function createAgentOtelInstrumentation(
   // than resuming this callback sequence in a replacement process.
   const steps = new WeakMap<InstrumentationAttemptScope, AttemptSpanState>();
 
+  /** Attributes every span within one attempt carries: framework, session, turn, step. */
+  const attemptScopeAttributes = (scope: InstrumentationAttemptScope) => ({
+    "agent.framework.name": "eve",
+    "agent.framework.version": input.frameworkVersion,
+    "agent.root.session.id": scope.rootSessionId ?? scope.sessionId,
+    "agent.session.id": scope.sessionId,
+    "agent.step.attempt": scope.attemptIndex,
+    "agent.step.index": scope.stepIndex,
+    "agent.turn.id": scope.turnId,
+  });
+
   const onSessionStarted = async (event: InstrumentationSessionStartedEvent): Promise<void> => {
     await ensureSessionContext(event);
   };
@@ -209,13 +216,7 @@ export function createAgentOtelInstrumentation(
       "agent.step",
       {
         attributes: {
-          "agent.session.id": event.scope.sessionId,
-          "agent.framework.name": "eve",
-          "agent.framework.version": input.frameworkVersion,
-          "agent.root.session.id": event.scope.rootSessionId ?? event.scope.sessionId,
-          "agent.step.attempt": event.scope.attemptIndex,
-          "agent.step.index": event.scope.stepIndex,
-          "agent.turn.id": event.scope.turnId,
+          ...attemptScopeAttributes(event.scope),
           "agent.name": event.scope.functionId,
         },
       },
@@ -395,16 +396,10 @@ export function createAgentOtelInstrumentation(
       "agent.action",
       {
         attributes: {
+          ...attemptScopeAttributes(event.scope),
           "agent.action.call_id": event.source.toolCall.toolCallId,
           "agent.action.kind": "tool",
           "agent.action.name": event.source.toolCall.toolName,
-          "agent.framework.name": "eve",
-          "agent.framework.version": input.frameworkVersion,
-          "agent.root.session.id": event.scope.rootSessionId ?? event.scope.sessionId,
-          "agent.session.id": event.scope.sessionId,
-          "agent.step.attempt": event.scope.attemptIndex,
-          "agent.step.index": event.scope.stepIndex,
-          "agent.turn.id": event.scope.turnId,
         },
       },
       attempt.step.context,
