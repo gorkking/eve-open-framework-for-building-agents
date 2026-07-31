@@ -12,13 +12,23 @@ import {
 } from "#harness/runtime-actions.js";
 import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 import { deriveAgentId, getAgentHandleStore } from "#harness/handles/store.js";
-import { confirmAgentStarted, prepareAgentStart } from "#harness/handles/transitions.js";
+import {
+  confirmAgentStarted,
+  prepareAgentContinuation,
+  prepareAgentStart,
+} from "#harness/handles/transitions.js";
 import { getProxyInputRequests, upsertProxyInputRequests } from "#harness/proxy-input-requests.js";
 import { getSessionTokenUsage, setTurnUsageState } from "#harness/turn-tag-state.js";
 import type { HarnessSession } from "#harness/types.js";
 
 const CHILD_SESSION_ID = "local-child-123456789012";
 const CHILD_CONTINUATION_TOKEN = "subagent:private-token";
+const ZERO_USAGE = {
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+} as const;
 const OPERATION_ID = deriveAgentOperationId({
   callId: "call-1",
   parentSessionId: "test-session",
@@ -103,6 +113,11 @@ describe("resolvePendingRuntimeActions", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "done" },
+              usageDelta: ZERO_USAGE,
+            },
             output: "done",
             sessionId: CHILD_SESSION_ID,
             subagentName: "researcher",
@@ -126,6 +141,11 @@ describe("resolvePendingRuntimeActions", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "done" },
+              usageDelta: ZERO_USAGE,
+            },
             output: "done",
             subagentName: "researcher",
           },
@@ -148,6 +168,14 @@ describe("resolvePendingRuntimeActions", () => {
             callId: "call-1",
             isError: true,
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: {
+                error: { code: "SESSION_FAILED", message: "child failed" },
+                kind: "failed",
+              },
+              usageDelta: ZERO_USAGE,
+            },
             output: { code: "SESSION_FAILED", message: "child failed" },
             sessionId: CHILD_SESSION_ID,
             subagentName: "researcher",
@@ -176,6 +204,11 @@ describe("resolvePendingRuntimeActions", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "done" },
+              usageDelta: ZERO_USAGE,
+            },
             output: "done",
             sessionId: CHILD_SESSION_ID,
             subagentName: "researcher",
@@ -194,6 +227,11 @@ describe("resolvePendingRuntimeActions", () => {
     const wrongChild = {
       callId: "call-1",
       kind: "subagent-result",
+      outcome: {
+        kind: "terminal",
+        result: { kind: "succeeded", output: "forged" },
+        usageDelta: ZERO_USAGE,
+      },
       output: "forged",
       sessionId: "forged-sibling-session",
       subagentName: "researcher",
@@ -239,6 +277,16 @@ describe("resolvePendingRuntimeActions", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "done" },
+              usageDelta: {
+                cacheReadTokens: 10,
+                cacheWriteTokens: 5,
+                inputTokens: 4_000,
+                outputTokens: 400,
+              },
+            },
             output: "done",
             sessionId: CHILD_SESSION_ID,
             subagentName: "researcher",
@@ -260,7 +308,228 @@ describe("resolvePendingRuntimeActions", () => {
     });
   });
 
-  it("leaves the parent's totals untouched when the child reports no usage", async () => {
+  it("keeps a parked handle resumable — even for a failed turn — and deletes a terminal one", async () => {
+    const session = createSessionWithRunningChild();
+    const agentId = deriveAgentId("researcher", OPERATION_ID);
+
+    const parkedResolve = await resolvePendingRuntimeActions({
+      session,
+      stepInput: {
+        runtimeActionResults: [
+          {
+            callId: "call-1",
+            isError: true,
+            kind: "subagent-result",
+            outcome: {
+              kind: "parked",
+              result: {
+                error: { code: "SUBAGENT_EXECUTION_FAILED", message: "schema not fulfilled" },
+                kind: "failed",
+              },
+              usageDelta: {
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+              },
+            },
+            output: { code: "SUBAGENT_EXECUTION_FAILED", message: "schema not fulfilled" },
+            sessionId: CHILD_SESSION_ID,
+            subagentName: "researcher",
+          },
+        ],
+      },
+    });
+
+    expect(parkedResolve.outcome).toBe("resolved");
+    expect(getAgentHandleStore(parkedResolve.session.state)?.handles).toEqual([
+      expect.objectContaining({ phase: "parked" }),
+    ]);
+
+    // The parked handle stays resumable: a continuation prepares cleanly.
+    const continueOperationId = deriveAgentOperationId({
+      callId: "call-2",
+      parentSessionId: "test-session",
+      parentTurnId: "turn_1",
+    });
+    const continued = prepareAgentContinuation(parkedResolve.session, {
+      agentId,
+      invokedName: "researcher",
+      operation: {
+        callId: "call-2",
+        id: continueOperationId,
+        kind: "continue",
+        parentTurnId: "turn_1",
+        previousStatus: "",
+      },
+    });
+    expect(continued.kind).toBe("ready");
+    if (continued.kind !== "ready") throw new Error("expected ready continuation");
+
+    // A terminal failure on the follow-up turn deletes the handle.
+    const secondBatch = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-2",
+          description: "research subagent",
+          input: { agentId, message: "continue" },
+          kind: "subagent-call",
+          name: "researcher",
+          nodeId: "subagents/researcher",
+          subagentName: "researcher",
+        },
+      ],
+      event: { sequence: 1, stepIndex: 0, turnId: "turn_1" },
+      responseMessages: [],
+      session: continued.session,
+    });
+    const terminalResolve = await resolvePendingRuntimeActions({
+      session: secondBatch,
+      stepInput: {
+        runtimeActionResults: [
+          {
+            callId: "call-2",
+            isError: true,
+            kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: {
+                error: { code: "SUBAGENT_EXECUTION_FAILED", message: "child crashed" },
+                kind: "failed",
+              },
+              usageDelta: {
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+              },
+            },
+            output: { code: "SUBAGENT_EXECUTION_FAILED", message: "child crashed" },
+            sessionId: CHILD_SESSION_ID,
+            subagentName: "researcher",
+          },
+        ],
+      },
+    });
+
+    expect(terminalResolve.outcome).toBe("resolved");
+    expect(getAgentHandleStore(terminalResolve.session.state)).toEqual({ handles: [] });
+  });
+
+  it("folds each turn's usage delta once so a two-turn child never double-counts", async () => {
+    // Turn 1: the child spent 4000/400 and parked.
+    const session = createSessionWithRunningChild();
+    const agentId = deriveAgentId("researcher", OPERATION_ID);
+    const firstResolve = await resolvePendingRuntimeActions({
+      session,
+      stepInput: {
+        runtimeActionResults: [
+          {
+            callId: "call-1",
+            kind: "subagent-result",
+            outcome: {
+              kind: "parked",
+              result: { kind: "succeeded", output: "first answer" },
+              usageDelta: {
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                inputTokens: 4_000,
+                outputTokens: 400,
+              },
+            },
+            output: "first answer",
+            sessionId: CHILD_SESSION_ID,
+            subagentName: "researcher",
+            // Cumulative child-session totals: folding these instead of the
+            // delta would double-count turn 1 on the next settlement.
+            usage: {
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              inputTokens: 4_000,
+              outputTokens: 400,
+            },
+          },
+        ],
+      },
+    });
+    expect(getSessionTokenUsage(firstResolve.session)).toMatchObject({
+      inputTokens: 5_000,
+      outputTokens: 500,
+    });
+
+    // Turn 2: the child spent another 1000/100 (cumulative 5000/500).
+    const continued = prepareAgentContinuation(firstResolve.session, {
+      agentId,
+      invokedName: "researcher",
+      operation: {
+        callId: "call-2",
+        id: deriveAgentOperationId({
+          callId: "call-2",
+          parentSessionId: "test-session",
+          parentTurnId: "turn_1",
+        }),
+        kind: "continue",
+        parentTurnId: "turn_1",
+        previousStatus: "",
+      },
+    });
+    if (continued.kind !== "ready") throw new Error("expected ready continuation");
+    const secondBatch = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-2",
+          description: "research subagent",
+          input: { agentId, message: "continue" },
+          kind: "subagent-call",
+          name: "researcher",
+          nodeId: "subagents/researcher",
+          subagentName: "researcher",
+        },
+      ],
+      event: { sequence: 1, stepIndex: 0, turnId: "turn_1" },
+      responseMessages: [],
+      session: continued.session,
+    });
+    const secondResolve = await resolvePendingRuntimeActions({
+      session: secondBatch,
+      stepInput: {
+        runtimeActionResults: [
+          {
+            callId: "call-2",
+            kind: "subagent-result",
+            outcome: {
+              kind: "parked",
+              result: { kind: "succeeded", output: "second answer" },
+              usageDelta: {
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                inputTokens: 1_000,
+                outputTokens: 100,
+              },
+            },
+            output: "second answer",
+            sessionId: CHILD_SESSION_ID,
+            subagentName: "researcher",
+            usage: {
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              inputTokens: 5_000,
+              outputTokens: 500,
+            },
+          },
+        ],
+      },
+    });
+
+    // Own 1000/100 + turn deltas (4000+1000)/(400+100) — never the child's
+    // cumulative 5000/500 twice.
+    expect(getSessionTokenUsage(secondResolve.session)).toMatchObject({
+      inputTokens: 6_000,
+      outputTokens: 600,
+    });
+  });
+
+  it("leaves the parent's totals untouched when the child reports a zero usage delta", async () => {
     const session = createSessionWithRunningChild();
 
     const resolved = await resolvePendingRuntimeActions({
@@ -270,6 +539,11 @@ describe("resolvePendingRuntimeActions", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "done" },
+              usageDelta: ZERO_USAGE,
+            },
             output: "done",
             sessionId: CHILD_SESSION_ID,
             subagentName: "researcher",
@@ -290,6 +564,11 @@ describe("result-to-handle binding", () => {
   const boundResult = {
     callId: "call-1",
     kind: "subagent-result",
+    outcome: {
+      kind: "terminal",
+      result: { kind: "succeeded", output: "done" },
+      usageDelta: ZERO_USAGE,
+    },
     output: "done",
     sessionId: CHILD_SESSION_ID,
     subagentName: "researcher",
@@ -316,6 +595,11 @@ describe("result-to-handle binding", () => {
     const legacyShaped = {
       callId: "call-1",
       kind: "subagent-result",
+      outcome: {
+        kind: "terminal",
+        result: { kind: "succeeded", output: "done" },
+        usageDelta: ZERO_USAGE,
+      },
       output: "done",
       subagentName: "researcher",
     } as const;

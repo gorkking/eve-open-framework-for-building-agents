@@ -78,6 +78,11 @@ function subagentResult(input: {
       result: {
         callId: input.callId,
         kind: "subagent-result",
+        outcome: {
+          kind: "terminal",
+          result: { kind: "succeeded", output: input.output as never },
+          usageDelta: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 },
+        },
         output: input.output as never,
         sessionId: "child-session",
         subagentName: input.subagentName,

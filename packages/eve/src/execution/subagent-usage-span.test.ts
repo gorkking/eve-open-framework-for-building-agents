@@ -27,6 +27,11 @@ function subagentResult(overrides: Partial<RuntimeSubagentChildResult> = {}): Ru
   return {
     callId: "call-1",
     kind: "subagent-result",
+    outcome: {
+      kind: "terminal",
+      result: { kind: "succeeded", output: "done" },
+      usageDelta: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 },
+    },
     output: "done",
     sessionId: "child-session",
     subagentName: "research",

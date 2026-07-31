@@ -304,6 +304,16 @@ describe("dispatchRuntimeActionsStep child starts", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "forged" },
+              usageDelta: {
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+              },
+            },
             output: "forged",
             sessionId: "forged-sibling-session",
             subagentName: "research",
@@ -320,6 +330,16 @@ describe("dispatchRuntimeActionsStep child starts", () => {
           {
             callId: "call-1",
             kind: "subagent-result",
+            outcome: {
+              kind: "terminal",
+              result: { kind: "succeeded", output: "done" },
+              usageDelta: {
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+              },
+            },
             output: "done",
             sessionId: CHILD_SESSION_ID,
             subagentName: "research",

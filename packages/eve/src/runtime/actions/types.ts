@@ -1,5 +1,6 @@
 import { z } from "#compiled/zod/index.js";
 
+import { agentTurnOutcomeSchema } from "#shared/agent-turn-outcome.js";
 import { jsonObjectSchema, jsonValueSchema } from "#shared/json-schemas.js";
 import { tokenUsageSchema } from "#shared/token-usage.js";
 
@@ -132,8 +133,15 @@ const runtimeToolResultActionResultSchema = z
  * `sessionId` names the callee session claiming the result; the parent
  * verifies it against the child identity captured at dispatch, so one callee
  * cannot settle a sibling's call. Older eve deployments do not send it, and
- * their results bind by callId alone. `usage` carries the completed child
- * session's token totals so the caller can attribute the subagent's spend.
+ * their results bind by callId alone. `usage` carries the turn's token spend
+ * so the caller can attribute the subagent's tokens.
+ *
+ * `outcome` is the child engine's explicit lifecycle verdict for the settled
+ * turn. The parent settles the agent handle from `outcome.kind` and folds
+ * `outcome.usageDelta` into its session totals; `output`/`isError` remain
+ * the tool-result projection shown to the model. Every producer states the
+ * envelope explicitly — task-mode boundaries synthesize a terminal one —
+ * so the parent never infers lifecycle from an absent field.
  */
 export type RuntimeSubagentChildResult = z.infer<typeof runtimeSubagentChildResultSchema>;
 
@@ -145,6 +153,7 @@ const runtimeSubagentChildResultSchema = z
     callId: z.string(),
     isError: z.boolean().optional(),
     kind: z.literal("subagent-result"),
+    outcome: agentTurnOutcomeSchema,
     output: jsonValueSchema,
     sessionId: z.string().optional(),
     subagentName: z.string(),
