@@ -11,29 +11,29 @@
  * captured at construction so foreign-output capture never sees the paints.
  */
 
-const ESC = "\x1b";
+import type { TerminalWriteTarget } from "#cli/ui/ansi.js";
+import {
+  CLEAR_TO_END,
+  CURSOR_HOME,
+  ESC,
+  HIDE_CURSOR,
+  SHOW_CURSOR,
+  SYNC_END,
+  SYNC_START,
+} from "#cli/ui/ansi.js";
+
 const ALT_SCREEN_ON = `${ESC}[?1049h`;
 const ALT_SCREEN_OFF = `${ESC}[?1049l`;
 // 1002 (button-event tracking) reports motion while a button is held, which
 // drag-to-select needs; 1006 upgrades coordinates to the SGR encoding.
 const MOUSE_ON = `${ESC}[?1002h${ESC}[?1006h`;
 const MOUSE_OFF = `${ESC}[?1006l${ESC}[?1002l`;
-const HIDE_CURSOR = `${ESC}[?25l`;
-const SHOW_CURSOR = `${ESC}[?25h`;
-const CLEAR_TO_END = `${ESC}[0J`;
-const CURSOR_HOME = `${ESC}[H`;
-const SYNC_START = `${ESC}[?2026h`;
-const SYNC_END = `${ESC}[?2026l`;
-
-export interface AltScreenOutput {
-  write(chunk: string): boolean;
-}
 
 export class AltScreen {
   readonly #write: (chunk: string) => boolean;
   #active = false;
 
-  constructor(output: AltScreenOutput) {
+  constructor(output: TerminalWriteTarget) {
     this.#write = output.write.bind(output);
   }
 
