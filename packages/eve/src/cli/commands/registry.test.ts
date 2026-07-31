@@ -429,7 +429,7 @@ describe("registry commands", () => {
     expect(logger.logs).toContain("Added @other to package.json.");
   });
 
-  it("loads real item titles in parallel for a page of search results", async () => {
+  it("loads real item titles for a page of search results in one batch", async () => {
     searchRegistries.mockResolvedValue({
       items: [
         {
@@ -445,27 +445,22 @@ describe("registry commands", () => {
       ],
       pagination: { total: 2, offset: 0, limit: 2, hasMore: false },
     });
-    const resolvers = new Map<string, (value: unknown[]) => void>();
-    getRegistryItems.mockImplementation(
-      ([address]: string[]) =>
-        new Promise((resolve) => {
-          resolvers.set(address!, resolve);
-        }),
-    );
+    getRegistryItems.mockResolvedValue([{ title: "Photon iMessage" }, { title: "AI SDK Tools" }]);
 
     const catalog = browseRegistryCatalog("/project", { query: "sdk" });
 
-    await vi.waitFor(() => expect(getRegistryItems).toHaveBeenCalledTimes(2));
-    resolvers.get("https://eve.dev/r/channel/photon-imessage.json")?.([
-      { title: "Photon iMessage" },
-    ]);
-    resolvers.get("@acme/ai-sdk-tools")?.([{ title: "AI SDK Tools" }]);
     await expect(catalog).resolves.toMatchObject({
       items: [
         { name: "channel/photon-imessage", title: "Photon iMessage" },
         { name: "extension/ai-sdk-tools", title: "AI SDK Tools" },
       ],
     });
+    // One batched fetch for the whole page, with manifests mapped back by order.
+    expect(getRegistryItems).toHaveBeenCalledTimes(1);
+    expect(getRegistryItems).toHaveBeenCalledWith(
+      ["https://eve.dev/r/channel/photon-imessage.json", "@acme/ai-sdk-tools"],
+      { config: { registries: { "@acme": "https://example.com/r/{name}.json" } } },
+    );
     expect(searchRegistries).toHaveBeenCalledWith(
       ["https://eve.dev/r/registry.json", "@acme"],
       expect.objectContaining({ limit: 100, query: "sdk" }),

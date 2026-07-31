@@ -81,13 +81,8 @@ export function resolveOfficialRegistryUrl(
 ): string {
   if (configured === undefined) return DEFAULT_OFFICIAL_REGISTRY_URL;
 
-  let url: URL;
-  try {
-    url = new URL(configured);
-  } catch {
-    throw new Error("EVE_DEV_OFFICIAL_REGISTRY_URL must be an HTTP(S) URL.");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
+  const url = URL.parse(configured);
+  if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
     throw new Error("EVE_DEV_OFFICIAL_REGISTRY_URL must be an HTTP(S) URL.");
   }
   if (url.username !== "" || url.password !== "") {
@@ -264,11 +259,12 @@ export async function browseRegistryCatalog(
   options: { query?: string; source?: string } = {},
 ): Promise<RegistryCatalogResult> {
   const { config, result } = await searchRegistryCatalog(appRoot, options);
-  const manifests = await Promise.all(
-    result.items.map(async (item) => {
-      const [manifest] = await getRegistryItems([item.addCommandArgument], { config });
-      return manifest;
-    }),
+  // One batched call: it resolves its addresses in parallel behind a shared
+  // source cache and returns them in order, so a page of 100 catalog items
+  // costs one fetch pass instead of 100 independent ones.
+  const manifests = await getRegistryItems(
+    result.items.map((item) => item.addCommandArgument),
+    { config },
   );
   return {
     items: result.items.map((item: RegistrySearchItem, index) => {
