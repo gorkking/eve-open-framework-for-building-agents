@@ -314,8 +314,7 @@ describe("renderTraceViewer", () => {
     // 30 rows minus three header rows (padding, title, padding) and the three-row
     // footer (padding + hints + status).
     const frame = render(viewerState(conversationSpans()), 100, 30);
-    expect(frame.timelineViewportRows).toBe(24);
-    expect(frame.panelViewportRows).toBe(24);
+    expect(frame.bodyViewportRows).toBe(24);
     expect(frame.panelTotalRows).toBe(0);
   });
 

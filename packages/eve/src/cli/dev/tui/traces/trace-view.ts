@@ -41,10 +41,8 @@ export interface TraceViewerFrame {
   readonly rows: readonly string[];
   /** Detail rows the panel has for the selected span — fed back into key handling. */
   readonly panelTotalRows: number;
-  /** Body rows available to the conversation. */
-  readonly timelineViewportRows: number;
-  /** Body rows available to the panel. */
-  readonly panelViewportRows: number;
+  /** Body rows the conversation and the detail drawer share. */
+  readonly bodyViewportRows: number;
   /** Column width the body renders at (expandability is width-dependent). */
   readonly contentWidth: number;
 }
@@ -77,7 +75,6 @@ export function renderTraceViewer(
   const timelineWidth = Math.max(20, width - (panelWidth === 0 ? 0 : panelWidth + 1));
 
   const detailLines = panelDetailLines(state, panelWidth, theme, options.surfaces);
-  const panelViewportRows = bodyRows;
 
   const rows: string[] = [];
   rows.push(...renderHeader(state, options));
@@ -116,8 +113,7 @@ export function renderTraceViewer(
   return {
     rows,
     panelTotalRows: detailLines.length,
-    timelineViewportRows: bodyRows,
-    panelViewportRows,
+    bodyViewportRows: bodyRows,
     contentWidth: timelineWidth,
   };
 }

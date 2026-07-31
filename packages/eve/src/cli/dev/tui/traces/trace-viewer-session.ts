@@ -83,8 +83,7 @@ export class TraceViewerSession {
   #refreshAgain = false;
   #surfaces?: TraceViewerSurfaces;
   #metrics: TraceViewerKeyEnvironment = {
-    timelineViewportRows: 0,
-    panelViewportRows: 0,
+    bodyViewportRows: 0,
     panelTotalRows: 0,
     contentWidth: 0,
   };
@@ -158,8 +157,7 @@ export class TraceViewerSession {
       surfaces: this.#surfaces,
     });
     this.#metrics = {
-      timelineViewportRows: frame.timelineViewportRows,
-      panelViewportRows: frame.panelViewportRows,
+      bodyViewportRows: frame.bodyViewportRows,
       panelTotalRows: frame.panelTotalRows,
       contentWidth: frame.contentWidth,
       conversationLineCounts: this.#state.conversationItems.map((item, index) =>

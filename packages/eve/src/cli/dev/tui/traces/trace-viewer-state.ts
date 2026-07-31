@@ -82,10 +82,8 @@ export function orderedTextSelection(selection: TextSelectionRange): {
 
 /** Viewport metrics the controller measures so scrolling math stays pure. */
 export interface TraceViewerKeyEnvironment {
-  /** Body rows available to the conversation. */
-  readonly timelineViewportRows: number;
-  /** Body rows available to the detail panel. */
-  readonly panelViewportRows: number;
+  /** Body rows the conversation and the detail drawer share. */
+  readonly bodyViewportRows: number;
   /** Total detail rows the panel would paint for the selected span. */
   readonly panelTotalRows: number;
   /** Body column width — card expandability is width-dependent. */
@@ -236,7 +234,7 @@ export function reduceTraceViewerKey(
   key: TerminalKey,
   environment: TraceViewerKeyEnvironment,
 ): TraceViewerKeyResult {
-  const panelMaxScroll = Math.max(0, environment.panelTotalRows - environment.panelViewportRows);
+  const panelMaxScroll = Math.max(0, environment.panelTotalRows - environment.bodyViewportRows);
   const base: TraceViewerState =
     state.panelScroll > panelMaxScroll ? { ...state, panelScroll: panelMaxScroll } : state;
 
@@ -442,7 +440,7 @@ function conversationScrollRow(
 ): number {
   const counts = environment.conversationLineCounts;
   if (counts === undefined) return state.scrollRow;
-  const viewportRows = environment.timelineViewportRows;
+  const viewportRows = environment.bodyViewportRows;
   const offsets = cardLineOffsets(state, counts);
   const cardStart = offsets[state.selectedRow] ?? 0;
   const cardHeight = counts[state.selectedRow] ?? 1;
@@ -472,7 +470,7 @@ function conversationCellAt(
   const counts = environment.conversationLineCounts;
   if (counts === undefined || state.conversationItems.length === 0) return undefined;
   const bodyIndex = y - 1 - TRACE_VIEWER_HEADER_ROWS; // 1-based coordinates
-  if (bodyIndex < 0 || bodyIndex >= environment.timelineViewportRows) return undefined;
+  if (bodyIndex < 0 || bodyIndex >= environment.bodyViewportRows) return undefined;
   const column = x - 1;
   if (column < 0 || column >= environment.contentWidth) return undefined;
   const totalLines = conversationLineTotal(state, counts);
@@ -494,7 +492,7 @@ function panelCellAt(
 ): TextSelectionPoint | undefined {
   if (!state.panelOpen || environment.panelTotalRows === 0) return undefined;
   const bodyIndex = y - 1 - TRACE_VIEWER_HEADER_ROWS; // 1-based coordinates
-  if (bodyIndex < 0 || bodyIndex >= environment.panelViewportRows) return undefined;
+  if (bodyIndex < 0 || bodyIndex >= environment.bodyViewportRows) return undefined;
   const column = x - 1 - (environment.contentWidth + 1);
   if (column < 0) return undefined;
   const line = state.panelScroll + bodyIndex;
@@ -542,7 +540,7 @@ function scrollConversation(
 ): TraceViewerState {
   const counts = environment.conversationLineCounts;
   if (counts === undefined || state.conversationItems.length === 0) return state;
-  const viewportRows = environment.timelineViewportRows;
+  const viewportRows = environment.bodyViewportRows;
   const maxScroll = Math.max(0, conversationLineTotal(state, counts) - viewportRows);
   const scrollRow = Math.min(maxScroll, Math.max(0, state.scrollRow + delta));
   if (scrollRow === state.scrollRow) return state;

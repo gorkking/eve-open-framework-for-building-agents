@@ -68,8 +68,7 @@ function entry(traceId: string, lastActivityMs = 0): TraceStoreEntry {
 }
 
 const ENV = {
-  timelineViewportRows: 10,
-  panelViewportRows: 10,
+  bodyViewportRows: 10,
   panelTotalRows: 30,
   contentWidth: 80,
 };
@@ -364,7 +363,7 @@ describe("reduceTraceViewerKey", () => {
     state = { ...state, conversationItems: items };
     const env = {
       ...ENV,
-      timelineViewportRows: 12,
+      bodyViewportRows: 12,
       conversationLineCounts: items.map(() => 5),
     };
     expect(state.scrollRow).toBe(0);
@@ -412,7 +411,7 @@ describe("reduceTraceViewerKey", () => {
     // Each card is 5 lines + 1 separator; the viewport holds 12 lines.
     const env = {
       ...ENV,
-      timelineViewportRows: 12,
+      bodyViewportRows: 12,
       conversationLineCounts: items.map(() => 5),
     };
     for (let index = 0; index < 9; index += 1) {
