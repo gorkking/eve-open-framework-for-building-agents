@@ -50,6 +50,7 @@ export interface RuntimeSandboxRegistry {
  */
 export function createRuntimeSandboxRegistry(input: {
   readonly authoredSandbox: ResolvedSandboxDefinition | null;
+  readonly templateReferences: Readonly<Record<string, unknown>>;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
 }): RuntimeSandboxRegistry {
   const definition =
@@ -58,6 +59,7 @@ export function createRuntimeSandboxRegistry(input: {
       hasWorkspace:
         input.workspaceResourceRoot.contentHash !== undefined ||
         input.workspaceResourceRoot.rootEntries.length > 0,
+      templateReferences: input.templateReferences,
     });
   return {
     sandbox: {
@@ -78,6 +80,7 @@ export function createRuntimeSandboxRegistry(input: {
  */
 export function createFrameworkSandboxDefinition(input: {
   readonly hasWorkspace: boolean;
+  readonly templateReferences?: Readonly<Record<string, unknown>>;
 }): ResolvedSandboxDefinition {
   const template = input.hasWorkspace ? DefaultSandbox.template() : null;
   return {
@@ -86,6 +89,15 @@ export function createFrameworkSandboxDefinition(input: {
     sourceHash: DEFAULT_SANDBOX_SOURCE_ID,
     sourceId: DEFAULT_SANDBOX_SOURCE_ID,
     sourceKind: "module",
-    templates: template === null ? [] : [{ exportName: "template", template }],
+    templates:
+      template === null
+        ? []
+        : [
+            {
+              exportName: "template",
+              reference: input.templateReferences?.template,
+              template,
+            },
+          ],
   };
 }

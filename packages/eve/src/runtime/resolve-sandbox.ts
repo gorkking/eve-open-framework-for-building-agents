@@ -15,6 +15,7 @@ export function resolveSandboxDefinition(
   definition: CompiledSandboxDefinition,
   moduleMap: CompiledModuleMap,
   nodeId: string | undefined,
+  templateReferences: Readonly<Record<string, unknown>>,
 ): ResolvedSandboxDefinition {
   const resolvedNodeId = nodeId ?? ROOT_COMPILED_AGENT_NODE_ID;
   const moduleNamespace = moduleMap.nodes[resolvedNodeId]?.modules[definition.sourceId];
@@ -47,7 +48,7 @@ export function resolveSandboxDefinition(
     }
     return {
       exportName,
-      reference: definition.templateReferences?.[exportName],
+      reference: templateReferences[exportName],
       template,
     };
   });

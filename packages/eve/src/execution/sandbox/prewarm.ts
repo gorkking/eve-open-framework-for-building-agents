@@ -280,20 +280,14 @@ function applySandboxTemplateBindings(
   }
 
   const bindNode = (node: CompiledAgentNodeManifest, nodeId: string): CompiledAgentNodeManifest => {
-    if (node.sandbox === null) {
-      return node;
-    }
     const nodeBindings = byNodeId.get(nodeId) ?? [];
     return {
       ...node,
-      sandbox: {
-        ...node.sandbox,
-        templateReferences: {
-          ...node.sandbox.templateReferences,
-          ...Object.fromEntries(
-            nodeBindings.map((binding) => [binding.exportName, binding.reference]),
-          ),
-        },
+      sandboxTemplateReferences: {
+        ...node.sandboxTemplateReferences,
+        ...Object.fromEntries(
+          nodeBindings.map((binding) => [binding.exportName, binding.reference]),
+        ),
       },
     };
   };

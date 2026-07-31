@@ -1,5 +1,5 @@
 import { contextStorage } from "#context/container.js";
-import { SandboxProviderContextKey } from "#context/keys.js";
+import { SandboxCreatedKey, SandboxProviderContextKey } from "#context/keys.js";
 import { withVirtualContextValue } from "#context/virtual-scope.js";
 import type { JsonValue } from "#shared/json.js";
 import { parseJsonValue } from "#shared/json.js";
@@ -134,7 +134,7 @@ export function defineSandboxAdapter<RawSandbox, Reference extends JsonValue>(
 
   function adapt(sandbox: RawSandbox, context = readSandboxProviderContext()): Sandbox {
     const session = definition.session(sandbox);
-    return createSandboxValue({
+    const value = createSandboxValue({
       adapter,
       adapterId,
       id: session.id,
@@ -142,6 +142,8 @@ export function defineSandboxAdapter<RawSandbox, Reference extends JsonValue>(
       rawSandbox: sandbox,
       session: Promise.resolve(session),
     });
+    contextStorage.getStore()?.get(SandboxCreatedKey)?.(value);
+    return value;
   }
 
   return Object.assign((sandbox: RawSandbox) => adapt(sandbox), {
@@ -250,8 +252,16 @@ export function requiresSandboxShutdown(sandbox: Sandbox): boolean {
 export async function withSandboxProviderContext<T>(
   context: SandboxProviderContext,
   callback: () => T | Promise<T>,
+  options: {
+    readonly onCreate?: (sandbox: Sandbox) => void;
+  } = {},
 ): Promise<T> {
-  return await withVirtualContextValue(SandboxProviderContextKey, context, callback);
+  return await withVirtualContextValue(SandboxProviderContextKey, context, async () => {
+    if (options.onCreate === undefined) {
+      return await callback();
+    }
+    return await withVirtualContextValue(SandboxCreatedKey, options.onCreate, callback);
+  });
 }
 
 function createSandboxValue(input: {

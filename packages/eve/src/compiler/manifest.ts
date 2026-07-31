@@ -11,6 +11,7 @@ import {
 import type { ChannelRouteMethod } from "#public/definitions/channel.js";
 import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
 import type { InternalInstructionsDefinition } from "#shared/instructions-definition.js";
+import type { JsonValue } from "#shared/json.js";
 import { jsonObjectSchema, jsonValueSchema } from "#shared/json-schemas.js";
 import type { Node } from "#shared/node.js";
 import type {
@@ -41,7 +42,7 @@ export const ROOT_COMPILED_AGENT_NODE_ID = "__root__";
 /**
  * Current compiled manifest schema version.
  */
-export const COMPILED_AGENT_MANIFEST_VERSION = 38;
+export const COMPILED_AGENT_MANIFEST_VERSION = 39;
 
 /**
  * Compiled channel entry preserved in the compiled manifest.
@@ -508,7 +509,6 @@ const compiledSandboxDefinitionSchema = z
     sourceId: z.string(),
     sourceKind: z.literal("module"),
     templateExports: z.array(z.string()).readonly(),
-    templateReferences: z.record(z.string(), jsonValueSchema).optional(),
   })
   .strict();
 
@@ -642,6 +642,7 @@ const compiledAgentNodeManifestSchema = z
     dynamicTools: z.array(compiledDynamicToolDefinitionSchema).default([]),
     hooks: z.array(compiledHookDefinitionSchema),
     sandbox: compiledSandboxDefinitionSchema.nullable(),
+    sandboxTemplateReferences: z.record(z.string(), jsonValueSchema),
     sandboxWorkspaces: z.array(compiledSandboxWorkspaceSchema),
     schedules: z.array(compiledScheduleDefinitionSchema),
     remoteAgents: z.array(compiledRemoteAgentNodeSchema),
@@ -731,6 +732,7 @@ export const compiledAgentManifestSchema = z
     kind: z.literal(COMPILED_AGENT_MANIFEST_KIND),
     remoteAgents: z.array(compiledRemoteAgentNodeSchema),
     sandbox: compiledSandboxDefinitionSchema.nullable(),
+    sandboxTemplateReferences: z.record(z.string(), jsonValueSchema),
     sandboxWorkspaces: z.array(compiledSandboxWorkspaceSchema),
     schedules: z.array(compiledScheduleDefinitionSchema),
     skills: z.array(compiledSkillSourceSchema).readonly(),
@@ -761,6 +763,7 @@ export function createCompiledAgentNodeManifest(input: {
   readonly hooks?: readonly CompiledHookDefinition[];
   readonly remoteAgents?: readonly CompiledRemoteAgentNode[];
   readonly sandbox?: CompiledSandboxDefinition | null;
+  readonly sandboxTemplateReferences?: Readonly<Record<string, JsonValue>>;
   readonly sandboxWorkspaces?: readonly CompiledSandboxWorkspace[];
   readonly schedules?: readonly CompiledScheduleDefinition[];
   readonly skills?: readonly CompiledSkillDefinition[];
@@ -842,6 +845,7 @@ export function createCompiledAgentNodeManifest(input: {
     hooks: [...(input.hooks ?? [])],
     remoteAgents: [...(input.remoteAgents ?? [])],
     sandbox: input.sandbox ?? null,
+    sandboxTemplateReferences: { ...input.sandboxTemplateReferences },
     sandboxWorkspaces: [...(input.sandboxWorkspaces ?? [])],
     schedules: [...(input.schedules ?? [])],
     skills: [...(input.skills ?? [])],
@@ -914,6 +918,7 @@ export function createCompiledAgentManifest(input: {
   readonly hooks?: readonly CompiledHookDefinition[];
   readonly remoteAgents?: readonly CompiledRemoteAgentNode[];
   readonly sandbox?: CompiledSandboxDefinition | null;
+  readonly sandboxTemplateReferences?: Readonly<Record<string, JsonValue>>;
   readonly sandboxWorkspaces?: readonly CompiledSandboxWorkspace[];
   readonly schedules?: readonly CompiledScheduleDefinition[];
   readonly skills?: readonly CompiledSkillDefinition[];

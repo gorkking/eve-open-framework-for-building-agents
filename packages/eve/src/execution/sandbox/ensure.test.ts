@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
 import {
@@ -9,6 +9,7 @@ import {
 import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
 import type { PrewarmedSandboxTemplateBinding } from "#execution/sandbox/prewarm.js";
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
+import { EVE_DEV_ENV_FLAG } from "#internal/application/optional-package-install.js";
 import type { SandboxDefinitionContext } from "#public/definitions/sandbox.js";
 import {
   createBundledRuntimeCompiledArtifactsSource,
@@ -16,9 +17,17 @@ import {
   type RuntimeCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
 import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
+import {
+  createRuntimeSandboxDefinitionRevision,
+  createRuntimeSandboxTemplateKey,
+} from "#runtime/sandbox/keys.js";
 import type { SandboxState, SandboxStateValue } from "#sandbox/state.js";
 import type { JsonObject } from "#shared/json.js";
-import { defineSandboxTemplate, type SandboxTemplate } from "#shared/sandbox-template.js";
+import {
+  defineSandboxTemplate,
+  getSandboxTemplateInternal,
+  type SandboxTemplate,
+} from "#shared/sandbox-template.js";
 import type { SandboxTemplatePrewarmLockInput } from "#execution/sandbox/template-prewarm-lock.js";
 import {
   defineSandboxAdapter,
@@ -205,6 +214,10 @@ describe("ensureSandboxAccess", () => {
     mocks.prewarmAppSandboxes.mockClear();
     mocks.waitForDevelopmentSandboxPrewarm.mockClear();
     mocks.waitForSandboxTemplatePrewarmLock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("invokes the definition lazily with session and runtime context", async () => {
@@ -520,14 +533,7 @@ describe("ensureSandboxAccess", () => {
   });
 
   it("binds the exact reference produced by development prewarming before creation", async () => {
-    mocks.waitForDevelopmentSandboxPrewarm.mockResolvedValueOnce([
-      {
-        exportName: "template",
-        nodeId: "__root__",
-        reference: { snapshotId: "development-snapshot" },
-        templateKey: "private-development-key",
-      },
-    ]);
+    vi.stubEnv(EVE_DEV_ENV_FLAG, "1");
     const template = defineSandboxTemplate<{ snapshotId: string }, Record<string, never>>({
       type: "test.dev/development-template/v1",
       async prewarm() {
@@ -537,15 +543,76 @@ describe("ensureSandboxAccess", () => {
         return createTestSandbox(reference.snapshotId);
       },
     });
+    const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(process.cwd());
+    const registry = createTestRegistry({
+      definition: () => template.create({}),
+      templates: [{ exportName: "template", template }],
+    });
+    const templateKey = await createTestTemplateKey({
+      compiledArtifactsSource,
+      registry,
+      template,
+    });
+    mocks.waitForDevelopmentSandboxPrewarm.mockResolvedValueOnce([
+      {
+        exportName: "template",
+        nodeId: "__root__",
+        reference: { snapshotId: "development-snapshot" },
+        templateKey,
+      },
+    ]);
     const access = await ensure({
-      compiledArtifactsSource: createDiskRuntimeCompiledArtifactsSource(process.cwd()),
-      registry: createTestRegistry({
-        definition: () => template.create({}),
-        templates: [{ exportName: "template", template }],
-      }),
+      compiledArtifactsSource,
+      registry,
     });
 
     await expect(access.get()).resolves.toMatchObject({ id: "development-snapshot" });
+    expect(mocks.prewarmAppSandboxes).not.toHaveBeenCalled();
+  });
+
+  it("prewarms the current development template when a previous generation resolves", async () => {
+    vi.stubEnv(EVE_DEV_ENV_FLAG, "1");
+    const template = defineSandboxTemplate<{ snapshotId: string }, Record<string, never>>({
+      type: "test.dev/rebuilt-template/v1",
+      async prewarm() {
+        return { snapshotId: "current-snapshot" };
+      },
+      create({ reference }) {
+        return createTestSandbox(reference.snapshotId);
+      },
+    });
+    const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(process.cwd());
+    const registry = createTestRegistry({
+      definition: () => template.create({}),
+      sourceHash: "current-source-hash",
+      templates: [{ exportName: "template", template }],
+    });
+    const templateKey = await createTestTemplateKey({
+      compiledArtifactsSource,
+      registry,
+      template,
+    });
+    mocks.waitForDevelopmentSandboxPrewarm.mockResolvedValueOnce([
+      {
+        exportName: "template",
+        nodeId: "__root__",
+        reference: { snapshotId: "stale-snapshot" },
+        templateKey: "previous-generation-template-key",
+      },
+    ]);
+    mocks.prewarmAppSandboxes.mockResolvedValueOnce([
+      {
+        exportName: "template",
+        nodeId: "__root__",
+        reference: { snapshotId: "current-snapshot" },
+        templateKey,
+      },
+    ]);
+
+    const access = await ensure({ compiledArtifactsSource, registry });
+
+    await expect(access.get()).resolves.toMatchObject({ id: "current-snapshot" });
+    expect(mocks.prewarmAppSandboxes).toHaveBeenCalledOnce();
   });
 
   it("waits for development prewarm before invoking a templated definition", async () => {
@@ -610,7 +677,48 @@ describe("ensureSandboxAccess", () => {
     await shutdownActiveSandboxHandles();
     expect(shutdownTestSandbox).toHaveBeenCalledWith("custom-sandbox");
   });
+
+  it("tracks provider sandboxes before authored setup rejects", async () => {
+    const access = await ensure({
+      registry: createTestRegistry({
+        async definition() {
+          const sandbox = createTestSandbox("failed-setup-sandbox");
+          await sandbox.run({ command: "prepare" });
+          throw new Error("authored setup failed");
+        },
+      }),
+    });
+
+    await expect(access.get()).rejects.toThrow("authored setup failed");
+    expect(countActiveSandboxHandles()).toBe(1);
+
+    await shutdownActiveSandboxHandles();
+    expect(shutdownTestSandbox).toHaveBeenCalledWith("failed-setup-sandbox");
+  });
 });
+
+async function createTestTemplateKey(input: {
+  readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
+  readonly nodeId?: string;
+  readonly registry: RuntimeSandboxRegistry;
+  readonly template: SandboxTemplate;
+}): Promise<string> {
+  const nodeId = input.nodeId ?? "__root__";
+  const registered = input.registry.sandbox;
+  const revision = await createRuntimeSandboxDefinitionRevision({
+    nodeId,
+    sourceHash: registered.definition.sourceHash,
+    sourceId: registered.definition.sourceId,
+    workspaceResourceRoot: registered.workspaceResourceRoot,
+  });
+  return await createRuntimeSandboxTemplateKey({
+    compiledArtifactsSource: input.compiledArtifactsSource,
+    exportName: "template",
+    implementationId: getSandboxTemplateInternal(input.template).implementationId,
+    nodeId,
+    revision,
+  });
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

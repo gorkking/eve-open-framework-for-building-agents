@@ -18,6 +18,7 @@ describe("createRuntimeSandboxRegistry", () => {
   it("falls back to the framework default sandbox when no authored override is present", () => {
     const registry = createRuntimeSandboxRegistry({
       authoredSandbox: null,
+      templateReferences: {},
       workspaceResourceRoot: EMPTY_RESOURCE_ROOT,
     });
 
@@ -33,6 +34,7 @@ describe("createRuntimeSandboxRegistry", () => {
 
     const registry = createRuntimeSandboxRegistry({
       authoredSandbox: null,
+      templateReferences: {},
       workspaceResourceRoot,
     });
 
@@ -48,6 +50,7 @@ describe("createRuntimeSandboxRegistry", () => {
 
     const registry = createRuntimeSandboxRegistry({
       authoredSandbox,
+      templateReferences: {},
       workspaceResourceRoot: EMPTY_RESOURCE_ROOT,
     });
 
@@ -66,6 +69,7 @@ describe("createRuntimeSandboxRegistry", () => {
 
     const registry = createRuntimeSandboxRegistry({
       authoredSandbox,
+      templateReferences: {},
       workspaceResourceRoot,
     });
 
@@ -83,10 +87,15 @@ describe("createRuntimeSandboxRegistry", () => {
   });
 
   it("exports a framework template when managed files need build prewarming", () => {
-    const definition = createFrameworkSandboxDefinition({ hasWorkspace: true });
+    const reference = { provider: "test", snapshotId: "snapshot_1" };
+    const definition = createFrameworkSandboxDefinition({
+      hasWorkspace: true,
+      templateReferences: { template: reference },
+    });
 
     expect(definition.templates).toHaveLength(1);
     expect(definition.templates[0]?.exportName).toBe("template");
+    expect(definition.templates[0]?.reference).toBe(reference);
   });
 });
 

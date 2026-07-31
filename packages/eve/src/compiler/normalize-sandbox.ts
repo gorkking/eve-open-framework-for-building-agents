@@ -63,7 +63,6 @@ export async function compileSandboxDefinition(
     sourceId: source.sourceId,
     sourceKind: "module",
     templateExports,
-    templateReferences: {},
   };
 }
 

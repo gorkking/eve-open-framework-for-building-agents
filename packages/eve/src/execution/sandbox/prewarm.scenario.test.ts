@@ -33,16 +33,43 @@ describe("sandbox template prewarm", () => {
     const manifest = JSON.parse(
       await readFile(join(appRoot, ".eve", "compile", "compiled-agent-manifest.json"), "utf8"),
     ) as {
-      sandbox: { templateReferences: Record<string, unknown> };
+      sandboxTemplateReferences: Record<string, unknown>;
       subagents: Array<{
-        agent: { sandbox: { templateReferences: Record<string, unknown> } };
+        agent: { sandboxTemplateReferences: Record<string, unknown> };
       }>;
     };
-    expect(manifest.sandbox.templateReferences).toEqual({
+    expect(manifest.sandboxTemplateReferences).toEqual({
       template: { snapshotId: "root-snapshot" },
     });
-    expect(manifest.subagents[0]?.agent.sandbox.templateReferences).toEqual({
+    expect(manifest.subagents[0]?.agent.sandboxTemplateReferences).toEqual({
       template: { snapshotId: "child-snapshot" },
+    });
+  });
+
+  it("persists the synthesized default template binding without an authored sandbox", async () => {
+    const appRoot = await createApp({ withWorkspace: true });
+
+    await compileAgent({ startPath: appRoot });
+    await prewarmAppSandboxes({
+      appRoot,
+      dispatch: async () => ({
+        provider: "just-bash",
+        reference: { snapshotId: "default-snapshot" },
+      }),
+    });
+
+    const manifest = JSON.parse(
+      await readFile(join(appRoot, ".eve", "compile", "compiled-agent-manifest.json"), "utf8"),
+    ) as {
+      sandbox: unknown;
+      sandboxTemplateReferences: Record<string, unknown>;
+    };
+    expect(manifest.sandbox).toBeNull();
+    expect(manifest.sandboxTemplateReferences).toEqual({
+      template: {
+        provider: "just-bash",
+        reference: { snapshotId: "default-snapshot" },
+      },
     });
   });
 
@@ -123,7 +150,7 @@ function sandboxModule(snapshotId: string): string {
 }
 
 async function createApp(input: {
-  readonly rootSandbox: string;
+  readonly rootSandbox?: string;
   readonly subagentSandbox?: string;
   readonly withWorkspace?: boolean;
   readonly workspaceContents?: string;
@@ -139,7 +166,9 @@ async function createApp(input: {
   );
   await writeFile(join(agentRoot, "agent.ts"), 'export default { model: "openai/gpt-5.4" };\n');
   await writeFile(join(agentRoot, "instructions.md"), "Root instructions.\n");
-  await writeFile(join(agentRoot, "sandbox", "sandbox.ts"), input.rootSandbox);
+  if (input.rootSandbox !== undefined) {
+    await writeFile(join(agentRoot, "sandbox", "sandbox.ts"), input.rootSandbox);
+  }
 
   if (input.withWorkspace) {
     await mkdir(join(agentRoot, "sandbox", "workspace"), { recursive: true });

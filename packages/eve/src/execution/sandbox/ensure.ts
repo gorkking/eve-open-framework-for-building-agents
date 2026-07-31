@@ -135,13 +135,22 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
     }
 
     if (templateBindings.length > 0) {
-      applyPrewarmedBindings(
+      const hasCurrentBindings = applyPrewarmedBindings(
         await waitForDevelopmentSandboxPrewarm({
           appRoot,
           compiledArtifactsSource: input.compiledArtifactsSource,
           log: logDevelopmentSandbox,
         }),
       );
+      if (isEveDevEnvironment() && !hasCurrentBindings) {
+        applyPrewarmedBindings(
+          await prewarmAppSandboxes({
+            appRoot,
+            compiledArtifactsSource: input.compiledArtifactsSource,
+            log: logDevelopmentSandbox,
+          }),
+        );
+      }
       await Promise.all(
         templateBindings.map(async ({ internal, templateKey }) => {
           await waitForSandboxTemplatePrewarmLock({
@@ -179,19 +188,22 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
     }
   }
 
-  function applyPrewarmedBindings(bindings: readonly PrewarmedSandboxTemplateBinding[]): void {
+  function applyPrewarmedBindings(bindings: readonly PrewarmedSandboxTemplateBinding[]): boolean {
     const references = new Map(
       bindings.map((binding) => [
-        createTemplateBindingKey(binding.nodeId, binding.exportName),
+        createTemplateBindingKey(binding.nodeId, binding.exportName, binding.templateKey),
         binding.reference,
       ]),
     );
     for (const binding of templateBindings) {
-      const reference = references.get(createTemplateBindingKey(input.nodeId, binding.exportName));
+      const reference = references.get(
+        createTemplateBindingKey(input.nodeId, binding.exportName, binding.templateKey),
+      );
       if (reference !== undefined) {
         binding.reference = reference;
       }
     }
+    return templateBindings.every((binding) => binding.reference !== undefined);
   }
 
   async function invokeDefinition(): Promise<Sandbox> {
@@ -243,6 +255,7 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
                 signal,
               });
             }),
+          { onCreate: trackSandboxForShutdown },
         ),
     );
 
@@ -316,6 +329,6 @@ function logDevelopmentSandbox(message: string): void {
   }
 }
 
-function createTemplateBindingKey(nodeId: string, exportName: string): string {
-  return `${nodeId}\0${exportName}`;
+function createTemplateBindingKey(nodeId: string, exportName: string, templateKey: string): string {
+  return `${nodeId}\0${exportName}\0${templateKey}`;
 }

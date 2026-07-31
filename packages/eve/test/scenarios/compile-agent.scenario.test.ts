@@ -647,7 +647,6 @@ describe("compileAgent", () => {
       sourceId: "sandbox/sandbox.cjs",
       sourceKind: "module",
       templateExports: [],
-      templateReferences: {},
     });
     expect(normalizeArtifactValue(moduleMapText, app.appRoot)).toContain('"agent.cjs": module_0');
     expect(normalizeArtifactValue(moduleMapText, app.appRoot)).toContain(
@@ -1173,8 +1172,8 @@ describe("compileAgent", () => {
       sourceId: "sandbox/sandbox.mjs",
       sourceKind: "module",
       templateExports: ["template"],
-      templateReferences: {},
     });
+    expect(result.manifest.sandboxTemplateReferences).toEqual({});
   });
 
   it("hashes the sandbox module dependency closure without unrelated agent source", async () => {
@@ -1275,7 +1274,6 @@ describe("compileAgent", () => {
       sourceId: "sandbox/sandbox.mjs",
       sourceKind: "module",
       templateExports: [],
-      templateReferences: {},
     });
   });
 
