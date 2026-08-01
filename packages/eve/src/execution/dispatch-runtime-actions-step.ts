@@ -507,10 +507,12 @@ async function startRemoteSubagent(input: {
       session: confirmAgentStarted(preparedSession, {
         address: {
           callbackBaseUrl,
-          continuationToken: child.continuationToken,
           kind: "agent/remote",
           sessionId: child.sessionId,
           url: resolvedRemote.url,
+          ...(child.continuationToken === undefined
+            ? {}
+            : { continuationToken: child.continuationToken }),
         },
         operationId: operation.id,
       }),
