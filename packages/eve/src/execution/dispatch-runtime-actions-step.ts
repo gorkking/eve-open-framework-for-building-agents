@@ -47,11 +47,19 @@ import {
 } from "#protocol/message.js";
 import type {
   RuntimeActionRequest,
+  RuntimeActionResult,
   RuntimeRemoteAgentCallActionRequest,
   RuntimeSubagentCallActionRequest,
   RuntimeSubagentDispatchFailure,
-  RuntimeSubagentResult,
+  RuntimeToolCallActionRequest,
 } from "#runtime/actions/types.js";
+import {
+  beginDelegatedTask,
+  executeTaskControlAction,
+  failDelegatedDispatch,
+  isTaskControlAction,
+  settleDelegatedDispatch,
+} from "#execution/tasks/dispatch.js";
 import {
   createDurableSessionState,
   type DurableSessionState,
@@ -102,7 +110,8 @@ type DispatchPlanEntry =
       readonly dynamicRemoteAgent?: DynamicRemoteAgentConfig;
     }
   | { readonly kind: "reject"; readonly result: RuntimeSubagentDispatchFailure }
-  | { readonly kind: "start"; readonly target: DispatchStartTarget };
+  | { readonly kind: "start"; readonly target: DispatchStartTarget }
+  | { readonly kind: "task-control"; readonly action: RuntimeToolCallActionRequest };
 
 type DispatchStartTarget =
   | {
@@ -125,7 +134,7 @@ export async function dispatchRuntimeActionsStep(input: {
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
 }): Promise<{
-  readonly results: readonly RuntimeSubagentResult[];
+  readonly results: readonly RuntimeActionResult[];
   readonly sessionState: DurableSessionState;
 }> {
   "use step";
@@ -157,8 +166,12 @@ export async function dispatchRuntimeActionsStep(input: {
   // Read here, not in the child: trace state is scoped to one session's
   // context, so this is the last place the parent's window is visible.
   const parentTraceContext = readSessionTraceContext(input.serializedContext, session.sessionId);
+  const tasksEnabled = bundle.resolvedAgent.config.experimental?.tasks === true;
+  // Background tasks require resumable children: the flag implies
+  // conversation-mode dispatch so `experimental.tasks` and
+  // `experimental.subagentPersistentSessions` never produce a third mode.
   const persistentSessions =
-    bundle.resolvedAgent.config.experimental?.subagentPersistentSessions === true;
+    tasksEnabled || bundle.resolvedAgent.config.experimental?.subagentPersistentSessions === true;
   // A corrupt handle store throws; surface that before anything dispatches.
   // A mid-loop throw after a sibling started would durably replay the whole
   // batch and re-dispatch that sibling.
@@ -177,7 +190,7 @@ export async function dispatchRuntimeActionsStep(input: {
   ).length;
 
   let nextSession = session;
-  const results: RuntimeSubagentResult[] = [];
+  const results: RuntimeActionResult[] = [];
 
   try {
     for (const entry of plan) {
@@ -185,6 +198,31 @@ export async function dispatchRuntimeActionsStep(input: {
         results.push(entry.result);
         continue;
       }
+
+      if (entry.kind === "task-control") {
+        const control = await executeTaskControlAction({
+          action: entry.action,
+          bundle,
+          session: nextSession,
+        });
+        if (control.result !== undefined) {
+          results.push(control.result);
+        }
+        continue;
+      }
+
+      // Delegated execution: the durable task record exists before the
+      // child dispatch side effect, and the child's reply address is the
+      // task run's private hook instead of the parent turn's inbox.
+      const delegated = tasksEnabled
+        ? await beginDelegatedTask({
+            ...describeDelegatedEntry(entry),
+            parentSessionId: session.sessionId,
+            parentTurnId: batch.event.turnId,
+            session: nextSession,
+          })
+        : undefined;
+      const delegatedParentToken = delegated?.commandToken;
 
       let outcome: DispatchOutcome;
       switch (entry.kind) {
@@ -198,7 +236,8 @@ export async function dispatchRuntimeActionsStep(input: {
               dynamicRemoteAgent: entry.dynamicRemoteAgent,
             }),
             currentSession: nextSession,
-            parentToken: input.parentContinuationToken ?? session.continuationToken,
+            parentToken:
+              delegatedParentToken ?? input.parentContinuationToken ?? session.continuationToken,
             parentTurnId: batch.event.turnId,
           });
           break;
@@ -213,7 +252,7 @@ export async function dispatchRuntimeActionsStep(input: {
             currentSession: nextSession,
             fanoutSize,
             initiatorAuth,
-            parentContinuationToken: input.parentContinuationToken,
+            parentContinuationToken: delegatedParentToken ?? input.parentContinuationToken,
             parentTraceContext,
             persistentSessions,
             session,
@@ -224,8 +263,23 @@ export async function dispatchRuntimeActionsStep(input: {
 
       nextSession = outcome.session;
       if (outcome.kind === "error") {
+        if (delegated !== undefined) {
+          await failDelegatedDispatch({ error: outcome.result.output, task: delegated });
+        }
         results.push(outcome.result);
         continue;
+      }
+
+      if (delegated !== undefined) {
+        const settled = await settleDelegatedDispatch({
+          callId: outcome.callId,
+          childSessionId: outcome.address.sessionId,
+          session: nextSession,
+          subagentName: outcome.toolName,
+          task: delegated,
+        });
+        nextSession = settled.session;
+        results.push(settled.receipt);
       }
 
       // Emission is observability, not control flow: a failure here must not
@@ -295,6 +349,10 @@ function planDispatch(input: {
   const handles = getAgentHandleStore(input.session.state)?.handles ?? [];
 
   return input.actions.map((action): DispatchPlanEntry => {
+    if (isTaskControlAction(action)) {
+      return { action, kind: "task-control" };
+    }
+
     const rawAgentId = action.input.agentId;
     const agentId =
       typeof rawAgentId === "string" && rawAgentId.trim() !== "" ? rawAgentId : undefined;
@@ -686,6 +744,17 @@ async function startRemoteSubagent(input: {
   }
 }
 
+/** Names one delegated dispatch for its task record, before any child exists. */
+function describeDelegatedEntry(entry: Extract<DispatchPlanEntry, { kind: "resume" | "start" }>): {
+  readonly callId: string;
+  readonly mode: "local" | "remote";
+  readonly name: string;
+} {
+  const action = entry.kind === "resume" ? entry.action : entry.target.action;
+  return action.kind === "remote-agent-call"
+    ? { callId: action.callId, mode: "remote", name: action.remoteAgentName }
+    : { callId: action.callId, mode: "local", name: action.subagentName };
+}
 function isRecursiveAgentAction(
   action: RuntimeActionRequest,
   subagentsByNodeId: ReadonlyMap<string, unknown>,
