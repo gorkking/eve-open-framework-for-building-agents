@@ -35,7 +35,7 @@ export type CompileAgentNodeManifestFn = (
   context: ManifestCompileContext,
   options?: {
     readonly externalDependencies?: readonly string[];
-    readonly allowWorkflowConfig?: boolean;
+    readonly allowRootOnlyConfig?: boolean;
   },
 ) => Promise<CompiledAgentNodeManifest>;
 
@@ -171,7 +171,7 @@ async function compileSubagent(input: {
       appRoot: input.appRoot,
     },
     input.context,
-    { allowWorkflowConfig: false, externalDependencies: input.externalDependencies },
+    { allowRootOnlyConfig: false, externalDependencies: input.externalDependencies },
   );
 
   const description = agent.config.description;

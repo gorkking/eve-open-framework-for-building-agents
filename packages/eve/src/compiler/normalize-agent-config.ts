@@ -174,6 +174,10 @@ function normalizeExperimentalDefinition(
     compiledExperimental.subagentPersistentSessions = experimental.subagentPersistentSessions;
   }
 
+  if (experimental.tasks !== undefined) {
+    compiledExperimental.tasks = experimental.tasks;
+  }
+
   if (experimental.workflow !== undefined) {
     compiledExperimental.workflow = {
       world: experimental.workflow.world,

@@ -76,13 +76,18 @@ async function compileAgentNodeManifest(
   context: ManifestCompileContext,
   options: {
     readonly externalDependencies?: readonly string[];
-    readonly allowWorkflowConfig?: boolean;
+    readonly allowRootOnlyConfig?: boolean;
   } = {},
 ): Promise<CompiledAgentNodeManifest> {
   const rawConfig = await compileAgentConfig(manifest, context);
-  if (options.allowWorkflowConfig === false && rawConfig.experimental?.workflow !== undefined) {
+  if (options.allowRootOnlyConfig === false && rawConfig.experimental?.workflow !== undefined) {
     throw new Error(
       `Workflow runtime configuration is only supported on the root agent config. Remove "experimental.workflow" from "${manifest.agentId}".`,
+    );
+  }
+  if (options.allowRootOnlyConfig === false && rawConfig.experimental?.tasks !== undefined) {
+    throw new Error(
+      `Background tasks are only supported on the root agent config. Remove "experimental.tasks" from "${manifest.agentId}".`,
     );
   }
   const externalDependencies = mergeExternalDependencies(
