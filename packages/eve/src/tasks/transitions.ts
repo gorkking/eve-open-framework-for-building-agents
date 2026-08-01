@@ -104,5 +104,18 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
         },
       };
     }
+    case "describe": {
+      if (view.metadata.childSessionId === command.childSessionId) {
+        return { outcome: "noop", view };
+      }
+
+      return {
+        outcome: "accepted",
+        view: {
+          ...view,
+          metadata: { ...view.metadata, childSessionId: command.childSessionId },
+        },
+      };
+    }
   }
 }

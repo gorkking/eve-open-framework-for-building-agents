@@ -54,6 +54,7 @@ const WORKFLOW_ENTRY_NAME = "workflowEntry";
 const TURN_WORKFLOW_NAME = "turnWorkflow";
 const SESSION_TIMEOUT_WORKFLOW_NAME = "sessionTimeoutWorkflow";
 const TASK_RUN_WORKFLOW_NAME = "taskRunWorkflow";
+const TASK_AWAIT_WORKFLOW_NAME = "taskAwaitWorkflow";
 const EVE_PACKAGE_INFO = resolveInstalledPackageInfo();
 const COMMAND_HOOK_READY_TIMEOUT_MS = 30_000;
 
@@ -75,6 +76,7 @@ export const STABLE_WORKFLOW_NAMES: ReadonlySet<string> = new Set([
   TURN_WORKFLOW_NAME,
   SESSION_TIMEOUT_WORKFLOW_NAME,
   TASK_RUN_WORKFLOW_NAME,
+  TASK_AWAIT_WORKFLOW_NAME,
 ]);
 
 const STABLE_ID_BASE = EVE_PACKAGE_INFO.name;
@@ -114,6 +116,11 @@ export const sessionTimeoutWorkflowReference = {
 /** Stable workflow reference for durable task runs (`experimental.tasks`). */
 export const taskRunWorkflowReference = {
   workflowId: `workflow//${STABLE_ID_BASE}//${TASK_RUN_WORKFLOW_NAME}`,
+};
+
+/** Stable workflow reference for `task_await` aggregation runs. */
+export const taskAwaitWorkflowReference = {
+  workflowId: `workflow//${STABLE_ID_BASE}//${TASK_AWAIT_WORKFLOW_NAME}`,
 };
 
 /**

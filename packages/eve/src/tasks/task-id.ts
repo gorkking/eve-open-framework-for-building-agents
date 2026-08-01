@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 
 /**
@@ -19,4 +21,24 @@ export function deriveTaskId(input: {
   readonly parentTurnId: string;
 }): string {
   return `task_${deriveAgentOperationId(input).slice(0, 24)}`;
+}
+
+/**
+ * Derives the task run's private command-hook token.
+ *
+ * Deterministic on purpose: a durable replay of the dispatch step must
+ * re-derive the same token so the duplicate task run loses the hook
+ * claim and exits instead of splitting the lifecycle across two runs.
+ * Unguessable in practice: the parent session's continuation token is
+ * itself a private capability, and the derived token never renders to
+ * the model.
+ */
+export function deriveTaskCommandToken(input: {
+  readonly parentContinuationToken: string;
+  readonly taskId: string;
+}): string {
+  return `task:${input.taskId}:${createHash("sha256")
+    .update(`${input.taskId}\0${input.parentContinuationToken}`)
+    .digest("hex")
+    .slice(0, 32)}`;
 }
