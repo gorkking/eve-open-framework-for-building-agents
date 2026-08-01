@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1084
 status: draft
-last_updated: "2026-07-31"
+last_updated: "2026-08-01"
 ---
 
 # Subagents as tasks
@@ -370,10 +370,12 @@ eve's `task_peek`, `task_send`, and `task_cancel` map to those operations. `task
 `task_sleep` are eve controls, not MCP methods. eve is not implementing the MCP wire protocol in
 this work.
 
-One semantic difference needs an explicit decision. MCP treats a tool-level `isError: true`
-result as `completed`; `failed` is reserved for JSON-RPC execution failure. This draft's
-`TaskOutput` has separate `result` and `error` variants. The implementation must either adopt the
-MCP distinction or state why eve uses a different failure taxonomy.
+One semantic difference is decided. MCP treats a tool-level `isError: true` result as
+`completed`; `failed` is reserved for JSON-RPC execution failure. eve diverges: child failure
+maps to the `failed` status, and as a consequence of that transition the task's output carries
+the error (`TaskOutput.error`). Failure is the state; the error output is its consequence. The
+model reasons about one lifecycle field instead of cross-referencing a completed status against
+an error payload.
 
 Cancellation also differs. MCP `tasks/cancel` acknowledges intent and allows the task to finish in
 a non-cancelled state. This draft commits `cancelled` before propagating abort and discards late
@@ -428,15 +430,17 @@ than MCP compatibility.
    `InputResponse[]` batches?
 2. Should `TaskView` include a monotonic revision for notification deduplication, or can the task
    run's stream index remain internal?
-3. Which output failures map to `failed` versus a completed tool result containing an error?
-4. What retention and TTL apply to terminal records and unanswered `input_required` tasks?
-5. What is the cross-deployment version negotiation for task callbacks during rolling deploys?
-6. Should a terminal background task always wake a parked conversation, or only become visible
-   through `task_peek` and explicit notification policy?
-7. Which task events enter model context, and how are repeated progress messages coalesced?
-8. How are child token usage and remaining parent budgets accounted after a background child
+3. What retention and TTL apply to terminal records and unanswered `input_required` tasks?
+4. What is the cross-deployment version negotiation for task callbacks during rolling deploys?
+5. Which task events enter model context, and how are repeated progress messages coalesced?
+6. How are child token usage and remaining parent budgets accounted after a background child
    completes on a later turn?
 
+Two former open questions are settled and recorded in the [delivery plan]: failure taxonomy
+(`failed` carries the error output) and wake policy (terminal and `input_required` wake a
+parked parent; nothing else does).
+
+[delivery plan]: ./subagents-as-tasks-implementation.md
 [Tools as Tasks proposal]: https://app.notion.com/p/3a5e06b059c48004ad1df5c7cfa58eea
 [agent2agent communication proposal]: https://app.notion.com/p/3abe06b059c4800da816f20918c5e628
 [PR #1085]: https://github.com/vercel/eve/pull/1085
