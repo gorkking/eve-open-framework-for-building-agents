@@ -222,9 +222,6 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   }
 
   const initialSession = hydrateDurableSession({
-    compactionOverrides: {
-      thresholdPercent: effectiveAgent.thresholdPercent,
-    },
     durable: durableSession,
     turnAgent: effectiveAgent.turnAgent,
   });
@@ -410,9 +407,6 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
         stepInput: StepInput | undefined,
       ): Promise<StepResult> => {
         const refreshedSession = refreshSessionFromTurnAgent({
-          compactionOverrides: {
-            thresholdPercent: effectiveAgent.thresholdPercent,
-          },
           session: lifecycleSession,
           turnAgent: effectiveAgent.turnAgent,
         });

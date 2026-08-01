@@ -7797,6 +7797,7 @@ describe("createToolLoopHarness", () => {
       compaction: {
         lastKnownInputTokens: 9000,
         lastKnownPromptMessageCount: 2,
+        prompt: "Preserve every unresolved customer question.",
         recentWindowSize: 10,
         threshold: 100_000,
       },
@@ -7810,9 +7811,16 @@ describe("createToolLoopHarness", () => {
 
     expect(result.next).toBeNull();
     expect(result.session.history).toEqual(compactedHistory);
-    expect(result.session.compaction).toEqual({ recentWindowSize: 10, threshold: 100_000 });
+    expect(result.session.compaction).toEqual({
+      prompt: "Preserve every unresolved customer question.",
+      recentWindowSize: 10,
+      threshold: 100_000,
+    });
     expect(shouldCompact).not.toHaveBeenCalled();
     expect(compactMessages).toHaveBeenCalledOnce();
+    expect(vi.mocked(compactMessages).mock.calls[0]?.[2].prompt).toBe(
+      "Preserve every unresolved customer question.",
+    );
     expect(onCompaction).toHaveBeenCalledOnce();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
     expect(getCompatibilityEventTypes(events)).toEqual([

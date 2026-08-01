@@ -26,6 +26,12 @@ export type RuntimeDynamicModelReference = Readonly<
   }
 >;
 
+export interface RuntimeCompactionDefinition {
+  readonly model?: RuntimeModelReference;
+  readonly prompt?: string;
+  readonly thresholdPercent?: number;
+}
+
 /**
  * Minimal runtime-owned agent shape prepared for one harness turn.
  */
@@ -33,12 +39,7 @@ export interface RuntimeTurnAgent {
   readonly availableSkills?: readonly AvailableSkillDescription[];
   readonly id: string;
   readonly instructions: readonly string[];
-  /**
-   * Optional model used only for compaction summaries.
-   *
-   * When omitted, the harness uses the active turn model for compaction.
-   */
-  readonly compactionModel?: RuntimeModelReference;
+  readonly compaction?: RuntimeCompactionDefinition;
   readonly dynamicModel?: RuntimeDynamicModelReference;
   readonly model: RuntimeModelReference;
   readonly nodeId?: string;
@@ -76,7 +77,7 @@ export function createResolvedRuntimeTurnAgent(input: {
       toolsAvailable: input.tools.length > 0,
       workspaceSpec: agent.workspaceSpec,
     }),
-    compactionModel: agent.config.compaction?.model,
+    compaction: agent.config.compaction,
     dynamicModel: agent.config.dynamicModel,
     model: agent.config.model,
     nodeId: input.nodeId,
