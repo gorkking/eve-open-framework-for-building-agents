@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1084
 status: draft
-last_updated: "2026-07-31"
+last_updated: "2026-08-01"
 ---
 
 # Subagents as tasks: additive delivery plan
@@ -16,9 +16,9 @@ agent-messaging stack, and how each stage is verified before the next begins.
 
 ## Baseline
 
-The baseline is `main` plus the agent-messaging stack (`am/01-contracts` through
-`am/04-surface`, the phase-one agent2agent work). That stack supplies the session-addressing
-dependency the design doc declares:
+The baseline is `am/04-surface`, the tip of the agent-messaging stack (the phase-one
+agent2agent work), which this plan's branch now stacks on directly. That stack supplies the
+session-addressing dependency the design doc declares:
 
 - **Durable child address**: the agent handle store (`eve.agent.handles` on session state) with
   replay-safe operation ids, commit-before-side-effect dispatch, and `starting/running/parked`
@@ -176,22 +176,30 @@ definitions, then make tasks the default subagent execution and retire the flag 
 acceptance criteria hold. Both are behavior changes, not additive, and are sequenced last
 deliberately; they get their own plans if anything nontrivial surfaces.
 
+## Settled decisions
+
+1. **Wake policy.** Terminal and `input_required` transitions wake a parked parent through the
+   session delivery path; they are the only wake triggers. Progress never wakes on its own.
+2. **`task_send` to a busy child.** A send to a `working` task surfaces `AGENT_BUSY` as a tool
+   error, matching handle-continuation semantics. Queuing on the task run is deferred; it is
+   the reversible follow-up if busy errors prove noisy in practice.
+3. **Failure taxonomy.** Child failure maps to the `failed` status, and as a consequence of
+   that transition the task's output carries the error (`TaskOutput.error`). Failure is the
+   state; the error output is its consequence. This intentionally diverges from MCP, which
+   reserves `failed` for protocol-level errors.
+4. **Progress is deferred.** The child-facing `task_message` tool and the progress flow are cut
+   from the first implementation; the stage 4 table's progress row lands in a follow-up. The
+   five remaining flows ship first.
+
 ## Known gaps to resolve in flight
 
-1. **`task_send` to a busy child.** Handle continuation classifies a running child as
-   `AGENT_BUSY`, a hard error. The design doc expects `task_send` to answer `input_required`
-   and to message the child session; decide in stage 2 whether a send to a `working` task
-   queues on the task run or surfaces the busy error to the model.
-2. **Remote children outlive the parent.** Agent-messaging documents that remote children are
+1. **Remote children outlive the parent.** Agent-messaging documents that remote children are
    not terminated with the parent. The tasks acceptance criterion "completing the parent
    session cancels its live tasks" needs the remote cancel path wired into parent finalization
    in stage 4, or an explicit scope cut.
-3. **Blocked vs computing children.** Today a child parked on input or authorization looks like
+2. **Blocked vs computing children.** Today a child parked on input or authorization looks like
    any running child. The `input_required` transition in stage 4 is what makes the difference
    observable; until then `task_peek` reports `working` for both, which is acceptable for the
    inert stages but must be closed before the flag ships.
-4. **MCP failure taxonomy.** Whether tool-level errors map to `failed` or to a completed result
-   carrying an error must be decided when `TaskOutput` lands in stage 1, since the transition
-   function encodes it.
 
 [subagents-as-tasks design]: ./tools-as-tasks.md
