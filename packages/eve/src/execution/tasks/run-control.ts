@@ -39,23 +39,33 @@ export async function startTaskRun(
 /**
  * Submits one command to a task run.
  *
- * `unreachable` means the run already finished and disposed its hook —
- * the task is terminal, and the caller should read the final snapshot
- * instead of treating the send as a failure.
+ * `unreachable` means the hook is not resumable — either the run
+ * already finished and disposed it (the task is terminal; read the
+ * final snapshot) or, right after creation, the freshly started run has
+ * not registered it yet. Senders racing that startup window pass
+ * `retryUnreachable`; senders addressing an established task treat
+ * `unreachable` as the terminal signal.
  */
 export async function sendTaskCommand(input: {
   readonly command: TaskCommand;
   readonly commandToken: string;
+  readonly retryUnreachable?: { readonly attempts: number; readonly delayMs: number };
 }): Promise<"delivered" | "unreachable"> {
   const payload: TaskCommandHookPayload = { command: input.command, kind: "task-command" };
-  try {
-    await resumeHook(input.commandToken, payload);
-    return "delivered";
-  } catch (error) {
-    if (isFinishedTaskRunTarget(error)) {
-      return "unreachable";
+  const attempts = Math.max(1, input.retryUnreachable?.attempts ?? 1);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await resumeHook(input.commandToken, payload);
+      return "delivered";
+    } catch (error) {
+      if (!isFinishedTaskRunTarget(error)) {
+        throw error;
+      }
+      if (attempt + 1 >= attempts) {
+        return "unreachable";
+      }
+      await new Promise((resolve) => setTimeout(resolve, input.retryUnreachable?.delayMs ?? 250));
     }
-    throw error;
   }
 }
 

@@ -21,14 +21,22 @@ import type { JsonValue } from "#shared/json.js";
  */
 export type TaskStatus = "working" | "input_required" | "completed" | "failed" | "cancelled";
 
-/** Immutable identity of the delegated work behind a task. */
+/**
+ * Immutable identity of the delegated work behind a task.
+ *
+ * `childSessionId` is optional because the task run is created before
+ * the child acknowledges its session — the durable record must exist
+ * before the dispatch side effect so a fast child always has a live
+ * command hook to answer. The `describe` command attaches the id at
+ * acknowledgement.
+ */
 export interface TaskMetadata {
   readonly kind: "subagent";
   readonly mode: "local" | "remote";
   /** Authored subagent name the parent dispatched. */
   readonly name: string;
   /** Child session acknowledged at dispatch. */
-  readonly childSessionId: string;
+  readonly childSessionId?: string;
   /** Remote children only: the child agent's base URL. */
   readonly url?: string;
 }
@@ -74,13 +82,58 @@ export type TaskCommand =
   | { readonly kind: "fail"; readonly data: JsonValue }
   | { readonly kind: "cancel" }
   | { readonly kind: "require-input"; readonly inputRequests: readonly TaskInputRequest[] }
-  | { readonly kind: "resume-working" };
+  | { readonly kind: "resume-working" }
+  | { readonly kind: "describe"; readonly childSessionId: string };
 
 /** Hook payload envelope commanding a durable task run. */
 export interface TaskCommandHookPayload {
   readonly kind: "task-command";
   readonly command: TaskCommand;
 }
+
+/**
+ * Structural shapes of the child wire payloads a task run consumes.
+ *
+ * These mirror the existing parent-notification contracts (the local
+ * `notifyDelegatedParentStep`, the subagent adapter's HITL forwarding,
+ * and the remote callback route) without importing their zod-backed
+ * modules: this file is bundled into workflow bodies. The wire itself
+ * is unchanged — delegated dispatch only points it at the task run's
+ * hook instead of the parent turn's inbox.
+ */
+export interface TaskInboundChildResult {
+  readonly kind: "runtime-action-result";
+  readonly results: readonly {
+    readonly isError?: boolean;
+    readonly outcome?: {
+      readonly kind: "parked" | "terminal";
+      readonly result:
+        | { readonly kind: "succeeded"; readonly output: JsonValue }
+        | { readonly error: JsonValue; readonly kind: "failed" }
+        | { readonly kind: "cancelled" };
+      /** Provider usage this turn added; accounting is deferred to a later stage. */
+      readonly usageDelta?: unknown;
+    };
+    readonly output: JsonValue;
+  }[];
+}
+
+export interface TaskInboundInputRequest {
+  readonly kind: "subagent-input-request";
+  readonly event: { readonly requests: readonly TaskInputRequest[] };
+}
+
+export interface TaskInboundAuthorizationEvent {
+  readonly kind: "subagent-authorization-event";
+  readonly event: { readonly type: "authorization.required" | "authorization.completed" };
+}
+
+/** Everything a task run's command hook may receive. */
+export type TaskRunInboundPayload =
+  | TaskCommandHookPayload
+  | TaskInboundChildResult
+  | TaskInboundInputRequest
+  | TaskInboundAuthorizationEvent;
 
 /** Namespaced run stream carrying `TaskView` snapshots. */
 export const TASK_SNAPSHOT_STREAM_NAMESPACE = "eve.task";

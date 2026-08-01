@@ -19,7 +19,7 @@ import { BundleKey } from "#runtime/sessions/runtime-context-keys.js";
 import type {
   RuntimeActionRequest,
   RuntimeSubagentDispatchFailure,
-  RuntimeSubagentResult,
+  RuntimeActionResult,
 } from "#runtime/actions/types.js";
 
 const log = createLogger("execution.dispatch-workflow-runtime-actions");
@@ -32,7 +32,7 @@ export async function dispatchWorkflowRuntimeActionsStep(input: {
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
 }): Promise<{
-  readonly results: readonly RuntimeSubagentResult[];
+  readonly results: readonly RuntimeActionResult[];
   readonly sessionState: DurableSessionState;
 }> {
   "use step";

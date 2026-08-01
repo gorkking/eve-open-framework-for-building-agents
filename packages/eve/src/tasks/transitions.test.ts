@@ -24,6 +24,7 @@ const ALL_COMMANDS: readonly TaskCommand[] = [
   { kind: "cancel" },
   { inputRequests: [{ question: "which?" }], kind: "require-input" },
   { kind: "resume-working" },
+  { childSessionId: "child-session-2", kind: "describe" },
 ];
 
 describe("applyTaskTransition", () => {
@@ -149,6 +150,25 @@ describe("applyTaskTransition", () => {
       const result = applyTaskTransition(createView(status), { kind: "cancel" });
       expect(result.outcome).toBe("rejected");
     }
+  });
+
+  it("attaches the child session through describe without changing status", () => {
+    const described = applyTaskTransition(
+      createView("working", {
+        metadata: { kind: "subagent", mode: "local", name: "research" },
+      }),
+      { childSessionId: "child-session-9", kind: "describe" },
+    );
+
+    expect(described.outcome).toBe("accepted");
+    expect(described.view.status).toBe("working");
+    expect(described.view.metadata.childSessionId).toBe("child-session-9");
+
+    const again = applyTaskTransition(described.view, {
+      childSessionId: "child-session-9",
+      kind: "describe",
+    });
+    expect(again.outcome).toBe("noop");
   });
 
   it("is deterministic for replayed commands", () => {
