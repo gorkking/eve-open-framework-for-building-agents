@@ -22,6 +22,10 @@ import {
   AGENT_TOOL_NAME,
   isImplicitAgentToolAvailable,
 } from "#runtime/framework-tools/agent.js";
+import {
+  createTaskToolHarnessDefinitions,
+  isTaskToolAvailable,
+} from "#runtime/framework-tools/tasks.js";
 import type { ResolvedRuntimeAgentNode } from "#runtime/graph.js";
 
 import type { PreparedRuntimeTool } from "#runtime/sessions/turn.js";
@@ -224,6 +228,20 @@ export function createNodeHarnessTools(input: {
         subagentName: AGENT_TOOL_NAME,
       },
     });
+  }
+
+  const tasksEnabled = input.node.agent.config?.experimental?.tasks === true;
+  for (const definition of createTaskToolHarnessDefinitions()) {
+    if (
+      isTaskToolAvailable({
+        disabledFrameworkTools: input.node.agent.disabledFrameworkTools,
+        hasAuthoredTool: tools.has(definition.name),
+        tasksEnabled,
+        toolName: definition.name,
+      })
+    ) {
+      tools.set(definition.name, definition);
+    }
   }
 
   return tools;
