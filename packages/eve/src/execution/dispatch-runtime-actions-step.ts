@@ -199,8 +199,10 @@ export async function dispatchRuntimeActionsStep(input: {
         const control = await executeTaskControlAction({
           action: entry.action,
           bundle,
+          parentTurnId: batch.event.turnId,
           session: nextSession,
         });
+        nextSession = control.session;
         if (control.result !== undefined) {
           results.push(control.result);
         }
