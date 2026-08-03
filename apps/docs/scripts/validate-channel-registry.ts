@@ -14,12 +14,12 @@ interface RegistryItem {
   files?: RegistryFile[];
   meta?: {
     eve?: {
-      setup?: {
+      setup?: Array<{
         command?: string;
         package?: string;
         bin?: string;
         args?: string[];
-      };
+      }>;
     };
   };
 }
@@ -96,16 +96,18 @@ if (JSON.stringify(actualSlugs) !== JSON.stringify(expectedSlugs)) {
 }
 
 for (const [index, item] of items.entries()) {
-  const setup = item.meta?.eve?.setup;
+  const setups = item.meta?.eve?.setup;
   if (
-    setup !== undefined &&
-    (setup.command === undefined ||
-      setup.package === undefined ||
-      setup.bin === undefined ||
-      setup.args === undefined)
+    setups?.some(
+      (setup) =>
+        setup.command === undefined ||
+        setup.package === undefined ||
+        setup.bin === undefined ||
+        setup.args === undefined,
+    )
   ) {
     throw new Error(
-      `Registry item "${item.name}" setup must declare command, package, bin, and args during the migration.`,
+      `Registry item "${item.name}" setup entries must declare command, package, bin, and args during the migration.`,
     );
   }
 
@@ -127,10 +129,8 @@ for (const [index, item] of items.entries()) {
       setupKindsByCatalogSlug[entry.slug] ?? registrySlug,
     ];
     if (
-      setup?.command !== "eve" ||
-      setup.package !== "eve" ||
-      setup.bin !== "eve" ||
-      JSON.stringify(setup.args) !== JSON.stringify(expectedArgs)
+      JSON.stringify(setups) !==
+      JSON.stringify([{ command: "eve", package: "eve", bin: "eve", args: expectedArgs }])
     ) {
       throw new Error(
         `Registry item "${item.name}" must delegate setup to eve integration setup ${expectedArgs[2]}.`,

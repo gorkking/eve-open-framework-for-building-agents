@@ -144,6 +144,12 @@ export async function installOfficialRegistryItem(
   });
 }
 
+const RegistrySetupSchema = z.object({
+  package: z.string().min(1),
+  bin: z.string().min(1),
+  args: z.array(z.string()).default([]),
+});
+
 const EveRegistryItemMetadataSchema = z.object({
   meta: z
     .object({
@@ -151,11 +157,8 @@ const EveRegistryItemMetadataSchema = z.object({
         .object({
           requires: z.string().optional(),
           setup: z
-            .object({
-              package: z.string().min(1),
-              bin: z.string().min(1),
-              args: z.array(z.string()).default([]),
-            })
+            .union([RegistrySetupSchema, z.array(RegistrySetupSchema).min(1)])
+            .transform((setup) => (Array.isArray(setup) ? setup : [setup]))
             .optional(),
         })
         .optional(),
@@ -469,27 +472,29 @@ export async function getRegistryItemManifest(appRoot: string, item: string): Pr
   return items.length === 1 ? items[0] : items;
 }
 
-async function runDeclaredSetup(
+async function runDeclaredSetups(
   logger: RegistryCommandLogger,
   appRoot: string,
   item: string,
-  setup: NonNullable<ReturnType<typeof eveMetadataFromRegistryItem>>["setup"],
+  setups: NonNullable<ReturnType<typeof eveMetadataFromRegistryItem>>["setup"],
   options: SetupCommandOptions,
   dependencies: RegistrySetupDependencies,
 ): Promise<void> {
-  if (setup === undefined) return;
+  if (setups === undefined) return;
   const runSetupCommand = await dependencies.loadSetupCommandRunner();
+  const prompter = options.prompter ?? createPrompter();
   try {
-    const prompter = options.prompter ?? createPrompter();
-    const result = await runSetupCommand(
-      appRoot,
-      { ...setup, args: [...setup.args, ...(options.yes ? ["--yes"] : [])] },
-      item,
-      { prompter, signal: options.signal },
-    );
-    if (result.kind === "cancelled") {
-      logger.log(setupReminder(item, "cancelled"));
-    } else {
+    for (const setup of setups) {
+      const result = await runSetupCommand(
+        appRoot,
+        { ...setup, args: [...setup.args, ...(options.yes ? ["--yes"] : [])] },
+        item,
+        { prompter, signal: options.signal },
+      );
+      if (result.kind === "cancelled") {
+        logger.log(setupReminder(item, "cancelled"));
+        return;
+      }
       for (const line of result.output) logger.log(line);
     }
   } catch (error) {
@@ -553,7 +558,7 @@ export async function runAddCommand(
       if (eveMetadata?.setup === undefined) {
         throw new Error(`Registry item "${item}" does not declare a setup flow.`);
       }
-      await runDeclaredSetup(logger, appRoot, item, eveMetadata.setup, options, dependencies);
+      await runDeclaredSetups(logger, appRoot, item, eveMetadata.setup, options, dependencies);
       return;
     }
 
@@ -595,7 +600,7 @@ export async function runAddCommand(
       }
     }
 
-    await runDeclaredSetup(logger, appRoot, item, eveMetadata.setup, options, dependencies);
+    await runDeclaredSetups(logger, appRoot, item, eveMetadata.setup, options, dependencies);
   });
 }
 
