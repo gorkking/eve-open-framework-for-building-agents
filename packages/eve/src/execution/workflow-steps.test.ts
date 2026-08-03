@@ -125,6 +125,7 @@ vi.mock("../runtime/sessions/compiled-agent-cache.js", () => ({
 }));
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
+  getHookByToken: vi.fn(async () => ({ runId: "child-run" })),
   getRun: (...args: unknown[]) => getRunMock(...args),
   resumeHook: vi.fn(),
   start: (...args: unknown[]) => startMock(...args),
