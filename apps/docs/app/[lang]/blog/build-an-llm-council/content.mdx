@@ -1,0 +1,155 @@
+PewDiePie recently turned a 10-GPU home lab into a [large language model (LLM) council](https://youtu.be/qw4fDU18RcU). His custom ChatOS sent the same prompt to a group of local models and had them vote on the strongest response.
+
+In the next few minutes, you’ll build a hosted version with [eve](https://eve.dev/docs/) and [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), without tripping the circuit breakers in your home. One root agent sends a prompt to four providers, streams their answers, and judges the result.
+
+For the full reference implementation, or to follow along in code, see the [eve LLM Council repository](https://github.com/cmpadden/eve-llm-council).
+
+## Build it with your coding agent
+
+Give your coding agent this prompt:
+
+```markdown
+Build a Next.js LLM council with eve and Vercel AI Gateway.
+
+Define a root eve agent and four filesystem-defined subagents using these model IDs:
+
+- `xai/grok-4.5`
+- `anthropic/claude-opus-5`
+- `openai/gpt-5.6-sol`
+- `moonshotai/kimi-k3`
+
+Send each subagent the same prompt in parallel. Stream every child session to the UI. Have the root agent return a direct answer of at most 75 words and an agreement score for each member. Display each response, token usage, and cost.
+```
+
+<img
+  alt="Four model responses connected to a council answer and agreement scores"
+  height={1496}
+  src="/blog/eve-llm-council.png"
+  width={2258}
+/>
+
+## What an LLM council adds
+
+A council lets you compare answers before returning one to your application. Different models may notice different constraints, challenge an assumption, or converge on the same conclusion.
+
+A council also reveals token use and cost across providers. That comparison helps when a provider limits part of a response.
+
+This demo uses four models:
+
+- xAI Grok 4.5
+- Anthropic Claude Opus 5
+- OpenAI GPT-5.6 Sol
+- Moonshot AI Kimi K3
+
+You can replace any of these with a model from the [AI Gateway model catalog](https://vercel.com/ai-gateway/models).
+
+Each member receives the same prompt, and a root agent reviews their responses, writes a concise answer, and scores each member’s agreement with that answer.
+
+## Building the council
+
+[eve agents are filesystem-first](https://eve.dev/docs/), so the root agent and its four members are declared as files:
+
+```text
+agent/
+├── agent.ts
+├── instructions.md
+├── lib/schemas.ts
+└── subagents/
+    ├── claude/
+    ├── grok/
+    ├── kimi/
+    └── openai/
+```
+
+The root agent sends requests, starts each council member in parallel, and summarizes the results.
+
+Here's a snippet of the root agent's prompt:
+
+```markdown
+For every prompt:
+
+1. Call `claude`, `grok`, `kimi`, and `openai` exactly once.
+2. Give every member the same complete prompt.
+3. After all four return, judge their answers.
+4. Return a direct answer of at most 75 words.
+5. Score each member's factual agreement from 0 to 100.
+```
+
+Agents call [subagents](https://eve.dev/docs/subagents), each with its own model, instructions, history, and durable child session.
+
+For each member, define an agent and provide its model identifier:
+
+```typescript
+// agent/subagents/grok/agent.ts
+import { defineAgent } from "eve";
+
+export default defineAgent({
+  description: "Independently answer the user's prompt with xAI Grok 4.5.",
+  model: "xai/grok-4.5",
+});
+```
+
+eve organizes execution into sessions, turns, steps, and actions. Subagent calls are actions with their own sessions and event streams. Read [sessions, runs, and streaming](https://eve.dev/docs/concepts/sessions-runs-and-streaming) for the full lifecycle.
+
+## Route models with AI Gateway
+
+[Vercel AI Gateway](https://vercel.com/ai-gateway/models) routes requests between eve and xAI, Anthropic, OpenAI, and Moonshot AI.
+
+A multi-provider council would otherwise need separate provider clients, credentials, response formats, and usage handling. AI Gateway exposes every model through the same AI SDK interface. No council code imports a provider-specific SDK.
+
+The gateway reports `inputTokens`, `outputTokens`, and `costUsd` in one format, so the application can display usage without translating provider payloads.
+
+## Connecting eve to the web application
+
+The [Next.js integration](https://eve.dev/docs/guides/frontend/nextjs) contains two framework calls. `withEve()` mounts the eve routes in `next.config.ts`. `useEveAgent()` submits the prompt and follows the root stream.
+
+The parent stream reports each `subagent.called` event with a `childSessionId`. The browser follows that child session to receive its text and usage events:
+
+```typescript
+async function streamMember(memberId: MemberId, sessionId: string) {
+  const session = client.session({ sessionId, streamIndex: 0 });
+
+  for await (const event of session.stream()) {
+    if (event.type !== "message.appended") continue;
+
+    setMemberState((current) => ({
+      ...current,
+      [memberId]: {
+        ...current[memberId],
+        response: event.data.messageSoFar,
+      },
+    }));
+  }
+}
+```
+
+This separates delegation from model content. The parent stream is the control plane, while child streams carry each response. The user interface (UI) can mark one member complete while another continues generating.
+
+The root returns its judgment through an [output schema](https://eve.dev/docs/guides/client/output-schema) to provide constraints:
+
+```typescript
+const councilResultSchema = z.object({
+  summary: z.string(),
+  agreementScores: z.object({
+    claude: z.number().int().min(0).max(100),
+    grok: z.number().int().min(0).max(100),
+    kimi: z.number().int().min(0).max(100),
+    openai: z.number().int().min(0).max(100),
+  }),
+});
+```
+
+The UI renders the streamed markdown with [Comark](https://comark.dev/), then displays each council member's status, agreement scores, and token consumption.
+
+Use the [complete eve LLM Council project](https://github.com/cmpadden/eve-llm-council) to run the demo or adapt the pattern to your own models.
+
+## Additional reading
+
+Continue with these projects and eve guides:
+
+- **PewDiePie’s local council**: [STOP. Using AI Right now](https://youtu.be/qw4fDU18RcU)
+- **Karpathy’s implementation**: [LLM Council](https://github.com/karpathy/llm-council)
+- **eve fundamentals**: [eve documentation](https://eve.dev/docs/)
+- **Subagent delegation**: [Subagents](https://eve.dev/docs/subagents)
+- **Durable execution and events**: [Sessions, runs, and streaming](https://eve.dev/docs/concepts/sessions-runs-and-streaming)
+- **Next.js integration**: [Use eve with Next.js](https://eve.dev/docs/guides/frontend/nextjs)
