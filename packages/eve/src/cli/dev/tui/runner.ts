@@ -1319,6 +1319,7 @@ export class EveTUIRunner {
         pendingInputRequests: this.#pendingInputRequests,
         turnState,
         onSubagentCalled: (called) => this.#subagentPump.begin(called),
+        onSubagentBackgrounded: (callId) => this.#subagentPump.background(callId),
         onSubagentCompleted: (callId) => this.#subagentPump.settle(callId),
         // A cancelled turn cancels its pending descendants server-side;
         // settle their sections and stop their child streams so stale
@@ -1765,6 +1766,7 @@ type EveStreamTranslatorInput = {
   pendingInputRequests: Map<string, InputRequest>;
   turnState: AgentTUITurnState;
   onSubagentCalled?: (event: SubagentCalledStreamEvent) => void;
+  onSubagentBackgrounded?: (callId: string) => void;
   onSubagentCompleted?: (callId: string) => void;
   onTurnCancelled?: () => void;
   onConnectionAuthRequired?: (event: AuthorizationRequiredStreamEvent) => void;
@@ -1791,6 +1793,7 @@ async function* eveEventsToTUIStream(
     pendingInputRequests,
     turnState,
     onSubagentCalled,
+    onSubagentBackgrounded,
     onSubagentCompleted,
     onTurnCancelled,
     onConnectionAuthRequired,
@@ -2147,7 +2150,11 @@ async function* eveEventsToTUIStream(
 
       case "subagent.completed": {
         const completed = event as SubagentCompletedStreamEvent;
-        onSubagentCompleted?.(completed.data.callId);
+        if (completed.data.backgroundTask === undefined) {
+          onSubagentCompleted?.(completed.data.callId);
+        } else {
+          onSubagentBackgrounded?.(completed.data.callId);
+        }
         break;
       }
 
