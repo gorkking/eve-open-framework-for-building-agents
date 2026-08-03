@@ -34,6 +34,7 @@ import {
   type UnstampedMessageStreamEvent,
   stampMessageStreamEvent,
 } from "#protocol/message.js";
+import { clearAwaitedTaskWakeSuppressions } from "#tasks/wake-suppression.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
 
@@ -132,17 +133,19 @@ export async function settleCancelledTurnStep(input: {
   // the cancelled turn's inbox is gone, so a child settlement can never
   // reach this store again. This is the last write that can move those
   // handles out of `running`.
-  const cancelledSession = reconcileSessionContinuationToken(
-    ctx,
-    setHarnessEmissionState(
-      clearPendingSessionLimitPrompt(
-        clearAllProxyInputRequests(
-          clearPendingWorkflowInterrupt(
-            clearPendingRuntimeActionBatch(abandonRunningAgentTurns(session)),
+  const cancelledSession = clearAwaitedTaskWakeSuppressions(
+    reconcileSessionContinuationToken(
+      ctx,
+      setHarnessEmissionState(
+        clearPendingSessionLimitPrompt(
+          clearAllProxyInputRequests(
+            clearPendingWorkflowInterrupt(
+              clearPendingRuntimeActionBatch(abandonRunningAgentTurns(session)),
+            ),
           ),
         ),
+        emissionState,
       ),
-      emissionState,
     ),
   );
 
