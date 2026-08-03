@@ -1,22 +1,27 @@
-import type { FilePart, UserContent } from "ai";
+import type { UserContent } from "ai";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
 import type { RunInput, Runtime, SessionAuthContext, SessionCommand } from "#channel/types.js";
-import { createSession, type Session } from "#channel/session.js";
-import type { SendFn, SendOptions, SendPayload } from "#channel/routes.js";
+import { createSession, type FixedSession, type Session } from "#channel/session.js";
+import type { SendOptions, SendPayload } from "#channel/routes.js";
+import { normalizeSendInput, serializeUrlFilePartsInMessage } from "#channel/send-input.js";
 import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
-import { serializeUrlFilePart } from "#internal/attachments/url-refs.js";
+
+type RuntimeSendFn<TState> = (
+  input: string | UserContent | SendPayload,
+  options: SendOptions<TState>,
+) => Promise<Session & FixedSession>;
 
 export function createSendFn<TState = undefined>(
   runtime: Runtime,
   adapter: ChannelAdapter<any>,
   channelName: string,
   metadata: { readonly requestId?: string } = {},
-): SendFn<TState> {
+): RuntimeSendFn<TState> {
   return async (
     input: string | UserContent | SendPayload,
     options: SendOptions<TState>,
-  ): Promise<Session> => {
+  ): Promise<Session & FixedSession> => {
     const auth = (options as { auth: SessionAuthContext | null }).auth;
     const initiatorAuth = (options as { initiatorAuth?: SessionAuthContext | null }).initiatorAuth;
     const callback = (options as { callback?: SendOptions<TState>["callback"] }).callback;
@@ -41,13 +46,13 @@ export function createSendFn<TState = undefined>(
       requestId: metadata.requestId,
     };
 
-    const dispatch = async (): Promise<Session | undefined> => {
+    const dispatch = async (): Promise<(Session & FixedSession) | undefined> => {
       const result = await runtime.dispatchContinuation({
         command,
         continuationToken,
       });
       return result.status === "accepted"
-        ? createSession(result.sessionId, rawToken, runtime)
+        ? createSession(result.sessionId, rawToken, runtime, metadata)
         : undefined;
     };
 
@@ -83,7 +88,7 @@ export function createSendFn<TState = undefined>(
     }
     try {
       const handle = await runtime.createSession(runInput);
-      return createSession(handle.sessionId, rawToken, runtime);
+      return createSession(handle.sessionId, rawToken, runtime, metadata);
     } catch (error) {
       if (!isRuntimeSessionOwnershipConflictError(error)) throw error;
       const winner = await dispatch();
@@ -91,38 +96,4 @@ export function createSendFn<TState = undefined>(
       throw error;
     }
   };
-}
-
-/**
- * Serializes `URL` objects in `FilePart.data` to `eve-url:` strings
- * before the message crosses the queue boundary. The staging pipeline
- * reconstitutes them on the other side.
- */
-function serializeUrlFilePartsInMessage(
-  message: string | UserContent | undefined,
-): string | UserContent | undefined {
-  if (message === undefined || typeof message === "string") {
-    return message;
-  }
-  let changed = false;
-  const result = message.map((part): FilePart | typeof part => {
-    if (part.type === "file" && part.data instanceof URL && part.data.protocol !== "data:") {
-      changed = true;
-      return { ...part, data: serializeUrlFilePart(part.data) };
-    }
-    return part;
-  });
-  return changed ? result : message;
-}
-
-function normalizeSendInput(input: string | UserContent | SendPayload): SendPayload {
-  if (typeof input === "string") {
-    return { message: input };
-  }
-
-  if (Array.isArray(input)) {
-    return { message: input };
-  }
-
-  return input;
 }
