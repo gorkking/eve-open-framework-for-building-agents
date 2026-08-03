@@ -1,10 +1,10 @@
 import type { FilePart, UserContent } from "ai";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
-import type { DeliverInput, RunInput, Runtime, SessionAuthContext } from "#channel/types.js";
+import type { RunInput, Runtime, SessionAuthContext, SessionCommand } from "#channel/types.js";
 import { createSession, type Session } from "#channel/session.js";
 import type { SendFn, SendOptions, SendPayload } from "#channel/routes.js";
-import { isRuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import { serializeUrlFilePart } from "#internal/attachments/url-refs.js";
 
 export function createSendFn<TState = undefined>(
@@ -34,21 +34,25 @@ export function createSendFn<TState = undefined>(
     } = normalizeSendInput(input);
     const message = serializeUrlFilePartsInMessage(rawMessage);
 
-    try {
-      const deliverInput: DeliverInput = {
-        auth,
-        continuationToken,
-        requestId: metadata.requestId,
-        payload: { inputResponses, message, context, outputSchema },
-      };
-      const { sessionId } = await runtime.deliver(deliverInput);
+    const command: Extract<SessionCommand, { readonly kind: "send" }> = {
+      auth,
+      kind: "send",
+      payload: { inputResponses, message, context, outputSchema },
+      requestId: metadata.requestId,
+    };
 
-      return createSession(sessionId, rawToken, runtime);
-    } catch (error) {
-      if (!isRuntimeNoActiveSessionError(error)) {
-        throw error;
-      }
-    }
+    const dispatch = async (): Promise<Session | undefined> => {
+      const result = await runtime.dispatchContinuation({
+        command,
+        continuationToken,
+      });
+      return result.status === "accepted"
+        ? createSession(result.sessionId, rawToken, runtime)
+        : undefined;
+    };
+
+    const existing = await dispatch();
+    if (existing !== undefined) return existing;
 
     if (inputResponses && inputResponses.length > 0) {
       throw new Error(
@@ -77,9 +81,15 @@ export function createSendFn<TState = undefined>(
     if (initiatorAuth !== undefined) {
       runInput.initiatorAuth = initiatorAuth;
     }
-    const handle = await runtime.run(runInput);
-
-    return createSession(handle.sessionId, rawToken, runtime);
+    try {
+      const handle = await runtime.createSession(runInput);
+      return createSession(handle.sessionId, rawToken, runtime);
+    } catch (error) {
+      if (!isRuntimeSessionOwnershipConflictError(error)) throw error;
+      const winner = await dispatch();
+      if (winner !== undefined) return winner;
+      throw error;
+    }
   };
 }
 

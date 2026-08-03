@@ -19,6 +19,8 @@ import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { settleCancelledTurnStep } from "#execution/settle-cancelled-turn-step.js";
 import { dispatchTurnStep } from "#execution/workflow-steps.js";
 import { emitTerminalSessionFailureStep } from "#execution/terminal-session-failure-step.js";
+import type { SessionInboxPayload } from "#execution/session-command-inbox.js";
+import { sessionCommandHookToken } from "#execution/session-command-token.js";
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: vi.fn(),
@@ -108,10 +110,10 @@ vi.mock("./session-callback-step.js", () => ({
 interface DeliveryHookConfig {
   readonly dispose?: () => void;
   readonly getConflict?: () => Promise<{ readonly runId: string } | null>;
-  readonly next?: () => Promise<IteratorResult<HookPayload>>;
-  readonly return?: () => Promise<IteratorResult<HookPayload>>;
+  readonly next?: () => Promise<IteratorResult<SessionInboxPayload>>;
+  readonly return?: () => Promise<IteratorResult<SessionInboxPayload>>;
   readonly token: string;
-  readonly values?: readonly HookPayload[];
+  readonly values?: readonly SessionInboxPayload[];
 }
 
 interface AuthHookConfig {
@@ -155,6 +157,7 @@ describe("workflowEntry", () => {
     expect(result).toEqual({ output: "ok" });
     expect(createSessionTimeoutControl).toHaveBeenCalledWith({
       deadline: new Date("2026-01-31T00:00:00.000Z"),
+      token: sessionCommandHookToken("wrun_test_123"),
     });
     expect(createSessionStep).toHaveBeenCalledWith({
       compiledArtifactsSource: {},
@@ -319,10 +322,11 @@ describe("workflowEntry", () => {
       deliveryHooks: [
         {
           dispose,
+          next: () => new Promise<IteratorResult<SessionInboxPayload>>(() => {}),
           token: "http:test",
-          values: [{ kind: "session-timeout" }],
         },
       ],
+      stableHook: { values: [{ kind: "session-timeout" }] },
       turnControls: [turnResult({ action: "park", sessionState })],
     });
 
@@ -336,8 +340,8 @@ describe("workflowEntry", () => {
 
     expect(createSessionTimeoutControl).toHaveBeenCalledWith({
       deadline: new Date("2026-01-01T00:00:01.000Z"),
+      token: sessionCommandHookToken("wrun_test_123"),
     });
-    expect(timeoutControl.rekey).toHaveBeenCalledWith("http:test");
     expect(timeoutControl.dispose).toHaveBeenCalledOnce();
     expect(emitTerminalSessionFailureStep).not.toHaveBeenCalled();
     expect(emitTerminalSessionCompletionStep).toHaveBeenCalledWith({
@@ -411,7 +415,7 @@ describe("workflowEntry", () => {
     expect(routeDeliverToChildren).not.toHaveBeenCalled();
   });
 
-  it("does not complete at the deadline until the active turn settles", async () => {
+  it("completes at the deadline after the active turn settles", async () => {
     const sessionState = createBaseSessionState();
     const dispose = vi.fn();
     let settleTurn: ((result: IteratorResult<TurnControlPayload>) => void) | undefined;
@@ -420,6 +424,7 @@ describe("workflowEntry", () => {
     });
 
     vi.mocked(createSessionStep).mockResolvedValue(createSessionStepResultForMock(sessionState));
+    let deliveredTimeout = false;
     vi.mocked(createHook).mockImplementation((options?: { readonly token?: string }) => {
       const token = options?.token ?? "";
       if (isTurnCompletionToken(token)) {
@@ -432,11 +437,25 @@ describe("workflowEntry", () => {
       if (token.endsWith(":auth")) {
         return createMockHook({ token, values: [] }) as never;
       }
-      return createMockHook({
-        dispose,
-        token,
-        values: [{ kind: "session-timeout" }],
-      }) as never;
+      return token === sessionCommandHookToken("wrun_test_123")
+        ? (createMockHook({
+            dispose,
+            next: () => {
+              if (deliveredTimeout) {
+                return new Promise<IteratorResult<SessionInboxPayload>>(() => {});
+              }
+              deliveredTimeout = true;
+              return Promise.resolve({ done: false, value: { kind: "session-timeout" } });
+            },
+            token,
+            values: [],
+          }) as never)
+        : (createMockHook({
+            dispose,
+            next: () => new Promise<IteratorResult<SessionInboxPayload>>(() => {}),
+            token,
+            values: [],
+          }) as never);
     });
 
     const result = workflowEntry({
@@ -539,8 +558,8 @@ describe("workflowEntry", () => {
           values: [
             {
               requestId: "req_followup",
-              kind: "deliver",
-              payloads: [{ message: "follow up" }],
+              kind: "send",
+              payload: { message: "follow up" },
             },
           ],
         },
@@ -618,8 +637,8 @@ describe("workflowEntry", () => {
         token,
         values: [
           {
-            kind: "deliver",
-            payloads: [{ inputResponses: [{ optionId: "approve", requestId: "req-1" }] }],
+            kind: "send",
+            payload: { inputResponses: [{ optionId: "approve", requestId: "req-1" }] },
           },
         ],
       }) as never;
@@ -674,7 +693,7 @@ describe("workflowEntry", () => {
       }
       return createMockHook({
         token,
-        values: [{ kind: "deliver", payloads: [{ message: "not for the child" }] }],
+        values: [{ kind: "send", payload: { message: "not for the child" } }],
       }) as never;
     });
 
@@ -708,7 +727,7 @@ describe("workflowEntry", () => {
       deliveryHooks: [
         {
           token: "http:test",
-          values: [{ kind: "deliver", payloads: [{ message: "after cancel" }] }],
+          values: [{ kind: "send", payload: { message: "after cancel" } }],
         },
       ],
       turnControls: [
@@ -897,8 +916,8 @@ describe("workflowEntry", () => {
           token: "slack:C01:",
           values: [
             {
-              kind: "deliver",
-              payloads: [{ message: "follow up" }],
+              kind: "send",
+              payload: { message: "follow up" },
             },
           ],
         },
@@ -956,8 +975,8 @@ describe("workflowEntry", () => {
           token: "http:test",
           values: [
             {
-              kind: "deliver",
-              payloads: [{ message: "follow up" }],
+              kind: "send",
+              payload: { message: "follow up" },
             },
           ],
         },
@@ -1056,6 +1075,7 @@ function turnResult(input: {
 function installHookMocks(input: {
   readonly authHook?: AuthHookConfig;
   readonly deliveryHooks?: readonly DeliveryHookConfig[];
+  readonly stableHook?: Omit<DeliveryHookConfig, "token">;
   readonly symbolDispose?: () => void;
   readonly turnControls: readonly TurnControlPayload[];
 }): void {
@@ -1082,6 +1102,25 @@ function installHookMocks(input: {
       }) as never;
     }
 
+    if (token === sessionCommandHookToken("wrun_test_123")) {
+      const values = [...(input.stableHook?.values ?? [])];
+      return createMockHook({
+        dispose: input.stableHook?.dispose,
+        getConflict: input.stableHook?.getConflict,
+        next:
+          input.stableHook?.next ??
+          (async () => {
+            const value = values.shift();
+            return value === undefined
+              ? await new Promise<IteratorResult<SessionInboxPayload>>(() => {})
+              : { done: false, value };
+          }),
+        return: input.stableHook?.return,
+        token,
+        values: [],
+      }) as never;
+    }
+
     const config = deliveryHooks.shift() ?? { token, values: [] };
     if (config.token !== token) {
       throw new Error(`Expected delivery hook token "${config.token}", received "${token}".`);
@@ -1102,7 +1141,7 @@ function installHookMocks(input: {
 function createTimeoutControl(): SessionTimeoutControl {
   return {
     dispose: vi.fn(async () => undefined),
-    rekey: vi.fn(async () => undefined),
+    start: vi.fn(async () => undefined),
   };
 }
 
@@ -1143,9 +1182,9 @@ function createMockHook<T>(input: {
   });
 }
 
-function createIteratorReturn(): () => Promise<IteratorResult<HookPayload>> {
+function createIteratorReturn(): () => Promise<IteratorResult<never>> {
   return vi.fn(
-    async (): Promise<IteratorResult<HookPayload>> => ({
+    async (): Promise<IteratorResult<never>> => ({
       done: true,
       value: undefined,
     }),
@@ -1158,7 +1197,10 @@ function nonTurnHookTokens(): string[] {
     .mock.calls.map((call) => call[0]?.token)
     .filter(
       (token): token is string =>
-        token !== undefined && !token.endsWith(":auth") && !isTurnCompletionToken(token),
+        token !== undefined &&
+        token !== sessionCommandHookToken("wrun_test_123") &&
+        !token.endsWith(":auth") &&
+        !isTurnCompletionToken(token),
     );
 }
 
