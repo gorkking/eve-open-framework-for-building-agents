@@ -5,6 +5,7 @@ import {
   discoverDiagnosticsSummarySchema,
 } from "#discover/diagnostics.js";
 import {
+  type CompiledDynamicSubagentDefinition,
   compiledRemoteAgentNodeSchema,
   type CompiledRemoteAgentNode,
 } from "#compiler/remote-agent-node.js";
@@ -247,19 +248,23 @@ export interface CompiledHookDefinition extends ModuleSourceRef {
  */
 export type CompiledAgentNodeManifest = z.infer<typeof compiledAgentNodeManifestSchema>;
 
-/**
- * Flattened compiled subagent node emitted by the compiler. `name` and
- * `description` are copied from `agent.config` for fast registry lookup.
- */
 export type CompiledSubagentNode = Readonly<
   ModuleSourceRef &
     Node & {
       agent: CompiledAgentNodeManifest;
-      description: string;
       entryPath: string;
       name: string;
       rootPath: string;
-    }
+    } & (
+      | {
+          description: string;
+          dynamic?: never;
+        }
+      | {
+          description?: never;
+          dynamic: CompiledDynamicSubagentDefinition;
+        }
+    )
 >;
 
 export type { CompiledRemoteAgentNode } from "#compiler/remote-agent-node.js";
@@ -424,6 +429,7 @@ const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z
     dynamicModel: compiledDynamicModelDefinitionSchema.optional(),
     experimental: z
       .object({
+        subagentPersistentSessions: z.boolean().optional(),
         workflow: compiledAgentWorkflowDefinitionSchema.optional(),
       })
       .strict()
@@ -663,20 +669,31 @@ const compiledAgentNodeManifestSchema = z
   })
   .strict();
 
-const compiledSubagentNodeSchema: z.ZodType<CompiledSubagentNode> = z
+const compiledSubagentNodeBaseFields = {
+  agent: compiledAgentNodeManifestSchema,
+  entryPath: z.string(),
+  logicalPath: z.string(),
+  name: z.string(),
+  nodeId: z.string(),
+  rootPath: z.string(),
+  sourceId: z.string(),
+  sourceKind: z.literal("module"),
+  exportName: z.string().optional(),
+};
+const compiledDynamicSubagentDefinitionSchema = z
   .object({
-    agent: compiledAgentNodeManifestSchema,
-    description: z.string(),
-    entryPath: z.string(),
-    logicalPath: z.string(),
-    name: z.string(),
-    nodeId: z.string(),
-    rootPath: z.string(),
-    sourceId: z.string(),
-    sourceKind: z.literal("module"),
-    exportName: z.string().optional(),
+    eventNames: z.array(z.string()).readonly(),
   })
   .strict();
+const compiledSubagentNodeSchema: z.ZodType<CompiledSubagentNode> = z.union([
+  z.object({ ...compiledSubagentNodeBaseFields, description: z.string() }).strict(),
+  z
+    .object({
+      ...compiledSubagentNodeBaseFields,
+      dynamic: compiledDynamicSubagentDefinitionSchema,
+    })
+    .strict(),
+]);
 
 const compiledSubagentEdgeSchema: z.ZodType<CompiledSubagentEdge> = z
   .object({
@@ -812,6 +829,7 @@ export function createCompiledAgentNodeManifest(input: {
         input.config.experimental === undefined
           ? undefined
           : {
+              subagentPersistentSessions: input.config.experimental.subagentPersistentSessions,
               workflow:
                 input.config.experimental.workflow === undefined
                   ? undefined
