@@ -93,6 +93,12 @@
  *             dropped, every retained epoch needs a compiling fixture, and
  *             every public authoring value must belong to a capability.
  *
+ *   rule 37 — The instrumentation lifecycle contract stays provider-neutral.
+ *             `harness/instrumentation-lifecycle.ts` must not import from
+ *             `ai`: its event payloads are eve's published shape, so deriving
+ *             them from the model SDK's callback types would make an SDK
+ *             upgrade a breaking change for every provider. Map at the bridge.
+ *
  * Baselines for rules with pre-existing violations live in
  * `guard-invariants-baseline.json`. Counts and allowlists in that file
  * may only shrink (as offenders are removed) — they may never grow.
@@ -182,6 +188,7 @@ function isTsLike(relPath) {
  *   rule28: Violation[];
  *   rule33: Violation[];
  *   rule35: Violation[];
+ *   rule37: Violation[];
  *   symlinks: string[];
  * }} state
  */
@@ -210,6 +217,7 @@ async function scanRepo(state) {
     checkRule28(posix, lines, state.rule28);
     checkRule33(posix, lines, state.rule33);
     checkRule35(posix, lines, state.rule35);
+    checkRule37(posix, lines, state.rule37);
   }
 }
 
@@ -327,6 +335,33 @@ function checkRule35(posix, lines, violations) {
         file: posix,
         line: idx + 1,
         message: `imports "#compiled/gray-matter" directly. gray-matter's default engines eval() a \`---js\` frontmatter fence, so parse through parseFrontmatter() from "#internal/helpers/gray-matter.js" instead — it is safe by default and takes an explicit { allowCodeEngines: true } opt-in for trusted input.`,
+      });
+    }
+  });
+}
+
+// ---------- Rule 37: provider-neutral lifecycle contract ----------
+
+const LIFECYCLE_CONTRACT = "packages/eve/src/harness/instrumentation-lifecycle.ts";
+const AI_SPECIFIER_RE = /["']ai(?:\/[^"']+)?["']/;
+
+/**
+ * @param {string} posix
+ * @param {string[]} lines
+ * @param {Violation[]} violations
+ */
+function checkRule37(posix, lines, violations) {
+  if (posix !== LIFECYCLE_CONTRACT) return;
+  lines.forEach((line, idx) => {
+    const isImport =
+      /^(?:import|export)\b|^}\s*from\b|\b(?:import|require)\s*\(/.test(line.trimStart()) &&
+      AI_SPECIFIER_RE.test(line);
+    if (isImport) {
+      violations.push({
+        rule: 37,
+        file: posix,
+        line: idx + 1,
+        message: `imports from "ai". Lifecycle event payloads are eve's own shape, so an AI SDK type reaching them makes an SDK upgrade a breaking change for every provider. Add an eve type here and map to it in ai-sdk-hook-bridge.ts.`,
       });
     }
   });
@@ -1066,6 +1101,7 @@ async function main() {
     rule28: /** @type {Violation[]} */ ([]),
     rule33: /** @type {Violation[]} */ ([]),
     rule35: /** @type {Violation[]} */ ([]),
+    rule37: /** @type {Violation[]} */ ([]),
     symlinks: /** @type {string[]} */ ([]),
   };
 
@@ -1156,6 +1192,7 @@ async function main() {
 
   // Rule 35
   violations.push(...state.rule35);
+  violations.push(...state.rule37);
 
   // Rule 36
   for (const issue of await checkExtensionCapabilityContracts()) {

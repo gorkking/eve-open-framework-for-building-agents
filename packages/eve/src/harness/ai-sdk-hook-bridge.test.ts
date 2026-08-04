@@ -199,29 +199,135 @@ describe("createAiSdkHookBridge", () => {
     );
   });
 
-  it("publishes frozen callback snapshots", async () => {
+  it("projects the operation callback onto eve fields only", async () => {
     const started = vi.fn();
     const hooks = createInstrumentationHooks([{ events: { "attempt.started": started } }]);
     const bridge = createAiSdkHookBridge(scope, hooks);
-    const operation = {
-      callId: "call-1",
-      modelId: "model",
-      operationId: "ai.streamText",
-      provider: "test",
-    };
-    const step = { callId: "call-1", stepNumber: 0 };
 
-    Reflect.apply(bridge.onStart!, bridge, [operation]);
-    await Reflect.apply(bridge.onStepStart!, bridge, [step]);
+    Reflect.apply(bridge.onStart!, bridge, [
+      { callId: "call-1", modelId: "model", operationId: "ai.streamText", provider: "test" },
+    ]);
+    await Reflect.apply(bridge.onStepStart!, bridge, [{ callId: "call-1", stepNumber: 0 }]);
 
-    expect(started).toHaveBeenCalledOnce();
-    const event = started.mock.calls[0]?.[0];
-    expect(event).toEqual({ operation, scope, step, type: "attempt.started" });
-    expect(event.operation).not.toBe(operation);
-    expect(event.step).not.toBe(step);
-    expect(Object.isFrozen(event.operation)).toBe(true);
-    expect(Object.isFrozen(event.step)).toBe(true);
+    expect(started).toHaveBeenCalledExactlyOnceWith({
+      operation: { modelId: "model", operationId: "ai.streamText", provider: "test" },
+      scope,
+      type: "attempt.started",
+    });
   });
+
+  it("projects the model call callbacks onto eve fields only", async () => {
+    const before = vi.fn(() => "state");
+    const after = vi.fn();
+    const hooks = createInstrumentationHooks([{ events: { "model.call": { after, before } } }]);
+    const bridge = createAiSdkHookBridge(scope, hooks);
+
+    await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
+      {
+        callId: "call-1",
+        instructions: "be brief",
+        messages: [{ content: "hi", role: "user" }],
+        modelId: "model",
+        provider: "test",
+        tools: undefined,
+      },
+    ]);
+    await Reflect.apply(bridge.onLanguageModelCallEnd!, bridge, [
+      {
+        callId: "call-1",
+        content: [
+          { text: "thinking", type: "reasoning" },
+          { text: "hello", type: "text" },
+          { input: { a: 1 }, toolName: "search", type: "tool-call" },
+          { input: { a: 1 }, output: "ok", toolName: "search", type: "tool-result" },
+          { error: "boom", input: { a: 2 }, toolName: "search", type: "tool-error" },
+          { type: "some-future-kind" },
+        ],
+        finishReason: "tool-calls",
+        performance: { responseTimeMs: 1 },
+        responseId: "response-1",
+        usage: {
+          inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 4 },
+          inputTokens: 1,
+          outputTokens: 2,
+        },
+      },
+    ]);
+
+    expect(before).toHaveBeenCalledExactlyOnceWith({
+      id: `${scope.attemptId}:model:call-1:0`,
+      input: { instructions: "be brief", messages: [{ content: "hi", role: "user" }] },
+      model: { modelId: "model", provider: "test" },
+      scope,
+      type: "model.call.started",
+    });
+    // An unrecognized part kind is dropped rather than forwarded, so widening
+    // InstrumentationContentPart is what makes a new kind reachable.
+    expect(after).toHaveBeenCalledExactlyOnceWith(
+      {
+        content: [
+          { text: "thinking", type: "reasoning" },
+          { text: "hello", type: "text" },
+          { input: { a: 1 }, toolName: "search", type: "tool-call" },
+          { input: { a: 1 }, output: "ok", toolName: "search", type: "tool-result" },
+          { error: "boom", input: { a: 2 }, toolName: "search", type: "tool-error" },
+        ],
+        finishReason: "tool-calls",
+        id: `${scope.attemptId}:model:call-1:0`,
+        scope,
+        type: "model.call.completed",
+        usage: {
+          inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 4 },
+          inputTokens: 1,
+          outputTokens: 2,
+        },
+      },
+      "state",
+    );
+  });
+
+  it.each([
+    {
+      expected: { output: "ok", type: "result" },
+      toolOutput: { output: "ok", type: "tool-result" },
+    },
+    {
+      expected: { error: "boom", type: "error" },
+      toolOutput: { error: "boom", type: "tool-error" },
+    },
+  ])(
+    "collapses tool output $toolOutput.type onto $expected.type",
+    async ({ expected, toolOutput }) => {
+      const before = vi.fn(() => "state");
+      const after = vi.fn();
+      const hooks = createInstrumentationHooks([{ events: { "tool.call": { after, before } } }]);
+      const bridge = createAiSdkHookBridge(scope, hooks);
+      const toolCall = { input: { q: "eve" }, toolCallId: "tool-1", toolName: "search" };
+
+      await Reflect.apply(bridge.onToolExecutionStart!, bridge, [{ callId: "call-1", toolCall }]);
+      await Reflect.apply(bridge.onToolExecutionEnd!, bridge, [
+        { callId: "call-1", toolCall, toolExecutionMs: 1, toolOutput },
+      ]);
+
+      expect(before).toHaveBeenCalledExactlyOnceWith({
+        callId: "tool-1",
+        id: `${scope.attemptId}:tool:tool-1:0`,
+        input: { q: "eve" },
+        scope,
+        toolName: "search",
+        type: "tool.call.started",
+      });
+      expect(after).toHaveBeenCalledExactlyOnceWith(
+        {
+          id: `${scope.attemptId}:tool:tool-1:0`,
+          output: expected,
+          scope,
+          type: "tool.call.completed",
+        },
+        "state",
+      );
+    },
+  );
 
   it("retains state for parallel tool starts", async () => {
     const resolvers = new Map<string, () => void>();

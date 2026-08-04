@@ -3,12 +3,16 @@ import type { Telemetry } from "ai";
 import type {
   InstrumentationAttemptScope,
   InstrumentationAttemptStartedEvent,
+  InstrumentationContentPart,
   InstrumentationContextRunner,
   InstrumentationHooks,
   InstrumentationModelCallCompletedEvent,
   InstrumentationModelCallStartedEvent,
+  InstrumentationOperationRef,
   InstrumentationToolCallCompletedEvent,
   InstrumentationToolCallStartedEvent,
+  InstrumentationToolOutput,
+  InstrumentationUsage,
 } from "#harness/instrumentation-lifecycle.js";
 
 type TelemetryEvent<TKey extends keyof Telemetry> = Parameters<NonNullable<Telemetry[TKey]>>[0];
@@ -17,8 +21,9 @@ interface AttemptState {
   readonly modelIds: Map<string, string>;
   readonly scope: InstrumentationAttemptScope;
   readonly toolIds: Map<string, string>;
-  operationStart?: Readonly<TelemetryEvent<"onStart">>;
-  stepStart?: Readonly<TelemetryEvent<"onStepStart">>;
+  operation?: InstrumentationOperationRef;
+  // Only the number is kept: it disambiguates call identities within an attempt.
+  stepNumber?: number;
 }
 
 /** Creates one provider-neutral AI SDK bridge for one actual model attempt. */
@@ -35,10 +40,14 @@ export function createAiSdkHookBridge(
 
   return {
     onStart(event) {
-      state.operationStart = snapshot(event);
+      state.operation = {
+        modelId: event.modelId,
+        operationId: event.operationId,
+        provider: event.provider,
+      };
     },
     async onStepStart(event) {
-      state.stepStart = snapshot(event);
+      state.stepNumber = event.stepNumber;
       const started = toAttemptStarted(state);
       if (started !== undefined) await hooks.publish(started);
     },
@@ -114,22 +123,17 @@ export function createAiSdkHookBridge(
 
 const directRunInContext: InstrumentationContextRunner = (_operation, execute) => execute();
 
-function snapshot<T extends object>(event: T): Readonly<T> {
-  return Object.freeze({ ...event });
-}
-
 function toAttemptStarted(state: AttemptState): InstrumentationAttemptStartedEvent | undefined {
-  if (state.operationStart === undefined || state.stepStart === undefined) return undefined;
+  if (state.operation === undefined || state.stepNumber === undefined) return undefined;
   return {
-    operation: state.operationStart,
+    operation: state.operation,
     scope: state.scope,
-    step: state.stepStart,
     type: "attempt.started",
   };
 }
 
 function createModelCallIdentity(state: AttemptState, callId: string): string {
-  return `${state.scope.attemptId}:model:${callId}:${state.stepStart?.stepNumber ?? 0}`;
+  return `${state.scope.attemptId}:model:${callId}:${state.stepNumber ?? 0}`;
 }
 
 function toModelCallStarted(
@@ -139,8 +143,9 @@ function toModelCallStarted(
 ): InstrumentationModelCallStartedEvent {
   return {
     id,
+    input: { instructions: source.instructions, messages: source.messages },
+    model: { modelId: source.modelId, provider: source.provider },
     scope: state.scope,
-    source: snapshot(source),
     type: "model.call.started",
   };
 }
@@ -151,15 +156,65 @@ function toModelCallCompleted(
   source: TelemetryEvent<"onLanguageModelCallEnd">,
 ): InstrumentationModelCallCompletedEvent {
   return {
+    content: toContentParts(source.content),
+    finishReason: source.finishReason,
     id,
     scope: state.scope,
-    source: snapshot(source),
     type: "model.call.completed",
+    usage: toUsage(source.usage),
   };
 }
 
+function toUsage(usage: TelemetryEvent<"onLanguageModelCallEnd">["usage"]): InstrumentationUsage {
+  return {
+    inputTokenDetails: {
+      cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens,
+      cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens,
+    },
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  };
+}
+
+/** Drops kinds eve does not record; see {@link InstrumentationContentPart}. */
+function toContentParts(
+  content: TelemetryEvent<"onLanguageModelCallEnd">["content"],
+): readonly InstrumentationContentPart[] {
+  const parts: InstrumentationContentPart[] = [];
+  for (const part of content) {
+    switch (part.type) {
+      case "text":
+      case "reasoning":
+        parts.push({ text: part.text, type: part.type });
+        break;
+      case "tool-call":
+        parts.push({ input: part.input, toolName: part.toolName, type: "tool-call" });
+        break;
+      case "tool-result":
+        parts.push({
+          input: part.input,
+          output: part.output,
+          toolName: part.toolName,
+          type: "tool-result",
+        });
+        break;
+      case "tool-error":
+        parts.push({
+          error: part.error,
+          input: part.input,
+          toolName: part.toolName,
+          type: "tool-error",
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return parts;
+}
+
 function createToolCallIdentity(state: AttemptState, toolCallId: string): string {
-  return `${state.scope.attemptId}:tool:${toolCallId}:${state.stepStart?.stepNumber ?? 0}`;
+  return `${state.scope.attemptId}:tool:${toolCallId}:${state.stepNumber ?? 0}`;
 }
 
 function toToolCallStarted(
@@ -168,9 +223,11 @@ function toToolCallStarted(
   source: TelemetryEvent<"onToolExecutionStart">,
 ): InstrumentationToolCallStartedEvent {
   return {
+    callId: source.toolCall.toolCallId,
     id,
+    input: source.toolCall.input,
     scope: state.scope,
-    source: snapshot(source),
+    toolName: source.toolCall.toolName,
     type: "tool.call.started",
   };
 }
@@ -182,8 +239,16 @@ function toToolCallCompleted(
 ): InstrumentationToolCallCompletedEvent {
   return {
     id,
+    output: toToolOutput(source.toolOutput),
     scope: state.scope,
-    source: snapshot(source),
     type: "tool.call.completed",
   };
+}
+
+function toToolOutput(
+  toolOutput: TelemetryEvent<"onToolExecutionEnd">["toolOutput"],
+): InstrumentationToolOutput {
+  return toolOutput.type === "tool-result"
+    ? { output: toolOutput.output, type: "result" }
+    : { error: toolOutput.error, type: "error" };
 }
