@@ -202,6 +202,40 @@ describe("Resend Marketplace", () => {
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining("safely stop waiting"));
   });
 
+  it("connects an existing resource using the Vercel CLI JSON format flag", async () => {
+    const runVercelCaptureStdout = vi.fn(async () => ({
+      ok: true,
+      stdout: JSON.stringify({ connected: true }),
+    }));
+    await connectResendMarketplaceResource({
+      resource: {
+        id: "store_resend",
+        externalResourceId: "provider-id",
+        name: "resend-agent",
+      },
+      log: createFakePrompter().prompter.log,
+      projectRoot: "/project",
+      project: { orgId: "team", projectId: "project" },
+      deps: { runVercelCaptureStdout },
+    });
+    expect(runVercelCaptureStdout).toHaveBeenCalledWith(
+      [
+        "integration",
+        "resource",
+        "connect",
+        "resend-agent",
+        "--environment",
+        "production",
+        "--yes",
+        "--format",
+        "json",
+        "--scope",
+        "team",
+      ],
+      expect.objectContaining({ cwd: "/project", nonInteractive: true }),
+    );
+  });
+
   it("does not reconnect a resource already attached to the linked project", async () => {
     const runVercelCaptureStdout = vi.fn();
     await connectResendMarketplaceResource({
