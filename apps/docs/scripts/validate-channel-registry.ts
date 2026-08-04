@@ -31,12 +31,14 @@ interface Registry {
 const registrySlugsByCatalogSlug: Readonly<Record<string, string>> = {
   eve: "web",
   photon: "photon-imessage",
+  "chat-sdk-resend": "resend",
 };
 
 const setupKindsByCatalogSlug: Readonly<Record<string, string>> = {
   discord: "discord",
   eve: "web",
   photon: "photon",
+  "chat-sdk-resend": "resend",
 };
 
 const adapterDependenciesByCatalogSlug: Readonly<Record<string, string>> = {
@@ -115,7 +117,8 @@ for (const [index, item] of items.entries()) {
     entry.slug === "slack" ||
     entry.slug === "discord" ||
     entry.slug === "eve" ||
-    entry.slug === "photon"
+    entry.slug === "photon" ||
+    entry.slug === "chat-sdk-resend"
   ) {
     const expectedArgs = [
       "integration",
