@@ -50,6 +50,8 @@ function deps(): ResendSetupDeps {
       connectorUid: "oauth/eve-resend-setup",
       cleanup: vi.fn(async () => {}),
     })),
+    createApiKey: vi.fn(async () => ({ id: "key_resend", token: "re_generated" })),
+    deleteApiKey: vi.fn(async () => {}),
     reconcileMarketplaceWebhook: vi.fn(async () => ({
       id: "wh_marketplace",
       signingSecret: "whsec_marketplace",
@@ -317,6 +319,36 @@ describe("Resend setup", () => {
     );
   });
 
+  it("uses existing-account OAuth to create the runtime API key without prompting", async () => {
+    const effects = deps();
+    const questions: Question<unknown>[] = [];
+    const setup = context(effects, "connect");
+    const value = {
+      ...setup.value,
+      ui: {
+        ...setup.value.ui,
+        asker: {
+          ask: async <T>(question: Question<T>) => {
+            questions.push(question as Question<unknown>);
+            if (question.key === "resend-from-name") return "Eve" as T;
+            return question.detected as T;
+          },
+          askMany: async () => [],
+        },
+      },
+    };
+
+    await expect(setupResend(value, effects)).resolves.toMatchObject({ kind: "done" });
+    expect(questions.map((question) => question.key)).not.toContain("resend-api-key");
+    expect(effects.createApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: "oauth_marketplace" }),
+    );
+    expect(effects.validateApiKey).toHaveBeenCalledWith("re_generated", undefined);
+    expect(effects.provisionConnector).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "re_generated" }),
+    );
+  });
+
   it("uses one normalized key and orders deploy, webhook, env, and redeploy", async () => {
     const effects = deps();
     const events: string[] = [];
@@ -345,6 +377,7 @@ describe("Resend setup", () => {
       return true;
     });
 
+    vi.mocked(effects.createApiKey).mockResolvedValue({ id: "key_resend", token: "re_secret" });
     const setup = context(effects);
     await expect(setupResend(setup.value, effects)).resolves.toMatchObject({ kind: "done" });
     expect(events).toEqual([
@@ -365,6 +398,7 @@ describe("Resend setup", () => {
   it("compensates a newly created webhook when saving the secret fails", async () => {
     const effects = deps();
     vi.mocked(effects.runVercel).mockResolvedValue(false);
+    vi.mocked(effects.createApiKey).mockResolvedValue({ id: "key_resend", token: "re_secret" });
     const setup = context(effects);
     await expect(setupResend(setup.value, effects)).rejects.toThrow("may persist");
     expect(effects.deleteWebhook).toHaveBeenCalledWith("re_secret", "wh_new", undefined);

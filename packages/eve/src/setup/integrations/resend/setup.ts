@@ -25,7 +25,11 @@ import {
   validateResendApiKey,
 } from "./api.js";
 import { provisionResendConnector } from "./connect.js";
-import { authorizeResendMarketplaceSetup } from "./marketplace-oauth.js";
+import {
+  authorizeResendMarketplaceSetup,
+  createResendApiKey,
+  deleteResendApiKey,
+} from "./marketplace-oauth.js";
 import {
   deleteMarketplaceResendWebhooks,
   reconcileMarketplaceResendWebhook,
@@ -54,6 +58,8 @@ export interface ResendSetupDeps {
   provisionMarketplaceResource: typeof provisionResendMarketplaceResource;
   connectMarketplaceResource: typeof connectResendMarketplaceResource;
   authorizeMarketplaceSetup: typeof authorizeResendMarketplaceSetup;
+  createApiKey: typeof createResendApiKey;
+  deleteApiKey: typeof deleteResendApiKey;
   reconcileMarketplaceWebhook: typeof reconcileMarketplaceResendWebhook;
   deleteMarketplaceWebhooks: typeof deleteMarketplaceResendWebhooks;
   waitForMarketplaceDomain: typeof waitForResendMarketplaceDomain;
@@ -78,6 +84,8 @@ const defaultDeps: ResendSetupDeps = {
   provisionMarketplaceResource: provisionResendMarketplaceResource,
   connectMarketplaceResource: connectResendMarketplaceResource,
   authorizeMarketplaceSetup: authorizeResendMarketplaceSetup,
+  createApiKey: createResendApiKey,
+  deleteApiKey: deleteResendApiKey,
   reconcileMarketplaceWebhook: reconcileMarketplaceResendWebhook,
   deleteMarketplaceWebhooks: deleteMarketplaceResendWebhooks,
   waitForMarketplaceDomain: waitForResendMarketplaceDomain,
@@ -147,18 +155,18 @@ async function chooseDestination(
     options: [
       {
         value: "marketplace",
-        label: "Set up with Vercel Marketplace",
-        hint: "Create or reuse a Resend domain and project credential",
+        label: "Set up with a Vercel domain",
+        hint: "Configure Resend, DNS, and project credentials for a domain in Vercel",
       },
       {
         value: "connect",
-        label: "Set up Vercel Connect",
-        hint: "Provision credentials, deploy, and configure the webhook",
+        label: "Use an existing Resend account",
+        hint: "Sign in to create a dedicated credential for this agent",
       },
       {
         value: "portable",
-        label: "Use portable credentials",
-        hint: "Store the API key locally and configure the webhook manually",
+        label: "Configure manually",
+        hint: "Use environment variables and configure the webhook yourself",
       },
     ],
     initialValue: context.environment.vercel.kind === "available" ? "marketplace" : "portable",
@@ -418,23 +426,51 @@ export async function setupResend(
     if (destination === "marketplace") return await setupMarketplace(context, deps);
     if (destination === "connect" && context.environment.vercel.kind === "unavailable") {
       throw new Error(
-        "Vercel Connect requires an authenticated Vercel CLI. Run `vercel login`, then retry Resend setup.",
+        "Using an existing Resend account requires an authenticated Vercel CLI. Run `vercel login`, then retry Resend setup.",
       );
     }
-    const instructions = [
-      "Use a full-access Resend API key. Setup needs webhook access, and the adapter fetches received-email contents.",
-      "Create a key: https://resend.com/api-keys",
-    ];
-    if (context.ui.prompter.acknowledge) {
-      await context.ui.prompter.acknowledge({ message: "Resend API key", lines: instructions });
+    let setupAuthorization: Awaited<ReturnType<typeof authorizeResendMarketplaceSetup>> | undefined;
+    let createdApiKey: Awaited<ReturnType<typeof createResendApiKey>> | undefined;
+    let apiKey: string;
+    if (destination === "connect") {
+      const project = await deps.ensureVercelProject({
+        appRoot: context.appRoot,
+        prompter: context.ui.prompter,
+        signal: context.signal,
+      });
+      setupAuthorization = await deps.authorizeMarketplaceSetup({
+        log: context.ui.prompter.log,
+        projectRoot: context.appRoot,
+        orgId: project.orgId,
+        signal: context.signal,
+      });
+      createdApiKey = await deps.createApiKey({
+        accessToken: setupAuthorization.accessToken,
+        name: `eve · ${await deps.deriveConnectorSlug(context.appRoot)}`,
+        signal: context.signal,
+      });
+      apiKey = createdApiKey.token;
     } else {
-      context.ui.prompter.log.info(instructions.join("\n"));
+      const instructions = [
+        "Use a full-access Resend API key. Setup needs webhook access, and the adapter fetches received-email contents.",
+        "Create a key: https://resend.com/api-keys",
+      ];
+      if (context.ui.prompter.acknowledge) {
+        await context.ui.prompter.acknowledge({ message: "Resend API key", lines: instructions });
+      } else {
+        context.ui.prompter.log.info(instructions.join("\n"));
+      }
+      apiKey = (
+        await context.ui.asker.ask(
+          text({
+            key: "resend-api-key",
+            message: "Resend API key",
+            required: true,
+            sensitive: true,
+          }),
+        )
+      ).trim();
     }
-    const apiKey = (
-      await context.ui.asker.ask(
-        text({ key: "resend-api-key", message: "Resend API key", required: true, sensitive: true }),
-      )
-    ).trim();
     await deps.validateApiKey(apiKey, context.signal);
     const suggestedFromAddress = await deps.suggestFromAddress(apiKey, context.signal);
     const defaultFromAddress = suggestedFromAddress ?? "onboarding@resend.dev";
@@ -547,12 +583,23 @@ export async function setupResend(
           }
         }
       }
+      await setupAuthorization?.cleanup();
       context.ui.nextSteps([
         `Resend endpoint: ${endpoint}`,
         `Send from ${fromAddress}; configure a receiving domain in Resend, then send an email and reply to smoke-test the thread.`,
       ]);
       return { kind: "done", facts: [{ label: "Resend webhook", value: endpoint, kind: "url" }] };
     } catch (error) {
+      if (createdApiKey !== undefined && setupAuthorization !== undefined) {
+        await deps
+          .deleteApiKey({
+            accessToken: setupAuthorization.accessToken,
+            id: createdApiKey.id,
+            signal: context.signal,
+          })
+          .catch(() => {});
+        await setupAuthorization.cleanup().catch(() => {});
+      }
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
         `${reason}\nResend connector ${connector.uid} may persist. Inspect it with \`vercel connect list\` and re-run \`eve add channel/resend\` to recover.`,

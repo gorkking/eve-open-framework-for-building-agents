@@ -10,12 +10,17 @@ const ConnectorSchema = z.object({
   supportedSubjectTypes: z.array(z.string()).optional(),
 });
 const TokenSchema = z.object({ token: z.string().min(1) });
+const ApiKeySchema = z.object({
+  id: z.string().min(1),
+  token: z.string().min(1),
+});
 
 export interface MarketplaceOAuthDeps {
+  fetch: typeof fetch;
   runVercelCaptureStdout: typeof runVercelCaptureStdout;
 }
 
-const defaultDeps: MarketplaceOAuthDeps = { runVercelCaptureStdout };
+const defaultDeps: MarketplaceOAuthDeps = { fetch, runVercelCaptureStdout };
 
 function parseJson(stdout: string, description: string): unknown {
   try {
@@ -67,7 +72,55 @@ async function cleanupSetupConnector(input: {
   }
 }
 
-/** Temporary user OAuth authorization used only to configure Resend webhooks. */
+/** Dedicated Resend API key created with a temporary setup authorization. */
+export interface CreatedResendApiKey {
+  readonly id: string;
+  readonly token: string;
+}
+
+/** Creates a full-access API key for durable runtime use. */
+export async function createResendApiKey(input: {
+  accessToken: string;
+  name: string;
+  signal?: AbortSignal;
+  deps?: Pick<MarketplaceOAuthDeps, "fetch">;
+}): Promise<CreatedResendApiKey> {
+  const response = await (input.deps ?? defaultDeps).fetch("https://api.resend.com/api-keys", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name: input.name.slice(0, 50), permission: "full_access" }),
+    signal: input.signal,
+  });
+  if (!response.ok) throw new Error(`Resend API-key creation failed with HTTP ${response.status}.`);
+  const parsed = ApiKeySchema.safeParse((await response.json()) as unknown);
+  if (!parsed.success) throw new Error("Resend returned an invalid API key.");
+  return parsed.data;
+}
+
+/** Deletes a setup-created API key after a later failure. */
+export async function deleteResendApiKey(input: {
+  accessToken: string;
+  id: string;
+  signal?: AbortSignal;
+  deps?: Pick<MarketplaceOAuthDeps, "fetch">;
+}): Promise<void> {
+  const response = await (input.deps ?? defaultDeps).fetch(
+    `https://api.resend.com/api-keys/${encodeURIComponent(input.id)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+      signal: input.signal,
+    },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Resend API-key cleanup failed with HTTP ${response.status}.`);
+  }
+}
+
+/** Temporary user OAuth authorization used only during guided setup. */
 export interface ResendSetupAuthorization {
   readonly accessToken: string;
   readonly connectorUid: string;

@@ -1,15 +1,46 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createFakePrompter } from "#internal/testing/fake-prompter.js";
-import { authorizeResendMarketplaceSetup, type MarketplaceOAuthDeps } from "./marketplace-oauth.js";
+import {
+  authorizeResendMarketplaceSetup,
+  createResendApiKey,
+  deleteResendApiKey,
+  type MarketplaceOAuthDeps,
+} from "./marketplace-oauth.js";
 
 function effects(outputs: Array<{ ok: boolean; stdout: string }>): MarketplaceOAuthDeps {
   return {
+    fetch: vi.fn(),
     runVercelCaptureStdout: vi.fn(async () => outputs.shift() ?? { ok: true, stdout: "{}" }),
   };
 }
 
 describe("Resend Marketplace setup OAuth", () => {
+  it("creates and deletes a dedicated full-access API key", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "key_1", token: "re_dedicated" }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      createResendApiKey({
+        accessToken: "oauth_secret",
+        name: "eve · weather",
+        deps: { fetch },
+      }),
+    ).resolves.toEqual({ id: "key_1", token: "re_dedicated" });
+    expect(fetch.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({ name: "eve · weather", permission: "full_access" }),
+    );
+    await deleteResendApiKey({
+      accessToken: "oauth_secret",
+      id: "key_1",
+      deps: { fetch },
+    });
+    expect(fetch.mock.calls[1]?.[0]).toBe("https://api.resend.com/api-keys/key_1");
+  });
   it("authorizes full_access and removes the temporary connector after cleanup", async () => {
     const deps = effects([
       {
