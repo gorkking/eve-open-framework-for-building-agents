@@ -277,15 +277,15 @@ Slack does not expose a conversation wrapper or reintroduce a generic public
 ### Chat SDK bridge
 
 The Chat SDK bridge binds delivery to the webhook that is currently running.
-Its `send` function takes one input object, with the originating thread beside
-the message and turn options:
+It retains its existing two-argument `send(input, options)` API. The first
+argument is a string, `UserContent`, or `SendPayload`; the second carries the
+originating thread and turn options:
 
 ```ts
 export const { bot, channel, send } = chatSdkChannel({ adapters, state });
 
 bot.onNewMention(async (thread, message) => {
-  await send({
-    message: message.text,
+  await send(message.text, {
     thread,
     title: "Support request",
     turnPolicy: "experimental-steer",
@@ -293,13 +293,10 @@ bot.onNewMention(async (thread, message) => {
 });
 ```
 
-HITL responses use the same shape without a message:
+HITL responses use a `SendPayload` as the first argument:
 
 ```ts
-await send({
-  inputResponses: [{ requestId, optionId: "approve" }],
-  thread,
-});
+await send({ inputResponses: [{ requestId, optionId: "approve" }] }, { thread });
 ```
 
 Methods that post eve output back through a platform SDK, such as
@@ -523,7 +520,6 @@ owner; an ownership conflict retries dispatch to the winner.
 | `getSession(sessionId)`                             | `attachSession(sessionId)`                          |
 | schedule `receive(channel, input)`                  | schedule `send(channel, input)`                     |
 | Slack `ctx.conversation` and `ctx.receive`          | flat `ctx.*` operations and `ctx.send(input)`       |
-| Chat SDK `send(message, options)`                   | `send({ message, thread, ... })`                    |
 | string arguments to client/eval/session `send()`    | `{ message, ... }` input objects                    |
 | split runtime delivery/control methods              | `dispatchContinuation` and `dispatchSession`        |
 
@@ -542,8 +538,9 @@ The migration must prove:
 - Reset releases aliases before replacement creation and an old ID cannot reach
   the replacement.
 - Built-in channels, custom routes, authored `receive` functions, schedule
-  sends, flat Slack operations, Chat SDK bridges, clients, evals, TUI,
-  fixtures, and docs use the final shapes.
+  sends, flat Slack operations, clients, evals, TUI, fixtures, and docs use the
+  final shapes.
+- Chat SDK bridges retain `send(input, options)` and its existing call sites.
 - E2E creates a session, sends a follow-up, cancels, compacts, clears, sends
   successfully afterward, proves a late accepted cancel is a no-op, resets,
   rejects the retired ID, and explicitly creates a replacement.
