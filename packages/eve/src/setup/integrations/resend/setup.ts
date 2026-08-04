@@ -105,6 +105,7 @@ function channelTemplate(input: {
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
 ${input.connectorUid ? 'import { connectResendApiKey } from "@vercel/connect/eve";\n' : ""}import type { Message, Thread } from "chat";
 import { chatSdkChannel, messageToUserContent } from "eve/channels/chat-sdk";
+import { restoreResendReplyContext } from "eve/channels/resend";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: ${JSON.stringify(input.fromName || "Email Agent")},
@@ -117,6 +118,7 @@ export const { bot, channel, send } = chatSdkChannel({
   },
   state: createMemoryState(),
   streaming: false,
+  restoreAdapterContext: restoreResendReplyContext,
 });
 
 bot.onNewMention(async (thread: Thread, message: Message) => {

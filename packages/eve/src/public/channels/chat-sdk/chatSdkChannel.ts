@@ -176,6 +176,14 @@ export interface ChatSdkChannelConfig<
   /** Optional Eve event handlers. Supplied handlers replace built-in defaults. */
   readonly events?: ChatSdkChannelEvents<TAdapters>;
   /**
+   * Restores adapter-owned transient context from eve's durable serialized
+   * thread before an outbound workflow event uses the reconstructed thread.
+   */
+  readonly restoreAdapterContext?: (input: {
+    readonly adapter: Adapter;
+    readonly thread: SerializedThread;
+  }) => void;
+  /**
    * Prefix for default Eve HITL button action ids. Change this if your Chat SDK
    * app already uses the `eve_input:` prefix.
    */
@@ -290,7 +298,7 @@ export function chatSdkChannel<TAdapters extends ChatSdkAdapters>(
         state,
         streaming,
         streamingEditIntervalMs,
-        thread: threadFromState(bot, state),
+        thread: threadFromState(bot, state, config.restoreAdapterContext),
       };
     },
     // Register both methods on each adapter's webhook path. Providers such as X
@@ -594,12 +602,15 @@ function metadataFromState(state: ChatSdkChannelState): ChatSdkInstrumentationMe
 function threadFromState<TAdapters extends ChatSdkAdapters>(
   bot: Chat<TAdapters>,
   state: ChatSdkChannelState,
+  restoreAdapterContext: ChatSdkChannelConfig<TAdapters>["restoreAdapterContext"],
 ): Thread | null {
   if (!state.thread) return null;
   try {
     const serialized = state.thread;
+    const adapter = bot.getAdapter(serialized.adapterName);
+    restoreAdapterContext?.({ adapter, thread: serialized });
     return new ThreadImpl({
-      adapter: bot.getAdapter(serialized.adapterName),
+      adapter,
       channelId: serialized.channelId,
       channelVisibility: serialized.channelVisibility,
       currentMessage: serialized.currentMessage
