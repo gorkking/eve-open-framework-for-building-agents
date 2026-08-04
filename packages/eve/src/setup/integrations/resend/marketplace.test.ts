@@ -32,6 +32,11 @@ describe("Resend Marketplace", () => {
           name: "database",
           product: { slug: "postgres" },
         },
+        {
+          id: "store_blob",
+          name: "blob-without-external-id",
+          type: "blob",
+        },
       ],
     });
 

@@ -148,7 +148,8 @@ async function chooseDestination(
 }
 
 function marketplaceDomain(resource: ResendMarketplaceResource): string | undefined {
-  const domain = resource.externalResourceId.trim().toLowerCase();
+  const domain = (resource.metadata?.domain ?? resource.externalResourceId)?.trim().toLowerCase();
+  if (domain === undefined) return undefined;
   return /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/u.test(domain) ? domain : undefined;
 }
 

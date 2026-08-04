@@ -5,13 +5,15 @@ import { z } from "zod";
 
 const ResourceSchema = z.object({
   id: z.string().min(1),
-  externalResourceId: z.string().min(1),
+  externalResourceId: z.string().min(1).optional(),
   name: z.string().min(1),
   status: z.string().nullish(),
+  metadata: z.object({ domain: z.string().min(1).optional() }).optional(),
   product: z
     .object({
       slug: z.string().optional(),
       integrationConfigurationId: z.string().optional(),
+      integration: z.object({ slug: z.string().optional() }).optional(),
     })
     .optional(),
   projectsMetadata: z
@@ -23,7 +25,7 @@ const ResourceSchema = z.object({
     )
     .optional(),
 });
-const ResourceListSchema = z.object({ stores: z.array(ResourceSchema) });
+const ResourceListSchema = z.object({ stores: z.array(z.unknown()) });
 const DomainListSchema = z.object({ domains: z.array(z.object({ name: z.string().min(1) })) });
 const ProvisionedSchema = z.object({
   resource: z.object({
@@ -66,9 +68,18 @@ export async function listResendMarketplaceResources(input: {
   }
   const parsed = ResourceListSchema.safeParse(body);
   if (!parsed.success) throw new Error("Vercel returned an invalid Marketplace resource list.");
-  return parsed.data.stores.filter(
-    (resource) => resource.product?.slug === "resend-email" || resource.product?.slug === "resend",
-  );
+  const resources: ResendMarketplaceResource[] = [];
+  for (const candidate of parsed.data.stores) {
+    const resource = ResourceSchema.safeParse(candidate);
+    if (!resource.success) continue;
+    if (
+      resource.data.product?.slug === "resend-email" ||
+      resource.data.product?.integration?.slug === "resend"
+    ) {
+      resources.push(resource.data);
+    }
+  }
+  return resources;
 }
 
 /** Lists domains owned by the linked Vercel team. */
@@ -144,6 +155,7 @@ export async function provisionResendMarketplaceResource(input: {
   return {
     id: parsed.data.resource.id,
     externalResourceId: parsed.data.resource.externalResourceId,
+    metadata: { domain: input.domain },
     name: parsed.data.resource.name,
     product: {
       slug: "resend-email",
