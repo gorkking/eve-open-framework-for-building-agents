@@ -169,37 +169,30 @@ export async function setupResend(
     ).trim();
     await deps.validateApiKey(apiKey, context.signal);
     const suggestedFromAddress = await deps.suggestFromAddress(apiKey, context.signal);
+    const defaultFromAddress = suggestedFromAddress ?? "onboarding@resend.dev";
     if (suggestedFromAddress === undefined) {
       const senderInstructions = [
         "Resend's managed *.resend.app domain receives email but cannot send replies.",
-        "Add and verify a custom sending domain in Resend, then enter an address on that domain.",
-        "For a limited test, onboarding@resend.dev can send only to your Resend account email and may not preserve normal reply behavior.",
+        "For this test, onboarding@resend.dev is prefilled. It can send only to your Resend account email, may go to spam, and may not preserve normal reply behavior.",
+        "For real conversations, add and verify a custom sending domain in Resend, then enter an address on that domain.",
         "Configure domains: https://resend.com/domains",
       ];
       if (context.ui.prompter.acknowledge) {
         await context.ui.prompter.acknowledge({
-          message: "Resend sending domain required",
+          message: "No custom Resend sending domain found",
           lines: senderInstructions,
         });
       } else {
         context.ui.prompter.log.warning(senderInstructions.join("\n"));
       }
     }
-    const fromAddressQuestion =
-      suggestedFromAddress === undefined
-        ? text({
-            key: "resend-from-address",
-            message: "Agent email address",
-            required: true,
-            validate: validateEmail,
-          })
-        : text({
-            key: "resend-from-address",
-            message: "Agent email address",
-            detected: suggestedFromAddress,
-            required: true,
-            validate: validateEmail,
-          });
+    const fromAddressQuestion = text({
+      key: "resend-from-address",
+      message: "Agent email address",
+      detected: defaultFromAddress,
+      required: true,
+      validate: validateEmail,
+    });
     const fromAddress = (await context.ui.asker.ask(fromAddressQuestion)).trim();
     const fromName = (
       await context.ui.asker.ask(

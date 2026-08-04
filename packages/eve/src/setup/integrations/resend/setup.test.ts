@@ -100,15 +100,43 @@ describe("Resend setup", () => {
     const effects = deps();
     vi.mocked(effects.suggestFromAddress).mockResolvedValue(undefined);
     const setup = context(effects, "portable");
+    const questions: Question<unknown>[] = [];
+    const value = {
+      ...setup.value,
+      ui: {
+        ...setup.value.ui,
+        asker: {
+          ask: async <T>(question: Question<T>) => {
+            questions.push(question as Question<unknown>);
+            if (question.key === "resend-api-key") return "re_secret" as T;
+            if (question.key === "resend-from-name") return "Email Agent" as T;
+            return question.detected as T;
+          },
+          askMany: async () => [],
+        },
+      },
+    };
 
-    await expect(setupResend(setup.value, effects)).resolves.toEqual({ kind: "done" });
+    await expect(setupResend(value, effects)).resolves.toEqual({ kind: "done" });
     expect(setup.value.ui.prompter.acknowledge).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "Resend sending domain required",
+        message: "No custom Resend sending domain found",
         lines: expect.arrayContaining([
           expect.stringContaining("*.resend.app domain receives email but cannot send replies"),
+          expect.stringContaining("onboarding@resend.dev is prefilled"),
         ]),
       }),
+    );
+    expect(questions).toContainEqual(
+      expect.objectContaining({
+        key: "resend-from-address",
+        detected: "onboarding@resend.dev",
+      }),
+    );
+    expect(effects.writeTextFile).toHaveBeenCalledWith(
+      "/project/agent/channels/resend.ts",
+      expect.stringContaining('fromAddress: "onboarding@resend.dev"'),
+      { force: undefined },
     );
   });
 
