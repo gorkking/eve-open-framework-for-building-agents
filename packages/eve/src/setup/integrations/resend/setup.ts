@@ -108,12 +108,12 @@ import { chatSdkChannel, messageToUserContent } from "eve/channels/chat-sdk";
 import { captureResendReplyContext, restoreResendReplyContext } from "eve/channels/resend";
 
 export const { bot, channel, send } = chatSdkChannel({
-  userName: ${JSON.stringify(input.fromName || "Email Agent")},
+  userName: ${JSON.stringify(input.fromName || "Eve")},
   adapters: {
     resend: createResendAdapter({
       apiKey: ${apiKey},
       fromAddress: ${JSON.stringify(input.fromAddress)},
-      fromName: ${JSON.stringify(input.fromName || "Email Agent")},
+      fromName: ${JSON.stringify(input.fromName || "Eve")},
     }),
   },
   state: createMemoryState(),
