@@ -9,6 +9,7 @@ import { writeTextFile } from "#setup/scaffold/files.js";
 import { openUrl } from "#setup/primitives/open-url.js";
 import { runVercel } from "#setup/primitives/run-vercel.js";
 import { WizardCancelledError } from "#setup/step.js";
+import { withSpinner } from "#setup/with-spinner.js";
 
 import type {
   IntegrationSetupContext,
@@ -181,11 +182,13 @@ async function selectMarketplaceDomain(
   deps: ResendSetupDeps,
   project: Awaited<ReturnType<typeof ensureVercelProject>>,
 ): Promise<string | "cancelled"> {
-  const domains = await deps.listDomains({
-    projectRoot: context.appRoot,
-    project,
-    signal: context.signal,
-  });
+  const domains = await withSpinner(context.ui.prompter, "Checking Vercel domains...", () =>
+    deps.listDomains({
+      projectRoot: context.appRoot,
+      project,
+      signal: context.signal,
+    }),
+  );
   if (domains.length === 0) {
     const url = "https://vercel.com/domains";
     context.ui.prompter.note(
@@ -219,11 +222,16 @@ async function setupMarketplace(
     prompter: context.ui.prompter,
     signal: context.signal,
   });
-  const resources = await deps.listMarketplaceResources({
-    projectRoot: context.appRoot,
-    project,
-    signal: context.signal,
-  });
+  const resources = await withSpinner(
+    context.ui.prompter,
+    "Checking Resend Marketplace resources...",
+    () =>
+      deps.listMarketplaceResources({
+        projectRoot: context.appRoot,
+        project,
+        signal: context.signal,
+      }),
+  );
   let resource = await chooseMarketplaceResource(context, resources);
   if (resource === "create") {
     const domain = await selectMarketplaceDomain(context, deps, project);

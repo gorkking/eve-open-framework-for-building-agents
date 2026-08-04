@@ -63,6 +63,10 @@ describe("Resend Marketplace", () => {
         deps: { captureVercel },
       }),
     ).resolves.toEqual(["example.com", "another.example"]);
+    expect(captureVercel).toHaveBeenCalledWith(
+      ["domains", "list", "--format", "json", "--limit", "100", "--scope", "team"],
+      expect.objectContaining({ cwd: "/project" }),
+    );
   });
 
   it("provisions Resend with domain metadata and production connection", async () => {

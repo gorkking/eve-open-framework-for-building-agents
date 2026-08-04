@@ -91,7 +91,7 @@ export async function listVercelDomains(input: {
 }): Promise<string[]> {
   const deps = input.deps ?? defaultDeps;
   const result = await deps.captureVercel(
-    ["domains", "list", "--json", "--limit", "100", "--scope", input.project.orgId],
+    ["domains", "list", "--format", "json", "--limit", "100", "--scope", input.project.orgId],
     { cwd: input.projectRoot, signal: input.signal },
   );
   if (!result.ok) throw new Error("Could not inspect Vercel domains.");
