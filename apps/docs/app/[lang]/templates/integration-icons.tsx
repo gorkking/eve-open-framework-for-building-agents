@@ -5,9 +5,11 @@ import {
   linearLogo,
   notionLogo,
   nuxtLogo,
+  resendLogo,
   sendblueLogo,
   sentryLogo,
   slackLogo,
+  typefullyLogo,
   webLogo,
 } from "@/lib/integrations/logos";
 import type { TemplateIntegration } from "@/lib/templates/data";
@@ -20,8 +22,10 @@ export const integrationIcons: Record<TemplateIntegration, IconComponent> = {
   Linear: linearLogo,
   Notion: notionLogo,
   Nuxt: nuxtLogo,
+  Resend: resendLogo,
   Sendblue: sendblueLogo,
   Sentry: sentryLogo,
   Slack: slackLogo,
+  Typefully: typefullyLogo,
   "Web chat": webLogo,
 };

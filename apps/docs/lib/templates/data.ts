@@ -1,4 +1,4 @@
-export type TemplateCategory = "Chat" | "Collaboration" | "Example";
+export type TemplateCategory = "Chat" | "Collaboration" | "Example" | "Marketing";
 import { templateSourceFiles } from "./sources";
 
 export type TemplateIntegration =
@@ -7,9 +7,11 @@ export type TemplateIntegration =
   | "Linear"
   | "Notion"
   | "Nuxt"
+  | "Resend"
   | "Sendblue"
   | "Sentry"
   | "Slack"
+  | "Typefully"
   | "Web chat";
 export type TemplateSource = "GitHub" | "Vercel Templates";
 
@@ -93,6 +95,21 @@ export const templateEntries: TemplateEntry[] = [
     integrations: ["Web chat", "Nuxt", "Slack", "Sendblue", "GitHub", "Linear"],
     source: "Vercel Templates",
     files: templateSourceFiles["personal-agent"],
+  },
+  {
+    slug: "marketing-team-eve-template",
+    title: "Marketing team",
+    setupPrompt:
+      "I want to build a team of marketing agents with the eve framework, using the marketing team template. Read the setup instructions at https://agent-resources.dev/marketing-team-eve-template.md and follow them. They will cover deploying the template, building with eve, how everything works overall, and more.",
+    description:
+      "A team of marketing agents: a lead routes work to specialists for positioning, long-form content, social, SEO, and email, publishing through Notion, Typefully, and Resend.",
+    sourceHref: "https://github.com/vercel-labs/marketing-team-eve-template/tree/main",
+    sourceRevision: "9a881661bd5b0652469467f00eadbd41e9f2c786",
+    category: "Marketing",
+    model: "anthropic/claude-opus-5",
+    integrations: ["Web chat", "Slack", "Notion", "Resend", "Typefully"],
+    source: "Vercel Templates",
+    files: templateSourceFiles["marketing-team-eve-template"],
   },
   {
     slug: "weather-agent-fixture",
