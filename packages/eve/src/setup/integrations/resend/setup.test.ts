@@ -30,10 +30,21 @@ function deps(): ResendSetupDeps {
     deriveConnectorSlug: vi.fn(async () => "agent" as never),
     ensureVercelProject: vi.fn(async () => ({ orgId: "team", projectId: "project" })),
     listWebhooks: vi.fn(async () => []),
+    listMarketplaceResources: vi.fn(async () => []),
+    listDomains: vi.fn(async () => ["example.com"]),
+    openUrl: vi.fn(),
     provisionConnector: vi.fn(async () => ({
       id: "scl_resend",
       uid: "api-key/resend-agent",
     })),
+    provisionMarketplaceResource: vi.fn(async (input) => ({
+      id: "store_resend",
+      externalResourceId: input.domain,
+      name: "resend-agent",
+      product: { slug: "resend-email", integrationConfigurationId: "icfg_resend" },
+      projectsMetadata: [{ projectId: "project", environments: ["production"] }],
+    })),
+    connectMarketplaceResource: vi.fn(async () => {}),
     runVercel: vi.fn(async () => true),
     suggestFromAddress: vi.fn(async () => "eve@example.com"),
     validateApiKey: vi.fn(async () => {}),
@@ -41,7 +52,10 @@ function deps(): ResendSetupDeps {
   };
 }
 
-function context(effects: ResendSetupDeps, select: "connect" | "portable" = "connect") {
+function context(
+  effects: ResendSetupDeps,
+  select: "marketplace" | "connect" | "portable" = "connect",
+) {
   const fake = createFakePrompter({ single: () => select });
   return {
     effects,
@@ -61,6 +75,59 @@ function context(effects: ResendSetupDeps, select: "connect" | "portable" = "con
 }
 
 describe("Resend setup", () => {
+  it("provisions a Marketplace resource from an existing Vercel domain", async () => {
+    const effects = deps();
+    const setup = context(effects, "marketplace");
+
+    await expect(setupResend(setup.value, effects)).resolves.toMatchObject({ kind: "done" });
+    expect(effects.provisionMarketplaceResource).toHaveBeenCalledWith(
+      expect.objectContaining({ domain: "example.com" }),
+    );
+    expect(effects.connectMarketplaceResource).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: expect.objectContaining({ id: "store_resend" }) }),
+    );
+    expect(effects.writeTextFile).toHaveBeenCalledWith(
+      "/project/agent/channels/resend.ts",
+      expect.stringContaining("process.env.RESEND_API_KEY"),
+      { force: undefined },
+    );
+  });
+
+  it("reuses an existing Marketplace resource", async () => {
+    const effects = deps();
+    vi.mocked(effects.listMarketplaceResources).mockResolvedValue([
+      {
+        id: "store_existing",
+        externalResourceId: "mail.example.com",
+        name: "resend-existing",
+        product: { slug: "resend-email", integrationConfigurationId: "icfg_existing" },
+        projectsMetadata: [{ projectId: "project", environments: ["production"] }],
+      },
+    ]);
+    const setup = context(effects, "marketplace");
+
+    await expect(setupResend(setup.value, effects)).resolves.toMatchObject({ kind: "done" });
+    expect(effects.provisionMarketplaceResource).not.toHaveBeenCalled();
+    expect(effects.connectMarketplaceResource).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: expect.objectContaining({ id: "store_existing" }) }),
+    );
+  });
+
+  it("hands domain setup off to Vercel web when the team has no domain", async () => {
+    const effects = deps();
+    vi.mocked(effects.listDomains).mockResolvedValue([]);
+    const setup = context(effects, "marketplace");
+
+    await expect(setupResend(setup.value, effects)).resolves.toEqual({ kind: "cancelled" });
+    expect(effects.openUrl).toHaveBeenCalledWith("https://vercel.com/domains");
+    expect(setup.value.ui.prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("rerun `eve add channel/resend`"),
+      "Vercel domain required",
+      { tone: "warning" },
+    );
+    expect(effects.provisionMarketplaceResource).not.toHaveBeenCalled();
+  });
+
   it("prefills the agent address from a send-and-receive custom Resend domain", async () => {
     const effects = deps();
     const questions: Question<unknown>[] = [];

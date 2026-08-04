@@ -6,6 +6,7 @@ import { ensureVercelProject } from "#setup/flows/ensure-vercel-project.js";
 import { runDeployFlow } from "#setup/flows/deploy.js";
 import { deriveSlackConnectorSlug } from "#setup/scaffold/index.js";
 import { writeTextFile } from "#setup/scaffold/files.js";
+import { openUrl } from "#setup/primitives/open-url.js";
 import { runVercel } from "#setup/primitives/run-vercel.js";
 import { WizardCancelledError } from "#setup/step.js";
 
@@ -23,6 +24,13 @@ import {
   validateResendApiKey,
 } from "./api.js";
 import { provisionResendConnector } from "./connect.js";
+import {
+  connectResendMarketplaceResource,
+  listResendMarketplaceResources,
+  listVercelDomains,
+  provisionResendMarketplaceResource,
+  type ResendMarketplaceResource,
+} from "./marketplace.js";
 
 export interface ResendSetupDeps {
   appendEnv: typeof appendEnv;
@@ -32,7 +40,12 @@ export interface ResendSetupDeps {
   deriveConnectorSlug: typeof deriveSlackConnectorSlug;
   ensureVercelProject: typeof ensureVercelProject;
   listWebhooks: typeof listResendWebhooks;
+  listMarketplaceResources: typeof listResendMarketplaceResources;
+  listDomains: typeof listVercelDomains;
+  openUrl: typeof openUrl;
   provisionConnector: typeof provisionResendConnector;
+  provisionMarketplaceResource: typeof provisionResendMarketplaceResource;
+  connectMarketplaceResource: typeof connectResendMarketplaceResource;
   runVercel: typeof runVercel;
   suggestFromAddress: typeof suggestResendFromAddress;
   validateApiKey: typeof validateResendApiKey;
@@ -47,7 +60,12 @@ const defaultDeps: ResendSetupDeps = {
   deriveConnectorSlug: deriveSlackConnectorSlug,
   ensureVercelProject,
   listWebhooks: listResendWebhooks,
+  listMarketplaceResources: listResendMarketplaceResources,
+  listDomains: listVercelDomains,
+  openUrl,
   provisionConnector: provisionResendConnector,
+  provisionMarketplaceResource: provisionResendMarketplaceResource,
+  connectMarketplaceResource: connectResendMarketplaceResource,
   runVercel,
   suggestFromAddress: suggestResendFromAddress,
   validateApiKey: validateResendApiKey,
@@ -104,11 +122,16 @@ export default channel;
 
 async function chooseDestination(
   context: IntegrationSetupContext,
-): Promise<"connect" | "portable"> {
-  if (context.yes) return "connect";
-  return context.ui.prompter.select<"connect" | "portable">({
+): Promise<"marketplace" | "connect" | "portable"> {
+  if (context.yes) return "marketplace";
+  return context.ui.prompter.select<"marketplace" | "connect" | "portable">({
     message: "How would you like to configure Resend?",
     options: [
+      {
+        value: "marketplace",
+        label: "Set up with Vercel Marketplace",
+        hint: "Create or reuse a Resend domain and project credential",
+      },
       {
         value: "connect",
         label: "Set up Vercel Connect",
@@ -120,8 +143,141 @@ async function chooseDestination(
         hint: "Store the API key locally and configure the webhook manually",
       },
     ],
-    initialValue: context.environment.vercel.kind === "available" ? "connect" : "portable",
+    initialValue: context.environment.vercel.kind === "available" ? "marketplace" : "portable",
   });
+}
+
+function marketplaceDomain(resource: ResendMarketplaceResource): string | undefined {
+  const domain = resource.externalResourceId.trim().toLowerCase();
+  return /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/u.test(domain) ? domain : undefined;
+}
+
+async function chooseMarketplaceResource(
+  context: IntegrationSetupContext,
+  resources: readonly ResendMarketplaceResource[],
+): Promise<ResendMarketplaceResource | "create"> {
+  if (resources.length === 0) return "create";
+  if (resources.length === 1 || context.yes) return resources[0]!;
+  const selected = await context.ui.prompter.select<string>({
+    message: "Resend Marketplace resource",
+    options: [
+      ...resources.map((resource) => ({
+        value: resource.id,
+        label: marketplaceDomain(resource) ?? resource.name,
+        hint: resource.status ?? "Existing Resend resource",
+      })),
+      { value: "create", label: "Configure another Vercel domain" },
+    ],
+    initialValue: resources[0]?.id,
+  });
+  return selected === "create"
+    ? "create"
+    : (resources.find((resource) => resource.id === selected) ?? "create");
+}
+
+async function selectMarketplaceDomain(
+  context: IntegrationSetupContext,
+  deps: ResendSetupDeps,
+  project: Awaited<ReturnType<typeof ensureVercelProject>>,
+): Promise<string | "cancelled"> {
+  const domains = await deps.listDomains({
+    projectRoot: context.appRoot,
+    project,
+    signal: context.signal,
+  });
+  if (domains.length === 0) {
+    const url = project.orgId.startsWith("team_")
+      ? `https://vercel.com/teams/${encodeURIComponent(project.orgId)}/domains`
+      : "https://vercel.com/domains";
+    context.ui.prompter.note(
+      `Add or purchase a domain in Vercel, then rerun \`eve add channel/resend\`.\n${url}`,
+      "Vercel domain required",
+      { tone: "warning" },
+    );
+    deps.openUrl(url);
+    return "cancelled";
+  }
+  if (domains.length === 1 || context.yes) return domains[0]!;
+  return context.ui.prompter.select<string>({
+    message: "Domain for Resend",
+    description: "Resend will open Vercel web to confirm account, billing, and DNS setup.",
+    options: domains.map((domain) => ({ value: domain, label: domain })),
+    initialValue: domains[0],
+  });
+}
+
+async function setupMarketplace(
+  context: IntegrationSetupContext,
+  deps: ResendSetupDeps,
+): Promise<IntegrationSetupResult> {
+  if (context.environment.vercel.kind === "unavailable") {
+    throw new Error(
+      "Vercel Marketplace requires an authenticated Vercel CLI. Run `vercel login`, then retry Resend setup.",
+    );
+  }
+  const project = await deps.ensureVercelProject({
+    appRoot: context.appRoot,
+    prompter: context.ui.prompter,
+    signal: context.signal,
+  });
+  const resources = await deps.listMarketplaceResources({
+    projectRoot: context.appRoot,
+    project,
+    signal: context.signal,
+  });
+  let resource = await chooseMarketplaceResource(context, resources);
+  if (resource === "create") {
+    const domain = await selectMarketplaceDomain(context, deps, project);
+    if (domain === "cancelled") return { kind: "cancelled" };
+    resource = await deps.provisionMarketplaceResource({
+      domain,
+      log: context.ui.prompter.log,
+      projectRoot: context.appRoot,
+      project,
+      signal: context.signal,
+    });
+  }
+  await deps.connectMarketplaceResource({
+    resource,
+    log: context.ui.prompter.log,
+    projectRoot: context.appRoot,
+    project,
+    signal: context.signal,
+  });
+  const domain = marketplaceDomain(resource);
+  const fromAddressQuestion =
+    domain === undefined
+      ? text({
+          key: "resend-from-address",
+          message: "Agent email address",
+          required: true,
+          validate: validateEmail,
+        })
+      : text({
+          key: "resend-from-address",
+          message: "Agent email address",
+          detected: `eve@${domain}`,
+          required: true,
+          validate: validateEmail,
+        });
+  const fromAddress = await context.ui.asker.ask(fromAddressQuestion);
+  const fromName = await context.ui.asker.ask(
+    text({ key: "resend-from-name", message: "From name (optional)", required: false }),
+  );
+  await deps.writeTextFile(
+    join(context.appRoot, "agent/channels/resend.ts"),
+    channelTemplate({ apiKey: "", fromAddress: fromAddress.trim(), fromName: fromName.trim() }),
+    { force: context.force },
+  );
+  context.ui.nextSteps([
+    "Complete Resend onboarding and Auto configure DNS in the browser if prompted.",
+    "Enable receiving for the selected domain, then create an email.received webhook for https://<your-host>/eve/v1/resend and save its signing secret as RESEND_WEBHOOK_SECRET.",
+    "Deploy the agent after the webhook secret is configured.",
+  ]);
+  return {
+    kind: "done",
+    facts: domain === undefined ? undefined : [{ label: "Resend domain", value: domain }],
+  };
 }
 
 async function writeProductionSecret(
@@ -148,6 +304,7 @@ export async function setupResend(
 ): Promise<IntegrationSetupResult> {
   try {
     const destination = await chooseDestination(context);
+    if (destination === "marketplace") return await setupMarketplace(context, deps);
     if (destination === "connect" && context.environment.vercel.kind === "unavailable") {
       throw new Error(
         "Vercel Connect requires an authenticated Vercel CLI. Run `vercel login`, then retry Resend setup.",
