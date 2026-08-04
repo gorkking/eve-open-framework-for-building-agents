@@ -40,8 +40,6 @@ describe("Resend Marketplace setup OAuth", () => {
         "connect",
         "token",
         "oauth/eve-resend-setup",
-        "--subject",
-        "user",
         "--scopes",
         "full_access",
         "--yes",

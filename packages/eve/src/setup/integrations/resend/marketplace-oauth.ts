@@ -125,8 +125,6 @@ export async function authorizeResendMarketplaceSetup(input: {
             "connect",
             "token",
             connector.data.uid,
-            "--subject",
-            "user",
             "--scopes",
             "full_access",
             "--yes",
