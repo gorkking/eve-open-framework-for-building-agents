@@ -5,6 +5,7 @@ import {
   connectResendMarketplaceResource,
   listResendMarketplaceResources,
   listVercelDomains,
+  inspectResendMarketplaceResource,
   provisionResendMarketplaceResource,
   waitForResendMarketplaceDomain,
   type ResendMarketplaceDeps,
@@ -115,7 +116,8 @@ describe("Resend Marketplace", () => {
         "region=us-east-1",
         "--environment",
         "production",
-        "--json",
+        "--format",
+        "json",
         "--scope",
         "team",
       ],
@@ -160,19 +162,32 @@ describe("Resend Marketplace", () => {
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining("safely stop waiting"));
   });
 
-  it("tracks DNS verification until the Marketplace resource becomes ready", async () => {
+  it("reads live provider status with integration resource inspect", async () => {
     const captureVercel = capture({
-      stores: [
-        {
+      resource: { id: "store_resend", name: "resend-agent", status: "available" },
+    });
+    await expect(
+      inspectResendMarketplaceResource({
+        resource: {
           id: "store_resend",
           externalResourceId: "provider-id",
           name: "resend-agent",
-          status: "available",
-          externalResourceStatus: "ready",
-          metadata: { domain: "mail.example.com" },
-          product: { slug: "resend-email" },
+          status: "onboarding",
         },
-      ],
+        projectRoot: "/project",
+        project: { orgId: "team", projectId: "project" },
+        deps: { captureVercel },
+      }),
+    ).resolves.toMatchObject({ status: "available" });
+    expect(captureVercel).toHaveBeenCalledWith(
+      ["integration", "resource", "inspect", "resend-agent", "--format", "json", "--scope", "team"],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+  });
+
+  it("tracks DNS verification until the live Marketplace resource becomes ready", async () => {
+    const captureVercel = capture({
+      resource: { id: "store_resend", name: "resend-agent", status: "available" },
     });
     const delay = vi.fn(async () => {});
     const log = createFakePrompter().prompter.log;
@@ -196,7 +211,7 @@ describe("Resend Marketplace", () => {
         pollIntervalMs: 1,
         pollTimeoutMs: 1_000,
       }),
-    ).resolves.toMatchObject({ status: "available", externalResourceStatus: "ready" });
+    ).resolves.toMatchObject({ status: "available" });
     expect(delay).toHaveBeenCalledOnce();
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining("configuring DNS"));
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining("safely stop waiting"));

@@ -30,6 +30,13 @@ const ResourceSchema = z.object({
 });
 const ResourceListSchema = z.object({ stores: z.array(z.unknown()) });
 const DomainListSchema = z.object({ domains: z.array(z.object({ name: z.string().min(1) })) });
+const InspectedResourceSchema = z.object({
+  resource: z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    status: z.string().min(1),
+  }),
+});
 const ProvisionedSchema = z.object({
   resource: z.object({
     id: z.string().min(1),
@@ -143,7 +150,8 @@ export async function provisionResendMarketplaceResource(input: {
         "region=us-east-1",
         "--environment",
         "production",
-        "--json",
+        "--format",
+        "json",
         "--scope",
         input.project.orgId,
       ],
@@ -209,11 +217,44 @@ export async function provisionResendMarketplaceResource(input: {
   };
 }
 
-/** Whether Resend reports both its Marketplace resource and external domain ready. */
+/** Reads live provider-backed status instead of the eventually consistent store summary. */
+export async function inspectResendMarketplaceResource(input: {
+  resource: ResendMarketplaceResource;
+  projectRoot: string;
+  project: VercelProjectReference;
+  signal?: AbortSignal;
+  deps?: Pick<ResendMarketplaceDeps, "captureVercel">;
+}): Promise<ResendMarketplaceResource | undefined> {
+  const deps = input.deps ?? defaultDeps;
+  const result = await deps.captureVercel(
+    [
+      "integration",
+      "resource",
+      "inspect",
+      input.resource.name,
+      "--format",
+      "json",
+      "--scope",
+      input.project.orgId,
+    ],
+    { cwd: input.projectRoot, signal: input.signal },
+  );
+  if (!result.ok) return undefined;
+  let body: unknown;
+  try {
+    body = JSON.parse(result.stdout) as unknown;
+  } catch {
+    return undefined;
+  }
+  const parsed = InspectedResourceSchema.safeParse(body);
+  return parsed.success
+    ? { ...input.resource, id: parsed.data.resource.id, status: parsed.data.resource.status }
+    : undefined;
+}
+
+/** Whether Resend reports its Marketplace resource ready. */
 export function isResendMarketplaceResourceReady(resource: ResendMarketplaceResource): boolean {
-  if (!READY_RESOURCE_STATUSES.has(resource.status ?? "")) return false;
-  const externalStatus = resource.externalResourceStatus;
-  return externalStatus == null || READY_RESOURCE_STATUSES.has(externalStatus);
+  return READY_RESOURCE_STATUSES.has(resource.status ?? "");
 }
 
 /** Waits for Resend and its DNS verification to become ready, supporting safe reruns on timeout. */
@@ -245,13 +286,13 @@ export async function waitForResendMarketplaceDomain(input: {
       while (Date.now() < deadline) {
         input.signal?.throwIfAborted();
         await deps.delay(pollIntervalMs, input.signal);
-        const resources = await listResendMarketplaceResources({
+        const current = await inspectResendMarketplaceResource({
+          resource: input.resource,
           projectRoot: input.projectRoot,
           project: input.project,
           signal: input.signal,
           deps,
         });
-        const current = resources.find((candidate) => candidate.id === input.resource.id);
         if (current !== undefined && isResendMarketplaceResourceReady(current)) return current;
       }
       throw new Error(
