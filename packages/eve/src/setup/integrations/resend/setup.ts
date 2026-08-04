@@ -209,16 +209,17 @@ async function selectMarketplaceDomain(
     search: true,
     placeholder: "type to filter domains",
     options: [
-      ...domains.map((domain, index) => ({
-        value: domain,
-        label: domain,
-        featured: index < 5,
-      })),
       {
         value: ADD_VERCEL_DOMAIN,
         label: "Add or purchase a domain in Vercel",
+        featured: true,
         trailingAction: true,
       },
+      ...domains.map((domain, index) => ({
+        value: domain,
+        label: domain,
+        featured: index < 4,
+      })),
     ],
     initialValue: domains[0],
   });

@@ -60,7 +60,7 @@ function context(
     single: (options) =>
       options.message === "How would you like to configure Resend?"
         ? select
-        : options.options[0]!.value,
+        : (options.initialValue ?? options.options[0]!.value),
   });
   return {
     effects,
@@ -148,12 +148,19 @@ describe("Resend setup", () => {
         message: "Domain for Resend",
         search: true,
         placeholder: "type to filter domains",
-        options: expect.arrayContaining([
+        options: [
           expect.objectContaining({
             value: "__add-vercel-domain__",
+            featured: true,
             trailingAction: true,
           }),
-        ]),
+          expect.objectContaining({ value: "alpha.example", featured: true }),
+          expect.objectContaining({ value: "beta.example", featured: true }),
+          expect.objectContaining({ value: "gamma.example", featured: true }),
+          expect.objectContaining({ value: "delta.example", featured: true }),
+          expect.objectContaining({ value: "epsilon.example", featured: false }),
+          expect.objectContaining({ value: "zeta.example", featured: false }),
+        ],
       }),
     );
     expect(effects.openUrl).toHaveBeenCalledWith("https://vercel.com/domains");
