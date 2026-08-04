@@ -198,6 +198,37 @@ describe("Resend setup", () => {
     expect(effects.provisionMarketplaceResource).not.toHaveBeenCalled();
   });
 
+  it("defaults the optional sender name to Eve", async () => {
+    const effects = deps();
+    const questions: Question<unknown>[] = [];
+    const setup = context(effects, "portable");
+    const value = {
+      ...setup.value,
+      ui: {
+        ...setup.value.ui,
+        asker: {
+          ask: async <T>(question: Question<T>) => {
+            questions.push(question as Question<unknown>);
+            if (question.key === "resend-api-key") return "re_secret" as T;
+            if (question.key === "resend-from-address") return "eve@example.com" as T;
+            return question.detected as T;
+          },
+          askMany: async () => [],
+        },
+      },
+    };
+
+    await expect(setupResend(value, effects)).resolves.toEqual({ kind: "done" });
+    expect(questions).toContainEqual(
+      expect.objectContaining({ key: "resend-from-name", detected: "Eve" }),
+    );
+    expect(effects.writeTextFile).toHaveBeenCalledWith(
+      "/project/agent/channels/resend.ts",
+      expect.stringContaining('fromName: "Eve"'),
+      { force: undefined },
+    );
+  });
+
   it("prefills the agent address from a send-and-receive custom Resend domain", async () => {
     const effects = deps();
     const questions: Question<unknown>[] = [];

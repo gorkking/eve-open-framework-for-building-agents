@@ -105,7 +105,7 @@ function channelTemplate(input: {
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
 ${input.connectorUid ? 'import { connectResendApiKey } from "@vercel/connect/eve";\n' : ""}import type { Message, Thread } from "chat";
 import { chatSdkChannel, messageToUserContent } from "eve/channels/chat-sdk";
-import { restoreResendReplyContext } from "eve/channels/resend";
+import { captureResendReplyContext, restoreResendReplyContext } from "eve/channels/resend";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: ${JSON.stringify(input.fromName || "Email Agent")},
@@ -118,6 +118,7 @@ export const { bot, channel, send } = chatSdkChannel({
   },
   state: createMemoryState(),
   streaming: false,
+  captureAdapterContext: captureResendReplyContext,
   restoreAdapterContext: restoreResendReplyContext,
 });
 
@@ -311,7 +312,12 @@ async function setupMarketplace(
         });
   const fromAddress = await context.ui.asker.ask(fromAddressQuestion);
   const fromName = await context.ui.asker.ask(
-    text({ key: "resend-from-name", message: "From name (optional)", required: false }),
+    text({
+      key: "resend-from-name",
+      message: "From name (optional)",
+      detected: "Eve",
+      required: false,
+    }),
   );
   await deps.writeTextFile(
     join(context.appRoot, "agent/channels/resend.ts"),
@@ -447,7 +453,12 @@ export async function setupResend(
     const fromAddress = (await context.ui.asker.ask(fromAddressQuestion)).trim();
     const fromName = (
       await context.ui.asker.ask(
-        text({ key: "resend-from-name", message: "From name (optional)", required: false }),
+        text({
+          key: "resend-from-name",
+          message: "From name (optional)",
+          detected: "Eve",
+          required: false,
+        }),
       )
     ).trim();
 

@@ -15,8 +15,8 @@ interface ResendAdapterWithResolver extends Adapter {
   threadResolver?: ResendThreadResolver;
 }
 
-function rawReplyContext(thread: SerializedThread): ResendRawReplyContext | undefined {
-  const raw = thread.currentMessage?.raw;
+function rawReplyContext(value: unknown): ResendRawReplyContext | undefined {
+  const raw = value;
   if (typeof raw !== "object" || raw === null) return undefined;
   const record = raw as Record<string, unknown>;
   if (typeof record.messageId !== "string" || typeof record.subject !== "string") {
@@ -55,17 +55,27 @@ function referenceMessageIds(headers: Record<string, string> | undefined): strin
   return trimmed.split(/\s+/u).filter(Boolean);
 }
 
+/** Captures the inbound Resend raw message into eve's durable channel state. */
+export function captureResendReplyContext(input: {
+  readonly adapter: Adapter;
+  readonly thread: SerializedThread;
+}): ResendRawReplyContext | undefined {
+  if (input.adapter.name !== "resend") return undefined;
+  return rawReplyContext(input.thread.currentMessage?.raw);
+}
+
 /**
  * Restores the official Resend adapter's reply metadata from eve's durable
- * serialized Chat SDK message. This experimental bridge keeps workflow replies
- * in the inbound email thread until the adapter exposes a public restoration API.
+ * channel state. This experimental bridge keeps workflow replies in the inbound
+ * email thread until the adapter exposes a public restoration API.
  */
 export function restoreResendReplyContext(input: {
   readonly adapter: Adapter;
+  readonly context: unknown;
   readonly thread: SerializedThread;
 }): void {
   if (input.adapter.name !== "resend") return;
-  const context = rawReplyContext(input.thread);
+  const context = rawReplyContext(input.context);
   if (context === undefined) return;
   const resolver = (input.adapter as ResendAdapterWithResolver).threadResolver;
   if (
