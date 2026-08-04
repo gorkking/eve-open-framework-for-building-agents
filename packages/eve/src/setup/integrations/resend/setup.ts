@@ -169,6 +169,22 @@ export async function setupResend(
     ).trim();
     await deps.validateApiKey(apiKey, context.signal);
     const suggestedFromAddress = await deps.suggestFromAddress(apiKey, context.signal);
+    if (suggestedFromAddress === undefined) {
+      const senderInstructions = [
+        "Resend's managed *.resend.app domain receives email but cannot send replies.",
+        "Add and verify a custom sending domain in Resend, then enter an address on that domain.",
+        "For a limited test, onboarding@resend.dev can send only to your Resend account email and may not preserve normal reply behavior.",
+        "Configure domains: https://resend.com/domains",
+      ];
+      if (context.ui.prompter.acknowledge) {
+        await context.ui.prompter.acknowledge({
+          message: "Resend sending domain required",
+          lines: senderInstructions,
+        });
+      } else {
+        context.ui.prompter.log.warning(senderInstructions.join("\n"));
+      }
+    }
     const fromAddressQuestion =
       suggestedFromAddress === undefined
         ? text({

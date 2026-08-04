@@ -35,7 +35,7 @@ function deps(): ResendSetupDeps {
       uid: "api-key/resend-agent",
     })),
     runVercel: vi.fn(async () => true),
-    suggestFromAddress: vi.fn(async () => "eve@phipelaan.resend.app"),
+    suggestFromAddress: vi.fn(async () => "eve@example.com"),
     validateApiKey: vi.fn(async () => {}),
     writeTextFile: vi.fn(async () => {}),
   };
@@ -61,7 +61,7 @@ function context(effects: ResendSetupDeps, select: "connect" | "portable" = "con
 }
 
 describe("Resend setup", () => {
-  it("prefills the agent address from a receiving-enabled Resend domain", async () => {
+  it("prefills the agent address from a send-and-receive custom Resend domain", async () => {
     const effects = deps();
     const questions: Question<unknown>[] = [];
     const setup = context(effects, "portable");
@@ -86,13 +86,29 @@ describe("Resend setup", () => {
     expect(questions).toContainEqual(
       expect.objectContaining({
         key: "resend-from-address",
-        detected: "eve@phipelaan.resend.app",
+        detected: "eve@example.com",
       }),
     );
     expect(effects.writeTextFile).toHaveBeenCalledWith(
       "/project/agent/channels/resend.ts",
-      expect.stringContaining('fromAddress: "eve@phipelaan.resend.app"'),
+      expect.stringContaining('fromAddress: "eve@example.com"'),
       { force: undefined },
+    );
+  });
+
+  it("warns when the account has no custom domain that can send and receive", async () => {
+    const effects = deps();
+    vi.mocked(effects.suggestFromAddress).mockResolvedValue(undefined);
+    const setup = context(effects, "portable");
+
+    await expect(setupResend(setup.value, effects)).resolves.toEqual({ kind: "done" });
+    expect(setup.value.ui.prompter.acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Resend sending domain required",
+        lines: expect.arrayContaining([
+          expect.stringContaining("*.resend.app domain receives email but cannot send replies"),
+        ]),
+      }),
     );
   });
 

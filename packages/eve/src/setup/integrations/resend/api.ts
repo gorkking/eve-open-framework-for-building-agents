@@ -94,9 +94,7 @@ export async function suggestResendFromAddress(
     (domain) =>
       domain.capabilities?.receiving === "enabled" && domain.capabilities.sending === "enabled",
   );
-  const domain =
-    receivingDomains.find((candidate) => !candidate.name.endsWith(".resend.app")) ??
-    receivingDomains[0];
+  const domain = receivingDomains.find((candidate) => !candidate.name.endsWith(".resend.app"));
   return domain === undefined ? undefined : `eve@${domain.name}`;
 }
 

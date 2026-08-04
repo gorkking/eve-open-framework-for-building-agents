@@ -51,7 +51,7 @@ describe("Resend API", () => {
     expect(fetch.mock.calls[0]?.[0]).toBe("https://api.resend.com/domains");
   });
 
-  it("uses the default Resend receiving domain when no custom receiving domain exists", async () => {
+  it("does not suggest the managed receiving-only Resend domain", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       response({
         data: [
@@ -63,9 +63,9 @@ describe("Resend API", () => {
       }),
     );
 
-    await expect(suggestResendFromAddress("re_secret", undefined, { fetch })).resolves.toBe(
-      "eve@phipelaan.resend.app",
-    );
+    await expect(
+      suggestResendFromAddress("re_secret", undefined, { fetch }),
+    ).resolves.toBeUndefined();
   });
 
   it("creates only an email.received webhook", async () => {
