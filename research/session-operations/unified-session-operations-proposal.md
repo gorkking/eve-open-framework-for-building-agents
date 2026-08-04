@@ -405,20 +405,32 @@ resolution.
 
 ### Channel lifecycle handlers
 
-Lifecycle handlers are already inside the owning workflow. They receive fixed
-session identity and optional routing state, not route-level operations:
+Lifecycle handlers are already inside the owning workflow. The `channel`
+argument carries platform state and optional continuation routing, not session
+identity:
 
 ```ts
 interface ChannelEventContext<TPlatformContext> extends TPlatformContext {
-  readonly session: {
-    readonly id: string;
-  };
   readonly continuation?: {
     readonly token: string;
     rekey(address: string): void;
   };
 }
+
+const events = {
+  "message.completed"(data, channel, ctx) {
+    console.log(ctx.session.id);
+  },
+
+  "session.failed"(data, channel) {
+    console.error(data.sessionId, data.message);
+  },
+};
 ```
+
+Normal lifecycle handlers read fixed session identity from `ctx.session.id`.
+`session.failed` runs outside session context, so its event data contains
+`sessionId` directly.
 
 Rekeying changes the dynamic channel alias while the stable session-ID alias
 continues to target the same inbox.
