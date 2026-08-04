@@ -177,14 +177,11 @@ export async function setupResend(
         "For real conversations, add and verify a custom sending domain in Resend, then enter an address on that domain.",
         "Configure domains: https://resend.com/domains",
       ];
-      if (context.ui.prompter.acknowledge) {
-        await context.ui.prompter.acknowledge({
-          message: "No custom Resend sending domain found",
-          lines: senderInstructions,
-        });
-      } else {
-        context.ui.prompter.log.warning(senderInstructions.join("\n"));
-      }
+      context.ui.prompter.note(
+        senderInstructions.join("\n"),
+        "Warning: No custom Resend sending domain found",
+        { tone: "warning" },
+      );
     }
     const fromAddressQuestion = text({
       key: "resend-from-address",

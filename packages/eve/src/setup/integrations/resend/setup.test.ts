@@ -118,14 +118,12 @@ describe("Resend setup", () => {
     };
 
     await expect(setupResend(value, effects)).resolves.toEqual({ kind: "done" });
-    expect(setup.value.ui.prompter.acknowledge).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "No custom Resend sending domain found",
-        lines: expect.arrayContaining([
-          expect.stringContaining("*.resend.app domain receives email but cannot send replies"),
-          expect.stringContaining("onboarding@resend.dev is prefilled"),
-        ]),
-      }),
+    expect(setup.value.ui.prompter.note).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\*\.resend\.app domain receives email but cannot send replies[\s\S]*onboarding@resend\.dev is prefilled/,
+      ),
+      "Warning: No custom Resend sending domain found",
+      { tone: "warning" },
     );
     expect(questions).toContainEqual(
       expect.objectContaining({
