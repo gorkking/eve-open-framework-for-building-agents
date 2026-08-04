@@ -29,7 +29,7 @@ describe("integration discovery", () => {
     const markdown = integrationMarkdown(slack!);
     expect(markdown).toContain("## Install");
     expect(markdown).toContain("## Quick start");
-    expect(markdown).toContain("eve channels add slack");
+    expect(markdown).toContain("eve add channel/slack");
   });
 
   it("renders the Browserbase extension setup", () => {
@@ -88,5 +88,15 @@ describe("integration discovery", () => {
     expect(markdown).toContain("### MCP · User");
     expect(markdown).toContain("### OpenAPI · User");
     expect(markdown).toContain("agent/connections/notion.ts");
+  });
+
+  it("renders instrumentation providers with registry installation", () => {
+    const braintrust = getIntegration("braintrust");
+    expect(braintrust).toBeDefined();
+
+    const markdown = integrationMarkdown(braintrust!);
+    expect(markdown).toContain("eve add instrumentation/braintrust");
+    expect(markdown).toContain("agent/instrumentation.ts");
+    expect(markdown).toContain("BRAINTRUST_API_KEY");
   });
 });

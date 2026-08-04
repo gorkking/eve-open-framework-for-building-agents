@@ -3,10 +3,17 @@ import {
   getRegistryItems,
   searchRegistries,
   type RegistryConfig,
+  type RegistrySearchItem,
 } from "#compiled/shadcn-registry/index.js";
+import semver from "#compiled/semver/index.js";
+import { z } from "#compiled/zod/index.js";
+import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { createPrompter, type Prompter } from "#setup/prompter.js";
 import { isEveProject } from "#setup/scaffold/index.js";
+import { WizardCancelledError } from "#setup/step.js";
 
 import { NOT_AN_AGENT_MESSAGE } from "./preconditions.js";
+import type { runRegistrySetupCommand } from "./registry-setup-command.js";
 import { addRegistryMappings, readRegistryConfig } from "./registry-project.js";
 
 export interface RegistryCommandLogger {
@@ -15,11 +22,94 @@ export interface RegistryCommandLogger {
 }
 
 export interface AddCommandOptions {
+  skipInstall?: boolean;
   overwrite?: boolean;
+  skipSetup?: boolean;
+  yes?: boolean;
+  /** Suppresses the registry SDK's terminal-native progress output. */
+  silent?: boolean;
 }
 
-const OFFICIAL_REGISTRY = "https://eve.dev/r";
+/** Options shared by registry catalog commands. */
+export interface RegistryCommandOptions {
+  /** Emit the underlying registry result as JSON. */
+  json?: boolean;
+}
+
+type SetupCommandOptions = Pick<AddCommandOptions, "yes"> & {
+  prompter?: Prompter;
+  signal?: AbortSignal;
+};
+
+export interface RegistrySetupDependencies {
+  loadSetupCommandRunner(): Promise<typeof runRegistrySetupCommand>;
+}
+
+export interface AddCommandDependencies extends RegistrySetupDependencies {
+  createPrompter?: () => Prompter;
+  isInteractive?: () => boolean;
+}
+
+/** One discoverable item from an eve-compatible registry catalog. */
+export interface RegistryCatalogItem {
+  address: string;
+  name: string;
+  title?: string;
+  type?: string;
+  description?: string;
+  source: string;
+}
+
+/** Catalog items plus non-fatal failures from the registry sources queried. */
+export interface RegistryCatalogResult {
+  items: RegistryCatalogItem[];
+  total: number;
+  errors: Array<{ message: string; registry: string }>;
+}
+
+const defaultAddCommandDependencies: AddCommandDependencies = {
+  createPrompter,
+  isInteractive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
+  loadSetupCommandRunner: async () =>
+    (await import("./registry-setup-command.js")).runRegistrySetupCommand,
+};
+
+const DEFAULT_OFFICIAL_REGISTRY_URL = "https://eve.dev/r";
+
+/**
+ * Resolves the official registry URL, honoring the explicit development trust override.
+ *
+ * The override makes its registry eligible to supply setup commands, so it must be
+ * configured in the process environment rather than project configuration.
+ */
+export function resolveOfficialRegistryUrl(
+  configured = process.env.EVE_DEV_OFFICIAL_REGISTRY_URL,
+): string {
+  if (configured === undefined) return DEFAULT_OFFICIAL_REGISTRY_URL;
+
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new Error("EVE_DEV_OFFICIAL_REGISTRY_URL must be an HTTP(S) URL.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("EVE_DEV_OFFICIAL_REGISTRY_URL must be an HTTP(S) URL.");
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new Error("EVE_DEV_OFFICIAL_REGISTRY_URL must not include credentials.");
+  }
+  if (url.search !== "" || url.hash !== "") {
+    throw new Error("EVE_DEV_OFFICIAL_REGISTRY_URL must not include a query or fragment.");
+  }
+
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString().replace(/\/$/, "");
+}
+
+const OFFICIAL_REGISTRY = resolveOfficialRegistryUrl();
 const OFFICIAL_CATALOG = `${OFFICIAL_REGISTRY}/registry.json`;
+const CATALOG_PAGE_SIZE = 100;
 
 function isRegistryAddress(value: string): boolean {
   return value.startsWith("@") || /^https?:\/\//.test(value);
@@ -27,6 +117,69 @@ function isRegistryAddress(value: string): boolean {
 
 function itemAddress(item: string): string {
   return isRegistryAddress(item) ? item : `${OFFICIAL_REGISTRY}/${item}.json`;
+}
+
+/** Installs an official registry item without running its declared setup command. */
+export async function installOfficialRegistryItem(
+  appRoot: string,
+  item: string,
+  options: AddCommandOptions = {},
+): Promise<void> {
+  const config = await readRegistryConfig(appRoot);
+  await addRegistryItems([itemAddress(item)], {
+    config,
+    cwd: appRoot,
+    overwrite: options.overwrite,
+  });
+}
+
+const EveRegistryItemMetadataSchema = z.object({
+  meta: z
+    .object({
+      eve: z
+        .object({
+          requires: z.string().optional(),
+          setup: z
+            .object({
+              package: z.string().min(1),
+              bin: z.string().min(1),
+              args: z.array(z.string()).default([]),
+            })
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
+function eveMetadataFromRegistryItem(item: unknown) {
+  return EveRegistryItemMetadataSchema.parse(item).meta?.eve;
+}
+
+function setupResumeCommand(item: string): string {
+  const argument = /^[\w@./:-]+$/.test(item) ? item : `'${item.replaceAll("'", `'\\''`)}'`;
+  return `eve add ${argument} --skip-install`;
+}
+
+function setupReminder(item: string, outcome: "cancelled" | "skipped"): string {
+  const action = outcome === "cancelled" ? "Setup cancelled." : "Setup skipped.";
+  return `${action} Run \`${setupResumeCommand(item)}\` when you're ready.`;
+}
+
+function assertCompatibleEveVersion(requiredVersion: string | undefined): void {
+  if (requiredVersion === undefined) return;
+  const installedVersion = resolveInstalledPackageInfo().version;
+  if (semver.validRange(requiredVersion) === null) {
+    throw new Error(`Registry item has an invalid eve version requirement: ${requiredVersion}.`);
+  }
+  if (semver.subset(installedVersion, requiredVersion)) return;
+  throw new Error(
+    `This registry item requires eve ${requiredVersion}, but this project is using eve ${installedVersion}. Upgrade eve and run the command again.`,
+  );
+}
+
+function isOfficialItemAddress(address: string): boolean {
+  return address.startsWith(`${OFFICIAL_REGISTRY}/`);
 }
 
 function errorMessage(error: unknown): string {
@@ -64,15 +217,86 @@ function validateRegistrySource(source: string | undefined): void {
 
 function printSearchResults(
   logger: RegistryCommandLogger,
-  items: Array<{ addCommandArgument: string; description?: string }>,
+  result: Awaited<ReturnType<typeof searchRegistries>>,
+  options: { query: string | undefined; sources: string[]; json?: boolean },
 ): void {
-  if (items.length === 0) {
+  if (options.json) {
+    logger.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (result.items.length === 0) {
     logger.log("No registry items found.");
     return;
   }
-  for (const item of items) {
-    logger.log(`${item.addCommandArgument}${item.description ? ` — ${item.description}` : ""}`);
+
+  const count = `${result.pagination.total} item${result.pagination.total === 1 ? "" : "s"}`;
+  const query = options.query === undefined ? "" : ` matching "${options.query}"`;
+  const registries = `${options.sources.length} registr${options.sources.length === 1 ? "y" : "ies"}`;
+  logger.log(`Found ${count}${query} in ${registries}`);
+  logger.log("");
+
+  for (const item of result.items) {
+    const address = item.registry === OFFICIAL_CATALOG ? item.name : item.addCommandArgument;
+    const description =
+      options.query === undefined && item.description ? ` — ${item.description}` : "";
+    logger.log(`${address}${description}`);
   }
+}
+
+async function searchRegistryCatalog(
+  appRoot: string,
+  options: { query?: string; source?: string },
+) {
+  validateRegistrySource(options.source);
+  const config = await readRegistryConfig(appRoot);
+  const sources = options.source
+    ? [options.source]
+    : [OFFICIAL_CATALOG, ...configuredRegistrySources(config)];
+  const result = await searchRegistries(sources, {
+    config,
+    continueOnError: sources.length > 1,
+    limit: CATALOG_PAGE_SIZE,
+    query: options.query,
+  });
+  return { config, result, sources };
+}
+
+function registryManifestTitle(manifest: unknown): string | undefined {
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest))
+    return undefined;
+  const title = (manifest as { title?: unknown }).title;
+  return typeof title === "string" ? title : undefined;
+}
+
+/** Browses all configured catalogs, or one namespace or URL source. */
+export async function browseRegistryCatalog(
+  appRoot: string,
+  options: { query?: string; source?: string } = {},
+): Promise<RegistryCatalogResult> {
+  const { config, result } = await searchRegistryCatalog(appRoot, options);
+  const manifests = await Promise.all(
+    result.items.map(async (item) => {
+      const [manifest] = await getRegistryItems([item.addCommandArgument], { config });
+      return manifest;
+    }),
+  );
+  return {
+    items: result.items.map((item: RegistrySearchItem, index) => {
+      const catalogItem: RegistryCatalogItem = {
+        address: item.registry === OFFICIAL_CATALOG ? item.name : item.addCommandArgument,
+        name: item.name,
+        source: item.registry === OFFICIAL_CATALOG ? "Vercel" : item.registry,
+      };
+      const title = registryManifestTitle(manifests[index]);
+      if (title !== undefined) catalogItem.title = title;
+      if (item.type !== undefined) catalogItem.type = item.type;
+      if (item.description !== undefined) catalogItem.description = item.description;
+      return catalogItem;
+    }),
+    total: result.pagination.total,
+    errors: result.errors ?? [],
+  };
 }
 
 async function browseRegistryItems(
@@ -80,18 +304,12 @@ async function browseRegistryItems(
   appRoot: string,
   query: string | undefined,
   source: string | undefined,
+  options: RegistryCommandOptions = {},
 ): Promise<void> {
-  validateRegistrySource(source);
-  const config = await readRegistryConfig(appRoot);
-  const sources = source ? [source] : [OFFICIAL_CATALOG, ...configuredRegistrySources(config)];
-  const result = await searchRegistries(sources, {
-    config,
-    continueOnError: sources.length > 1,
-    query,
-  });
+  const { result, sources } = await searchRegistryCatalog(appRoot, { query, source });
   const errors = result.errors ?? [];
-  if (errors.length < sources.length) {
-    printSearchResults(logger, result.items);
+  if (options.json || errors.length < sources.length) {
+    printSearchResults(logger, result, { ...options, query, sources });
   }
   for (const error of errors) {
     logger.error(`${error.registry}: ${error.message}`);
@@ -99,16 +317,140 @@ async function browseRegistryItems(
   if (errors.length > 0) process.exitCode = 1;
 }
 
+/** Resolves one official, configured, or URL-addressed item manifest. */
+export async function getRegistryItemManifest(appRoot: string, item: string): Promise<unknown> {
+  const config = await readRegistryConfig(appRoot);
+  const items = await getRegistryItems([itemAddress(item)], { config });
+  return items.length === 1 ? items[0] : items;
+}
+
+async function runDeclaredSetup(
+  logger: RegistryCommandLogger,
+  appRoot: string,
+  item: string,
+  setup: NonNullable<ReturnType<typeof eveMetadataFromRegistryItem>>["setup"],
+  options: SetupCommandOptions,
+  dependencies: RegistrySetupDependencies,
+): Promise<void> {
+  if (setup === undefined) return;
+  const runSetupCommand = await dependencies.loadSetupCommandRunner();
+  try {
+    const prompter = options.prompter ?? createPrompter();
+    const result = await runSetupCommand(
+      appRoot,
+      { ...setup, args: [...setup.args, ...(options.yes ? ["--yes"] : [])] },
+      item,
+      { prompter, signal: options.signal },
+    );
+    if (result.kind === "cancelled") {
+      logger.log(setupReminder(item, "cancelled"));
+    } else {
+      for (const line of result.output) logger.log(line);
+    }
+  } catch (error) {
+    throw new Error(`${errorMessage(error)} Try again with \`${setupResumeCommand(item)}\`.`);
+  }
+}
+
+/** Installs an official, configured, or URL-addressed registry item. */
+export async function installRegistryItem(
+  appRoot: string,
+  item: string,
+  options: AddCommandOptions & { prompter?: Prompter; signal?: AbortSignal } = {},
+  dependencies: AddCommandDependencies = defaultAddCommandDependencies,
+): Promise<readonly string[]> {
+  let failure: string | undefined;
+  const output: string[] = [];
+  const logger: RegistryCommandLogger = {
+    error: (message) => {
+      failure = message;
+    },
+    log: (message) => output.push(message),
+  };
+  const previousExitCode = process.exitCode;
+  await runAddCommand(logger, appRoot, item, { ...options, yes: true }, dependencies);
+  process.exitCode = previousExitCode;
+  if (failure !== undefined) throw new Error(failure);
+  return output;
+}
+
 /** Installs an official, configured, or URL-addressed registry item. */
 export async function runAddCommand(
   logger: RegistryCommandLogger,
   appRoot: string,
   item: string,
-  options: AddCommandOptions,
+  options: AddCommandOptions & { prompter?: Prompter; signal?: AbortSignal },
+  dependencies: AddCommandDependencies = defaultAddCommandDependencies,
 ): Promise<void> {
   await runRegistryAction(logger, appRoot, async () => {
     const config = await readRegistryConfig(appRoot);
-    await addRegistryItems([itemAddress(item)], { ...options, config, cwd: appRoot });
+    const address = itemAddress(item);
+    if (options.skipInstall === true) {
+      if (options.overwrite === true) {
+        throw new Error("--overwrite cannot be used with --skip-install.");
+      }
+      if (options.skipSetup === true) {
+        throw new Error("--skip-install cannot be used with --skip-setup.");
+      }
+      if (!isOfficialItemAddress(address)) {
+        throw new Error(
+          "Setup flows are currently supported only for official eve registry items.",
+        );
+      }
+    }
+    const [registryItem] = await getRegistryItems([address], { config });
+    const eveMetadata = isOfficialItemAddress(address)
+      ? eveMetadataFromRegistryItem(registryItem)
+      : undefined;
+    assertCompatibleEveVersion(eveMetadata?.requires);
+
+    if (options.skipInstall === true) {
+      if (eveMetadata?.setup === undefined) {
+        throw new Error(`Registry item "${item}" does not declare a setup flow.`);
+      }
+      await runDeclaredSetup(logger, appRoot, item, eveMetadata.setup, options, dependencies);
+      return;
+    }
+
+    await addRegistryItems([address], {
+      config,
+      cwd: appRoot,
+      overwrite: options.overwrite,
+      silent: options.silent,
+    });
+    if (eveMetadata?.setup === undefined) return;
+
+    const isInteractive =
+      dependencies.isInteractive?.() ?? defaultAddCommandDependencies.isInteractive!();
+    if (options.skipSetup === true || (!options.yes && !isInteractive)) {
+      logger.log(setupReminder(item, "skipped"));
+      return;
+    }
+
+    if (!options.yes) {
+      try {
+        const prompter =
+          dependencies.createPrompter?.() ?? defaultAddCommandDependencies.createPrompter!();
+        const shouldRun = await prompter.select({
+          message: `Set up ${item} now?`,
+          initialValue: "yes",
+          options: [
+            { value: "yes", label: "Yes" },
+            { value: "no", label: "No" },
+          ],
+        });
+        if (shouldRun === "no") {
+          logger.log(setupReminder(item, "skipped"));
+          return;
+        }
+      } catch (error) {
+        if (!(error instanceof WizardCancelledError)) throw error;
+        logger.log(setupReminder(item, "cancelled"));
+        return;
+      }
+    }
+
+    await runDeclaredSetup(logger, appRoot, item, eveMetadata.setup, options, dependencies);
   });
 }
 
@@ -137,9 +479,10 @@ export async function runRegistryListCommand(
   logger: RegistryCommandLogger,
   appRoot: string,
   source?: string,
+  options: RegistryCommandOptions = {},
 ): Promise<void> {
   await runRegistryAction(logger, appRoot, () =>
-    browseRegistryItems(logger, appRoot, undefined, source),
+    browseRegistryItems(logger, appRoot, undefined, source, options),
   );
 }
 
@@ -149,9 +492,10 @@ export async function runRegistrySearchCommand(
   appRoot: string,
   query: string,
   source?: string,
+  options: RegistryCommandOptions = {},
 ): Promise<void> {
   await runRegistryAction(logger, appRoot, () =>
-    browseRegistryItems(logger, appRoot, query, source),
+    browseRegistryItems(logger, appRoot, query, source, options),
   );
 }
 

@@ -4,12 +4,12 @@ import type { ChannelAdapter } from "#channel/adapter.js";
 import { createSendFn } from "#channel/send.js";
 import type { RunHandle, Runtime } from "#channel/types.js";
 import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
-import type { HandleMessageStreamEvent } from "#protocol/message.js";
+import type { MessageStreamEvent } from "#protocol/message.js";
 
 function createMockRunHandle(): RunHandle {
   return {
     continuationToken: "test:token",
-    events: new ReadableStream<HandleMessageStreamEvent>(),
+    events: new ReadableStream<MessageStreamEvent>(),
     sessionId: "mock-session-id",
   };
 }
@@ -17,10 +17,12 @@ function createMockRunHandle(): RunHandle {
 function createRuntime(deliverError: unknown): Runtime {
   return {
     cancelTurn: vi.fn(),
+    clearSession: vi.fn(),
+    compactSession: vi.fn(),
     deliver: vi.fn().mockRejectedValue(deliverError),
     resolveSession: vi.fn(),
     run: vi.fn().mockResolvedValue(createMockRunHandle()),
-    getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+    getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
     getStreamTailIndex: vi.fn().mockResolvedValue(-1),
     terminateSession: vi.fn(),
   };
@@ -81,10 +83,12 @@ describe("createSendFn", () => {
     const context = ["thread background"];
     const deliverRuntime: Runtime = {
       cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
-      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
       getStreamTailIndex: vi.fn().mockResolvedValue(-1),
       terminateSession: vi.fn(),
     };
@@ -116,10 +120,12 @@ describe("createSendFn", () => {
   it("adds channel request ids to deliver and run inputs when provided", async () => {
     const deliverRuntime: Runtime = {
       cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
-      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
       getStreamTailIndex: vi.fn().mockResolvedValue(-1),
       terminateSession: vi.fn(),
     };
@@ -146,10 +152,12 @@ describe("createSendFn", () => {
     } as const;
     const deliverRuntime: Runtime = {
       cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
-      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<HandleMessageStreamEvent>()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
       getStreamTailIndex: vi.fn().mockResolvedValue(-1),
       terminateSession: vi.fn(),
     };
