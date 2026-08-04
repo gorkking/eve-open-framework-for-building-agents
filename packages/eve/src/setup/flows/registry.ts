@@ -13,6 +13,7 @@ const ADDRESS_PREFIX = "address:";
 const BACK = "action:back";
 const DONE = "action:done";
 const ALL = "category:all";
+const SKILLS = "category:skills";
 
 type RegistryRow = string;
 type RegistryCategory = "channel" | "connection" | "extension" | "instrumentation";
@@ -56,6 +57,7 @@ const REGISTRY_CATEGORIES: ReadonlyArray<{
 
 export interface RegistryFlowDeps {
   browseRegistryCatalog: (typeof import("#cli/commands/registry.js"))["browseRegistryCatalog"];
+  browseSkillsCatalog: (typeof import("#cli/commands/registry.js"))["browseSkillsCatalog"];
   getRegistryItemManifest: (typeof import("#cli/commands/registry.js"))["getRegistryItemManifest"];
   installRegistryItem: (typeof import("#cli/commands/registry.js"))["installRegistryItem"];
 }
@@ -88,6 +90,11 @@ function categoryRows(): SelectOption<RegistryRow>[] {
       label: category.label,
       hint: category.hint,
     })),
+    {
+      value: SKILLS,
+      label: "Skills",
+      hint: "Search skills.sh",
+    },
     {
       value: ALL,
       label: "Browse all",
@@ -247,6 +254,7 @@ export async function runRegistryFlow(input: {
   let loaded: typeof import("#cli/commands/registry.js") | undefined;
   if (
     input.deps?.browseRegistryCatalog === undefined ||
+    input.deps.browseSkillsCatalog === undefined ||
     input.deps.getRegistryItemManifest === undefined ||
     input.deps.installRegistryItem === undefined
   ) {
@@ -254,6 +262,7 @@ export async function runRegistryFlow(input: {
   }
   const deps: RegistryFlowDeps = {
     browseRegistryCatalog: input.deps?.browseRegistryCatalog ?? loaded!.browseRegistryCatalog,
+    browseSkillsCatalog: input.deps?.browseSkillsCatalog ?? loaded!.browseSkillsCatalog,
     getRegistryItemManifest: input.deps?.getRegistryItemManifest ?? loaded!.getRegistryItemManifest,
     installRegistryItem: input.deps?.installRegistryItem ?? loaded!.installRegistryItem,
   };
@@ -262,16 +271,6 @@ export async function runRegistryFlow(input: {
   try {
     while (true) {
       input.signal?.throwIfAborted();
-      const catalog = await withSpinner(input.prompter, "Loading registry…", () =>
-        deps.browseRegistryCatalog(input.appRoot),
-      );
-      notices = [
-        ...notices,
-        ...catalog.errors.map((error) => ({
-          tone: "warning" as const,
-          text: `${error.registry}: ${error.message}`,
-        })),
-      ];
       const selectedCategory = await input.prompter.select<RegistryRow>({
         message: "Add an integration",
         options: categoryRows(),
@@ -281,19 +280,55 @@ export async function runRegistryFlow(input: {
       notices = [];
       if (selectedCategory === DONE) return { kind: "done", addedItems: [] };
 
-      const categoryItems = itemsForCategory(catalog.items, selectedCategory);
+      const catalog =
+        selectedCategory === SKILLS
+          ? undefined
+          : await withSpinner(input.prompter, "Loading registry…", () =>
+              deps.browseRegistryCatalog(input.appRoot),
+            );
+      let categoryItems: readonly RegistryCatalogItem[] =
+        selectedCategory === SKILLS ? [] : itemsForCategory(catalog!.items, selectedCategory);
       const rows = itemRows(categoryItems);
       rows.push({ value: BACK, label: "Back", trailingAction: true });
       const selected = await input.prompter.select<RegistryRow>({
-        message: categoryFor(selectedCategory)?.browseLabel ?? "Browse integrations",
+        message:
+          selectedCategory === SKILLS
+            ? "Skills from skills.sh"
+            : (categoryFor(selectedCategory)?.browseLabel ?? "Browse integrations"),
         options: rows,
         search: true,
-        placeholder: "Search integrations or enter an item address",
-        searchAction: {
-          label: (query) => `Add “${query}”`,
-          value: (query) => `${ADDRESS_PREFIX}${query.trim()}`,
-        },
+        ...(selectedCategory === SKILLS
+          ? {
+              placeholder: "What skill do you need?",
+              searchAction: {
+                label: (query: string) => `Search skills.sh for “${query}”`,
+                value: (query: string) => `${ADDRESS_PREFIX}${query.trim()}`,
+                load: async (query: string) => {
+                  categoryItems = (
+                    await withSpinner(input.prompter, "Searching skills.sh…", () =>
+                      deps.browseSkillsCatalog(query),
+                    )
+                  ).items;
+                  return [
+                    ...itemRows(categoryItems),
+                    { value: BACK, label: "Back", trailingAction: true },
+                  ];
+                },
+              },
+            }
+          : {
+              placeholder: "Search integrations or enter an item address",
+              searchAction: {
+                label: (query: string) => `Add “${query}”`,
+                value: (query: string) => `${ADDRESS_PREFIX}${query.trim()}`,
+              },
+            }),
         hintLayout: "inline",
+        notices:
+          catalog?.errors.map((error) => ({
+            tone: "warning" as const,
+            text: `${error.registry}: ${error.message}`,
+          })) ?? [],
       });
       if (selected === BACK) continue;
       const resolved = selected.startsWith(ADDRESS_PREFIX)

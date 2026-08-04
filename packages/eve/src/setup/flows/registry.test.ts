@@ -21,6 +21,19 @@ function deps(overrides: Partial<RegistryFlowDeps> = {}): RegistryFlowDeps {
       total: 1,
       errors: [],
     })),
+    browseSkillsCatalog: vi.fn(async () => ({
+      items: [
+        {
+          address: "https://www.skills.sh/r/example/react?agent=eve",
+          name: "example/react",
+          title: "React",
+          description: "React guidance",
+          source: "skills.sh",
+        },
+      ],
+      total: 1,
+      errors: [],
+    })),
     getRegistryItemManifest: vi.fn(async () => ({
       name: "extension/agent-browser",
       title: "agent-browser",
@@ -106,6 +119,42 @@ describe("runRegistryFlow", () => {
         { value: "back", label: "Back" },
       ],
     });
+  });
+
+  it("dynamically searches skills.sh in the picker", async () => {
+    const answers = ["category:skills", "item:0", "add"];
+    const prompts: unknown[] = [];
+    const fake = createFakePrompter({
+      single: async (options) => {
+        prompts.push(options);
+        if (answers[0] === "item:0") {
+          await (options.searchAction as { load(query: string): Promise<unknown> }).load("react");
+        }
+        return answers.shift()!;
+      },
+    });
+    const flowDeps = deps();
+
+    await expect(
+      runRegistryFlow({ appRoot: APP_ROOT, prompter: fake.prompter, deps: flowDeps }),
+    ).resolves.toEqual({
+      kind: "done",
+      addedItems: ["https://www.skills.sh/r/example/react?agent=eve"],
+    });
+
+    const searchAction = (
+      prompts[1] as {
+        searchAction: { label(query: string): string; load(query: string): Promise<unknown> };
+      }
+    ).searchAction;
+    expect(searchAction.label("react")).toBe("Search skills.sh for “react”");
+    expect(flowDeps.browseSkillsCatalog).toHaveBeenCalledWith("react");
+    expect(flowDeps.browseRegistryCatalog).not.toHaveBeenCalled();
+    expect(flowDeps.installRegistryItem).toHaveBeenCalledWith(
+      APP_ROOT,
+      "https://www.skills.sh/r/example/react?agent=eve",
+      expect.objectContaining({ silent: true, prompter: fake.prompter }),
+    );
   });
 
   it("uses the registry title when labeling an item", async () => {

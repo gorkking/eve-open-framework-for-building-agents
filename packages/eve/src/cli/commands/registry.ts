@@ -121,6 +121,7 @@ const SKILLS_REGISTRY = "@skills";
 const SKILLS_REGISTRY_URL = "https://www.skills.sh/r/{name}?agent=eve";
 const CATALOG_PAGE_SIZE = 100;
 const DEFAULT_SEARCH_LIMIT = 10;
+const SKILLS_PAGE_SIZE = 20;
 
 function isRegistryAddress(value: string): boolean {
   return value.startsWith("@") || /^https?:\/\//.test(value);
@@ -410,6 +411,11 @@ function registryManifestTitle(manifest: unknown): string | undefined {
   return typeof title === "string" ? title : undefined;
 }
 
+function registrySearchItemTitle(item: RegistrySearchItem): string | undefined {
+  const title = (item as RegistrySearchItem & { title?: unknown }).title;
+  return typeof title === "string" ? title : undefined;
+}
+
 /** Browses all configured catalogs, or one namespace or URL source. */
 export async function browseRegistryCatalog(
   appRoot: string,
@@ -439,6 +445,32 @@ export async function browseRegistryCatalog(
     errors: result.errors ?? [],
   };
 }
+
+/** Searches skills.sh for skills targeted to this eve project. */
+export async function browseSkillsCatalog(query: string): Promise<RegistryCatalogResult> {
+  const result = await searchRegistries([SKILLS_REGISTRY], {
+    config: withBuiltInRegistries({}),
+    limit: SKILLS_PAGE_SIZE,
+    query,
+  });
+  return {
+    items: result.items.map((item) => {
+      const catalogItem: RegistryCatalogItem = {
+        address: item.addCommandArgument,
+        name: item.name,
+        source: "skills.sh",
+      };
+      const title = registrySearchItemTitle(item);
+      if (title !== undefined) catalogItem.title = title;
+      if (item.type !== undefined) catalogItem.type = item.type;
+      if (item.description !== undefined) catalogItem.description = item.description;
+      return catalogItem;
+    }),
+    total: result.pagination.total,
+    errors: result.errors ?? [],
+  };
+}
+
 
 async function browseRegistryItems(
   logger: RegistryCommandLogger,
