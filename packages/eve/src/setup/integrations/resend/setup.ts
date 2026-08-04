@@ -24,7 +24,6 @@ import {
   suggestResendFromAddress,
   validateResendApiKey,
 } from "./api.js";
-import { provisionResendConnector } from "./connect.js";
 import {
   authorizeResendMarketplaceSetup,
   createResendApiKey,
@@ -54,7 +53,6 @@ export interface ResendSetupDeps {
   listMarketplaceResources: typeof listResendMarketplaceResources;
   listDomains: typeof listVercelDomains;
   openUrl: typeof openUrl;
-  provisionConnector: typeof provisionResendConnector;
   provisionMarketplaceResource: typeof provisionResendMarketplaceResource;
   connectMarketplaceResource: typeof connectResendMarketplaceResource;
   authorizeMarketplaceSetup: typeof authorizeResendMarketplaceSetup;
@@ -80,7 +78,6 @@ const defaultDeps: ResendSetupDeps = {
   listMarketplaceResources: listResendMarketplaceResources,
   listDomains: listVercelDomains,
   openUrl,
-  provisionConnector: provisionResendConnector,
   provisionMarketplaceResource: provisionResendMarketplaceResource,
   connectMarketplaceResource: connectResendMarketplaceResource,
   authorizeMarketplaceSetup: authorizeResendMarketplaceSetup,
@@ -99,22 +96,10 @@ function validateEmail(value: string): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) ? null : "Enter a complete email address.";
 }
 
-function channelTemplate(input: {
-  apiKey: string;
-  connectorUid?: string;
-  fromAddress: string;
-  fromName: string;
-}): string {
-  const apiKey = input.connectorUid
-    ? `connectResendApiKey(${JSON.stringify(input.connectorUid)})`
-    : `() => {
-        const apiKey = process.env.RESEND_API_KEY;
-        if (!apiKey) throw new Error("RESEND_API_KEY is required.");
-        return Promise.resolve(apiKey);
-      }`;
+function channelTemplate(input: { fromAddress: string; fromName: string }): string {
   return `import { createMemoryState } from "@chat-adapter/state-memory";
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
-${input.connectorUid ? 'import { connectResendApiKey } from "@vercel/connect/eve";\n' : ""}import type { Message, Thread } from "chat";
+import type { Message, Thread } from "chat";
 import { chatSdkChannel, messageToUserContent } from "eve/channels/chat-sdk";
 import { captureResendReplyContext, restoreResendReplyContext } from "eve/channels/resend";
 
@@ -122,7 +107,11 @@ export const { bot, channel, send } = chatSdkChannel({
   userName: ${JSON.stringify(input.fromName || "Eve")},
   adapters: {
     resend: createResendAdapter({
-      apiKey: ${apiKey},
+      apiKey: () => {
+        const apiKey = process.env.RESEND_API_KEY;
+        if (!apiKey) throw new Error("RESEND_API_KEY is required.");
+        return Promise.resolve(apiKey);
+      },
       fromAddress: ${JSON.stringify(input.fromAddress)},
       fromName: ${JSON.stringify(input.fromName || "Eve")},
     }),
@@ -332,7 +321,7 @@ async function setupMarketplace(
   );
   await deps.writeTextFile(
     join(context.appRoot, "agent/channels/resend.ts"),
-    channelTemplate({ apiKey: "", fromAddress: fromAddress.trim(), fromName: fromName.trim() }),
+    channelTemplate({ fromAddress: fromAddress.trim(), fromName: fromName.trim() }),
     { force: context.force },
   );
   const deployed = await deps.deploy({
@@ -514,7 +503,7 @@ export async function setupResend(
       });
       await deps.writeTextFile(
         join(context.appRoot, "agent/channels/resend.ts"),
-        channelTemplate({ apiKey, fromAddress, fromName }),
+        channelTemplate({ fromAddress, fromName }),
         { force: context.force },
       );
       context.ui.nextSteps([
@@ -524,23 +513,25 @@ export async function setupResend(
       return { kind: "done" };
     }
 
-    const project = await deps.ensureVercelProject({
+    await deps.ensureVercelProject({
       appRoot: context.appRoot,
       prompter: context.ui.prompter,
       signal: context.signal,
     });
-    const connector = await deps.provisionConnector({
-      apiKey,
-      log: context.ui.prompter.log,
-      project,
-      projectRoot: context.appRoot,
-      slug: `resend-${await deps.deriveConnectorSlug(context.appRoot)}`,
-      signal: context.signal,
-    });
     try {
+      const savedApiKey = await deps.runVercel(
+        ["env", "add", "RESEND_API_KEY", "production", "--force", "--yes"],
+        {
+          cwd: context.appRoot,
+          nonInteractive: true,
+          signal: context.signal,
+          stdin: apiKey,
+        },
+      );
+      if (!savedApiKey) throw new Error("Could not save RESEND_API_KEY to Vercel production.");
       await deps.writeTextFile(
         join(context.appRoot, "agent/channels/resend.ts"),
-        channelTemplate({ apiKey, connectorUid: connector.uid, fromAddress, fromName }),
+        channelTemplate({ fromAddress, fromName }),
         { force: context.force },
       );
       const deployed = await deps.deploy({
@@ -551,7 +542,7 @@ export async function setupResend(
       });
       if (deployed.kind !== "deployed" || deployed.productionUrl === undefined) {
         throw new Error(
-          `Connector ${connector.uid} is ready, but setup could not determine the production URL. Run \`vercel deploy --prod\`, then re-run Resend setup.`,
+          "The Resend credential is ready, but setup could not determine the production URL. Run `vercel deploy --prod`, then rerun Resend setup.",
         );
       }
       const endpoint = new URL("/eve/v1/resend", deployed.productionUrl).href;
@@ -602,7 +593,7 @@ export async function setupResend(
       }
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `${reason}\nResend connector ${connector.uid} may persist. Inspect it with \`vercel connect list\` and re-run \`eve add channel/resend\` to recover.`,
+        `${reason}\nThe generated Resend API key may persist in the project's production environment. Rerun \`eve add channel/resend\` to recover.`,
       );
     }
   } catch (error) {

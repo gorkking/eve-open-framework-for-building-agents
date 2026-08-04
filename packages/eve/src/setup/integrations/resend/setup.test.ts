@@ -33,10 +33,6 @@ function deps(): ResendSetupDeps {
     listMarketplaceResources: vi.fn(async () => []),
     listDomains: vi.fn(async () => ["example.com"]),
     openUrl: vi.fn(),
-    provisionConnector: vi.fn(async () => ({
-      id: "scl_resend",
-      uid: "api-key/resend-agent",
-    })),
     provisionMarketplaceResource: vi.fn(async (input) => ({
       id: "store_resend",
       externalResourceId: input.domain,
@@ -344,8 +340,9 @@ describe("Resend setup", () => {
       expect.objectContaining({ accessToken: "oauth_marketplace" }),
     );
     expect(effects.validateApiKey).toHaveBeenCalledWith("re_generated", undefined);
-    expect(effects.provisionConnector).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: "re_generated" }),
+    expect(effects.runVercel).toHaveBeenCalledWith(
+      ["env", "add", "RESEND_API_KEY", "production", "--force", "--yes"],
+      expect.objectContaining({ stdin: "re_generated" }),
     );
   });
 
@@ -354,10 +351,6 @@ describe("Resend setup", () => {
     const events: string[] = [];
     vi.mocked(effects.validateApiKey).mockImplementation(async (key) => {
       events.push(`validate:${key}`);
-    });
-    vi.mocked(effects.provisionConnector).mockImplementation(async (input) => {
-      events.push(`connector:${input.apiKey}`);
-      return { id: "scl_resend", uid: "api-key/resend-agent" };
     });
     vi.mocked(effects.deploy).mockReset();
     vi.mocked(effects.deploy).mockImplementation(async () => {
@@ -382,7 +375,7 @@ describe("Resend setup", () => {
     await expect(setupResend(setup.value, effects)).resolves.toMatchObject({ kind: "done" });
     expect(events).toEqual([
       "validate:re_secret",
-      "connector:re_secret",
+      "env:re_secret",
       "deploy",
       "webhook:re_secret",
       "env:whsec_secret",
@@ -390,14 +383,14 @@ describe("Resend setup", () => {
     ]);
     expect(effects.writeTextFile).toHaveBeenCalledWith(
       "/project/agent/channels/resend.ts",
-      expect.stringContaining('connectResendApiKey("api-key/resend-agent")'),
+      expect.stringContaining("process.env.RESEND_API_KEY"),
       { force: undefined },
     );
   });
 
   it("compensates a newly created webhook when saving the secret fails", async () => {
     const effects = deps();
-    vi.mocked(effects.runVercel).mockResolvedValue(false);
+    vi.mocked(effects.runVercel).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     vi.mocked(effects.createApiKey).mockResolvedValue({ id: "key_resend", token: "re_secret" });
     const setup = context(effects);
     await expect(setupResend(setup.value, effects)).rejects.toThrow("may persist");
@@ -411,7 +404,6 @@ describe("Resend setup", () => {
     expect(effects.appendEnv).toHaveBeenCalledWith("/project/.env.local", {
       RESEND_API_KEY: "re_secret",
     });
-    expect(effects.provisionConnector).not.toHaveBeenCalled();
     expect(effects.writeTextFile).toHaveBeenCalledWith(
       "/project/agent/channels/resend.ts",
       expect.stringContaining("process.env.RESEND_API_KEY"),
