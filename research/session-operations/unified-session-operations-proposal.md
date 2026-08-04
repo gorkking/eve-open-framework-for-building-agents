@@ -115,6 +115,11 @@ session that issued the request can consume them.
 `reset` retires the target and releases its aliases before returning. Awaited
 commands sent through the same address preserve commit order.
 
+A live session returns `accepted` for `cancel` even when it is already parked;
+the driver consumes that late or duplicate command as a no-op. The stream is
+authoritative for whether a turn emitted `turn.cancelled`. `no_active_turn`
+means the session or channel address is unknown or terminal.
+
 ## Authoring shapes by surface
 
 ### Custom channel route
@@ -465,5 +470,5 @@ The migration must prove:
 - Built-in channels, custom routes, authored `receive` functions, Slack helpers,
   clients, TUI, fixtures, and docs use the final shapes.
 - E2E creates a session, sends a follow-up, cancels, compacts, clears, sends
-  successfully afterward, resets, rejects the retired ID, and explicitly
-  creates a replacement.
+  successfully afterward, proves a late accepted cancel is a no-op, resets,
+  rejects the retired ID, and explicitly creates a replacement.
