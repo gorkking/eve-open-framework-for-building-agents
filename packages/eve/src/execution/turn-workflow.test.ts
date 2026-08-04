@@ -648,7 +648,9 @@ describe("turnWorkflow", () => {
   });
 
   it("durably refreshes channel status while retaining one pending inbox read", async () => {
-    const pendingState = createSessionState();
+    const pendingState = withRunningChildren(createSessionState(), [
+      { callId: "call-1", sessionId: "child-session" },
+    ]);
     let deliverResult: ((value: IteratorResult<unknown>) => void) | undefined;
     const next = vi.fn(
       () =>
