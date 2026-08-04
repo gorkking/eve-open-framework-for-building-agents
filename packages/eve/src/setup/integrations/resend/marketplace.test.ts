@@ -16,6 +16,19 @@ function capture(stdout: unknown): ResendMarketplaceDeps["captureVercel"] {
   }));
 }
 
+function deps(input: {
+  captureVercel?: ResendMarketplaceDeps["captureVercel"];
+  runVercelCaptureStdout?: ResendMarketplaceDeps["runVercelCaptureStdout"];
+  delay?: ResendMarketplaceDeps["delay"];
+}): ResendMarketplaceDeps {
+  return {
+    captureVercel: input.captureVercel ?? capture({ stores: [] }),
+    runVercelCaptureStdout:
+      input.runVercelCaptureStdout ?? vi.fn(async () => ({ ok: false, stdout: "" })),
+    delay: input.delay ?? vi.fn(async () => {}),
+  };
+}
+
 describe("Resend Marketplace", () => {
   it("lists only Resend Marketplace resources", async () => {
     const captureVercel = capture({
@@ -87,7 +100,7 @@ describe("Resend Marketplace", () => {
       log: createFakePrompter().prompter.log,
       projectRoot: "/project",
       project: { orgId: "team", projectId: "project" },
-      deps: { runVercelCaptureStdout },
+      deps: deps({ runVercelCaptureStdout }),
     });
 
     expect(runVercelCaptureStdout).toHaveBeenCalledWith(
@@ -107,6 +120,43 @@ describe("Resend Marketplace", () => {
       ],
       expect.objectContaining({ cwd: "/project" }),
     );
+  });
+
+  it("polls for the resource after Marketplace hands setup to the browser", async () => {
+    const runVercelCaptureStdout = vi.fn(async () => ({ ok: false, stdout: "" }));
+    const captureVercel = vi
+      .fn<ResendMarketplaceDeps["captureVercel"]>()
+      .mockResolvedValueOnce({ ok: true, stdout: JSON.stringify({ stores: [] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: JSON.stringify({
+          stores: [
+            {
+              id: "store_resend",
+              externalResourceId: "provider-id",
+              name: "resend-agent",
+              metadata: { domain: "mail.example.com" },
+              product: { slug: "resend-email" },
+            },
+          ],
+        }),
+      });
+    const delay = vi.fn(async () => {});
+    const log = createFakePrompter().prompter.log;
+
+    await expect(
+      provisionResendMarketplaceResource({
+        domain: "mail.example.com",
+        log,
+        projectRoot: "/project",
+        project: { orgId: "team", projectId: "project" },
+        deps: deps({ captureVercel, runVercelCaptureStdout, delay }),
+        pollIntervalMs: 1,
+        pollTimeoutMs: 1_000,
+      }),
+    ).resolves.toMatchObject({ id: "store_resend" });
+    expect(delay).toHaveBeenCalledOnce();
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining("safely stop waiting"));
   });
 
   it("does not reconnect a resource already attached to the linked project", async () => {

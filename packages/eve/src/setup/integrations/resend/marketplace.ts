@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import { createPromptCommandOutput, type ChannelSetupLog, withPhase } from "#setup/cli/index.js";
 import type { VercelProjectReference } from "#setup/project-resolution.js";
 import { captureVercel, runVercelCaptureStdout } from "#setup/primitives/run-vercel.js";
@@ -43,9 +45,17 @@ export type ResendMarketplaceResource = z.infer<typeof ResourceSchema>;
 export interface ResendMarketplaceDeps {
   captureVercel: typeof captureVercel;
   runVercelCaptureStdout: typeof runVercelCaptureStdout;
+  delay(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
-const defaultDeps: ResendMarketplaceDeps = { captureVercel, runVercelCaptureStdout };
+const defaultDeps: ResendMarketplaceDeps = {
+  captureVercel,
+  runVercelCaptureStdout,
+  delay: (ms, signal) => delay(ms, undefined, { signal }),
+};
+
+const MARKETPLACE_POLL_INTERVAL_MS = 3_000;
+const MARKETPLACE_POLL_TIMEOUT_MS = 10 * 60_000;
 
 /** Lists existing Resend Marketplace resources without reading their secrets. */
 export async function listResendMarketplaceResources(input: {
@@ -113,7 +123,9 @@ export async function provisionResendMarketplaceResource(input: {
   projectRoot: string;
   project: VercelProjectReference;
   signal?: AbortSignal;
-  deps?: Pick<ResendMarketplaceDeps, "runVercelCaptureStdout">;
+  deps?: ResendMarketplaceDeps;
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
 }): Promise<ResendMarketplaceResource> {
   const deps = input.deps ?? defaultDeps;
   const result = await withPhase(input.log, "Setting up Resend in Vercel Marketplace...", () =>
@@ -140,8 +152,37 @@ export async function provisionResendMarketplaceResource(input: {
     ),
   );
   if (!result.ok) {
-    throw new Error(
-      "Resend Marketplace setup was not completed. Finish the browser flow, then rerun `eve add channel/resend`.",
+    input.log.info(
+      `Complete Resend setup in the browser for ${input.domain}. This can take several minutes.`,
+    );
+    input.log.info(
+      "You can safely stop waiting and rerun `eve add channel/resend`; setup will reuse the new Marketplace resource.",
+    );
+    const deadline = Date.now() + (input.pollTimeoutMs ?? MARKETPLACE_POLL_TIMEOUT_MS);
+    const pollIntervalMs = input.pollIntervalMs ?? MARKETPLACE_POLL_INTERVAL_MS;
+    return withPhase(
+      input.log,
+      "Waiting for Resend Marketplace setup in the browser...",
+      async () => {
+        while (Date.now() < deadline) {
+          input.signal?.throwIfAborted();
+          const resources = await listResendMarketplaceResources({
+            projectRoot: input.projectRoot,
+            project: input.project,
+            signal: input.signal,
+            deps,
+          });
+          const resource = resources.find(
+            (candidate) => candidate.metadata?.domain?.toLowerCase() === input.domain.toLowerCase(),
+          );
+          if (resource !== undefined) return resource;
+          await deps.delay(pollIntervalMs, input.signal);
+        }
+        throw new Error(
+          `Resend Marketplace setup is still pending for ${input.domain}. Finish it in the browser, then rerun \`eve add channel/resend\`; the existing resource will be reused.`,
+        );
+      },
+      { kind: "external-action", emphasis: "browser" },
     );
   }
   let body: unknown;
