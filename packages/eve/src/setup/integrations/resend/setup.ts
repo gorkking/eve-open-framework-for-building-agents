@@ -19,6 +19,7 @@ import {
   deleteResendWebhook,
   listResendWebhooks,
   sameResendEndpoint,
+  suggestResendFromAddress,
   validateResendApiKey,
 } from "./api.js";
 import { provisionResendConnector } from "./connect.js";
@@ -33,6 +34,7 @@ export interface ResendSetupDeps {
   listWebhooks: typeof listResendWebhooks;
   provisionConnector: typeof provisionResendConnector;
   runVercel: typeof runVercel;
+  suggestFromAddress: typeof suggestResendFromAddress;
   validateApiKey: typeof validateResendApiKey;
   writeTextFile: typeof writeTextFile;
 }
@@ -47,6 +49,7 @@ const defaultDeps: ResendSetupDeps = {
   listWebhooks: listResendWebhooks,
   provisionConnector: provisionResendConnector,
   runVercel,
+  suggestFromAddress: suggestResendFromAddress,
   validateApiKey: validateResendApiKey,
   writeTextFile,
 };
@@ -164,22 +167,29 @@ export async function setupResend(
         text({ key: "resend-api-key", message: "Resend API key", required: true, sensitive: true }),
       )
     ).trim();
-    const fromAddress = (
-      await context.ui.asker.ask(
-        text({
-          key: "resend-from-address",
-          message: "From address",
-          required: true,
-          validate: validateEmail,
-        }),
-      )
-    ).trim();
+    await deps.validateApiKey(apiKey, context.signal);
+    const suggestedFromAddress = await deps.suggestFromAddress(apiKey, context.signal);
+    const fromAddressQuestion =
+      suggestedFromAddress === undefined
+        ? text({
+            key: "resend-from-address",
+            message: "Agent email address",
+            required: true,
+            validate: validateEmail,
+          })
+        : text({
+            key: "resend-from-address",
+            message: "Agent email address",
+            detected: suggestedFromAddress,
+            required: true,
+            validate: validateEmail,
+          });
+    const fromAddress = (await context.ui.asker.ask(fromAddressQuestion)).trim();
     const fromName = (
       await context.ui.asker.ask(
         text({ key: "resend-from-name", message: "From name (optional)", required: false }),
       )
     ).trim();
-    await deps.validateApiKey(apiKey, context.signal);
 
     if (destination === "portable") {
       await deps.appendEnv(join(context.appRoot, ".env.local"), { RESEND_API_KEY: apiKey });

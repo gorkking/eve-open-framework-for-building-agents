@@ -35,6 +35,7 @@ function deps(): ResendSetupDeps {
       uid: "api-key/resend-agent",
     })),
     runVercel: vi.fn(async () => true),
+    suggestFromAddress: vi.fn(async () => "eve@phipelaan.resend.app"),
     validateApiKey: vi.fn(async () => {}),
     writeTextFile: vi.fn(async () => {}),
   };
@@ -60,6 +61,41 @@ function context(effects: ResendSetupDeps, select: "connect" | "portable" = "con
 }
 
 describe("Resend setup", () => {
+  it("prefills the agent address from a receiving-enabled Resend domain", async () => {
+    const effects = deps();
+    const questions: Question<unknown>[] = [];
+    const setup = context(effects, "portable");
+    const value = {
+      ...setup.value,
+      ui: {
+        ...setup.value.ui,
+        asker: {
+          ask: async <T>(question: Question<T>) => {
+            questions.push(question as Question<unknown>);
+            if (question.key === "resend-api-key") return "re_secret" as T;
+            if (question.key === "resend-from-name") return "Email Agent" as T;
+            return question.detected as T;
+          },
+          askMany: async () => [],
+        },
+      },
+    };
+
+    await expect(setupResend(value, effects)).resolves.toEqual({ kind: "done" });
+    expect(effects.suggestFromAddress).toHaveBeenCalledWith("re_secret", undefined);
+    expect(questions).toContainEqual(
+      expect.objectContaining({
+        key: "resend-from-address",
+        detected: "eve@phipelaan.resend.app",
+      }),
+    );
+    expect(effects.writeTextFile).toHaveBeenCalledWith(
+      "/project/agent/channels/resend.ts",
+      expect.stringContaining('fromAddress: "eve@phipelaan.resend.app"'),
+      { force: undefined },
+    );
+  });
+
   it("uses one normalized key and orders deploy, webhook, env, and redeploy", async () => {
     const effects = deps();
     const events: string[] = [];
