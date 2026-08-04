@@ -186,9 +186,7 @@ async function selectMarketplaceDomain(
     signal: context.signal,
   });
   if (domains.length === 0) {
-    const url = project.orgId.startsWith("team_")
-      ? `https://vercel.com/teams/${encodeURIComponent(project.orgId)}/domains`
-      : "https://vercel.com/domains";
+    const url = "https://vercel.com/domains";
     context.ui.prompter.note(
       `Add or purchase a domain in Vercel, then rerun \`eve add channel/resend\`.\n${url}`,
       "Vercel domain required",
