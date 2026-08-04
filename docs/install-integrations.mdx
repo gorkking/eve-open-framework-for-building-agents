@@ -42,7 +42,17 @@ Inspect an integration before you install it:
 eve registry view extension/agent-browser
 ```
 
-`list` and `search` include the official eve catalog and every source you add to the project.
+`list` includes the official eve catalog and every source you add to the project. `search` also includes [skills.sh](https://skills.sh), available as the built-in `@skills` source.
+
+## Add a skill
+
+Add a known [skills.sh](https://skills.sh) item directly:
+
+```bash
+eve add @skills/vercel-labs/agent-skills/vercel-react-best-practices
+```
+
+Skills from skills.sh are community-authored project files. Review their source and the resulting diff before you run your agent.
 
 ## Add a third-party source
 

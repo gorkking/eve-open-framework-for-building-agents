@@ -63,6 +63,7 @@ describe("registry commands", () => {
       vi.fn(async () => new Response(JSON.stringify({ items: [] }))),
     );
     isEveProject.mockResolvedValue(true);
+    getRegistryItems.mockResolvedValue([]);
     readFile.mockResolvedValue(
       JSON.stringify({
         name: "project",
@@ -101,12 +102,18 @@ describe("registry commands", () => {
 
     expect(getRegistryItems).toHaveBeenCalledWith(["https://eve.dev/r/extension/browser.json"], {
       config: {
-        registries: { "@acme": "https://example.com/r/{name}.json" },
+        registries: {
+          "@skills": "https://www.skills.sh/r/{name}?agent=eve",
+          "@acme": "https://example.com/r/{name}.json",
+        },
       },
     });
     expect(addRegistryItems).toHaveBeenCalledWith(["https://eve.dev/r/extension/browser.json"], {
       config: {
-        registries: { "@acme": "https://example.com/r/{name}.json" },
+        registries: {
+          "@skills": "https://www.skills.sh/r/{name}?agent=eve",
+          "@acme": "https://example.com/r/{name}.json",
+        },
       },
       cwd: "/project",
       overwrite: true,
@@ -467,7 +474,11 @@ describe("registry commands", () => {
       ],
     });
     expect(searchRegistries).toHaveBeenCalledWith(
-      ["https://eve.dev/r/registry.json", "@acme"],
+      ["https://eve.dev/r/registry.json"],
+      expect.objectContaining({ limit: 100, query: "sdk" }),
+    );
+    expect(searchRegistries).toHaveBeenCalledWith(
+      ["@acme"],
       expect.objectContaining({ limit: 100, query: "sdk" }),
     );
   });
@@ -483,8 +494,7 @@ describe("registry commands", () => {
     await runRegistryListCommand(logger, "/project");
 
     expect(searchRegistries).toHaveBeenCalledWith(["https://eve.dev/r/registry.json"], {
-      config: { registries: {} },
-      continueOnError: false,
+      config: { registries: { "@skills": "https://www.skills.sh/r/{name}?agent=eve" } },
       limit: 100,
       query: undefined,
     });
@@ -501,11 +511,21 @@ describe("registry commands", () => {
 
     await runRegistryListCommand(logger, "/project", undefined, { json: true });
 
-    expect(logger.logs).toEqual([JSON.stringify(result, null, 2)]);
+    expect(logger.logs).toEqual([
+      JSON.stringify(
+        {
+          ...result,
+          pagination: { hasMore: false, limit: 100, offset: 0, total: 1 },
+        },
+        null,
+        2,
+      ),
+    ]);
   });
 
-  it("preserves explicit registry URLs in list output", async () => {
+  it("uses sanitized manifest titles and preserves explicit registry URLs in list output", async () => {
     const logger = createLogger();
+    getRegistryItems.mockResolvedValue([{ title: "External\u001B]0;spoofed\u0007 Search" }]);
     searchRegistries.mockResolvedValue({
       items: [
         {
@@ -522,53 +542,90 @@ describe("registry commands", () => {
 
     expect(logger.logs).toEqual([
       [
-        "Found 1 item in 1 registry",
-        "",
-        "https://example.com/r/search.json",
-        "  External search tools",
+        "https://example.com/r/registry.json (1 result)",
+        "  External Search",
+        "    https://example.com/r/search.json",
+        "    External search tools",
       ].join("\n"),
     ]);
   });
 
-  it("searches the official catalog and configured registries", async () => {
+  it("segments search results by source and shows each source's available results", async () => {
     const logger = createLogger();
-    searchRegistries.mockResolvedValue({
-      items: [
-        {
-          registry: "https://eve.dev/r/registry.json",
-          name: "extension/agent-browser",
-          addCommandArgument: "https://eve.dev/r/extension/agent-browser.json",
-          description: "Browser automation",
-        },
-        {
-          registry: "@acme",
-          name: "browser",
-          addCommandArgument: "@acme/browser",
-          description: "Browser tools",
-        },
-      ],
-      pagination: { total: 2, offset: 0, limit: 2, hasMore: false },
+    searchRegistries.mockImplementation(async ([source]: string[]) => {
+      if (source === "https://eve.dev/r/registry.json") {
+        return {
+          items: [
+            {
+              registry: source,
+              name: "extension/agent-browser",
+              addCommandArgument: "https://eve.dev/r/extension/agent-browser.json",
+              description: "Browser automation",
+            },
+          ],
+          pagination: { total: 1, offset: 0, limit: 10, hasMore: false },
+        };
+      }
+      if (source === "@skills") {
+        return {
+          items: [
+            {
+              registry: source,
+              name: "browser",
+              addCommandArgument: "@skills/example/browser",
+              description: "Browser skills",
+            },
+          ],
+          pagination: { total: 200, offset: 0, limit: 10, hasMore: true },
+        };
+      }
+      return {
+        items: [
+          {
+            registry: source!,
+            name: "browser",
+            addCommandArgument: "@acme/browser",
+            description: "Browser tools",
+          },
+        ],
+        pagination: { total: 1, offset: 0, limit: 10, hasMore: false },
+      };
     });
 
     await runRegistrySearchCommand(logger, "/project", "browser");
 
-    expect(searchRegistries).toHaveBeenCalledWith(["https://eve.dev/r/registry.json", "@acme"], {
+    expect(searchRegistries).toHaveBeenCalledWith(["https://eve.dev/r/registry.json"], {
       config: {
-        registries: { "@acme": "https://example.com/r/{name}.json" },
+        registries: {
+          "@skills": "https://www.skills.sh/r/{name}?agent=eve",
+          "@acme": "https://example.com/r/{name}.json",
+        },
       },
-      continueOnError: true,
       limit: 10,
       query: "browser",
     });
+    expect(searchRegistries).toHaveBeenCalledWith(
+      ["@skills"],
+      expect.objectContaining({ limit: 10 }),
+    );
+    expect(searchRegistries).toHaveBeenCalledWith(
+      ["@acme"],
+      expect.objectContaining({ limit: 10 }),
+    );
     expect(logger.logs).toEqual([
       [
-        'Found 2 items matching "browser" in 2 registries',
-        "",
-        "extension/agent-browser",
-        "  Browser automation",
-        "",
-        "@acme/browser",
-        "  Browser tools",
+        "eve (1 result)",
+        "  agent-browser",
+        "    extension/agent-browser",
+        "    Browser automation",
+        "skills.sh (showing 1 of 200 results)",
+        "  browser",
+        "    @skills/example/browser",
+        "    Browser skills",
+        "@acme (1 result)",
+        "  browser",
+        "    @acme/browser",
+        "    Browser tools",
       ].join("\n"),
     ]);
   });
@@ -587,10 +644,48 @@ describe("registry commands", () => {
     await runRegistrySearchCommand(logger, "/project", "web", undefined, { limit: 5 });
 
     expect(searchRegistries).toHaveBeenCalledWith(
-      ["https://eve.dev/r/registry.json", "@acme"],
+      ["https://eve.dev/r/registry.json"],
       expect.objectContaining({ limit: 5, query: "web" }),
     );
-    expect(logger.logs[0]).toMatch(/^Showing 5 of 21 items matching "web" in 2 registries/);
+    expect(logger.logs[0]).toMatch(/^@acme \(showing 5 of 21 results\)/);
+  });
+
+  it("puts descriptions below long addresses instead of creating a narrow second column", async () => {
+    const logger = createLogger();
+    const columnsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+    Object.defineProperty(process.stdout, "columns", { configurable: true, value: 120 });
+    searchRegistries.mockResolvedValue({
+      items: [
+        {
+          registry: "@skills",
+          name: "vercel-react-best-practices",
+          addCommandArgument:
+            "@skills/vercel-labs/agent-skills/vercel-react-best-practices-with-a-long-name",
+          description:
+            "React and Next.js performance optimization guidelines from Vercel Engineering.",
+        },
+      ],
+      pagination: { total: 200, offset: 0, limit: 10, hasMore: true },
+    });
+
+    try {
+      await runRegistrySearchCommand(logger, "/project", "react", "@skills");
+    } finally {
+      if (columnsDescriptor === undefined) {
+        Reflect.deleteProperty(process.stdout, "columns");
+      } else {
+        Object.defineProperty(process.stdout, "columns", columnsDescriptor);
+      }
+    }
+
+    expect(logger.logs).toEqual([
+      [
+        "skills.sh (showing 1 of 200 results)",
+        "  vercel-react-best-practices",
+        "    @skills/vercel-labs/agent-skills/vercel-react-best-practices-with-a-long-name",
+        "    React and Next.js performance optimization guidelines from Vercel Engineering.",
+      ].join("\n"),
+    ]);
   });
 
   it("sanitizes and wraps registry descriptions beneath their addresses", async () => {
@@ -622,11 +717,11 @@ describe("registry commands", () => {
 
     expect(logger.logs).toEqual([
       [
-        'Found 1 item matching "browser" in 2 registries',
-        "",
-        "@acme/browser",
-        "  A long registry description that wraps",
-        "  cleanly beneath its address.",
+        "@acme (1 result)",
+        "  browser",
+        "    @acme/browser",
+        "    A long registry description that",
+        "    wraps cleanly beneath its address.",
       ].join("\n"),
     ]);
     expect(logger.logs[0]).not.toContain("spoofed");
@@ -652,12 +747,24 @@ describe("registry commands", () => {
 
     expect(logger.logs).toEqual([
       [
-        'Found 1 item matching "resources" in 2 registries',
-        "",
-        "@acme/resources",
-        '  Use when asked to "list resources".',
+        "@acme (1 result)",
+        "  resources",
+        "    @acme/resources",
+        '    Use when asked to "list resources".',
       ].join("\n"),
     ]);
+  });
+
+  it("names the active filter in an empty search result", async () => {
+    const logger = createLogger();
+    searchRegistries.mockResolvedValue({
+      items: [],
+      pagination: { total: 0, offset: 0, limit: 10, hasMore: false },
+    });
+
+    await runRegistrySearchCommand(logger, "/project", "missing");
+
+    expect(logger.logs).toEqual(['No registry items match "missing".']);
   });
 
   it("emits search results as JSON", async () => {
@@ -670,7 +777,16 @@ describe("registry commands", () => {
 
     await runRegistrySearchCommand(logger, "/project", "browser", undefined, { json: true });
 
-    expect(logger.logs).toEqual([JSON.stringify(result, null, 2)]);
+    expect(logger.logs).toEqual([
+      JSON.stringify(
+        {
+          ...result,
+          pagination: { hasMore: false, limit: 10, offset: 0, total: 1 },
+        },
+        null,
+        2,
+      ),
+    ]);
   });
 
   it("emits JSON when every registry search fails", async () => {
@@ -684,7 +800,17 @@ describe("registry commands", () => {
 
     await runRegistryListCommand(logger, "/project", undefined, { json: true });
 
-    expect(logger.logs).toEqual([JSON.stringify(result, null, 2)]);
+    expect(logger.logs).toEqual([
+      JSON.stringify(
+        {
+          items: [],
+          pagination: { hasMore: false, limit: 100, offset: 0, total: 0 },
+          errors: result.errors,
+        },
+        null,
+        2,
+      ),
+    ]);
     expect(logger.errors).toEqual(["https://eve.dev/r/registry.json: eve unavailable"]);
     expect(process.exitCode).toBe(1);
   });
@@ -718,7 +844,10 @@ describe("registry commands", () => {
 
     expect(getRegistryItems).toHaveBeenCalledWith(["https://eve.dev/r/extension/browser.json"], {
       config: {
-        registries: { "@acme": "https://example.com/r/{name}.json" },
+        registries: {
+          "@skills": "https://www.skills.sh/r/{name}?agent=eve",
+          "@acme": "https://example.com/r/{name}.json",
+        },
       },
     });
     expect(logger.logs).toEqual([

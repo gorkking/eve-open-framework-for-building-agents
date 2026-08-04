@@ -117,6 +117,8 @@ export function resolveOfficialRegistryUrl(
 
 const OFFICIAL_REGISTRY = resolveOfficialRegistryUrl();
 const OFFICIAL_CATALOG = `${OFFICIAL_REGISTRY}/registry.json`;
+const SKILLS_REGISTRY = "@skills";
+const SKILLS_REGISTRY_URL = "https://www.skills.sh/r/{name}?agent=eve";
 const CATALOG_PAGE_SIZE = 100;
 const DEFAULT_SEARCH_LIMIT = 10;
 
@@ -134,7 +136,7 @@ export async function installOfficialRegistryItem(
   item: string,
   options: AddCommandOptions = {},
 ): Promise<void> {
-  const config = await readRegistryConfig(appRoot);
+  const config = await readEveRegistryConfig(appRoot);
   await addRegistryItems([itemAddress(item)], {
     config,
     cwd: appRoot,
@@ -214,8 +216,19 @@ async function runRegistryAction(
   }
 }
 
+function withBuiltInRegistries(config: RegistryConfig): RegistryConfig {
+  return {
+    ...config,
+    registries: { [SKILLS_REGISTRY]: SKILLS_REGISTRY_URL, ...config.registries },
+  };
+}
+
+async function readEveRegistryConfig(appRoot: string): Promise<RegistryConfig> {
+  return withBuiltInRegistries(await readRegistryConfig(appRoot));
+}
+
 function configuredRegistrySources(config: RegistryConfig): string[] {
-  return Object.keys(config.registries ?? {});
+  return Object.keys(config.registries ?? {}).filter((source) => source !== SKILLS_REGISTRY);
 }
 
 function validateRegistrySource(source: string | undefined): void {
@@ -237,56 +250,93 @@ function registryDescriptionSummary(description: string): string {
   return normalized.match(/^.*?[.!?](?=\s|$)/u)?.[0] ?? normalized;
 }
 
+function searchItemAddress(item: RegistrySearchItem): string {
+  const address = item.registry === OFFICIAL_CATALOG ? item.name : item.addCommandArgument;
+  return normalizeRegistryText(address);
+}
+
+function searchItemFallbackTitle(item: RegistrySearchItem): string {
+  const name = normalizeRegistryText(item.name);
+  return name.split("/").at(-1) ?? name;
+}
+
 function renderSearchItem(
   item: RegistrySearchItem,
+  title: string | undefined,
   width: number,
   theme: ReturnType<typeof createCliTheme>,
 ): string {
-  const rawAddress = item.registry === OFFICIAL_CATALOG ? item.name : item.addCommandArgument;
-  const address = theme.accent(normalizeRegistryText(rawAddress));
-  if (!item.description) return address;
+  const valueWidth = Math.max(1, width - 4);
+  const addressLines = wrapVisibleLine(searchItemAddress(item), valueWidth);
+  const lines = [
+    `  ${theme.label(title ?? searchItemFallbackTitle(item))}`,
+    ...addressLines.map((line) => `    ${line}`),
+  ];
+  if (!item.description) return lines.join("\n");
 
   const description = registryDescriptionSummary(item.description);
-  if (description.length === 0) return address;
+  if (description.length === 0) return lines.join("\n");
 
-  const descriptionWidth = Math.max(1, width - 2);
-  const wrapped = wrapVisibleLine(description, descriptionWidth);
-  const lines =
+  const wrapped = wrapVisibleLine(description, valueWidth);
+  const descriptionLines =
     wrapped.length <= 2
       ? wrapped
-      : [wrapped[0]!, `${clipVisible(wrapped[1]!, Math.max(1, descriptionWidth - 1)).trimEnd()}…`];
-  return [address, ...lines.map((line) => theme.muted(`  ${line}`))].join("\n");
+      : [wrapped[0]!, `${clipVisible(wrapped[1]!, Math.max(1, valueWidth - 1)).trimEnd()}…`];
+  lines.push(...descriptionLines.map((line) => theme.muted(`    ${line}`)));
+  return lines.join("\n");
+}
+
+type RegistrySearchResult = Awaited<ReturnType<typeof searchRegistries>>;
+
+function registrySourceLabel(source: string): string {
+  if (source === OFFICIAL_CATALOG) return "eve";
+  if (source === SKILLS_REGISTRY) return "skills.sh";
+  return source;
 }
 
 function printSearchResults(
   logger: RegistryCommandLogger,
-  result: Awaited<ReturnType<typeof searchRegistries>>,
-  options: { query: string | undefined; sources: string[]; json?: boolean },
+  result: RegistrySearchResult,
+  options: {
+    json?: boolean;
+    query: string | undefined;
+    resultsBySource: ReadonlyMap<string, RegistrySearchResult>;
+    sources: string[];
+    titles: ReadonlyMap<string, string>;
+  },
 ): void {
   if (options.json) {
     logger.log(JSON.stringify(result, null, 2));
     return;
   }
-
   if (result.items.length === 0) {
-    logger.log("No registry items found.");
+    const query = options.query && normalizeRegistryText(options.query);
+    logger.log(query ? `No registry items match "${query}".` : "No registry items found.");
     return;
   }
 
-  const total = result.pagination.total;
-  const count = `${total} item${total === 1 ? "" : "s"}`;
-  const query =
-    options.query === undefined ? "" : ` matching "${normalizeRegistryText(options.query)}"`;
-  const registries = `${options.sources.length} registr${options.sources.length === 1 ? "y" : "ies"}`;
-  const resultCount = result.items.length;
-  const summary =
-    resultCount < total
-      ? `Showing ${resultCount} of ${count}${query} in ${registries}`
-      : `Found ${count}${query} in ${registries}`;
   const theme = createCliTheme();
   const width = Math.max(20, process.stdout.columns ?? 80);
-  const items = result.items.map((item) => renderSearchItem(item, width, theme));
-  logger.log([summary, ...items].join("\n\n"));
+  const sections = options.sources.flatMap((source) => {
+    const sourceResult = options.resultsBySource.get(source);
+    if (sourceResult === undefined || sourceResult.items.length === 0) return [];
+    const { pagination } = sourceResult;
+    const count = `${pagination.total} result${pagination.total === 1 ? "" : "s"}`;
+    const detail =
+      sourceResult.items.length < pagination.total
+        ? `showing ${sourceResult.items.length} of ${count}`
+        : count;
+    const heading = `${theme.label(registrySourceLabel(source))} ${theme.muted(`(${detail})`)}`;
+    return [
+      [
+        heading,
+        ...sourceResult.items.map((item) =>
+          renderSearchItem(item, options.titles.get(item.addCommandArgument), width, theme),
+        ),
+      ].join("\n"),
+    ];
+  });
+  logger.log(sections.join("\n"));
 }
 
 async function searchRegistryCatalog(
@@ -294,17 +344,68 @@ async function searchRegistryCatalog(
   options: { limit?: number; query?: string; source?: string },
 ) {
   validateRegistrySource(options.source);
-  const config = await readRegistryConfig(appRoot);
+  const config = await readEveRegistryConfig(appRoot);
   const sources = options.source
     ? [options.source]
-    : [OFFICIAL_CATALOG, ...configuredRegistrySources(config)];
-  const result = await searchRegistries(sources, {
-    config,
-    continueOnError: sources.length > 1,
-    limit: options.limit ?? CATALOG_PAGE_SIZE,
-    query: options.query,
-  });
-  return { config, result, sources };
+    : [
+        OFFICIAL_CATALOG,
+        ...configuredRegistrySources(config).filter(
+          (source) => options.query !== undefined || source !== SKILLS_REGISTRY,
+        ),
+      ];
+  const responses = await Promise.all(
+    sources.map(async (source) => {
+      try {
+        return {
+          result: await searchRegistries([source], {
+            config,
+            limit: options.limit ?? CATALOG_PAGE_SIZE,
+            query: options.query,
+          }),
+          source,
+        };
+      } catch (error) {
+        return { error, source };
+      }
+    }),
+  );
+  const errors: NonNullable<RegistrySearchResult["errors"]> = [];
+  const resultsBySource = new Map<string, RegistrySearchResult>();
+  for (const response of responses) {
+    if ("error" in response) {
+      errors.push({ message: errorMessage(response.error), registry: response.source });
+    } else {
+      const sourceErrors = response.result.errors ?? [];
+      errors.push(...sourceErrors);
+      if (sourceErrors.length === 0) {
+        const items = response.result.items.filter((item) => item.registry === response.source);
+        resultsBySource.set(response.source, {
+          ...response.result,
+          items,
+          pagination: {
+            ...response.result.pagination,
+            total:
+              response.result.items.length === items.length ? response.result.pagination.total : 0,
+          },
+        });
+      }
+    }
+  }
+  const uniqueErrors = new Map(
+    errors.map((error) => [`${error.registry}\0${error.message}`, error]),
+  );
+  const results = [...resultsBySource.values()];
+  const result: RegistrySearchResult = {
+    items: results.flatMap((entry) => entry.items),
+    pagination: {
+      hasMore: results.some((entry) => entry.pagination.hasMore),
+      limit: options.limit ?? CATALOG_PAGE_SIZE,
+      offset: 0,
+      total: results.reduce((total, entry) => total + entry.pagination.total, 0),
+    },
+    ...(uniqueErrors.size > 0 ? { errors: [...uniqueErrors.values()] } : {}),
+  };
+  return { config, result, resultsBySource, sources };
 }
 
 function registryManifestTitle(manifest: unknown): string | undefined {
@@ -344,6 +445,26 @@ export async function browseRegistryCatalog(
   };
 }
 
+async function loadRegistrySearchTitles(
+  items: readonly RegistrySearchItem[],
+  config: RegistryConfig,
+): Promise<Map<string, string>> {
+  const entries = await Promise.all(
+    items.map(async (item) => {
+      try {
+        const [manifest] = await getRegistryItems([item.addCommandArgument], { config });
+        const title = registryManifestTitle(manifest);
+        return [item.addCommandArgument, title && normalizeRegistryText(title)] as const;
+      } catch {
+        return [item.addCommandArgument, undefined] as const;
+      }
+    }),
+  );
+  return new Map(
+    entries.filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
+  );
+}
+
 async function browseRegistryItems(
   logger: RegistryCommandLogger,
   appRoot: string,
@@ -351,14 +472,17 @@ async function browseRegistryItems(
   source: string | undefined,
   options: RegistrySearchCommandOptions = {},
 ): Promise<void> {
-  const { result, sources } = await searchRegistryCatalog(appRoot, {
+  const { config, result, resultsBySource, sources } = await searchRegistryCatalog(appRoot, {
     limit: options.limit,
     query,
     source,
   });
   const errors = result.errors ?? [];
-  if (options.json || errors.length < sources.length) {
-    printSearchResults(logger, result, { ...options, query, sources });
+  if (options.json || resultsBySource.size > 0) {
+    const titles = options.json
+      ? new Map<string, string>()
+      : await loadRegistrySearchTitles(result.items, config);
+    printSearchResults(logger, result, { ...options, query, resultsBySource, sources, titles });
   }
   for (const error of errors) {
     logger.error(`${error.registry}: ${error.message}`);
@@ -368,7 +492,7 @@ async function browseRegistryItems(
 
 /** Resolves one official, configured, or URL-addressed item manifest. */
 export async function getRegistryItemManifest(appRoot: string, item: string): Promise<unknown> {
-  const config = await readRegistryConfig(appRoot);
+  const config = await readEveRegistryConfig(appRoot);
   const items = await getRegistryItems([itemAddress(item)], { config });
   return items.length === 1 ? items[0] : items;
 }
@@ -432,7 +556,7 @@ export async function runAddCommand(
   dependencies: AddCommandDependencies = defaultAddCommandDependencies,
 ): Promise<void> {
   await runRegistryAction(logger, appRoot, async () => {
-    const config = await readRegistryConfig(appRoot);
+    const config = await readEveRegistryConfig(appRoot);
     const address = itemAddress(item);
     if (options.skipInstall === true) {
       if (options.overwrite === true) {
@@ -558,7 +682,7 @@ export async function runRegistryViewCommand(
   item: string,
 ): Promise<void> {
   await runRegistryAction(logger, appRoot, async () => {
-    const config = await readRegistryConfig(appRoot);
+    const config = await readEveRegistryConfig(appRoot);
     const items = await getRegistryItems([itemAddress(item)], { config });
     logger.log(JSON.stringify(items.length === 1 ? items[0] : items, null, 2));
   });

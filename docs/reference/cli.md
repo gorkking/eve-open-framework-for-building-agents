@@ -99,7 +99,7 @@ eve add @acme/my-extension
 
 `eve add` asks before running setup declared by an official item and prints the matching `eve add <item> --skip-install` command when setup is skipped or cancelled. `--skip-install` reruns setup without reinstalling the item.
 
-`eve registry add` records configured sources in `package.json#registries`. `eve registry list` and `search` aggregate the official catalog and all configured sources by default, or browse one supplied URL or namespace. Search returns up to 10 matches by default; pass `--limit <count>` to request between 1 and 100. Official and other universal items with explicit file targets do not require shadcn project configuration.
+`eve registry add` records configured sources in `package.json#registries`. `eve registry list` aggregates the official catalog and all configured sources by default. `eve registry search` also includes [skills.sh](https://skills.sh), available without configuration at `@skills`, and groups results by source with each source's available result count. Search returns up to 10 matches per source by default; pass `--limit <count>` to request between 1 and 100. Either command can browse one supplied URL or namespace. Official and other universal items with explicit file targets do not require shadcn project configuration.
 
 ## `eve info`
 
