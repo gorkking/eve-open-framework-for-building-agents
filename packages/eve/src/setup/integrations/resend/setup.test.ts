@@ -45,6 +45,7 @@ function deps(): ResendSetupDeps {
       projectsMetadata: [{ projectId: "project", environments: ["production"] }],
     })),
     connectMarketplaceResource: vi.fn(async () => {}),
+    waitForMarketplaceDomain: vi.fn(async (input) => input.resource),
     runVercel: vi.fn(async () => true),
     suggestFromAddress: vi.fn(async () => "eve@example.com"),
     validateApiKey: vi.fn(async () => {}),
@@ -90,6 +91,9 @@ describe("Resend setup", () => {
     );
     expect(effects.connectMarketplaceResource).toHaveBeenCalledWith(
       expect.objectContaining({ resource: expect.objectContaining({ id: "store_resend" }) }),
+    );
+    expect(effects.waitForMarketplaceDomain).toHaveBeenCalledWith(
+      expect.objectContaining({ domain: "example.com" }),
     );
     expect(effects.writeTextFile).toHaveBeenCalledWith(
       "/project/agent/channels/resend.ts",

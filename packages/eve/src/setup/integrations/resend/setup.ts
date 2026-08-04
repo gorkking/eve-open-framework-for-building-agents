@@ -30,6 +30,7 @@ import {
   listResendMarketplaceResources,
   listVercelDomains,
   provisionResendMarketplaceResource,
+  waitForResendMarketplaceDomain,
   type ResendMarketplaceResource,
 } from "./marketplace.js";
 
@@ -47,6 +48,7 @@ export interface ResendSetupDeps {
   provisionConnector: typeof provisionResendConnector;
   provisionMarketplaceResource: typeof provisionResendMarketplaceResource;
   connectMarketplaceResource: typeof connectResendMarketplaceResource;
+  waitForMarketplaceDomain: typeof waitForResendMarketplaceDomain;
   runVercel: typeof runVercel;
   suggestFromAddress: typeof suggestResendFromAddress;
   validateApiKey: typeof validateResendApiKey;
@@ -67,6 +69,7 @@ const defaultDeps: ResendSetupDeps = {
   provisionConnector: provisionResendConnector,
   provisionMarketplaceResource: provisionResendMarketplaceResource,
   connectMarketplaceResource: connectResendMarketplaceResource,
+  waitForMarketplaceDomain: waitForResendMarketplaceDomain,
   runVercel,
   suggestFromAddress: suggestResendFromAddress,
   validateApiKey: validateResendApiKey,
@@ -269,6 +272,17 @@ async function setupMarketplace(
     project,
     signal: context.signal,
   });
+  const resourceDomain = marketplaceDomain(resource);
+  if (resourceDomain !== undefined) {
+    resource = await deps.waitForMarketplaceDomain({
+      resource,
+      domain: resourceDomain,
+      log: context.ui.prompter.log,
+      projectRoot: context.appRoot,
+      project,
+      signal: context.signal,
+    });
+  }
   const domain = marketplaceDomain(resource);
   const fromAddressQuestion =
     domain === undefined

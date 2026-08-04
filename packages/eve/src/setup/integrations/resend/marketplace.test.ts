@@ -6,6 +6,7 @@ import {
   listResendMarketplaceResources,
   listVercelDomains,
   provisionResendMarketplaceResource,
+  waitForResendMarketplaceDomain,
   type ResendMarketplaceDeps,
 } from "./marketplace.js";
 
@@ -156,6 +157,48 @@ describe("Resend Marketplace", () => {
       }),
     ).resolves.toMatchObject({ id: "store_resend" });
     expect(delay).toHaveBeenCalledOnce();
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining("safely stop waiting"));
+  });
+
+  it("tracks DNS verification until the Marketplace resource becomes ready", async () => {
+    const captureVercel = capture({
+      stores: [
+        {
+          id: "store_resend",
+          externalResourceId: "provider-id",
+          name: "resend-agent",
+          status: "available",
+          externalResourceStatus: "ready",
+          metadata: { domain: "mail.example.com" },
+          product: { slug: "resend-email" },
+        },
+      ],
+    });
+    const delay = vi.fn(async () => {});
+    const log = createFakePrompter().prompter.log;
+
+    await expect(
+      waitForResendMarketplaceDomain({
+        resource: {
+          id: "store_resend",
+          externalResourceId: "provider-id",
+          name: "resend-agent",
+          status: "onboarding",
+          externalResourceStatus: "onboarding",
+          metadata: { domain: "mail.example.com" },
+          product: { slug: "resend-email" },
+        },
+        domain: "mail.example.com",
+        log,
+        projectRoot: "/project",
+        project: { orgId: "team", projectId: "project" },
+        deps: { captureVercel, delay },
+        pollIntervalMs: 1,
+        pollTimeoutMs: 1_000,
+      }),
+    ).resolves.toMatchObject({ status: "available", externalResourceStatus: "ready" });
+    expect(delay).toHaveBeenCalledOnce();
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining("configuring DNS"));
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining("safely stop waiting"));
   });
 

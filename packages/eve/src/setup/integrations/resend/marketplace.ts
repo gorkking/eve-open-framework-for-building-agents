@@ -10,6 +10,7 @@ const ResourceSchema = z.object({
   externalResourceId: z.string().min(1).optional(),
   name: z.string().min(1),
   status: z.string().nullish(),
+  externalResourceStatus: z.string().nullish(),
   metadata: z.object({ domain: z.string().min(1).optional() }).optional(),
   product: z
     .object({
@@ -56,6 +57,8 @@ const defaultDeps: ResendMarketplaceDeps = {
 
 const MARKETPLACE_POLL_INTERVAL_MS = 3_000;
 const MARKETPLACE_POLL_TIMEOUT_MS = 10 * 60_000;
+const DOMAIN_READY_POLL_TIMEOUT_MS = 15 * 60_000;
+const READY_RESOURCE_STATUSES = new Set(["active", "available", "ready"]);
 
 /** Lists existing Resend Marketplace resources without reading their secrets. */
 export async function listResendMarketplaceResources(input: {
@@ -204,6 +207,59 @@ export async function provisionResendMarketplaceResource(input: {
     },
     projectsMetadata: [{ projectId: input.project.projectId, environments: ["production"] }],
   };
+}
+
+/** Whether Resend reports both its Marketplace resource and external domain ready. */
+export function isResendMarketplaceResourceReady(resource: ResendMarketplaceResource): boolean {
+  if (!READY_RESOURCE_STATUSES.has(resource.status ?? "")) return false;
+  const externalStatus = resource.externalResourceStatus;
+  return externalStatus == null || READY_RESOURCE_STATUSES.has(externalStatus);
+}
+
+/** Waits for Resend and its DNS verification to become ready, supporting safe reruns on timeout. */
+export async function waitForResendMarketplaceDomain(input: {
+  resource: ResendMarketplaceResource;
+  domain: string;
+  log: ChannelSetupLog;
+  projectRoot: string;
+  project: VercelProjectReference;
+  signal?: AbortSignal;
+  deps?: Pick<ResendMarketplaceDeps, "captureVercel" | "delay">;
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+}): Promise<ResendMarketplaceResource> {
+  if (isResendMarketplaceResourceReady(input.resource)) return input.resource;
+  const deps = input.deps ?? defaultDeps;
+  const deadline = Date.now() + (input.pollTimeoutMs ?? DOMAIN_READY_POLL_TIMEOUT_MS);
+  const pollIntervalMs = input.pollIntervalMs ?? MARKETPLACE_POLL_INTERVAL_MS;
+  input.log.info(
+    `Resend is configuring DNS for ${input.domain}. Verification can take several minutes.`,
+  );
+  input.log.info(
+    "You can safely stop waiting and rerun `eve add channel/resend`; setup will resume from this resource.",
+  );
+  return withPhase(
+    input.log,
+    `Waiting for Resend domain DNS (${input.domain})...`,
+    async () => {
+      while (Date.now() < deadline) {
+        input.signal?.throwIfAborted();
+        await deps.delay(pollIntervalMs, input.signal);
+        const resources = await listResendMarketplaceResources({
+          projectRoot: input.projectRoot,
+          project: input.project,
+          signal: input.signal,
+          deps,
+        });
+        const current = resources.find((candidate) => candidate.id === input.resource.id);
+        if (current !== undefined && isResendMarketplaceResourceReady(current)) return current;
+      }
+      throw new Error(
+        `Resend is still verifying DNS for ${input.domain}. Finish any requested DNS setup in Resend, then rerun \`eve add channel/resend\`; setup will reuse this resource.`,
+      );
+    },
+    { kind: "external-action", emphasis: "browser" },
+  );
 }
 
 /** Connects an existing Marketplace resource to the linked project for production. */
