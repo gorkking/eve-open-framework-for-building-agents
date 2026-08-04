@@ -45,6 +45,12 @@ function deps(): ResendSetupDeps {
       projectsMetadata: [{ projectId: "project", environments: ["production"] }],
     })),
     connectMarketplaceResource: vi.fn(async () => {}),
+    reconcileMarketplaceWebhook: vi.fn(async () => ({
+      id: "wh_marketplace",
+      signingSecret: "whsec_marketplace",
+      previousIds: [],
+    })),
+    deleteMarketplaceWebhooks: vi.fn(async () => {}),
     waitForMarketplaceDomain: vi.fn(async (input) => input.resource),
     runVercel: vi.fn(async () => true),
     suggestFromAddress: vi.fn(async () => "eve@example.com"),
@@ -99,6 +105,13 @@ describe("Resend setup", () => {
       "/project/agent/channels/resend.ts",
       expect.stringContaining("process.env.RESEND_API_KEY"),
       { force: undefined },
+    );
+    expect(effects.reconcileMarketplaceWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "https://agent.test/eve/v1/resend" }),
+    );
+    expect(effects.runVercel).toHaveBeenCalledWith(
+      ["env", "add", "RESEND_WEBHOOK_SECRET", "production", "--force", "--yes"],
+      expect.objectContaining({ stdin: "whsec_marketplace" }),
     );
   });
 

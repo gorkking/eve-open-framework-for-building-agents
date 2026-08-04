@@ -26,6 +26,10 @@ import {
 } from "./api.js";
 import { provisionResendConnector } from "./connect.js";
 import {
+  deleteMarketplaceResendWebhooks,
+  reconcileMarketplaceResendWebhook,
+} from "./marketplace-webhook.js";
+import {
   connectResendMarketplaceResource,
   listResendMarketplaceResources,
   listVercelDomains,
@@ -48,6 +52,8 @@ export interface ResendSetupDeps {
   provisionConnector: typeof provisionResendConnector;
   provisionMarketplaceResource: typeof provisionResendMarketplaceResource;
   connectMarketplaceResource: typeof connectResendMarketplaceResource;
+  reconcileMarketplaceWebhook: typeof reconcileMarketplaceResendWebhook;
+  deleteMarketplaceWebhooks: typeof deleteMarketplaceResendWebhooks;
   waitForMarketplaceDomain: typeof waitForResendMarketplaceDomain;
   runVercel: typeof runVercel;
   suggestFromAddress: typeof suggestResendFromAddress;
@@ -69,6 +75,8 @@ const defaultDeps: ResendSetupDeps = {
   provisionConnector: provisionResendConnector,
   provisionMarketplaceResource: provisionResendMarketplaceResource,
   connectMarketplaceResource: connectResendMarketplaceResource,
+  reconcileMarketplaceWebhook: reconcileMarketplaceResendWebhook,
+  deleteMarketplaceWebhooks: deleteMarketplaceResendWebhooks,
   waitForMarketplaceDomain: waitForResendMarketplaceDomain,
   runVercel,
   suggestFromAddress: suggestResendFromAddress,
@@ -308,14 +316,62 @@ async function setupMarketplace(
     channelTemplate({ apiKey: "", fromAddress: fromAddress.trim(), fromName: fromName.trim() }),
     { force: context.force },
   );
+  const deployed = await deps.deploy({
+    appRoot: context.appRoot,
+    prompter: context.ui.prompter,
+    interactive: true,
+    signal: context.signal,
+  });
+  if (deployed.kind !== "deployed" || deployed.productionUrl === undefined) {
+    throw new Error(
+      `Resend Marketplace resource ${resource.name} is ready, but setup could not determine the production URL. Run \`vercel deploy --prod\`, then rerun \`eve add channel/resend\`.`,
+    );
+  }
+  const endpoint = new URL("/eve/v1/resend", deployed.productionUrl).href;
+  const webhook = await deps.reconcileMarketplaceWebhook({
+    endpoint,
+    projectRoot: context.appRoot,
+    orgId: project.orgId,
+    signal: context.signal,
+  });
+  try {
+    await writeProductionSecret(context, webhook.signingSecret, deps);
+    const redeployed = await deps.deploy({
+      appRoot: context.appRoot,
+      prompter: context.ui.prompter,
+      interactive: true,
+      signal: context.signal,
+    });
+    if (redeployed.kind !== "deployed") throw new Error("Production redeploy was cancelled.");
+  } catch (error) {
+    await deps
+      .deleteMarketplaceWebhooks({
+        ids: [webhook.id],
+        projectRoot: context.appRoot,
+        orgId: project.orgId,
+        signal: context.signal,
+      })
+      .catch(() => {});
+    throw error;
+  }
+  await deps
+    .deleteMarketplaceWebhooks({
+      ids: webhook.previousIds.filter((id) => id !== webhook.id),
+      projectRoot: context.appRoot,
+      orgId: project.orgId,
+      signal: context.signal,
+    })
+    .catch(() => {});
   context.ui.nextSteps([
-    "Complete Resend onboarding and Auto configure DNS in the browser if prompted.",
-    "Enable receiving for the selected domain, then create an email.received webhook for https://<your-host>/eve/v1/resend and save its signing secret as RESEND_WEBHOOK_SECRET.",
-    "Deploy the agent after the webhook secret is configured.",
+    `Resend endpoint: ${endpoint}`,
+    `Send an email to ${fromAddress.trim()} and reply to smoke-test the conversation.`,
   ]);
   return {
     kind: "done",
-    facts: domain === undefined ? undefined : [{ label: "Resend domain", value: domain }],
+    facts: [
+      ...(domain === undefined ? [] : [{ label: "Resend domain", value: domain }]),
+      { label: "Resend webhook", value: endpoint, kind: "url" as const },
+    ],
   };
 }
 
