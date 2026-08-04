@@ -228,7 +228,7 @@ async function readEveRegistryConfig(appRoot: string): Promise<RegistryConfig> {
 }
 
 function configuredRegistrySources(config: RegistryConfig): string[] {
-  return Object.keys(config.registries ?? {}).filter((source) => source !== SKILLS_REGISTRY);
+  return Object.keys(config.registries ?? {});
 }
 
 function validateRegistrySource(source: string | undefined): void {
