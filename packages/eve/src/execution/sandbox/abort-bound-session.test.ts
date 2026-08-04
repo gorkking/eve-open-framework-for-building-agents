@@ -1,3 +1,5 @@
+import { getEventListeners } from "node:events";
+
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -58,10 +60,10 @@ function createRecordingSession(calls: RecordedCall[]): SandboxSession {
 }
 
 describe("bindSandboxAbortSignal", () => {
-  it("injects the bound signal into every I/O method by default", async () => {
+  it("injects a separate dependent signal into every I/O method", async () => {
     const calls: RecordedCall[] = [];
-    const signal = new AbortController().signal;
-    const bound = bindSandboxAbortSignal(createRecordingSession(calls), signal);
+    const controller = new AbortController();
+    const bound = bindSandboxAbortSignal(createRecordingSession(calls), controller.signal);
 
     await bound.run({ command: "echo hi" });
     await expect(bound.spawn({ command: "sleep 1" })).rejects.toThrow("unused");
@@ -84,9 +86,19 @@ describe("bindSandboxAbortSignal", () => {
       "writeTextFile",
       "removePath",
     ]);
-    for (const call of calls) {
-      expect(call.abortSignal).toBe(signal);
+
+    const signals = calls.map((call) => call.abortSignal);
+    expect(signals.every((signal) => signal !== undefined)).toBe(true);
+    expect(signals).not.toContain(controller.signal);
+    expect(new Set(signals)).toHaveLength(signals.length);
+
+    for (const signal of signals) {
+      signal?.addEventListener("abort", () => {}, { once: true });
     }
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+
+    controller.abort(new Error("turn cancelled"));
+    expect(signals.every((signal) => signal?.aborted === true)).toBe(true);
   });
 
   it("composes a call-level signal with the bound signal instead of replacing it", async () => {

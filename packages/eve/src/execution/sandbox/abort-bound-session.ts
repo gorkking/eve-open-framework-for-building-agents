@@ -19,28 +19,38 @@ export function bindSandboxAbortSignal(
   session: SandboxSession,
   abortSignal: AbortSignal,
 ): SandboxSession {
-  const compose = (callSignal: AbortSignal | undefined): AbortSignal =>
-    callSignal === undefined ? abortSignal : AbortSignal.any([abortSignal, callSignal]);
+  // Give backend listeners operation scope instead of attaching them to the long-lived bound signal.
+  const createOperationSignal = (callSignal: AbortSignal | undefined): AbortSignal =>
+    AbortSignal.any(callSignal === undefined ? [abortSignal] : [abortSignal, callSignal]);
 
   return {
     ...session,
     run: (options: SandboxRunOptions) =>
-      session.run({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.run({ ...options, abortSignal: createOperationSignal(options.abortSignal) }),
     spawn: (options: SandboxSpawnOptions) =>
-      session.spawn({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.spawn({ ...options, abortSignal: createOperationSignal(options.abortSignal) }),
     readFile: (options: SandboxReadFileOptions) =>
-      session.readFile({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.readFile({ ...options, abortSignal: createOperationSignal(options.abortSignal) }),
     readBinaryFile: (options: SandboxReadBinaryFileOptions) =>
-      session.readBinaryFile({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.readBinaryFile({
+        ...options,
+        abortSignal: createOperationSignal(options.abortSignal),
+      }),
     readTextFile: (options: SandboxReadTextFileOptions) =>
-      session.readTextFile({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.readTextFile({ ...options, abortSignal: createOperationSignal(options.abortSignal) }),
     writeFile: (options: SandboxWriteFileOptions) =>
-      session.writeFile({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.writeFile({ ...options, abortSignal: createOperationSignal(options.abortSignal) }),
     writeBinaryFile: (options: SandboxWriteBinaryFileOptions) =>
-      session.writeBinaryFile({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.writeBinaryFile({
+        ...options,
+        abortSignal: createOperationSignal(options.abortSignal),
+      }),
     writeTextFile: (options: SandboxWriteTextFileOptions) =>
-      session.writeTextFile({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.writeTextFile({
+        ...options,
+        abortSignal: createOperationSignal(options.abortSignal),
+      }),
     removePath: (options: SandboxRemovePathOptions) =>
-      session.removePath({ ...options, abortSignal: compose(options.abortSignal) }),
+      session.removePath({ ...options, abortSignal: createOperationSignal(options.abortSignal) }),
   };
 }
