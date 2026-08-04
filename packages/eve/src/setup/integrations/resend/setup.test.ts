@@ -56,7 +56,12 @@ function context(
   effects: ResendSetupDeps,
   select: "marketplace" | "connect" | "portable" = "connect",
 ) {
-  const fake = createFakePrompter({ single: () => select });
+  const fake = createFakePrompter({
+    single: (options) =>
+      options.message === "How would you like to configure Resend?"
+        ? select
+        : options.options[0]!.value,
+  });
   return {
     effects,
     value: {
@@ -111,6 +116,47 @@ describe("Resend setup", () => {
     expect(effects.connectMarketplaceResource).toHaveBeenCalledWith(
       expect.objectContaining({ resource: expect.objectContaining({ id: "store_existing" }) }),
     );
+  });
+
+  it("offers a searchable domain picker and Vercel web handoff", async () => {
+    const effects = deps();
+    vi.mocked(effects.listDomains).mockResolvedValue([
+      "alpha.example",
+      "beta.example",
+      "gamma.example",
+      "delta.example",
+      "epsilon.example",
+      "zeta.example",
+    ]);
+    let domainPicker: unknown;
+    const fake = createFakePrompter({
+      single: (options) => {
+        if (options.message === "How would you like to configure Resend?") return "marketplace";
+        domainPicker = options;
+        return "__add-vercel-domain__";
+      },
+    });
+    const setup = context(effects, "marketplace");
+    const value = {
+      ...setup.value,
+      ui: createIntegrationSetupUi({ asker: setup.value.ui.asker, prompter: fake.prompter }),
+    };
+
+    await expect(setupResend(value, effects)).resolves.toEqual({ kind: "cancelled" });
+    expect(domainPicker).toEqual(
+      expect.objectContaining({
+        message: "Domain for Resend",
+        search: true,
+        placeholder: "type to filter domains",
+        options: expect.arrayContaining([
+          expect.objectContaining({
+            value: "__add-vercel-domain__",
+            trailingAction: true,
+          }),
+        ]),
+      }),
+    );
+    expect(effects.openUrl).toHaveBeenCalledWith("https://vercel.com/domains");
   });
 
   it("hands domain setup off to Vercel web when the team has no domain", async () => {

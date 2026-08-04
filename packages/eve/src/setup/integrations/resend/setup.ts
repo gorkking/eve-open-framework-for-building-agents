@@ -177,6 +177,8 @@ async function chooseMarketplaceResource(
     : (resources.find((resource) => resource.id === selected) ?? "create");
 }
 
+const ADD_VERCEL_DOMAIN = "__add-vercel-domain__";
+
 async function selectMarketplaceDomain(
   context: IntegrationSetupContext,
   deps: ResendSetupDeps,
@@ -189,7 +191,7 @@ async function selectMarketplaceDomain(
       signal: context.signal,
     }),
   );
-  if (domains.length === 0) {
+  const openDomainSetup = (): "cancelled" => {
     const url = "https://vercel.com/domains";
     context.ui.prompter.note(
       `Add or purchase a domain in Vercel, then rerun \`eve add channel/resend\`.\n${url}`,
@@ -198,14 +200,29 @@ async function selectMarketplaceDomain(
     );
     deps.openUrl(url);
     return "cancelled";
-  }
-  if (domains.length === 1 || context.yes) return domains[0]!;
-  return context.ui.prompter.select<string>({
+  };
+  if (domains.length === 0) return openDomainSetup();
+  if (context.yes) return domains[0]!;
+  const selected = await context.ui.prompter.select<string>({
     message: "Domain for Resend",
     description: "Resend will open Vercel web to confirm account, billing, and DNS setup.",
-    options: domains.map((domain) => ({ value: domain, label: domain })),
+    search: true,
+    placeholder: "type to filter domains",
+    options: [
+      ...domains.map((domain, index) => ({
+        value: domain,
+        label: domain,
+        featured: index < 5,
+      })),
+      {
+        value: ADD_VERCEL_DOMAIN,
+        label: "Add or purchase a domain in Vercel",
+        trailingAction: true,
+      },
+    ],
     initialValue: domains[0],
   });
+  return selected === ADD_VERCEL_DOMAIN ? openDomainSetup() : selected;
 }
 
 async function setupMarketplace(
