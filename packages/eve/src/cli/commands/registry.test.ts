@@ -523,9 +523,8 @@ describe("registry commands", () => {
     ]);
   });
 
-  it("uses sanitized manifest titles and preserves explicit registry URLs in list output", async () => {
+  it("preserves explicit registry URLs in list output", async () => {
     const logger = createLogger();
-    getRegistryItems.mockResolvedValue([{ title: "External\u001B]0;spoofed\u0007 Search" }]);
     searchRegistries.mockResolvedValue({
       items: [
         {
@@ -543,7 +542,7 @@ describe("registry commands", () => {
     expect(logger.logs).toEqual([
       [
         "https://example.com/r/registry.json (1 result)",
-        "  External Search",
+        "  search",
         "    https://example.com/r/search.json",
         "    External search tools",
       ].join("\n"),

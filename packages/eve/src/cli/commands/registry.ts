@@ -262,14 +262,13 @@ function searchItemFallbackTitle(item: RegistrySearchItem): string {
 
 function renderSearchItem(
   item: RegistrySearchItem,
-  title: string | undefined,
   width: number,
   theme: ReturnType<typeof createCliTheme>,
 ): string {
   const valueWidth = Math.max(1, width - 4);
   const addressLines = wrapVisibleLine(searchItemAddress(item), valueWidth);
   const lines = [
-    `  ${theme.label(title ?? searchItemFallbackTitle(item))}`,
+    `  ${theme.label(searchItemFallbackTitle(item))}`,
     ...addressLines.map((line) => `    ${line}`),
   ];
   if (!item.description) return lines.join("\n");
@@ -302,7 +301,6 @@ function printSearchResults(
     query: string | undefined;
     resultsBySource: ReadonlyMap<string, RegistrySearchResult>;
     sources: string[];
-    titles: ReadonlyMap<string, string>;
   },
 ): void {
   if (options.json) {
@@ -328,12 +326,9 @@ function printSearchResults(
         : count;
     const heading = `${theme.label(registrySourceLabel(source))} ${theme.muted(`(${detail})`)}`;
     return [
-      [
-        heading,
-        ...sourceResult.items.map((item) =>
-          renderSearchItem(item, options.titles.get(item.addCommandArgument), width, theme),
-        ),
-      ].join("\n"),
+      [heading, ...sourceResult.items.map((item) => renderSearchItem(item, width, theme))].join(
+        "\n",
+      ),
     ];
   });
   logger.log(sections.join("\n"));
@@ -445,26 +440,6 @@ export async function browseRegistryCatalog(
   };
 }
 
-async function loadRegistrySearchTitles(
-  items: readonly RegistrySearchItem[],
-  config: RegistryConfig,
-): Promise<Map<string, string>> {
-  const entries = await Promise.all(
-    items.map(async (item) => {
-      try {
-        const [manifest] = await getRegistryItems([item.addCommandArgument], { config });
-        const title = registryManifestTitle(manifest);
-        return [item.addCommandArgument, title && normalizeRegistryText(title)] as const;
-      } catch {
-        return [item.addCommandArgument, undefined] as const;
-      }
-    }),
-  );
-  return new Map(
-    entries.filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
-  );
-}
-
 async function browseRegistryItems(
   logger: RegistryCommandLogger,
   appRoot: string,
@@ -472,17 +447,14 @@ async function browseRegistryItems(
   source: string | undefined,
   options: RegistrySearchCommandOptions = {},
 ): Promise<void> {
-  const { config, result, resultsBySource, sources } = await searchRegistryCatalog(appRoot, {
+  const { result, resultsBySource, sources } = await searchRegistryCatalog(appRoot, {
     limit: options.limit,
     query,
     source,
   });
   const errors = result.errors ?? [];
   if (options.json || resultsBySource.size > 0) {
-    const titles = options.json
-      ? new Map<string, string>()
-      : await loadRegistrySearchTitles(result.items, config);
-    printSearchResults(logger, result, { ...options, query, resultsBySource, sources, titles });
+    printSearchResults(logger, result, { ...options, query, resultsBySource, sources });
   }
   for (const error of errors) {
     logger.error(`${error.registry}: ${error.message}`);
