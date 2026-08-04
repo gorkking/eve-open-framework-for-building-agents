@@ -91,7 +91,8 @@ export async function suggestResendFromAddress(
   );
   if (!parsed.success) throw new Error("Resend returned an invalid domain list.");
   const receivingDomains = parsed.data.data.filter(
-    (domain) => domain.capabilities?.receiving === "enabled",
+    (domain) =>
+      domain.capabilities?.receiving === "enabled" && domain.capabilities.sending === "enabled",
   );
   const domain =
     receivingDomains.find((candidate) => !candidate.name.endsWith(".resend.app")) ??
