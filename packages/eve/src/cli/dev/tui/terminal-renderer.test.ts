@@ -4272,6 +4272,30 @@ describe("TerminalRenderer setup select typing", () => {
     renderer.shutdown();
   });
 
+  it("loads dynamic search results for the empty filter and each filter change", async () => {
+    const { input, renderer } = makeRenderer();
+    const search = vi.fn(async (query: string) => [
+      { value: query || "popular", label: query || "Popular" },
+    ]);
+
+    renderer.setupFlow.begin("/add");
+    const answer = renderer.setupFlow.readSelect({
+      kind: "search",
+      message: "Skills from skills.sh",
+      options: [{ value: "back", label: "Back", trailingAction: true }],
+      searchAction: { label: (query) => `Search for '${query}'`, load: search, loadOnChange: true },
+    });
+
+    await vi.waitFor(() => expect(search).toHaveBeenCalledWith(""));
+    input.type("react");
+    await vi.waitFor(() => expect(search).toHaveBeenLastCalledWith("react"));
+    input.enter();
+    await expect(answer).resolves.toEqual(["react"]);
+
+    renderer.setupFlow.end();
+    renderer.shutdown();
+  });
+
   it("keeps the searchable panel open while a search action loads results", async () => {
     const { screen, input, renderer } = makeRenderer();
     let resolveSearch!: (options: readonly { value: string; label: string }[]) => void;

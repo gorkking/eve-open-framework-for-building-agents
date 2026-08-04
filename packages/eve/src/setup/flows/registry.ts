@@ -303,6 +303,7 @@ export async function runRegistryFlow(input: {
               searchAction: {
                 label: (query: string) => `Search skills.sh for “${query}”`,
                 value: (query: string) => `${ADDRESS_PREFIX}${query.trim()}`,
+                loadOnChange: true,
                 load: async (query: string) => {
                   categoryItems = (
                     await withSpinner(input.prompter, "Searching skills.sh…", () =>

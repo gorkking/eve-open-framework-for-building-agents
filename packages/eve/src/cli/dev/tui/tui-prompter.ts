@@ -82,6 +82,7 @@ function setupSelectRequest<T extends PrompterValue>(
       if (load !== undefined) {
         request.searchAction.load = async (query) => encodeOptions(await load(query));
       }
+      if (opts.searchAction.loadOnChange === true) request.searchAction.loadOnChange = true;
     }
   } else {
     // The public "inline" hint layout is the panel's "task-list" presentation.

@@ -140,6 +140,8 @@ export interface SearchAction<T extends PrompterValue> {
    * and shows the wait beside it.
    */
   load?(query: string): Promise<readonly SelectOption<T>[]>;
+  /** Refresh rows when the filter changes, including once for the empty filter. TUI only. */
+  loadOnChange?: boolean;
 }
 
 /** Single-select form: navigate, then enter picks the highlighted option. */

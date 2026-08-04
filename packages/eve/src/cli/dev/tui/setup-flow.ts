@@ -31,6 +31,7 @@ interface SetupSingleSelectRequest extends SetupSelectRequestBase {
 
 interface SetupSearchAction extends SearchActionOption {
   load?(query: string): Promise<readonly SetupPanelOption[]>;
+  loadOnChange?: boolean;
 }
 
 interface SetupSearchSelectRequest extends SetupSelectRequestBase {

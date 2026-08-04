@@ -1796,6 +1796,10 @@ export class TerminalRenderer implements AgentTUIRenderer {
       }
     };
 
+    if (searchAction?.loadOnChange === true && searchAction.load !== undefined) {
+      void loadSearch("", searchAction.load);
+    }
+
     let notices = opts.notices;
     if (opts.kind === "task-list" || (opts.kind === "search" && opts.layout === "task-list")) {
       const start = flow.taskListLineStart ?? flow.lines.length;
@@ -1826,10 +1830,18 @@ export class TerminalRenderer implements AgentTUIRenderer {
         settle(value);
       };
       if (loading) {
-        if (key.type === "ctrl-c") close(undefined);
-        else if (key.type === "escape") clearSearch();
-        else if (key.type === "ctrl-r") this.#paint();
-        return;
+        if (key.type === "ctrl-c") {
+          close(undefined);
+          return;
+        }
+        if (key.type === "ctrl-r") {
+          this.#paint();
+          return;
+        }
+        if (searchAction?.loadOnChange !== true) {
+          if (key.type === "escape") clearSearch();
+          return;
+        }
       }
 
       const base = { key, options: selectOptions, searchAction, select };
@@ -1847,6 +1859,9 @@ export class TerminalRenderer implements AgentTUIRenderer {
           select = result.select;
           error = undefined;
           this.#paint();
+          if (searchAction?.loadOnChange === true && searchAction.load !== undefined) {
+            void loadSearch(select.filter, searchAction.load);
+          }
           return;
         case "submit": {
           const query = searchActionQuery(result.values[0] ?? "");
