@@ -25,6 +25,7 @@ import {
   validateResendApiKey,
 } from "./api.js";
 import { provisionResendConnector } from "./connect.js";
+import { authorizeResendMarketplaceSetup } from "./marketplace-oauth.js";
 import {
   deleteMarketplaceResendWebhooks,
   reconcileMarketplaceResendWebhook,
@@ -52,6 +53,7 @@ export interface ResendSetupDeps {
   provisionConnector: typeof provisionResendConnector;
   provisionMarketplaceResource: typeof provisionResendMarketplaceResource;
   connectMarketplaceResource: typeof connectResendMarketplaceResource;
+  authorizeMarketplaceSetup: typeof authorizeResendMarketplaceSetup;
   reconcileMarketplaceWebhook: typeof reconcileMarketplaceResendWebhook;
   deleteMarketplaceWebhooks: typeof deleteMarketplaceResendWebhooks;
   waitForMarketplaceDomain: typeof waitForResendMarketplaceDomain;
@@ -75,6 +77,7 @@ const defaultDeps: ResendSetupDeps = {
   provisionConnector: provisionResendConnector,
   provisionMarketplaceResource: provisionResendMarketplaceResource,
   connectMarketplaceResource: connectResendMarketplaceResource,
+  authorizeMarketplaceSetup: authorizeResendMarketplaceSetup,
   reconcileMarketplaceWebhook: reconcileMarketplaceResendWebhook,
   deleteMarketplaceWebhooks: deleteMarketplaceResendWebhooks,
   waitForMarketplaceDomain: waitForResendMarketplaceDomain,
@@ -336,10 +339,15 @@ async function setupMarketplace(
     );
   }
   const endpoint = new URL("/eve/v1/resend", deployed.productionUrl).href;
-  const webhook = await deps.reconcileMarketplaceWebhook({
-    endpoint,
+  const authorization = await deps.authorizeMarketplaceSetup({
+    log: context.ui.prompter.log,
     projectRoot: context.appRoot,
     orgId: project.orgId,
+    signal: context.signal,
+  });
+  const webhook = await deps.reconcileMarketplaceWebhook({
+    accessToken: authorization.accessToken,
+    endpoint,
     signal: context.signal,
   });
   try {
@@ -354,22 +362,22 @@ async function setupMarketplace(
   } catch (error) {
     await deps
       .deleteMarketplaceWebhooks({
+        accessToken: authorization.accessToken,
         ids: [webhook.id],
-        projectRoot: context.appRoot,
-        orgId: project.orgId,
         signal: context.signal,
       })
       .catch(() => {});
+    await authorization.cleanup().catch(() => {});
     throw error;
   }
   await deps
     .deleteMarketplaceWebhooks({
+      accessToken: authorization.accessToken,
       ids: webhook.previousIds.filter((id) => id !== webhook.id),
-      projectRoot: context.appRoot,
-      orgId: project.orgId,
       signal: context.signal,
     })
     .catch(() => {});
+  await authorization.cleanup();
   context.ui.nextSteps([
     `Resend endpoint: ${endpoint}`,
     `Send an email to ${fromAddress.trim()} and reply to smoke-test the conversation.`,

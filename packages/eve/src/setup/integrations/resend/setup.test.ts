@@ -45,6 +45,11 @@ function deps(): ResendSetupDeps {
       projectsMetadata: [{ projectId: "project", environments: ["production"] }],
     })),
     connectMarketplaceResource: vi.fn(async () => {}),
+    authorizeMarketplaceSetup: vi.fn(async () => ({
+      accessToken: "oauth_marketplace",
+      connectorUid: "oauth/eve-resend-setup",
+      cleanup: vi.fn(async () => {}),
+    })),
     reconcileMarketplaceWebhook: vi.fn(async () => ({
       id: "wh_marketplace",
       signingSecret: "whsec_marketplace",
@@ -106,8 +111,14 @@ describe("Resend setup", () => {
       expect.stringContaining("process.env.RESEND_API_KEY"),
       { force: undefined },
     );
+    expect(effects.authorizeMarketplaceSetup).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "team" }),
+    );
     expect(effects.reconcileMarketplaceWebhook).toHaveBeenCalledWith(
-      expect.objectContaining({ endpoint: "https://agent.test/eve/v1/resend" }),
+      expect.objectContaining({
+        accessToken: "oauth_marketplace",
+        endpoint: "https://agent.test/eve/v1/resend",
+      }),
     );
     expect(effects.runVercel).toHaveBeenCalledWith(
       ["env", "add", "RESEND_WEBHOOK_SECRET", "production", "--force", "--yes"],

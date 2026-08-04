@@ -3,30 +3,31 @@ import { describe, expect, it, vi } from "vitest";
 import {
   deleteMarketplaceResendWebhooks,
   reconcileMarketplaceResendWebhook,
-  type MarketplaceWebhookDeps,
 } from "./marketplace-webhook.js";
 
-const RESULT_PREFIX = "EVE_RESEND_RESULT=";
-
-function result(value: unknown): string {
-  return `${RESULT_PREFIX}${Buffer.from(JSON.stringify(value), "utf8").toString("base64url")}\n`;
+function response(body: unknown, status = 200): Response {
+  return new Response(status === 204 ? null : JSON.stringify(body), { status });
 }
 
-describe("Resend Marketplace webhook helper", () => {
-  it("runs reconciliation with production Marketplace environment variables", async () => {
-    const runVercelCaptureStdout = vi.fn<MarketplaceWebhookDeps["runVercelCaptureStdout"]>(
-      async () => ({
-        ok: true,
-        stdout: result({ id: "wh_new", signingSecret: "whsec_new", previousIds: ["wh_old"] }),
-      }),
-    );
+describe("Resend Marketplace webhook setup", () => {
+  it("reconciles an email.received webhook with the temporary OAuth token", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        response({
+          data: [
+            { id: "wh_old", endpoint: "https://agent.test/eve/v1/resend/" },
+            { id: "wh_other", endpoint: "https://other.test/webhook" },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(response({ id: "wh_new", signing_secret: "whsec_new" }));
 
     await expect(
       reconcileMarketplaceResendWebhook({
+        accessToken: "oauth_secret",
         endpoint: "https://agent.test/eve/v1/resend",
-        projectRoot: "/project",
-        orgId: "team",
-        deps: { runVercelCaptureStdout },
+        deps: { fetch },
       }),
     ).resolves.toEqual({
       id: "wh_new",
@@ -34,37 +35,25 @@ describe("Resend Marketplace webhook helper", () => {
       previousIds: ["wh_old"],
     });
 
-    const [args, options] = runVercelCaptureStdout.mock.calls[0]!;
-    expect(args.slice(0, 7)).toEqual([
-      "env",
-      "run",
-      "--environment",
-      "production",
-      "--scope",
-      "team",
-      "--",
-    ]);
-    expect(args).toContain("reconcile");
-    expect(args).toContain("https://agent.test/eve/v1/resend");
-    expect(args.join(" ")).not.toContain("whsec_new");
-    expect(options).toMatchObject({ cwd: "/project", nonInteractive: true });
-  });
-
-  it("runs deletion without exposing credentials", async () => {
-    const runVercelCaptureStdout = vi.fn<MarketplaceWebhookDeps["runVercelCaptureStdout"]>(
-      async () => ({
-        ok: true,
-        stdout: result({ deleted: ["wh_old"] }),
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({
+      headers: { Authorization: "Bearer oauth_secret" },
+    });
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(
+      JSON.stringify({
+        endpoint: "https://agent.test/eve/v1/resend",
+        events: ["email.received"],
       }),
     );
+  });
+
+  it("deletes webhooks without putting the OAuth token in the URL", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response(undefined, 204));
     await deleteMarketplaceResendWebhooks({
+      accessToken: "oauth_secret",
       ids: ["wh_old"],
-      projectRoot: "/project",
-      orgId: "team",
-      deps: { runVercelCaptureStdout } satisfies MarketplaceWebhookDeps,
+      deps: { fetch },
     });
-    expect(runVercelCaptureStdout.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining(["delete", "wh_old"]),
-    );
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://api.resend.com/webhooks/wh_old");
+    expect(String(fetch.mock.calls[0]?.[0])).not.toContain("oauth_secret");
   });
 });
