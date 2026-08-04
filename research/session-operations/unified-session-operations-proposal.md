@@ -10,12 +10,12 @@ last_updated: "2026-08-04"
 
 eve exposes two identities with the same operation names:
 
-- Channel operations take a channel-local address on every call and target its
-  current owner.
+- `from(address)` binds a channel-local address and returns operations targeting
+  its current owner.
 - `Session` is a fixed handle for one durable `sessionId`.
 
 `ChannelAddress` is not a public authoring API. eve may bind an address
-internally to implement the direct functions and platform conveniences such as
+internally to implement `from` and platform conveniences such as
 Slack's thread-bound `ctx.send()` and `ctx.cancel()` methods.
 
 ```text
@@ -26,12 +26,13 @@ sessionId ───────────────────────�
 
 The identity determines the behavior:
 
-- `send(address, input)` resumes the current owner, or creates and claims the
-  address when it is unowned.
-- `cancel(address)`, `compact(address)`, `clear(address)`, and
-  `reset(address)` target the current owner and never create.
+- `from(address).send(message, options)` resumes the current owner, or creates
+  and claims the address when it is unowned.
+- The other `from(address).*` operations target the current owner and never
+  create.
 - `resolveSession(address)` is the only explicit conversion from a dynamic
-  address to a fixed `Session`.
+  address to a fixed `Session`. It is top-level beside `from`, not a method on
+  the bound source.
 - Every `session.*` method targets exactly `session.id`. It never creates or
   follows a replacement.
 
@@ -39,22 +40,29 @@ This is intentionally a breaking API migration with no compatibility aliases.
 
 ## Public authoring contract
 
-Custom channel routes and authored `receive` functions get direct operations:
+Custom channel routes and authored `receive` functions get two top-level
+identity selectors:
 
 ```ts
-interface ChannelOperations<TState = undefined> {
-  send(address: string, input: ChannelSendInput<TState>): Promise<Session>;
-  cancel(address: string, options?: { turnId?: string }): Promise<CancelTurnResult>;
-  compact(address: string): Promise<CompactSessionResult>;
-  clear(address: string): Promise<ClearSessionResult>;
-  reset(address: string, options?: { reason?: string }): Promise<ResetSessionResult>;
+interface ChannelReceiveContext<TState = undefined> {
+  from(address: string): ChannelSource<TState>;
   resolveSession(address: string): Promise<Session | undefined>;
 }
 
-interface BaseChannelSendInput {
+interface ChannelSource<TState = undefined> {
+  send(message: string | UserContent, options: ChannelSendOptions<TState>): Promise<Session>;
+  respond(
+    inputResponses: readonly InputResponse[],
+    options: ChannelRespondOptions,
+  ): Promise<Session>;
+  cancel(options?: { turnId?: string }): Promise<CancelTurnResult>;
+  compact(): Promise<CompactSessionResult>;
+  clear(): Promise<ClearSessionResult>;
+  reset(options?: { reason?: string }): Promise<ResetSessionResult>;
+}
+
+interface BaseChannelSendOptions {
   auth: SessionAuthContext | null;
-  message?: string | UserContent;
-  inputResponses?: readonly InputResponse[];
   context?: readonly string[];
   outputSchema?: JsonObject;
   callback?: SessionCallback;
@@ -63,9 +71,15 @@ interface BaseChannelSendInput {
   title?: string;
 }
 
-type ChannelSendInput<TState = undefined> = [TState] extends [undefined]
-  ? BaseChannelSendInput
-  : BaseChannelSendInput & { state: TState };
+type ChannelSendOptions<TState = undefined> = [TState] extends [undefined]
+  ? BaseChannelSendOptions
+  : BaseChannelSendOptions & { state: TState };
+
+interface ChannelRespondOptions {
+  auth: SessionAuthContext | null;
+  context?: readonly string[];
+  outputSchema?: JsonObject;
+}
 ```
 
 Fixed-ID operations use a `Session`:
@@ -74,7 +88,14 @@ Fixed-ID operations use a `Session`:
 interface Session {
   readonly id: string;
 
-  send(input: SessionSendInput): Promise<SessionSendCommandResult>;
+  send(
+    message: string | UserContent,
+    options: SessionSendOptions,
+  ): Promise<SessionSendCommandResult>;
+  respond(
+    inputResponses: readonly InputResponse[],
+    options: SessionRespondOptions,
+  ): Promise<SessionSendCommandResult>;
   cancel(options?: { turnId?: string }): Promise<CancelTurnResult>;
   compact(): Promise<CompactSessionResult>;
   clear(): Promise<ClearSessionResult>;
@@ -84,9 +105,14 @@ interface Session {
   getStreamTailIndex(): Promise<number>;
 }
 
-interface SessionSendInput extends SendPayload {
+interface SessionSendOptions {
   auth: SessionAuthContext | null;
+  caller?: TurnCaller;
+  context?: readonly string[];
+  outputSchema?: JsonObject;
 }
+
+type SessionRespondOptions = SessionSendOptions;
 ```
 
 `attachSession(sessionId)` constructs this handle without I/O. The first
@@ -96,13 +122,15 @@ operation reports whether the ID is active.
 
 | Call                       | Identity used        | Can create        | Missing target       |
 | -------------------------- | -------------------- | ----------------- | -------------------- |
-| `send(address, input)`     | continuation address | only when unowned | creates and claims   |
-| `cancel(address)`          | continuation address | no                | `no_active_turn`     |
-| `compact(address)`         | continuation address | no                | `no_active_session`  |
-| `clear(address)`           | continuation address | no                | `no_active_session`  |
-| `reset(address)`           | continuation address | no                | `no_active_session`  |
+| `from(address).send(...)`  | continuation address | only when unowned | creates and claims   |
+| `from(address).respond(…)` | continuation address | no                | throws               |
+| `from(address).cancel()`   | continuation address | no                | `no_active_turn`     |
+| `from(address).compact()`  | continuation address | no                | `no_active_session`  |
+| `from(address).clear()`    | continuation address | no                | `no_active_session`  |
+| `from(address).reset()`    | continuation address | no                | `no_active_session`  |
 | `resolveSession(address)`  | continuation address | no                | `undefined`          |
-| `session.send(input)`      | session ID           | no                | `session_not_active` |
+| `session.send(…)`          | session ID           | no                | `session_not_active` |
+| `session.respond(…)`       | session ID           | no                | `session_not_active` |
 | `session.cancel()`         | session ID           | no                | `no_active_turn`     |
 | `session.compact()`        | session ID           | no                | `no_active_session`  |
 | `session.clear()`          | session ID           | no                | `no_active_session`  |
@@ -130,30 +158,29 @@ import { defineChannel, GET, POST } from "eve/channels";
 
 export default defineChannel({
   routes: [
-    POST("/threads/:threadId/messages", async (request, { params, send }) => {
+    POST("/threads/:threadId/messages", async (request, { from, params }) => {
       const body = await request.json();
-      const session = await send(params.threadId, {
+      const session = await from(params.threadId).send(body.message, {
         auth: null,
-        message: body.message,
       });
 
       return Response.json({ sessionId: session.id });
     }),
 
-    POST("/threads/:threadId/cancel", async (_request, { cancel, params }) =>
-      Response.json(await cancel(params.threadId)),
+    POST("/threads/:threadId/cancel", async (_request, { from, params }) =>
+      Response.json(await from(params.threadId).cancel()),
     ),
 
-    POST("/threads/:threadId/compact", async (_request, { compact, params }) =>
-      Response.json(await compact(params.threadId)),
+    POST("/threads/:threadId/compact", async (_request, { from, params }) =>
+      Response.json(await from(params.threadId).compact()),
     ),
 
-    POST("/threads/:threadId/clear", async (_request, { clear, params }) =>
-      Response.json(await clear(params.threadId)),
+    POST("/threads/:threadId/clear", async (_request, { from, params }) =>
+      Response.json(await from(params.threadId).clear()),
     ),
 
-    POST("/threads/:threadId/reset", async (_request, { params, reset }) =>
-      Response.json(await reset(params.threadId, { reason: "Start over" })),
+    POST("/threads/:threadId/reset", async (_request, { from, params }) =>
+      Response.json(await from(params.threadId).reset({ reason: "Start over" })),
     ),
 
     GET("/threads/:threadId/owner", async (_request, { params, resolveSession }) => {
@@ -163,14 +190,15 @@ export default defineChannel({
 
     POST("/admin/session/:sessionId", async (request, { attachSession, params }) => {
       const session = attachSession(params.sessionId);
-      return Response.json(await session.send({ auth: null, message: await request.text() }));
+      return Response.json(await session.send(await request.text(), { auth: null }));
     }),
   ],
 });
 ```
 
-The direct functions make dynamic routing visible without making authors build
-or name an intermediate address object.
+`from` makes dynamic routing visible without exposing the internal
+`ChannelAddress` representation. `resolveSession` stays top-level because it
+snapshots an address rather than operating through the dynamic source.
 
 ### Authored receive and cross-channel handoff
 
@@ -179,32 +207,29 @@ initial state:
 
 ```ts
 export default defineChannel<State, Context, Target>({
-  async receive(input, { send }) {
+  async receive(input, { from }) {
     const address = addressFromTarget(input.target);
 
-    return await send(address, {
+    return await from(address).send(input.message, {
       auth: input.auth,
-      message: input.message,
       state: initialState(input.target),
     });
   },
 });
 ```
 
-A schedule hands work to that implementation with `send(channel, input)` and
-receives a fixed session:
+A schedule selects the target with `to(channel, target)` and receives a fixed
+session from `send`:
 
 ```ts
 export default defineSchedule({
   cron: "0 9 * * *",
-  async run({ send, appAuth }) {
-    const session = await send(slack, {
+  async run({ to, appAuth }) {
+    const session = await to(slack, { channelId, threadTs }).send("Investigate this incident", {
       auth: appAuth,
-      message: "Investigate this incident",
-      target: { channelId, threadTs },
     });
 
-    await session.send({ auth: appAuth, message: "Additional detail" });
+    await session.send("Additional detail", { auth: appAuth });
     await session.cancel();
     await session.compact();
     await session.clear();
@@ -213,16 +238,13 @@ export default defineSchedule({
 });
 ```
 
-A channel route uses `args.receive(channel, input)` for the same cross-channel
-handoff because `args.send(address, input)` already means direct delivery on
-its own channel:
+A channel route uses the same `to(channel, target).send(message, options)`
+handoff:
 
 ```ts
-const session = await args.receive(slack, {
-  auth,
-  message: "Investigate this incident",
-  target: { channelId, threadTs },
-});
+const session = await args
+  .to(slack, { channelId, threadTs })
+  .send("Investigate this incident", { auth });
 ```
 
 Neither caller knows the target channel's address format. Later operations on
@@ -236,7 +258,8 @@ input supplies `auth` explicitly:
 
 ```ts
 async onAppMention(ctx) {
-  await ctx.send({ message: "Run a separate turn" });
+  await ctx.send("Run a separate turn");
+  await ctx.respond(inputResponses);
   await ctx.cancel({ turnId });
   await ctx.compact();
   await ctx.clear();
@@ -261,13 +284,10 @@ async onEvent(ctx) {
   await ctx.reset({ reason: "Start over", target });
   const fixed = await ctx.resolveSession({ target });
 
-  const session = await ctx.send({
-    auth: null,
-    message: "hello",
-    target,
-  });
+  const session = await ctx.send("hello", { auth: null, target });
+  await ctx.respond(inputResponses, { auth: null, target });
 
-  await session.send({ auth: null, message: "follow-up" });
+  await session.send("follow-up", { auth: null });
 }
 ```
 
@@ -441,7 +461,13 @@ Both public identity forms dispatch one shared command protocol:
 
 ```ts
 type SessionCommand =
-  | { kind: "send"; auth: SessionAuthContext | null; payload: DeliverPayload; requestId?: string }
+  | {
+      kind: "send";
+      auth: SessionAuthContext | null;
+      caller?: TurnCaller;
+      payload: DeliverPayload;
+      requestId?: string;
+    }
   | { kind: "cancel"; turnId?: string }
   | { kind: "compact" }
   | { kind: "clear" }
@@ -482,9 +508,9 @@ Only explicit `resolveSession(address)` calls `resolveContinuation`. A future
 lightweight owner lookup can optimize that conversion without affecting normal
 operation latency.
 
-Internally eve may implement `ChannelOperations` by binding an address to a
-private handle and forwarding the method. That object must not be exported or
-accepted by authored channel APIs.
+Internally eve may bind an address to a private continuation handle. The public
+`ChannelSource` exposes only the dynamic operations; the underlying
+`ChannelAddress` must not be exported or accepted by authored channel APIs.
 
 ## Race and lifetime rules
 
@@ -509,8 +535,8 @@ await session?.clear(); // still wrun_A
 Reset followed by send is ordered:
 
 ```ts
-await reset("thread-123");
-const replacement = await send("thread-123", { auth, message: "start again", state });
+await from("thread-123").reset();
+const replacement = await from("thread-123").send("start again", { auth, state });
 ```
 
 The replacement may be created only after the prior owner releases the address.
@@ -519,21 +545,21 @@ owner; an ownership conflict retries dispatch to the winner.
 
 ## Removed public APIs
 
-| Removed                                             | Replacement                                         |
-| --------------------------------------------------- | --------------------------------------------------- |
-| HTTP continuation-token fields and control bodies   | `/eve/v1/session/:sessionId/*`                      |
-| plural `/eve/v1/sessions` routes                    | singular `/eve/v1/session`                          |
-| follow-up `/:sessionId/messages`                    | `POST /:sessionId`                                  |
-| `client.session(token)`                             | `client.sessions.create()` or `.attach(id)`         |
-| client continuation-token state                     | `{ sessionId, streamIndex }`                        |
-| free token helpers                                  | direct `send(address, input)` and control functions |
-| public `ChannelAddress` / `channelAddress(address)` | direct channel operations                           |
-| `resolveActiveSession(address)`                     | `resolveSession(address)`                           |
-| `getSession(sessionId)`                             | `attachSession(sessionId)`                          |
-| schedule `receive(channel, input)`                  | schedule `send(channel, input)`                     |
-| Slack `ctx.conversation` and `ctx.receive`          | flat `ctx.*` operations and `ctx.send(input)`       |
-| string arguments to client/eval/session `send()`    | `{ message, ... }` input objects                    |
-| split runtime delivery/control methods              | `dispatchContinuation` and `dispatchSession`        |
+| Removed                                             | Replacement                                          |
+| --------------------------------------------------- | ---------------------------------------------------- |
+| HTTP continuation-token fields and control bodies   | `/eve/v1/session/:sessionId/*`                       |
+| plural `/eve/v1/sessions` routes                    | singular `/eve/v1/session`                           |
+| follow-up `/:sessionId/messages`                    | `POST /:sessionId`                                   |
+| `client.session(token)`                             | `client.sessions.create()` or `.attach(id)`          |
+| client continuation-token state                     | `{ sessionId, streamIndex }`                         |
+| free token helpers                                  | `from(address)` and `resolveSession(address)`        |
+| public `ChannelAddress` / `channelAddress(address)` | `from(address)`                                      |
+| `resolveActiveSession(address)`                     | `resolveSession(address)`                            |
+| `getSession(sessionId)`                             | `attachSession(sessionId)`                           |
+| schedule `receive(channel, input)`                  | `to(channel, target).send(message, options)`         |
+| Slack `ctx.conversation` and `ctx.receive`          | flat `ctx.send(message, options)` / `ctx.respond(…)` |
+| string arguments to client/eval `send()`            | `{ message, ... }` input objects                     |
+| split runtime delivery/control methods              | `dispatchContinuation` and `dispatchSession`         |
 
 No deprecated aliases, alternate request parsing, or fallback compatibility
 paths remain.
@@ -542,8 +568,8 @@ paths remain.
 
 The migration must prove:
 
-- Every address send/control performs one continuation dispatch and no implicit
-  resolution.
+- Every `from(address)` send/control performs one continuation dispatch and no
+  implicit resolution.
 - Address send resumes or creates; other address operations never create.
 - Every fixed-session and HTTP operation remains pinned to one ID.
 - Rekeying preserves fixed-ID delivery while moving only the channel alias.
