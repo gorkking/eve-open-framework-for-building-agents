@@ -100,7 +100,7 @@ describe("Resend setup", () => {
     ]);
     expect(effects.writeTextFile).toHaveBeenCalledWith(
       "/project/agent/channels/resend.ts",
-      expect.stringContaining('getToken("api-key/resend-agent"'),
+      expect.stringContaining('connectResendApiKey("api-key/resend-agent")'),
       { force: undefined },
     );
   });

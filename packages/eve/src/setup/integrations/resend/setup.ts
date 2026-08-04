@@ -62,7 +62,7 @@ function channelTemplate(input: {
   fromName: string;
 }): string {
   const apiKey = input.connectorUid
-    ? `() => getToken(${JSON.stringify(input.connectorUid)}, { subject: { type: "app" } })`
+    ? `connectResendApiKey(${JSON.stringify(input.connectorUid)})`
     : `() => {
         const apiKey = process.env.RESEND_API_KEY;
         if (!apiKey) throw new Error("RESEND_API_KEY is required.");
@@ -70,7 +70,7 @@ function channelTemplate(input: {
       }`;
   return `import { createMemoryState } from "@chat-adapter/state-memory";
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
-${input.connectorUid ? 'import { getToken } from "@vercel/connect";\n' : ""}import type { Message, Thread } from "chat";
+${input.connectorUid ? 'import { connectResendApiKey } from "@vercel/connect/eve";\n' : ""}import type { Message, Thread } from "chat";
 import { chatSdkChannel, messageToUserContent } from "eve/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
