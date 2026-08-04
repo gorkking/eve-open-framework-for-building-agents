@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1580
 status: proposed
-last_updated: "2026-08-03"
+last_updated: "2026-08-04"
 ---
 
 # Unified session addressing and operations
@@ -344,22 +344,22 @@ Authored `receive` implementations convert the platform target into a
 The built-in HTTP channel never exposes or accepts a continuation token:
 
 ```http
-POST /eve/v1/sessions
+POST /eve/v1/session
 {"message":"hello"}
 
-POST /eve/v1/sessions/wrun_A/messages
+POST /eve/v1/session/wrun_A
 {"message":"follow-up"}
 
-POST /eve/v1/sessions/wrun_A/cancel
+POST /eve/v1/session/wrun_A/cancel
 {"turnId":"turn_A"}
 
-POST /eve/v1/sessions/wrun_A/compact
-POST /eve/v1/sessions/wrun_A/clear
+POST /eve/v1/session/wrun_A/compact
+POST /eve/v1/session/wrun_A/clear
 
-POST /eve/v1/sessions/wrun_A/reset
+POST /eve/v1/session/wrun_A/reset
 {"reason":"Start over"}
 
-GET /eve/v1/sessions/wrun_A/stream
+GET /eve/v1/session/wrun_A/stream
 ```
 
 The create route calls `createSession()`. Every route containing `wrun_A`
@@ -697,7 +697,7 @@ the fixed `Session` before scheduling the operation.
 The mismatch is impossible because HTTP carries one address:
 
 ```http
-POST /eve/v1/sessions/wrun_A/messages
+POST /eve/v1/session/wrun_A
 {"message":"hello"}
 ```
 
@@ -708,7 +708,6 @@ There is no body token that can redirect delivery to `wrun_B`.
 | Removed                                            | Replacement                                         |
 | -------------------------------------------------- | --------------------------------------------------- |
 | HTTP `continuationToken` fields                    | ID-only session routes                              |
-| Singular `/eve/v1/session` route family            | Plural `/eve/v1/sessions` resources                 |
 | `ClientSessionState.continuationToken`             | `sessionId` and stream cursor                       |
 | `client.session(token)`                            | `client.sessions.create()` or `.attach(sessionId)`  |
 | `Session.continuationToken`                        | `ChannelAddress.continuationToken` where relevant   |
