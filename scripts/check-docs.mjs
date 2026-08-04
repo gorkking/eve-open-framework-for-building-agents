@@ -15,8 +15,8 @@
  *      every site-page markdown file must be reachable from the sidebar nav
  *      — either listed by slug in an ancestor `meta.json#pages`, covered
  *      by a `"..."` token in that array, or explicitly allowed as a
- *      footer-only page. Otherwise the page renders at its URL but never
- *      appears in the sidebar (easy to miss in review).
+ *      `"..."` token in that array. Otherwise the page renders at its URL
+ *      but never appears in the sidebar (easy to miss in review).
  *
  * Files intentionally not part of the site (the top-level engineer-facing
  * README.md in each root) are skipped via isExcluded().
@@ -34,16 +34,10 @@ const ROOTS = [
   },
 ];
 
-const SIDEBAR_EXEMPT_PAGES = new Set([
-  // Linked from the global footer instead of the docs sidebar.
-  "responsible-use.md",
-]);
-
 // Only the top-level README.md is excluded. Nested READMEs (e.g.
 // channels/README.md) are site pages and must carry a `url:` frontmatter
 // override, validated below.
 const isExcluded = (relPath) => relPath === "README.md";
-const isSidebarExempt = (relPath) => SIDEBAR_EXEMPT_PAGES.has(relPath);
 
 function walkMarkdown(dir) {
   const out = [];
@@ -176,7 +170,7 @@ for (const root of ROOTS) {
         issue: `frontmatter missing \`${field}\``,
       });
     }
-    if (nav && !isSidebarExempt(relPath) && !isCoveredByNav(relPath, nav)) {
+    if (nav && !isCoveredByNav(relPath, nav)) {
       failures.push({
         root: root.label,
         file: relPath,
