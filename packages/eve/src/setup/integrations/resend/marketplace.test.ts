@@ -66,10 +66,29 @@ describe("Resend Marketplace", () => {
     ]);
   });
 
-  it("lists Vercel-owned domains", async () => {
-    const captureVercel = capture({
-      domains: [{ name: "example.com" }, { name: "another.example" }],
-    });
+  it("prioritizes useful production aliases before Vercel-owned domains", async () => {
+    const captureVercel = vi
+      .fn<ResendMarketplaceDeps["captureVercel"]>()
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: JSON.stringify({
+          domains: [{ name: "example.com" }, { name: "another.example" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: JSON.stringify({
+          targets: {
+            production: {
+              alias: [
+                "resend-eve-test.playground-vercel.tools",
+                "resend-eve-test.vercel.app",
+                "resend-eve-test-git-main.preview.example.com",
+              ],
+            },
+          },
+        }),
+      });
 
     await expect(
       listVercelDomains({
@@ -77,7 +96,11 @@ describe("Resend Marketplace", () => {
         project: { orgId: "team", projectId: "project" },
         deps: { captureVercel },
       }),
-    ).resolves.toEqual(["example.com", "another.example"]);
+    ).resolves.toEqual([
+      "resend-eve-test.playground-vercel.tools",
+      "example.com",
+      "another.example",
+    ]);
     expect(captureVercel).toHaveBeenCalledWith(
       ["domains", "list", "--format", "json", "--limit", "100", "--scope", "team"],
       expect.objectContaining({ cwd: "/project" }),

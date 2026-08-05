@@ -30,6 +30,13 @@ const ResourceSchema = z.object({
 });
 const ResourceListSchema = z.object({ stores: z.array(z.unknown()) });
 const DomainListSchema = z.object({ domains: z.array(z.object({ name: z.string().min(1) })) });
+const ProjectSchema = z.object({
+  targets: z
+    .object({
+      production: z.object({ alias: z.array(z.string()).optional() }).optional(),
+    })
+    .optional(),
+});
 const InspectedResourceSchema = z.object({
   resource: z.object({
     id: z.string().min(1),
@@ -102,7 +109,7 @@ export async function listResendMarketplaceResources(input: {
   return resources;
 }
 
-/** Lists domains owned by the linked Vercel team. */
+/** Lists project production aliases and domains owned by the linked Vercel team. */
 export async function listVercelDomains(input: {
   projectRoot: string;
   project: VercelProjectReference;
@@ -110,20 +117,39 @@ export async function listVercelDomains(input: {
   deps?: Pick<ResendMarketplaceDeps, "captureVercel">;
 }): Promise<string[]> {
   const deps = input.deps ?? defaultDeps;
-  const result = await deps.captureVercel(
-    ["domains", "list", "--format", "json", "--limit", "100", "--scope", input.project.orgId],
-    { cwd: input.projectRoot, signal: input.signal },
-  );
-  if (!result.ok) throw new Error("Could not inspect Vercel domains.");
-  let body: unknown;
+  const [domainsResult, projectResult] = await Promise.all([
+    deps.captureVercel(
+      ["domains", "list", "--format", "json", "--limit", "100", "--scope", input.project.orgId],
+      { cwd: input.projectRoot, signal: input.signal },
+    ),
+    deps.captureVercel(
+      [
+        "api",
+        `/v9/projects/${input.project.projectId}?teamId=${input.project.orgId}`,
+        "--scope",
+        input.project.orgId,
+      ],
+      { cwd: input.projectRoot, signal: input.signal },
+    ),
+  ]);
+  if (!domainsResult.ok) throw new Error("Could not inspect Vercel domains.");
+  let domainsBody: unknown;
+  let projectBody: unknown;
   try {
-    body = JSON.parse(result.stdout) as unknown;
+    domainsBody = JSON.parse(domainsResult.stdout) as unknown;
+    projectBody = projectResult.ok ? (JSON.parse(projectResult.stdout) as unknown) : undefined;
   } catch {
     throw new Error("Vercel returned invalid JSON for the domain list.");
   }
-  const parsed = DomainListSchema.safeParse(body);
-  if (!parsed.success) throw new Error("Vercel returned an invalid domain list.");
-  return parsed.data.domains.map((domain) => domain.name);
+  const domains = DomainListSchema.safeParse(domainsBody);
+  if (!domains.success) throw new Error("Vercel returned an invalid domain list.");
+  const project = ProjectSchema.safeParse(projectBody);
+  const aliases = project.success ? (project.data.targets?.production?.alias ?? []) : [];
+  const usefulAliases = aliases.filter(
+    (alias) =>
+      !alias.endsWith(".vercel.app") && !alias.includes("-git-") && !alias.includes(".preview."),
+  );
+  return [...new Set([...usefulAliases, ...domains.data.domains.map((domain) => domain.name)])];
 }
 
 /** Provisions and connects a Resend Marketplace resource through Vercel CLI. */

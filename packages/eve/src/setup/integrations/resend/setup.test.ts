@@ -176,11 +176,15 @@ describe("Resend setup", () => {
         placeholder: "type to filter domains",
         options: [
           expect.objectContaining({
+            value: "alpha.example",
+            featured: true,
+            hint: "Current production domain · recommended",
+          }),
+          expect.objectContaining({
             value: "__add-vercel-domain__",
             featured: true,
             trailingAction: true,
           }),
-          expect.objectContaining({ value: "alpha.example", featured: true }),
           expect.objectContaining({ value: "beta.example", featured: true }),
           expect.objectContaining({ value: "gamma.example", featured: true }),
           expect.objectContaining({ value: "delta.example", featured: true }),

@@ -216,7 +216,8 @@ async function selectMarketplaceDomain(
     return "cancelled";
   };
   if (domains.length === 0) return openDomainSetup();
-  if (context.yes) return domains[0]!;
+  const recommended = domains[0]!;
+  if (context.yes) return recommended;
   const selected = await context.ui.prompter.select<string>({
     message: "Domain for Resend",
     description: "Resend will open Vercel web to confirm account, billing, and DNS setup.",
@@ -224,18 +225,24 @@ async function selectMarketplaceDomain(
     placeholder: "type to filter domains",
     options: [
       {
+        value: recommended,
+        label: recommended,
+        hint: "Current production domain · recommended",
+        featured: true,
+      },
+      {
         value: ADD_VERCEL_DOMAIN,
         label: "Add or purchase a domain in Vercel",
         featured: true,
         trailingAction: true,
       },
-      ...domains.map((domain, index) => ({
+      ...domains.slice(1).map((domain, index) => ({
         value: domain,
         label: domain,
-        featured: index < 4,
+        featured: index < 3,
       })),
     ],
-    initialValue: domains[0],
+    initialValue: recommended,
   });
   return selected === ADD_VERCEL_DOMAIN ? openDomainSetup() : selected;
 }
