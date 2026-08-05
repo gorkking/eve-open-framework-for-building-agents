@@ -87,6 +87,48 @@ and more frequent than useful status changes, and are independently valuable
 to clients. Progress reduction may consume them without making every partial a
 progress revision or forwarding raw partials through the subagent tree.
 
+## Existing agent workarounds
+
+Internal agents already implement two ends of the desired design outside eve.
+They are useful requirements, not APIs to preserve.
+
+`v` maintains a small delegation reducer in its Slack channel state:
+
+- `actions.requested` extracts remote and local calls by `callId`, records
+  `pendingDelegations`, and reduces names to `calling d0 + content...`;
+- `action.result` removes the matching call and records failures and elapsed
+  time;
+- a detached 75-second loop re-renders that same status, adds elapsed minutes,
+  posts a five-minute still-working notice, and eventually probes remote child
+  sessions before deciding whether work is alive, stalled, or unknown;
+- `subagent.called` is attached by reaching into the channel adapter because
+  the public Slack event map cannot expose the child session id. The id is
+  copied to Postgres because the detached refresh invocation cannot read the
+  parent's durable channel state.
+
+This is an operation-set reducer plus a channel reconciler, but lifecycle,
+liveness, rendering, timer ownership, and external persistence are interleaved.
+It demonstrates that a useful aggregate needs stable call identity, child
+session identity, parallel labels, elapsed time, stale/unknown semantics, and
+an explicit distinction between refreshing presentation and changing progress.
+
+`e0` demonstrates structured, model-authored progress. Its `todo` results are
+validated as full snapshots, keyed by root or child session and turn, and
+reconciled into one Slack message that is updated in place. Root plans remain
+visible as completed; child plans are removed at child completion. e0 also
+attaches to each local child session stream to observe nested todo results,
+reasoning summaries, and action requests, then writes all of them directly to
+the parent Slack thread. This is effectively a hand-built hierarchical progress
+projection, but it depends on channel-side child stream attachment and embeds
+Slack message metadata in the persistence strategy.
+
+Together these implementations favor a layered authoring model:
+
+1. tools publish structured snapshots or tool-owned progress contributions;
+2. eve owns the default action/child tree and lifecycle invariants;
+3. an agent-level policy selects, combines, and summarizes contributions;
+4. the root channel reconciles the projection, including timer-driven refresh.
+
 ## Proposed semantic split
 
 ### Progress facts
@@ -143,6 +185,14 @@ ProgressNode`. Every channel can understand the result, but the shared shape
    their channel reconciler consumes the matching type. This is expressive but
    requires a clean way to connect agent and channel types across filesystem
    definitions and delegated-agent boundaries.
+
+Do not require an agent author to reconstruct the action map, child revision
+checks, or terminal precedence. Those are framework invariants. Agent-level
+authoring should wrap a default structural reducer or configure policies such
+as which completed nodes to retain, how to summarize parallel children, and
+whether a structured plan supersedes low-level actions. Tool-level projectors
+answer what one operation's output means; the agent policy answers what matters
+across the whole tree.
 
 Start with the constrained internal projection to establish semantics. Do not
 expose a public reducer until the tree survives nested delegation without
@@ -258,6 +308,13 @@ and child propagation are unchanged in either case.
    snapshots?
 9. How long do completed child nodes remain in the projection, especially when
    persistent subagent sessions are continued by a later call?
+10. Is elapsed time a renderer concern, a refresh-time projection over durable
+    `startedAt`, or semantic progress? v needs it without creating a new child
+    revision every minute.
+11. How should liveness observations such as v's remote session probes enter
+    progress without confusing "no recent event" with failure?
+12. Can root and child structured plans use one projection while retaining e0's
+    policy that completed root plans remain visible and child plans disappear?
 
 ## Implementation sequence
 
