@@ -120,7 +120,7 @@ for (const [index, item] of items.entries()) {
     )
   ) {
     throw new Error(
-      `Registry item "${item.name}" setup entries must declare command, package, bin, and args during the migration.`,
+      `Registry item "${item.name}" setup entries must declare command, package, bin, and args.`,
     );
   }
 

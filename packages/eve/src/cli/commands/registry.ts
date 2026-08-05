@@ -216,6 +216,7 @@ async function runRegistryAction(
   try {
     await action();
   } catch (error) {
+    if (error instanceof WizardCancelledError) return;
     logger.error(errorMessage(error));
     process.exitCode = 1;
   }

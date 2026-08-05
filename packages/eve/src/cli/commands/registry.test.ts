@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createFakePrompter } from "#internal/testing/fake-prompter.js";
+import { WizardCancelledError } from "#setup/step.js";
 import {
   browseRegistryCatalog,
   runAddCommand,
@@ -242,6 +243,39 @@ describe("registry commands", () => {
       "linear",
       expect.objectContaining({ prompter: fake.prompter }),
     );
+  });
+
+  it("cancels registry package component selection without reporting an error", async () => {
+    const logger = createLogger();
+    const fake = createFakePrompter({
+      multiple: () => {
+        throw new WizardCancelledError();
+      },
+    });
+    getRegistryItems.mockResolvedValueOnce([
+      {
+        meta: {
+          eve: {
+            components: [
+              { item: "channel/linear-agent", label: "Linear Agent", default: true },
+              { item: "connection/linear", label: "Linear tools", default: true },
+            ],
+          },
+        },
+      },
+    ]);
+
+    await runAddCommand(
+      logger,
+      "/project",
+      "linear",
+      { prompter: fake.prompter },
+      { isInteractive: () => true, loadSetupCommandRunner: vi.fn() },
+    );
+
+    expect(logger.errors).toEqual([]);
+    expect(addRegistryItems).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("installs a registry package's default components with --yes", async () => {

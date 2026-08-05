@@ -76,7 +76,7 @@ for (const item of items) {
     )
   ) {
     throw new Error(
-      `Registry item "${item.name}" setup entries must declare command, package, bin, and args during the migration.`,
+      `Registry item "${item.name}" setup entries must declare command, package, bin, and args.`,
     );
   }
 
