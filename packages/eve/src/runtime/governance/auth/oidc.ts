@@ -1,7 +1,8 @@
 import type { JWTPayload } from "#compiled/jose/index.js";
-import { createRemoteJWKSet, jwtVerify } from "#compiled/jose/index.js";
-import { z } from "#compiled/zod/index.js";
+import type { createRemoteJWKSet } from "#compiled/jose/index.js";
+import { jwtVerify } from "#compiled/jose/index.js";
 
+import { getRemoteJwksFromDiscovery } from "#runtime/governance/auth/oidc-discovery.js";
 import {
   areTokenClaimMatchersSatisfied,
   createJwtAuthenticatedCallerPrincipal,
@@ -10,18 +11,6 @@ import type {
   ResolvedOidcAuthStrategy,
   RouteStrategyAuthenticationResult,
 } from "#runtime/governance/auth/types.js";
-
-const oidcDiscoveryDocumentSchema = z
-  .object({
-    issuer: z.string().optional(),
-    jwks_uri: z.string().url(),
-  })
-  .passthrough();
-const oidcDiscoveryDocumentCache = new Map<
-  string,
-  Promise<z.output<typeof oidcDiscoveryDocumentSchema>>
->();
-const oidcJwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 /**
  * Verifies one bearer token against a resolved OIDC strategy.
@@ -33,7 +22,7 @@ export async function authenticateOidcStrategy(input: {
   let remoteJwks: ReturnType<typeof createRemoteJWKSet>;
 
   try {
-    remoteJwks = await getOidcRemoteJwks(input.strategy);
+    remoteJwks = await getRemoteJwksFromDiscovery(input.strategy.discoveryUrl);
   } catch (error) {
     return {
       kind: "misconfigured",
@@ -152,53 +141,6 @@ export async function authenticateOidcStrategy(input: {
       kind: "not-authenticated",
     };
   }
-}
-
-async function getOidcRemoteJwks(
-  strategy: ResolvedOidcAuthStrategy,
-): Promise<ReturnType<typeof createRemoteJWKSet>> {
-  const discoveryDocument = await getOidcDiscoveryDocument(strategy.discoveryUrl);
-  const existing = oidcJwksCache.get(discoveryDocument.jwks_uri);
-
-  if (existing !== undefined) {
-    return existing;
-  }
-
-  const remoteJwks = createRemoteJWKSet(new URL(discoveryDocument.jwks_uri));
-  oidcJwksCache.set(discoveryDocument.jwks_uri, remoteJwks);
-
-  return remoteJwks;
-}
-
-async function getOidcDiscoveryDocument(
-  discoveryUrl: string,
-): Promise<z.output<typeof oidcDiscoveryDocumentSchema>> {
-  const cached = oidcDiscoveryDocumentCache.get(discoveryUrl);
-
-  if (cached !== undefined) {
-    return await cached;
-  }
-
-  const discoveryPromise = fetch(discoveryUrl, {
-    headers: {
-      accept: "application/json",
-    },
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`Discovery route returned HTTP ${response.status}.`);
-      }
-
-      return oidcDiscoveryDocumentSchema.parse(await response.json());
-    })
-    .catch((error) => {
-      oidcDiscoveryDocumentCache.delete(discoveryUrl);
-      throw error;
-    });
-
-  oidcDiscoveryDocumentCache.set(discoveryUrl, discoveryPromise);
-
-  return await discoveryPromise;
 }
 
 /**

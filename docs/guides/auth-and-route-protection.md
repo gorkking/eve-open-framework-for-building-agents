@@ -86,15 +86,16 @@ Any other thrown error follows the normal channel failure path. When building a 
 
 `eve/channels/auth` ships these channel-auth helpers:
 
-| Helper           | Use when                                                                                           |
-| ---------------- | -------------------------------------------------------------------------------------------------- |
-| `localDev()`     | Local development. Accepts requests only while the process is an `eve dev` or `vercel dev` server. |
-| `vercelOidc()`   | The common Vercel deployment path. Verifies a Vercel OIDC bearer JWT.                              |
-| `none()`         | You want to accept anonymous traffic explicitly (use as the final entry).                          |
-| `httpBasic(...)` | Operator or service access via a shared username/password.                                         |
-| `jwtHmac(...)`   | You control a shared-secret JWT signer.                                                            |
-| `jwtEcdsa(...)`  | You verify asymmetric JWTs minted by another system.                                               |
-| `oidc(...)`      | You want eve to verify OIDC-issued tokens from an arbitrary issuer.                                |
+| Helper             | Use when                                                                                           |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `localDev()`       | Local development. Accepts requests only while the process is an `eve dev` or `vercel dev` server. |
+| `vercelOidc()`     | The common Vercel deployment path. Verifies a Vercel OIDC bearer JWT.                              |
+| `vercelPassport()` | The deployment sits behind Vercel Passport. Verifies the Passport-injected identity token.         |
+| `none()`           | You want to accept anonymous traffic explicitly (use as the final entry).                          |
+| `httpBasic(...)`   | Operator or service access via a shared username/password.                                         |
+| `jwtHmac(...)`     | You control a shared-secret JWT signer.                                                            |
+| `jwtEcdsa(...)`    | You verify asymmetric JWTs minted by another system.                                               |
+| `oidc(...)`        | You want eve to verify OIDC-issued tokens from an arbitrary issuer.                                |
 
 `httpBasic(credentials, { realm })` accepts an optional `realm`, rendered on the `WWW-Authenticate: Basic` challenge (e.g. `Basic realm="agent", charset="UTF-8"`) so browsers label their native login prompt. It defaults to `"eve"`, ensuring every Basic challenge includes the required realm. Usernames and passwords are normalized to Unicode NFC before comparison, matching the advertised UTF-8 credential encoding.
 
@@ -129,6 +130,33 @@ vercelOidc({
 
 `teamSlug` and `projectName` are the human-readable slugs Vercel embeds in `sub` (not the stable `team_…` / `prj_…` IDs), so they can't contain `:` or `*`. `environment` is `"production" | "preview" | "development" | "*"`. Only hand-write the subject string yourself when you actually mean to match across teams with a wildcard.
 
+### `vercelPassport()`
+
+When [Vercel Passport](https://vercel.com/docs/passport) protects a deployment, Vercel authenticates the visitor at the edge, strips any caller-supplied `x-vercel-oidc-passport-token` header, and injects the visitor's identity token in its place. `vercelPassport()` reads that header (falling back to a forwarded `Authorization: Bearer` token) and verifies it: the signature against the Passport issuer's JWKS, the team-scoped `https://passport.vercel.com/` issuer, the `typ: "passport"` claim, the validity window, and a fail-closed `project_id` / `environment` bind against `VERCEL_PROJECT_ID` and `VERCEL_TARGET_ENV` / `VERCEL_ENV`.
+
+The visitor authenticates as a `user` principal. The Passport `sub` claim becomes the session subject and the team-scoped `iss` the session issuer — together they are the stable visitor identifier Vercel documents. Identity-provider claims (`external_sub`, `external_iss`, `connector_id`, `email`, `name`) show up in `ctx.session.auth.current.attributes`.
+
+```ts title="agent/channels/eve.ts"
+import { eveChannel } from "eve/channels/eve";
+import { localDev, vercelPassport, vercelOidc } from "eve/channels/auth";
+
+export default eveChannel({
+  auth: [vercelPassport(), vercelOidc(), localDev()],
+});
+```
+
+The helper never trusts the token on presence alone. Passport's edge-stripping guarantee only exists on a Vercel deployment with Passport enabled, so anywhere else (`eve start`, self-hosting, protection disabled) a forged header fails verification and the walk falls through to the next entry. Requests without a token skip too, so keep `vercelOidc()` in the walk for internal runtime and subagent callers, which authenticate with a Vercel OIDC bearer token rather than a Passport identity.
+
+When another Passport-protected deployment forwards its token to the agent (see [Forward Passport identity](https://vercel.com/docs/passport/forward-identity)), pass the **source** deployment's binding instead of relying on the runtime environment:
+
+```ts
+vercelPassport({
+  currentVercelProject: { projectId: "prj_source_frontend", environment: "production" },
+});
+```
+
+The low-level verifier behind the helper is `verifyVercelPassport(token, opts)`.
+
 ### Custom verifiers
 
 When none of the shipped helpers fit, write your own `AuthFn` (the array example above) or call the low-level verifiers directly. Each verifier is the pure function sitting behind the matching strategy helper, and returns `{ ok: true, sessionAuth }` or `{ ok: false }`:
@@ -144,13 +172,14 @@ const apiKeyAuth: AuthFn<Request> = withAuthChallenges(
 );
 ```
 
-| Verifier                               | Behind         | Input                            |
-| -------------------------------------- | -------------- | -------------------------------- |
-| `verifyHttpBasic(header, credentials)` | `httpBasic()`  | raw `Authorization` header value |
-| `verifyJwtHmac(token, config)`         | `jwtHmac()`    | bearer token (HMAC-signed JWT)   |
-| `verifyJwtEcdsa(token, config)`        | `jwtEcdsa()`   | bearer token (ECDSA-signed JWT)  |
-| `verifyOidc(token, config)`            | `oidc()`       | bearer token (OIDC, any issuer)  |
-| `verifyVercelOidc(token, opts)`        | `vercelOidc()` | bearer token (Vercel OIDC)       |
+| Verifier                               | Behind             | Input                                                |
+| -------------------------------------- | ------------------ | ---------------------------------------------------- |
+| `verifyHttpBasic(header, credentials)` | `httpBasic()`      | raw `Authorization` header value                     |
+| `verifyJwtHmac(token, config)`         | `jwtHmac()`        | bearer token (HMAC-signed JWT)                       |
+| `verifyJwtEcdsa(token, config)`        | `jwtEcdsa()`       | bearer token (ECDSA-signed JWT)                      |
+| `verifyOidc(token, config)`            | `oidc()`           | bearer token (OIDC, any issuer)                      |
+| `verifyVercelOidc(token, opts)`        | `vercelOidc()`     | bearer token (Vercel OIDC)                           |
+| `verifyVercelPassport(token, opts)`    | `vercelPassport()` | Passport identity token (header or forwarded bearer) |
 
 Pull the token with `extractBearerToken(request.headers.get("authorization"))` before you hand it to the JWT/OIDC verifiers. The configs (`VerifyJwtHmacConfig`, `VerifyJwtEcdsaConfig`, `VerifyOidcConfig`) take `issuer`, `audiences`, the signing material (`secret` / `publicKey` / `discoveryUrl`), and optional `subjects` / `claims` matchers.
 

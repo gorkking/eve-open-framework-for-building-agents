@@ -14,6 +14,7 @@ import { authenticateHttpBasicStrategy } from "#runtime/governance/auth/http-bas
 import { authenticateJwtEcdsaStrategy } from "#runtime/governance/auth/jwt-ecdsa.js";
 import { authenticateJwtHmacStrategy } from "#runtime/governance/auth/jwt-hmac.js";
 import { authenticateOidcStrategy } from "#runtime/governance/auth/oidc.js";
+import { authenticateVercelPassportStrategy } from "#runtime/governance/auth/vercel-passport.js";
 import { resolveVercelOidcCurrentProject } from "#runtime/governance/auth/vercel-oidc-project.js";
 import {
   createRuntimeSessionAuthContext,
@@ -24,6 +25,7 @@ import {
 } from "#runtime/governance/auth/types.js";
 
 const vercelOidcLog = createLogger("auth.vercel-oidc");
+const vercelPassportLog = createLogger("auth.vercel-passport");
 import {
   createRuntimeIpAllowList,
   isRuntimeIpAllowed,
@@ -966,6 +968,124 @@ function isLocalDevelopmentVercelOidc(): boolean {
     return false;
   }
   return isEveDevEnvironment();
+}
+
+/**
+ * Header carrying the visitor identity token that Vercel Passport injects
+ * on requests to a deployment it protects.
+ */
+const VERCEL_PASSPORT_TOKEN_HEADER = "x-vercel-oidc-passport-token";
+
+/**
+ * Options for {@link verifyVercelPassport} and {@link vercelPassport}.
+ */
+export interface VerifyVercelPassportOptions {
+  /**
+   * Tolerance in seconds for the `exp` and `nbf` claims. Defaults to 30.
+   */
+  readonly clockSkewSeconds?: number;
+  /**
+   * Explicit source-deployment binding for the verified token. When omitted,
+   * the verifier reads `VERCEL_PROJECT_ID` and `VERCEL_TARGET_ENV` /
+   * `VERCEL_ENV` from the runtime environment, which is correct when the
+   * agent itself sits behind Passport. When another Passport-protected
+   * deployment forwards its token to the agent, pass the **source**
+   * deployment's project and environment instead.
+   */
+  readonly currentVercelProject?: {
+    readonly environment?: string;
+    readonly projectId: string;
+  };
+}
+
+/**
+ * Verifies a Vercel Passport identity token.
+ *
+ * Applies the checks Vercel documents for Passport tokens: the RS256
+ * signature against the Passport issuer's JWKS, the team-scoped
+ * `https://passport.vercel.com/` issuer, the `typ: "passport"` claim, the
+ * required identity claims, the validity window, and a fail-closed
+ * `project_id` / `environment` bind against the configured deployment. A
+ * token can never authenticate without an explicit project and environment
+ * bind, so a forged token fails verification on hosts where Passport's
+ * edge guarantees do not apply.
+ *
+ * The visitor authenticates as `principalType: "user"` with the Passport
+ * `sub` claim as the eve subject and the team-scoped `iss` as the eve
+ * issuer — Vercel documents `iss` + `sub` as the stable visitor identifier.
+ * The identity-provider claims (`external_sub`, `external_iss`,
+ * `connector_id`, `email`, `name`, …) are exposed as auth attributes.
+ */
+export async function verifyVercelPassport(
+  token: string | null,
+  opts: VerifyVercelPassportOptions = {},
+): Promise<VerifyResult> {
+  if (token === null || token.length === 0) {
+    return { ok: false };
+  }
+
+  const currentVercelProject = resolveCurrentVercelProject(opts);
+  const result = await authenticateVercelPassportStrategy({
+    strategy: {
+      clockSkewSeconds: opts.clockSkewSeconds ?? 30,
+      currentVercelProject,
+    },
+    token,
+  });
+
+  if (result.kind === "authenticated") {
+    vercelPassportLog.debug("Accepted Vercel Passport token.", {
+      issuer: result.principal.issuer,
+      subject: result.principal.subject,
+    });
+    return { ok: true, sessionAuth: createRuntimeSessionAuthContext(result.principal) };
+  }
+
+  const rejection: Record<string, unknown> = {
+    currentProjectConfigured: currentVercelProject !== undefined,
+    reason: result.kind,
+  };
+  if (result.kind === "misconfigured") {
+    rejection.detail = result.message;
+  }
+  vercelPassportLog.debug("Rejected Vercel Passport token.", rejection);
+  return { ok: false };
+}
+
+/**
+ * Returns an {@link AuthFn} backed by Vercel Passport.
+ *
+ * When Passport protects a deployment, Vercel authenticates the visitor at
+ * the edge, strips any caller-supplied `x-vercel-oidc-passport-token`
+ * header, and injects the visitor's identity token in its place. This
+ * helper reads that header — falling back to a forwarded
+ * `Authorization: Bearer` token — and verifies it with
+ * {@link verifyVercelPassport}. The token is never trusted on presence
+ * alone, so on hosts without Passport's edge guarantees (`eve start`,
+ * self-hosting, protection disabled) a forged header fails verification
+ * and the walk falls through. Requests without a token skip to the next
+ * entry:
+ *
+ * ```ts
+ * eveChannel({ auth: [vercelPassport(), vercelOidc(), localDev()] });
+ * ```
+ *
+ * Keep {@link vercelOidc} in the walk on Vercel deployments: internal
+ * runtime and subagent callers authenticate with a Vercel OIDC bearer
+ * token, not a Passport identity. Declares a `Bearer`
+ * {@link withAuthChallenges} challenge for {@link routeAuth}'s 401.
+ */
+export function vercelPassport(opts: VerifyVercelPassportOptions = {}): AuthFn<Request> {
+  return withAuthChallenges(
+    async (request) => {
+      const token =
+        request.headers.get(VERCEL_PASSPORT_TOKEN_HEADER) ??
+        extractBearerToken(request.headers.get("authorization"));
+      const result = await verifyVercelPassport(token, opts);
+      return result.ok ? result.sessionAuth : null;
+    },
+    [{ scheme: "Bearer" }],
+  );
 }
 
 /**

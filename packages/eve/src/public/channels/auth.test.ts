@@ -20,11 +20,13 @@ import {
   type UnauthorizedChallenge,
   UnauthenticatedError,
   vercelOidc,
+  vercelPassport,
   vercelSubject,
   verifyHttpBasic,
   verifyJwtEcdsa,
   verifyJwtHmac,
   verifyVercelOidc,
+  verifyVercelPassport,
   withAuthChallenges,
 } from "#public/channels/auth.js";
 
@@ -1305,6 +1307,67 @@ async function installMockedVercelIssuer(slug: string): Promise<{
   };
 }
 
+async function installMockedPassportIssuer(slug: string): Promise<{
+  readonly issuer: string;
+  readonly signToken: (claims: Record<string, unknown>) => Promise<string>;
+  readonly restore: () => void;
+}> {
+  const teamSlug = `${slug}-${crypto.randomUUID()}`;
+  const issuer = `https://passport.vercel.com/${teamSlug}`;
+  // Real Passport discovery advertises a shared jwks_uri; the mock keeps it
+  // issuer-scoped so parallel tests never share a cached key set.
+  const jwksUrl = `${issuer}/.well-known/jwks.json`;
+  const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
+  const keyId = `passport-key-${teamSlug}`;
+
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const publicJwk = await exportJWK(publicKey);
+
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+
+    if (url === discoveryUrl) {
+      return new Response(JSON.stringify({ issuer, jwks_uri: jwksUrl }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }
+
+    if (url === jwksUrl) {
+      return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: keyId, use: "sig" }] }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  });
+
+  return {
+    issuer,
+    restore() {
+      fetchSpy.mockRestore();
+    },
+    async signToken(claims) {
+      const { sub, ...rest }: Record<string, unknown> = {
+        connector_id: "connector_test",
+        external_sub: "github|ada",
+        owner: teamSlug,
+        typ: "passport",
+        ...claims,
+      };
+      return await new SignJWT(rest)
+        .setProtectedHeader({ alg: "RS256", kid: keyId })
+        .setAudience(`https://vercel.com/${teamSlug}`)
+        .setExpirationTime("5m")
+        .setIssuedAt()
+        .setIssuer(issuer)
+        .setSubject(typeof sub === "string" ? sub : "pp_visitor")
+        .sign(privateKey);
+    },
+  };
+}
+
 describe("vercelSubject", () => {
   it("formats a strict project subject with explicit environment", () => {
     expect(
@@ -1461,6 +1524,263 @@ describe("vercelOidc strategy helper", () => {
     } finally {
       issuer.restore();
       vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("verifyVercelPassport", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects null, empty, and malformed tokens without throwing", async () => {
+    await expect(verifyVercelPassport(null)).resolves.toEqual({ ok: false });
+    await expect(verifyVercelPassport("")).resolves.toEqual({ ok: false });
+    await expect(verifyVercelPassport("not.a.real.jwt")).resolves.toEqual({ ok: false });
+  });
+
+  it("rejects tokens whose issuer is not the Passport issuer", async () => {
+    // A Vercel OIDC runtime token must not authenticate through the
+    // Passport verifier: the issuer prefix check rejects it before any
+    // JWKS lookup happens.
+    const { privateKey } = await generateKeyPair("RS256");
+    const token = await new SignJWT({ external_sub: "github|mallory", typ: "passport" })
+      .setProtectedHeader({ alg: "RS256" })
+      .setAudience("https://vercel.com/acme")
+      .setExpirationTime("5m")
+      .setIssuedAt()
+      .setIssuer("https://oidc.vercel.com/acme")
+      .setSubject("pp_visitor")
+      .sign(privateKey);
+
+    await expect(verifyVercelPassport(token)).resolves.toEqual({ ok: false });
+  });
+
+  it("authenticates a Passport visitor with iss + sub as the identifier", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_current");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-accept");
+    try {
+      const token = await issuer.signToken({
+        email: "ada@example.com",
+        environment: "production",
+        external_iss: "https://github.com",
+        external_sub: "github|ada",
+        name: "Ada Lovelace",
+        project_id: "prj_current",
+        sub: "pp_visitor_ada",
+      });
+
+      const result = await verifyVercelPassport(token);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.sessionAuth).toMatchObject({
+          attributes: {
+            connector_id: "connector_test",
+            email: "ada@example.com",
+            external_iss: "https://github.com",
+            external_sub: "github|ada",
+            name: "Ada Lovelace",
+          },
+          authenticator: "oidc",
+          issuer: issuer.issuer,
+          principalId: `${issuer.issuer}:pp_visitor_ada`,
+          principalType: "user",
+          subject: "pp_visitor_ada",
+        });
+      }
+    } finally {
+      issuer.restore();
+    }
+  });
+
+  it("rejects tokens without the passport typ claim", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_current");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-typ");
+    try {
+      const token = await issuer.signToken({
+        environment: "production",
+        project_id: "prj_current",
+        typ: "not-passport",
+      });
+
+      await expect(verifyVercelPassport(token)).resolves.toEqual({ ok: false });
+    } finally {
+      issuer.restore();
+    }
+  });
+
+  it("rejects tokens missing a required identity claim", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_current");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-identity-claims");
+    try {
+      const token = await issuer.signToken({
+        environment: "production",
+        external_sub: undefined,
+        project_id: "prj_current",
+      });
+
+      await expect(verifyVercelPassport(token)).resolves.toEqual({ ok: false });
+    } finally {
+      issuer.restore();
+    }
+  });
+
+  it("rejects tokens minted for another project or environment", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_current");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-project-bind");
+    try {
+      const otherProject = await issuer.signToken({
+        environment: "production",
+        project_id: "prj_other",
+      });
+      await expect(verifyVercelPassport(otherProject)).resolves.toEqual({ ok: false });
+
+      const otherEnvironment = await issuer.signToken({
+        environment: "preview",
+        project_id: "prj_current",
+      });
+      await expect(verifyVercelPassport(otherEnvironment)).resolves.toEqual({ ok: false });
+    } finally {
+      issuer.restore();
+    }
+  });
+
+  it("fails closed when no current project or environment is configured", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "");
+    vi.stubEnv("VERCEL_TARGET_ENV", "");
+    vi.stubEnv("VERCEL_ENV", "");
+
+    const issuer = await installMockedPassportIssuer("passport-fail-closed");
+    try {
+      const token = await issuer.signToken({
+        environment: "production",
+        project_id: "prj_current",
+      });
+
+      await expect(verifyVercelPassport(token)).resolves.toEqual({ ok: false });
+    } finally {
+      issuer.restore();
+    }
+  });
+
+  it("accepts a forwarded token bound to an explicit source deployment", async () => {
+    // A backend receiving a forwarded Passport token validates the SOURCE
+    // deployment that minted it, not its own project.
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_receiving_backend");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-forwarded");
+    try {
+      const token = await issuer.signToken({
+        environment: "production",
+        project_id: "prj_source_frontend",
+      });
+
+      await expect(verifyVercelPassport(token)).resolves.toEqual({ ok: false });
+      const result = await verifyVercelPassport(token, {
+        currentVercelProject: { environment: "production", projectId: "prj_source_frontend" },
+      });
+      expect(result.ok).toBe(true);
+    } finally {
+      issuer.restore();
+    }
+  });
+});
+
+describe("vercelPassport strategy helper", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("skips requests carrying no token", async () => {
+    const authFn = vercelPassport();
+    const request = new Request(TEST_ROUTE_URL, { method: "POST" });
+    await expect(Promise.resolve(authFn(request))).resolves.toBeNull();
+  });
+
+  it("rejects forged passport headers without throwing", async () => {
+    // On hosts without Passport's edge stripping guarantee, the header is
+    // caller-controlled; verification must fail closed rather than trust it.
+    const { privateKey } = await generateKeyPair("RS256");
+    const forged = await new SignJWT({ external_sub: "github|mallory", typ: "passport" })
+      .setProtectedHeader({ alg: "RS256" })
+      .setAudience("https://vercel.com/acme")
+      .setExpirationTime("5m")
+      .setIssuedAt()
+      .setIssuer("https://attacker.example/passport")
+      .setSubject("pp_visitor")
+      .sign(privateKey);
+
+    const authFn = vercelPassport();
+    for (const headers of [
+      { "x-vercel-oidc-passport-token": "not.a.real.jwt" },
+      { "x-vercel-oidc-passport-token": forged },
+    ]) {
+      const request = new Request(TEST_ROUTE_URL, { headers, method: "POST" });
+      await expect(Promise.resolve(authFn(request))).resolves.toBeNull();
+    }
+  });
+
+  it("authenticates the Passport-injected header token as a user", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_current");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-header");
+    try {
+      const token = await issuer.signToken({
+        environment: "production",
+        project_id: "prj_current",
+        sub: "pp_visitor_ada",
+      });
+
+      const authFn = vercelPassport();
+      const request = new Request(TEST_ROUTE_URL, {
+        headers: { "x-vercel-oidc-passport-token": token },
+        method: "POST",
+      });
+
+      await expect(Promise.resolve(authFn(request))).resolves.toMatchObject({
+        principalType: "user",
+        subject: "pp_visitor_ada",
+      });
+    } finally {
+      issuer.restore();
+    }
+  });
+
+  it("authenticates a forwarded bearer token", async () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_current");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
+
+    const issuer = await installMockedPassportIssuer("passport-bearer");
+    try {
+      const token = await issuer.signToken({
+        environment: "production",
+        project_id: "prj_current",
+        sub: "pp_visitor_ada",
+      });
+
+      const authFn = vercelPassport();
+      const request = new Request(TEST_ROUTE_URL, {
+        headers: { authorization: `Bearer ${token}` },
+        method: "POST",
+      });
+
+      await expect(Promise.resolve(authFn(request))).resolves.toMatchObject({
+        principalType: "user",
+        subject: "pp_visitor_ada",
+      });
+    } finally {
+      issuer.restore();
     }
   });
 });
