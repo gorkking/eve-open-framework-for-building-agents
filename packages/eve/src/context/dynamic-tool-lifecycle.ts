@@ -13,6 +13,7 @@ import { createLogger } from "#internal/logging.js";
 import {
   serializeInputSchema,
   serializeOutputSchema,
+  isToolSchema,
   toInputSchema,
   toOutputSchema,
 } from "#shared/tool-schema.js";
@@ -26,6 +27,13 @@ import {
   LiveStepToolsKey,
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
+import {
+  DYNAMIC_TOOL_INPUT_SCHEMA_FACTORY_PROPERTY,
+  DYNAMIC_TOOL_OUTPUT_SCHEMA_FACTORY_PROPERTY,
+  replayDynamicToolInputSchema,
+  replayDynamicToolOutputSchema,
+  type DynamicToolStepFunction,
+} from "#context/dynamic-tool-schema-replay.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 
@@ -121,9 +129,19 @@ export function replayDynamicSessionTools(
         scope: m.name,
         execute: (input, ctx) => stepFn(m.closureVars, input, ctx),
       }),
-      inputSchema: toInputSchema(m.inputSchema),
+      inputSchema: replayDynamicToolInputSchema({
+        closureVars: m.closureVars,
+        fallback: m.inputSchema,
+        stepFn,
+        toolName: m.name,
+      }),
       name: m.name,
-      outputSchema: toOutputSchema(m.outputSchema),
+      outputSchema: replayDynamicToolOutputSchema({
+        closureVars: m.closureVars,
+        fallback: m.outputSchema,
+        stepFn,
+        toolName: m.name,
+      }),
     });
   }
 
@@ -145,10 +163,10 @@ function getStepRegistry(): Map<string, Function> {
   return registry;
 }
 
-function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) | null {
+function lookupStepFunction(stepId: string): DynamicToolStepFunction | null {
   try {
     const fn = getStepRegistry().get(stepId);
-    return fn ? (fn as (...args: unknown[]) => unknown) : null;
+    return fn ? (fn as DynamicToolStepFunction) : null;
   } catch {
     return null;
   }
@@ -298,15 +316,28 @@ async function resolveToolsFromEvent(
       if (executeStepFnName === undefined) {
         const syntheticId = `eve:framework-dynamic:${resolver.slug}:${entryKey}`;
         const originalExecute = entry.execute.bind(entry);
-        registerStepFunction(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
-          originalExecute(
-            input as Record<string, unknown>,
-            ctx as Parameters<typeof entry.execute>[1],
-          ),
+        const syntheticStepFn: DynamicToolStepFunction = Object.assign(
+          (_closureVars: unknown, input: unknown, ctx: unknown) =>
+            originalExecute(
+              input as Record<string, unknown>,
+              ctx as Parameters<typeof entry.execute>[1],
+            ),
+          {
+            [DYNAMIC_TOOL_INPUT_SCHEMA_FACTORY_PROPERTY]: () => entry.inputSchema,
+            [DYNAMIC_TOOL_OUTPUT_SCHEMA_FACTORY_PROPERTY]: () => entry.outputSchema,
+          },
         );
+        registerStepFunction(syntheticId, syntheticStepFn);
         executeStepFnName = syntheticId;
         serializedClosureVars = {};
       }
+
+      const replayableStepFn =
+        stepFn === undefined
+          ? lookupStepFunction(executeStepFnName)
+          : (stepFn as DynamicToolStepFunction);
+      warnIfLiveSchemaCannotReplay(name, "input", entry.inputSchema, replayableStepFn);
+      warnIfLiveSchemaCannotReplay(name, "output", entry.outputSchema, replayableStepFn);
 
       let approvalStepFnName: string | undefined;
       if (entry.approval !== undefined) {
@@ -332,6 +363,26 @@ async function resolveToolsFromEvent(
   }
 
   return { metadata, liveTools };
+}
+
+function warnIfLiveSchemaCannotReplay(
+  toolName: string,
+  direction: "input" | "output",
+  schema: unknown,
+  stepFn: DynamicToolStepFunction | null,
+): void {
+  if (!isToolSchema(schema)) return;
+  const property =
+    direction === "input"
+      ? DYNAMIC_TOOL_INPUT_SCHEMA_FACTORY_PROPERTY
+      : DYNAMIC_TOOL_OUTPUT_SCHEMA_FACTORY_PROPERTY;
+  if (stepFn?.[property] !== undefined) return;
+
+  log.warn(
+    `Dynamic tool "${toolName}" has a live ${direction} schema that cannot be reconstructed ` +
+      "across workflow steps; refinements, transforms, and other custom validation may be lost. " +
+      "Keep the schema expression directly on defineTool() or move the schema to module scope.",
+  );
 }
 
 // ---------------------------------------------------------------------------

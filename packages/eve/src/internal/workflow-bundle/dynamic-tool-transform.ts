@@ -1,10 +1,11 @@
 /**
  * Compiler transform for dynamic tool files.
  *
- * Hoists inline `execute` functions from `defineDynamic`
- * event handler return values to module-scope named functions
- * registered in the global step registry. The workflow SDK then
- * handles serialization and replay.
+ * Hoists inline `execute` functions from `defineDynamic` event handler return
+ * values to module-scope named functions registered in the global step
+ * registry. Direct input and output schema expressions become factories on
+ * those functions so replay can restore live validators after serializing the
+ * durable tool metadata.
  *
  * The walker enters nested functions (helpers, callbacks, IIFEs) so
  * patterns like `function buildTool(n) { return { execute() {} } }`
@@ -17,6 +18,11 @@
  * - A wrapper that passes referenced scope values as `__vars`
  * - `__executeStepFn`: reference to the hoisted function
  * - `__closureVars`: snapshot for durable serialization
+ *
+ * The registered execute function also carries schema factories when the
+ * corresponding schema is inline or module-scoped. A handler-local schema
+ * variable is intentionally not captured because validator objects are not
+ * durable; runtime lifecycle code warns before falling back to JSON Schema.
  *
  * Limitation: `execute` must be an inline function literal (function
  * expression, arrow, or method shorthand). Variable references
@@ -32,6 +38,12 @@ import {
   type DynamicToolAstNode as AstNode,
   walkNode,
 } from "#internal/workflow-bundle/dynamic-tool-ast-references.js";
+import {
+  buildSchemaFactoryRegistration,
+  canReplaySchemaExpression,
+  findSchemaExpression,
+  type SchemaExpressionInfo,
+} from "#internal/workflow-bundle/dynamic-tool-schema-transform.js";
 
 interface HandlerInfo {
   /** The handler function AST node */
@@ -64,6 +76,10 @@ interface ExecuteInfo {
   bodyNode: AstNode;
   /** Scope entries from nested functions between handler and this execute */
   nestedScopes: readonly ScopeEntry[];
+  /** Direct input schema expression from the containing defineTool call. */
+  inputSchema?: SchemaExpressionInfo;
+  /** Direct output schema expression from the containing defineTool call. */
+  outputSchema?: SchemaExpressionInfo;
 }
 
 interface ScopeEntry {
@@ -346,6 +362,8 @@ function walkForExecuteProps(
     (node.arguments[0] as AstNode).type === "ObjectExpression"
   ) {
     const toolArg = node.arguments[0] as AstNode;
+    const inputSchema = findSchemaExpression(source, toolArg, "inputSchema");
+    const outputSchema = findSchemaExpression(source, toolArg, "outputSchema");
     for (const prop of toolArg.properties ?? []) {
       if (
         prop.type === "Property" &&
@@ -377,7 +395,9 @@ function walkForExecuteProps(
               body,
               bodyNode,
               hoistedName: `__eve_dynamic_exec_${transformCounter++}`,
+              inputSchema,
               nestedScopes,
+              outputSchema,
             });
           }
         }
@@ -477,25 +497,47 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
         }
       }
 
-      // Only capture vars the execute body actually references. This
-      // avoids TDZ errors when the execute is inside a nested function
-      // that runs before later handler-level declarations are initialized.
-      const referencedNames = collectReferencedIdentifierNames(exec.bodyNode);
+      const inputSchema = canReplaySchemaExpression(exec.inputSchema, deduped)
+        ? exec.inputSchema
+        : undefined;
+      const outputSchema = canReplaySchemaExpression(exec.outputSchema, deduped)
+        ? exec.outputSchema
+        : undefined;
 
+      // Capture only values needed by the execute body and schema factories.
+      // This avoids TDZ errors from unrelated later declarations and keeps
+      // non-serializable local schema objects out of durable closure vars.
+      const executeReferencedNames = collectReferencedIdentifierNames(exec.bodyNode);
+      const inputSchemaReferencedNames =
+        inputSchema === undefined
+          ? new Set<string>()
+          : collectReferencedIdentifierNames(inputSchema.node);
+      const outputSchemaReferencedNames =
+        outputSchema === undefined
+          ? new Set<string>()
+          : collectReferencedIdentifierNames(outputSchema.node);
       // Exclude names that collide with the execute function's own
       // parameters — the hoisted function already has those as formal
       // params, and a `const { name } = __vars` would be a duplicate
       // binding SyntaxError.
       const execParamNames = extractExecuteParamNames(exec.params);
 
+      const executeVars = deduped.filter(
+        (name) => !execParamNames.has(name) && executeReferencedNames.has(name),
+      );
+      const schemaVars = deduped.filter(
+        (name) => inputSchemaReferencedNames.has(name) || outputSchemaReferencedNames.has(name),
+      );
       const allVars = deduped.filter(
-        (name) => !execParamNames.has(name) && referencedNames.has(name),
+        (name) => executeVars.includes(name) || schemaVars.includes(name),
       );
 
       const varsObj = allVars.length > 0 ? `{ ${allVars.join(", ")} }` : "{}";
 
       const asyncPrefix = exec.isAsync ? "async " : "";
-      const varsDestructure = allVars.length > 0 ? `const ${varsObj} = __vars;\n  ` : "";
+      const executeVarsObject = executeVars.length > 0 ? `{ ${executeVars.join(", ")} }` : "{}";
+      const varsDestructure =
+        executeVars.length > 0 ? `const ${executeVarsObject} = __vars;\n  ` : "";
       const originalParams = exec.params;
       const hoistedParams = originalParams ? `__vars, ${originalParams}` : "__vars";
       const bodyContent = exec.body.slice(1, -1).trim();
@@ -508,6 +550,26 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
       );
 
       registrations.push(`${exec.hoistedName}.stepId = ${JSON.stringify(stepId)};`);
+      if (inputSchema !== undefined) {
+        registrations.push(
+          buildSchemaFactoryRegistration(
+            exec.hoistedName,
+            "__eveInputSchemaFactory",
+            inputSchema.source,
+            allVars.filter((name) => inputSchemaReferencedNames.has(name)),
+          ),
+        );
+      }
+      if (outputSchema !== undefined) {
+        registrations.push(
+          buildSchemaFactoryRegistration(
+            exec.hoistedName,
+            "__eveOutputSchemaFactory",
+            outputSchema.source,
+            allVars.filter((name) => outputSchemaReferencedNames.has(name)),
+          ),
+        );
+      }
       registrations.push(`__eveStepRegistry.set(${JSON.stringify(stepId)}, ${exec.hoistedName});`);
       allExecNames.push(exec.hoistedName);
 

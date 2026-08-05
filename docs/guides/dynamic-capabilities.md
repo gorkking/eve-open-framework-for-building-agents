@@ -122,6 +122,8 @@ export default defineDynamic({
 
 Write `execute` as an inline function expression, arrow, or method shorthand placed directly as the property value. The bundler transform does not detect `execute: myFn` or `execute: makeFn()`, so those tools work on the first step but do not survive replay (re-running a step after a crash or resume; see [Execution model & durability](../concepts/execution-model-and-durability)). On later steps the transform reconstructs each `execute` from its stored closure variables instead of re-running the resolver, which is why it has to be inline.
 
+For a Zod or other live Standard Schema with custom validation, reference a module-scoped schema or construct it directly in the `inputSchema` or `outputSchema` property. eve registers a schema factory beside the inline executor so refinements and transforms survive replay. A live schema first assigned to a handler-local variable cannot be serialized; eve warns and falls back to its JSON Schema representation, which may omit custom validation.
+
 ### Naming
 
 | Return shape            | File                       | Tool name(s)      |

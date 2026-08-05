@@ -1,5 +1,6 @@
 import { asSchema } from "ai";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "#compiled/zod/index.js";
 
 import type { DynamicToolEntry } from "#shared/dynamic-tool-definition.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
@@ -894,6 +895,110 @@ describe("dispatchDynamicToolEvent", () => {
         toolName: "query",
       });
     } finally {
+      registry.delete(stepId);
+    }
+  });
+
+  it("preserves live input validation when replaying a session tool", async () => {
+    const ctx = createCtx();
+    const stepId = "eve:dynamic-tool//__eve_dispatch_live_schema_test";
+    const inputSchema = z
+      .strictObject({
+        estimatedReviewMinutes: z.number().optional(),
+        itemType: z.enum(["issue", "pull_request"]),
+      })
+      .superRefine((assessment, refinementCtx) => {
+        if (
+          assessment.itemType === "pull_request" &&
+          assessment.estimatedReviewMinutes === undefined
+        ) {
+          refinementCtx.addIssue({
+            code: "custom",
+            message: "Pull requests require estimatedReviewMinutes.",
+            path: ["estimatedReviewMinutes"],
+          });
+        }
+      });
+    const stepFn = Object.assign(() => ({ ok: true }), {
+      __eveInputSchemaFactory: () => inputSchema,
+      stepId,
+    });
+    const registry = getOrCreateStepRegistry(registrySym);
+    registry.set(stepId, stepFn);
+
+    try {
+      const resolver = createResolver("assessment", ["session.started"], () => {
+        const entry = defineTool({
+          description: "submit assessment",
+          inputSchema,
+          execute: async () => ({ ok: true }),
+        });
+        Object.assign(entry, {
+          __executeStepFn: stepFn,
+          __closureVars: {},
+        });
+        return entry;
+      });
+
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("session.started"),
+      });
+
+      ctx.clearVirtualContext();
+      const schema = asSchema(buildDynamicTools(ctx)[0]!.inputSchema);
+      await expect(schema.validate?.({ itemType: "pull_request" })).resolves.toMatchObject({
+        success: false,
+      });
+      await expect(
+        schema.validate?.({ estimatedReviewMinutes: 30, itemType: "pull_request" }),
+      ).resolves.toEqual({
+        success: true,
+        value: { estimatedReviewMinutes: 30, itemType: "pull_request" },
+      });
+    } finally {
+      registry.delete(stepId);
+    }
+  });
+
+  it("warns when a live session-tool schema cannot be reconstructed", async () => {
+    const ctx = createCtx();
+    const stepId = "eve:dynamic-tool//__eve_dispatch_missing_schema_factory_test";
+    const stepFn = Object.assign(() => ({ ok: true }), { stepId });
+    const registry = getOrCreateStepRegistry(registrySym);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registry.set(stepId, stepFn);
+
+    try {
+      const resolver = createResolver("assessment", ["session.started"], () => {
+        const entry = defineTool({
+          description: "submit assessment",
+          inputSchema: z.object({ itemType: z.string() }).superRefine(() => {}),
+          execute: async () => ({ ok: true }),
+        });
+        Object.assign(entry, {
+          __executeStepFn: stepFn,
+          __closureVars: {},
+        });
+        return entry;
+      });
+
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("session.started"),
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Dynamic tool "assessment" has a live input schema that cannot be reconstructed',
+        ),
+      );
+    } finally {
+      warnSpy.mockRestore();
       registry.delete(stepId);
     }
   });

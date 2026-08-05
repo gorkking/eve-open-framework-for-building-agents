@@ -6,21 +6,25 @@ import {
   LiveStepToolsKey,
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
+import {
+  replayDynamicToolInputSchema,
+  replayDynamicToolOutputSchema,
+  type DynamicToolStepFunction,
+} from "#context/dynamic-tool-schema-replay.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createLogger } from "#internal/logging.js";
 import type { ApprovalContext, ApprovalStatus } from "#public/definitions/approval.js";
-import { toInputSchema, toOutputSchema } from "#shared/tool-schema.js";
 
 const log = createLogger("dynamic-tools");
 
-function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) | null {
+function lookupStepFunction(stepId: string): DynamicToolStepFunction | null {
   try {
     const registry = (globalThis as Record<symbol, Map<string, Function> | undefined>)[
       Symbol.for("@workflow/core//registeredSteps")
     ];
     if (registry === undefined) return null;
     const fn = registry.get(stepId);
-    return fn ? (fn as (...args: unknown[]) => unknown) : null;
+    return fn ? (fn as DynamicToolStepFunction) : null;
   } catch {
     return null;
   }
@@ -53,10 +57,20 @@ function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessTo
         scope: m.name,
         execute: (input, ctx) => stepFn(m.closureVars, input, ctx),
       }),
-      inputSchema: toInputSchema(m.inputSchema),
+      inputSchema: replayDynamicToolInputSchema({
+        closureVars: m.closureVars,
+        fallback: m.inputSchema,
+        stepFn,
+        toolName: m.name,
+      }),
       name: m.name,
       approval: buildReplayedApproval(m),
-      outputSchema: toOutputSchema(m.outputSchema),
+      outputSchema: replayDynamicToolOutputSchema({
+        closureVars: m.closureVars,
+        fallback: m.outputSchema,
+        stepFn,
+        toolName: m.name,
+      }),
     });
   }
 

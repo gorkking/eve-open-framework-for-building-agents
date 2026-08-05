@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
+import { z } from "#compiled/zod/index.js";
 
 import { transformDynamicToolExecute } from "./dynamic-tool-transform.js";
 
@@ -49,8 +50,8 @@ async function transformAndEval(
 
   // Evaluate in a function scope to provide our stubs. The transform
   // prepends its own __eveStepRegistry setup, so we don't need to add it.
-  const evalFn = new Function("defineDynamic", "defineTool", `${code}\nreturn __exported;`);
-  evalFn(defineDynamic, defineTool);
+  const evalFn = new Function("defineDynamic", "defineTool", "z", `${code}\nreturn __exported;`);
+  evalFn(defineDynamic, defineTool, z);
 
   const registrySym = Symbol.for("@workflow/core//registeredSteps");
   const registry = (globalThis as Record<symbol, Map<string, Function>>)[registrySym] ?? new Map();
@@ -182,6 +183,115 @@ export default defineDynamic({
     // Calling the step function directly with __vars and input should work
     const result = stepFn({ multiplier: 10 }, { x: 5 });
     expect(result).toBe(50);
+  });
+
+  it("registers live input and output schema factories on the step function", async () => {
+    const source = `
+import { defineDynamic, defineTool } from "eve/tools";
+
+const sharedInputSchema = { kind: "input" };
+const sharedOutputSchema = { kind: "output" };
+
+export default defineDynamic({
+  events: {
+    "session.started": async () => {
+      const tenant = "acme";
+      return defineTool({
+        description: "Submit",
+        inputSchema: sharedInputSchema,
+        outputSchema: { ...sharedOutputSchema, tenant },
+        execute(input) { return input; },
+      });
+    },
+  },
+});
+`;
+
+    const { callHandler } = await transformAndEval("tools/submit.ts", source);
+    const tool = await callHandler();
+    const stepFn = tool.__executeStepFn as Function & {
+      __eveInputSchemaFactory?: (vars: Record<string, unknown>) => unknown;
+      __eveOutputSchemaFactory?: (vars: Record<string, unknown>) => unknown;
+    };
+
+    expect(stepFn.__eveInputSchemaFactory?.({})).toEqual({
+      kind: "input",
+    });
+    expect(stepFn.__eveOutputSchemaFactory?.({ tenant: "acme" })).toEqual({
+      kind: "output",
+      tenant: "acme",
+    });
+  });
+
+  it("rebuilds a module-scoped Zod schema with superRefine intact", async () => {
+    const source = `
+import { defineDynamic, defineTool } from "eve/tools";
+import { z } from "zod";
+
+const assessmentSchema = z
+  .strictObject({
+    estimatedReviewMinutes: z.number().optional(),
+    itemType: z.enum(["issue", "pull_request"]),
+  })
+  .superRefine((assessment, ctx) => {
+    if (assessment.itemType === "pull_request" && assessment.estimatedReviewMinutes === undefined) {
+      ctx.addIssue({ code: "custom", message: "Required", path: ["estimatedReviewMinutes"] });
+    }
+  });
+
+export default defineDynamic({
+  events: {
+    "session.started": async () => {
+      return defineTool({
+        description: "Submit",
+        inputSchema: assessmentSchema,
+        execute(input) { return input; },
+      });
+    },
+  },
+});
+`;
+
+    const { callHandler } = await transformAndEval("tools/assessment.ts", source);
+    const tool = await callHandler();
+    const stepFn = tool.__executeStepFn as Function & {
+      __eveInputSchemaFactory?: (vars: Record<string, unknown>) => {
+        safeParse(value: unknown): { success: boolean };
+      };
+    };
+    const rebuiltSchema = stepFn.__eveInputSchemaFactory?.({});
+
+    expect(rebuiltSchema?.safeParse({ itemType: "pull_request" }).success).toBe(false);
+    expect(
+      rebuiltSchema?.safeParse({
+        estimatedReviewMinutes: 30,
+        itemType: "pull_request",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("does not capture a handler-local schema object in durable closure vars", async () => {
+    const source = `
+import { defineDynamic, defineTool } from "eve/tools";
+
+export default defineDynamic({
+  events: {
+    "session.started": async () => {
+      const inputSchema = makeSchema();
+      return defineTool({
+        description: "Submit",
+        inputSchema,
+        execute(input) { return input; },
+      });
+    },
+  },
+});
+`;
+
+    const { code } = await transformAndEval("tools/local-schema.ts", source);
+
+    expect(code).not.toContain("__eveInputSchemaFactory");
+    expect(code).toContain("__closureVars: {}");
   });
 
   it("replay path: step function + stored closure vars produce correct result", async () => {
