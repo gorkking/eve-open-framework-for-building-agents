@@ -16,10 +16,17 @@ export function ensureOtelIntegration(): void {
     return;
   }
   registered = true;
-  registerTelemetry(createOtelIntegration());
+  registerTelemetry(new OpenTelemetry({ runtimeContext: true }));
 }
 
-/** Creates the existing OTel integration for explicit per-call composition. */
-export function createOtelIntegration(): Telemetry {
-  return new OpenTelemetry({ runtimeContext: true });
+/**
+ * Every integration currently registered with the AI SDK — eve's own, plus any
+ * an authored instrumentation module added with `registerTelemetry`.
+ *
+ * A per-call `integrations` list replaces the registered ones rather than
+ * adding to them, so anything that passes integrations per call has to carry
+ * these forward or they stop receiving events.
+ */
+export function getRegisteredTelemetryIntegrations(): readonly Telemetry[] {
+  return globalThis.AI_SDK_TELEMETRY_INTEGRATIONS ?? [];
 }

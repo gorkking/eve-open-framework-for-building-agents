@@ -153,7 +153,10 @@ import {
   hasEmptyDeliverySentinel,
 } from "#shared/empty-delivery.js";
 import { extractWorkflowStreamWriteErrorDetails } from "#harness/workflow-stream-error.js";
-import { createOtelIntegration, ensureOtelIntegration } from "#harness/otel-integration.js";
+import {
+  ensureOtelIntegration,
+  getRegisteredTelemetryIntegrations,
+} from "#harness/ai-sdk-telemetry.js";
 import { getAdvertisedTools } from "#harness/advertised-tools.js";
 import {
   applyLastToolCacheBreakpoint,
@@ -271,12 +274,12 @@ function enrichTelemetry(
   return {
     functionId: authored?.functionId ?? agentName,
     includeRuntimeContext,
+    // Passing integrations replaces the registered ones for this call, so the
+    // bridge has to be composed with them rather than handed over on its own.
     integrations:
       bridgeIntegration === undefined
         ? undefined
-        : authored === undefined
-          ? [bridgeIntegration]
-          : [bridgeIntegration, createOtelIntegration()],
+        : [bridgeIntegration, ...getRegisteredTelemetryIntegrations()],
     isEnabled: true,
     recordInputs: authored?.recordInputs ?? true,
     recordOutputs: authored?.recordOutputs ?? true,

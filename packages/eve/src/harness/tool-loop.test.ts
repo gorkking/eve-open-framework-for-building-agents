@@ -73,18 +73,25 @@ vi.mock("ai", () => ({
   tool: vi.fn((t: unknown) => t),
 }));
 
-const { existingOtelIntegration, mockCreateAiSdkHookBridge } = vi.hoisted(() => ({
-  existingOtelIntegration: { onStart: vi.fn() },
+const {
+  mockCreateAiSdkHookBridge,
+  mockGetRegisteredTelemetryIntegrations,
+  registeredAuthorIntegration,
+  registeredOtelIntegration,
+} = vi.hoisted(() => ({
   mockCreateAiSdkHookBridge: vi.fn((..._args: unknown[]) => ({ onStart: vi.fn() })),
+  mockGetRegisteredTelemetryIntegrations: vi.fn((): unknown[] => []),
+  registeredAuthorIntegration: { onStart: vi.fn() },
+  registeredOtelIntegration: { onStart: vi.fn() },
 }));
 
 vi.mock("./ai-sdk-hook-bridge.js", () => ({
   createAiSdkHookBridge: (...args: unknown[]) => mockCreateAiSdkHookBridge(...args),
 }));
 
-vi.mock("./otel-integration.js", () => ({
-  createOtelIntegration: vi.fn(() => existingOtelIntegration),
+vi.mock("./ai-sdk-telemetry.js", () => ({
   ensureOtelIntegration: vi.fn(),
+  getRegisteredTelemetryIntegrations: () => mockGetRegisteredTelemetryIntegrations(),
 }));
 
 const mockGetInstrumentationConfig = vi.fn().mockReturnValue(undefined);
@@ -112,6 +119,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   mockGetInstrumentationConfig.mockReturnValue(undefined);
+  mockGetRegisteredTelemetryIntegrations.mockReturnValue([]);
 });
 
 function createTestSession(overrides?: Partial<HarnessSession>): HarnessSession {
@@ -9362,7 +9370,7 @@ describe("createToolLoopHarness", () => {
       );
     });
 
-    it("composes lifecycle hooks with existing authored OTel", async () => {
+    it("composes the bridge with every registered integration", async () => {
       setupMockAgent({
         finishReason: "stop",
         response: { messages: [{ content: "Hello!", role: "assistant" }] },
@@ -9371,6 +9379,11 @@ describe("createToolLoopHarness", () => {
         toolResults: [],
       });
       mockGetInstrumentationConfig.mockReturnValue({ recordInputs: true, recordOutputs: false });
+      // An authored module can register its own integration alongside eve's.
+      mockGetRegisteredTelemetryIntegrations.mockReturnValue([
+        registeredOtelIntegration,
+        registeredAuthorIntegration,
+      ]);
       const hooks = createInstrumentationHooks([]);
       const runStep = createToolLoopHarness(
         createTestConfig("conversation", undefined, {
@@ -9392,7 +9405,7 @@ describe("createToolLoopHarness", () => {
         };
       };
       expect(agentCall.telemetry).toMatchObject({
-        integrations: [bridge, existingOtelIntegration],
+        integrations: [bridge, registeredOtelIntegration, registeredAuthorIntegration],
         recordInputs: true,
         recordOutputs: false,
       });
