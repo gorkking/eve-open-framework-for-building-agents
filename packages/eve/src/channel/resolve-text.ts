@@ -1,10 +1,13 @@
 import type { InputOption, InputRequest, InputResponse } from "#runtime/input/types.js";
 
+type ResolvableInputRequest = Pick<InputRequest, "allowFreeform" | "options" | "requestId">;
+
 /**
  * Maps freeform text to an {@link InputResponse} for a single request.
  *
  * Emitters import this utility to resolve text-based user input against
- * pending request options. The harness and runtime do not call it.
+ * pending request options. The harness also uses it for its own deterministic
+ * session-limit prompt, never to infer answers to model-authored input.
  *
  * Resolution order:
  * 1. Exact option ID (case-insensitive)
@@ -14,7 +17,7 @@ import type { InputOption, InputRequest, InputResponse } from "#runtime/input/ty
  */
 export function resolveTextToResponse(
   text: string,
-  request: InputRequest,
+  request: ResolvableInputRequest,
 ): InputResponse | undefined {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
@@ -46,7 +49,7 @@ export function resolveTextToResponse(
  */
 export function resolveTextToResponses(
   text: string,
-  requests: readonly InputRequest[],
+  requests: readonly ResolvableInputRequest[],
 ): readonly InputResponse[] {
   const responses: InputResponse[] = [];
 

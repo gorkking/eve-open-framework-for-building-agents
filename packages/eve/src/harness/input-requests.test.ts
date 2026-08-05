@@ -37,6 +37,16 @@ function createHarnessSession(): HarnessSession {
   };
 }
 
+function expectApprovalDenied(messages: readonly ModelMessage[]): void {
+  expect(messages.at(-1)).toMatchObject({
+    content: [
+      { approvalId: "approval-1", approved: false, type: "tool-approval-response" },
+      { toolCallId: "approval-call", type: "tool-result" },
+    ],
+    role: "tool",
+  });
+}
+
 describe("hasStepInput", () => {
   it("returns false when input is undefined", () => {
     expect(hasStepInput(undefined)).toBe(false);
@@ -195,7 +205,7 @@ describe("resolvePendingInput", () => {
     });
   });
 
-  it("resolves freeform question input from a follow-up message", () => {
+  it("dismisses a pending question when the user sends a follow-up message", () => {
     const session = setPendingInputBatch({
       requests: [
         {
@@ -241,11 +251,7 @@ describe("resolvePendingInput", () => {
         {
           output: {
             type: "json",
-            value: {
-              optionId: undefined,
-              text: "Ignore that and continue.",
-              status: "answered",
-            },
+            value: { status: "ignored" },
           },
           toolCallId: "question-call",
           toolName: "ask_question",
@@ -256,7 +262,7 @@ describe("resolvePendingInput", () => {
     });
   });
 
-  it("defers a follow-up message until after tool approvals are resolved", () => {
+  it("preserves an explicit approval response alongside a follow-up message", () => {
     const session = setPendingInputBatch({
       requests: [
         {
@@ -301,16 +307,14 @@ describe("resolvePendingInput", () => {
     // Deliver an approval response AND a message simultaneously.
     const result = resolvePendingInput({
       stepInput: {
-        inputResponses: [{ requestId: "approval-1", optionId: "deny" }],
+        inputResponses: [{ requestId: "approval-1", optionId: "approve" }],
         message: "Ignore that and say hi instead.",
       },
       session,
     });
 
-    // The approval should be resolved immediately.
     expect(result.outcome).toBe("resolved");
-
-    // The follow-up message should be deferred.
+    expect(getApprovedTools(result.session).has("bash")).toBe(true);
     expect(result.deferredMessage).toBe(true);
     expect(hasDeferredStepInput(result.session)).toBe(true);
 
@@ -384,7 +388,7 @@ describe("resolvePendingInput", () => {
     expect(hasDeferredStepInput(deferred.session)).toBe(false);
   });
 
-  it("resolves approval when follow-up text matches an option", () => {
+  it("denies approval when follow-up text matches an option", () => {
     const session = setPendingInputBatch({
       requests: [
         {
@@ -432,21 +436,12 @@ describe("resolvePendingInput", () => {
     });
 
     expect(result.outcome).toBe("resolved");
-    expect(result.deferredMessage).toBeUndefined();
-    expect(result.consumedMessage).toBe(true);
-    expect(result.messages.at(-1)).toEqual({
-      content: [
-        {
-          approvalId: "approval-1",
-          approved: true,
-          reason: undefined,
-          type: "tool-approval-response",
-        },
-      ],
-      role: "tool",
+    expect(result.deferredMessage).toBe(true);
+    expectApprovalDenied(result.messages);
+    expect(getApprovedTools(result.session).has("bash")).toBe(false);
+    expect(consumeDeferredStepInput({ session: result.session }).input).toEqual({
+      message: "approve",
     });
-    expect(getApprovedTools(result.session).has("bash")).toBe(true);
-    expect(hasDeferredStepInput(result.session)).toBe(false);
   });
 
   it("records compound approval key when resolveApprovalKey is provided", () => {
@@ -680,7 +675,7 @@ describe("resolvePendingInput", () => {
     expect(result.rejectedActions).toBeUndefined();
   });
 
-  it("keeps a pending approval and queues an unrelated follow-up message", () => {
+  it("denies a pending approval when the user sends a follow-up message", () => {
     const session = setPendingInputBatch({
       event: { sequence: 7, stepIndex: 2, turnId: "turn_1" },
       requests: [
@@ -711,9 +706,12 @@ describe("resolvePendingInput", () => {
       session,
     });
 
-    expect(result.outcome).toBe("unresolved");
-    expect(result.rejectedActions).toBeUndefined();
-    expect(result.messages).toEqual([{ content: "previous", role: "user" }]);
+    expect(result.outcome).toBe("resolved");
+    expect(result.rejectedActions?.results[0]).toMatchObject({
+      callId: "approval-call",
+      output: { approval: { requestId: "approval-1", status: "denied" } },
+    });
+    expectApprovalDenied(result.messages);
     expect(hasDeferredStepInput(result.session)).toBe(true);
 
     const deferred = consumeDeferredStepInput({ session: result.session });
@@ -894,18 +892,19 @@ describe("resolvePendingInput with a session-limit continuation batch", () => {
     });
   }
 
-  it("resolves a continue answer without appending tool messages", () => {
+  it("prefers an explicit continue answer over conflicting message text", () => {
     const result = resolvePendingInput({
       session: createLimitBatchSession(),
       stepInput: {
         inputResponses: [{ optionId: "continue", requestId: "sess-test:limit:input:12" }],
+        message: "stop",
       },
     });
 
     expect(result.outcome).toBe("resolved");
     expect(result.limitContinuation).toEqual({ granted: true });
-    // The prompt is harness-authored — no tool call exists in model history,
-    // so resolution must not append a tool message.
+    expect(result.consumedMessage).toBe(true);
+    // The harness-authored prompt has no tool call in model history.
     expect(result.messages).toEqual([{ content: "previous", role: "user" }]);
   });
 
@@ -988,8 +987,9 @@ describe("clearPendingSessionLimitPrompt", () => {
     const kept = clearPendingSessionLimitPrompt(session);
     const result = resolvePendingInput({ session: kept, stepInput: { message: "and then this" } });
 
-    // The approval still gates the turn: the follow-up defers behind it.
-    expect(result.outcome).toBe("unresolved");
+    // The batch survives cancellation cleanup, then the follow-up denies it.
+    expect(result.outcome).toBe("resolved");
+    expectApprovalDenied(result.messages);
     expect(hasDeferredStepInput(result.session)).toBe(true);
   });
 

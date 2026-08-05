@@ -175,4 +175,57 @@ describe("tool loop generate approval resume (real AI SDK)", () => {
       role: "assistant",
     });
   });
+
+  it("denies a pending approval before replaying a freeform follow-up", async () => {
+    const execute = vi.fn(async () => "/workspace");
+    const model = new MockLanguageModelV4({
+      doGenerate: {
+        content: [{ text: "I will not run that command.", type: "text" }],
+        finishReason: { raw: undefined, unified: "stop" },
+        usage,
+        warnings: [],
+      },
+      modelId: "generate-approval-resume-model",
+      provider: "eve-integration-mock",
+    });
+    const config: ToolLoopHarnessConfig = {
+      mode: "conversation",
+      resolveModel: async (): Promise<LanguageModel> => model,
+      tools: new Map([
+        [
+          toolCall.toolName,
+          {
+            description: "Run a shell command.",
+            execute,
+            inputSchema: jsonSchema({ type: "object" }),
+            name: toolCall.toolName,
+          },
+        ],
+      ]),
+    };
+
+    const result = await createToolLoopHarness(config)(createPendingApprovalSession(), {
+      message: "Never mind, do something else.",
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(model.doGenerateCalls).toHaveLength(1);
+    expect(findPart(model.doGenerateCalls[0]?.prompt ?? [], "tool-result")).toMatchObject({
+      output: { type: "execution-denied" },
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName,
+    });
+    expect(typeof result.next).toBe("function");
+    if (typeof result.next !== "function") {
+      throw new TypeError("Expected the denial to continue with the deferred user message.");
+    }
+
+    await result.next(result.session);
+
+    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(model.doGenerateCalls[1]?.prompt.at(-1)).toMatchObject({
+      content: [{ text: "Never mind, do something else.", type: "text" }],
+      role: "user",
+    });
+  });
 });

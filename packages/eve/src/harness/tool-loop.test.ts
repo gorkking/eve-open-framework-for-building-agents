@@ -1470,6 +1470,7 @@ describe("createToolLoopHarness", () => {
     expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledTimes(1);
     expect(resumed.next).toBeNull();
     expect(getSessionTokenLimitViolation(resumed.session)).toBeNull();
+    expect(resumed.session.history).not.toContainEqual({ content: "continue", role: "user" });
   });
 
   it("cancels the turn when the user declines the limit continuation prompt", async () => {
@@ -6998,7 +6999,7 @@ describe("createToolLoopHarness", () => {
     expect(events.filter((event) => event.type === "action.result")).toHaveLength(1);
   });
 
-  it("queues a follow-up user message until the pending tool approval resolves", async () => {
+  it("denies a pending approval before replaying a follow-up user message", async () => {
     const generateCalls: unknown[] = [];
     const agentResults = [
       {
@@ -7113,15 +7114,9 @@ describe("createToolLoopHarness", () => {
       message: "Hi instead.",
     });
 
-    expect(firstResult.next).toBeNull();
-    expect(generateCalls).toEqual([]);
+    expect(typeof firstResult.next).toBe("function");
+    expect(generateCalls).toHaveLength(1);
     expect(hasDeferredStepInput(firstResult.session)).toBe(true);
-
-    const deniedResult = await createToolLoopHarness(config)(firstResult.session, {
-      inputResponses: [{ requestId: "approval-1", optionId: "deny" }],
-    });
-
-    expect(typeof deniedResult.next).toBe("function");
     expect(generateCalls[0]).toEqual([
       {
         content: [
@@ -7161,7 +7156,7 @@ describe("createToolLoopHarness", () => {
       },
     ]);
 
-    const secondResult = await createToolLoopHarness(config)(deniedResult.session);
+    const secondResult = await createToolLoopHarness(config)(firstResult.session);
 
     expect(secondResult.next).toBeNull();
     expect((generateCalls[1] as { role: string; content: unknown }[]).at(-1)).toEqual({
@@ -7178,7 +7173,7 @@ describe("createToolLoopHarness", () => {
     });
   });
 
-  it("consumes text approval shortcuts without appending them as user messages", async () => {
+  it("treats text approval shortcuts as follow-up messages", async () => {
     const generateCalls: unknown[] = [];
 
     vi.mocked(ToolLoopAgent).mockImplementation(function (
@@ -7279,7 +7274,7 @@ describe("createToolLoopHarness", () => {
       ]),
     });
 
-    await createToolLoopHarness(config)(session, { message: "approve" });
+    const firstResult = await createToolLoopHarness(config)(session, { message: "approve" });
 
     expect(generateCalls[0]).toEqual([
       {
@@ -7302,14 +7297,29 @@ describe("createToolLoopHarness", () => {
         content: [
           {
             approvalId: "approval-1",
-            approved: true,
-            reason: undefined,
+            approved: false,
+            reason: "Tool execution was denied.",
             type: "tool-approval-response",
+          },
+          {
+            output: {
+              reason: "Tool execution was denied.",
+              type: "execution-denied",
+            },
+            toolCallId: "call-1",
+            toolName: "guarded_echo",
+            type: "tool-result",
           },
         ],
         role: "tool",
       },
     ]);
+
+    await createToolLoopHarness(config)(firstResult.session);
+    expect((generateCalls[1] as ModelMessage[]).at(-1)).toEqual({
+      content: "approve",
+      role: "user",
+    });
   });
 
   it("keeps channel context after the approval-response model call", async () => {
@@ -7405,11 +7415,7 @@ describe("createToolLoopHarness", () => {
     });
   });
 
-  it("deferred message lands as last non-system message after explicit approval denial", async () => {
-    // Step 1: pending approval + user sends a follow-up message. The approval
-    // remains pending and the message is deferred. Step 2: the user denies the
-    // approval. Step 3: the deferred message is consumed and appears as the
-    // last message the model sees.
+  it("deferred message lands last after automatic approval denial", async () => {
     const generateCalls: Array<Array<{ role: string; content: unknown }>> = [];
     const agentResults = [
       {
@@ -7523,31 +7529,19 @@ describe("createToolLoopHarness", () => {
       ]),
     });
 
-    // Step 1: user sends "Do something else" while approval is pending.
-    // Approval remains pending; message is deferred.
     const firstResult = await createToolLoopHarness(config)(session, {
       message: "Do something else",
     });
-    expect(firstResult.next).toBeNull();
-    expect(generateCalls).toEqual([]);
+    expect(typeof firstResult.next).toBe("function");
+    expect(generateCalls[0]?.at(-1)?.role).toBe("tool");
 
-    // Step 2: user denies the approval; the deferred message is NOT in this call.
-    const deniedResult = await createToolLoopHarness(config)(firstResult.session, {
-      inputResponses: [{ requestId: "approval-1", optionId: "deny" }],
-    });
-    expect(typeof deniedResult.next).toBe("function");
-    const step2Last = generateCalls[0]?.at(-1);
-    expect(step2Last?.role).toBe("tool");
-
-    // Step 3: harness consumes the deferred message.
-    const secondResult = await createToolLoopHarness(config)(deniedResult.session);
+    const secondResult = await createToolLoopHarness(config)(firstResult.session);
     expect(secondResult.next).toBeNull();
+    expect(generateCalls[1]?.at(-1)).toEqual({
+      content: "Do something else",
+      role: "user",
+    });
 
-    // The deferred user message is the last message the model sees.
-    const step3Last = generateCalls[1]?.at(-1);
-    expect(step3Last).toEqual({ content: "Do something else", role: "user" });
-
-    // History reflects the full conversation.
     expect(secondResult.session.history.at(-1)).toEqual({
       content: "Sure, here you go.",
       role: "assistant",
@@ -7828,8 +7822,7 @@ describe("createToolLoopHarness", () => {
       }),
     });
 
-    // The follow-up resolves question-1 as freeform; the turn completes with
-    // nothing pending.
+    // The follow-up dismisses question-1; the turn completes with nothing pending.
     const followupResult = await runStep(session, {
       message: "Use current context instead.",
     });
@@ -7855,7 +7848,7 @@ describe("createToolLoopHarness", () => {
       role: "user",
     });
     // The stale selection must not append a second tool result for
-    // question-1: only the freeform answer from the follow-up turn exists.
+    // question-1: only the ignored result from the follow-up turn exists.
     expect(modelMessages?.filter((message: ModelMessage) => message.role === "tool")).toHaveLength(
       1,
     );

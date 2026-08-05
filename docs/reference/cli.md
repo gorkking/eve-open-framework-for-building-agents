@@ -220,7 +220,7 @@ printf '%s' "$result" | eve invoke --resume "approve"
 eve invoke --json-schema
 ```
 
-`--resume` reads a complete previous result from stdin. Supply text for a `ready` follow-up or pending input; the agent harness resolves input text against all pending requests. A `ready` result includes the previous turn's completed or failed `outcome`. An `authorization-required` result lists every unresolved challenge in `authorizations`; complete them, then resume without text. Pass explicit headers again for protected remote servers. If the URL belongs to another Vercel team, pass its slug with `--scope`; this does not relink the current directory. Pass the scope again when resuming. Paused invocations exit `3`; failures exit `1`.
+`--resume` reads a complete previous result from stdin. Supply text for a `ready` follow-up or pending input; `eve invoke` converts text that matches pending options or is accepted as freeform into explicit responses, then sends unmatched text as a follow-up. A `ready` result includes the previous turn's completed or failed `outcome`. An `authorization-required` result lists every unresolved challenge in `authorizations`; complete them, then resume without text. Pass explicit headers again for protected remote servers. If the URL belongs to another Vercel team, pass its slug with `--scope`; this does not relink the current directory. Pass the scope again when resuming. Paused invocations exit `3`; failures exit `1`.
 
 Local callback-based connection authorization requires a persistent server. Run `eve dev`, then use `eve invoke --url <dev-url>` instead. If a waiting invocation receives `SIGINT` or `SIGTERM` after acceptance, it emits a final resumable `running` result before exiting.
 

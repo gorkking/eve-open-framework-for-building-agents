@@ -1,10 +1,10 @@
 import { defineEval } from "eve/evals";
 
 /**
- * A freeform answer can resolve an ask_question request before the user clicks
- * one of its rendered controls. A later click must become a new user turn,
- * even if another question is pending, so the model can decide whether that
- * old selection is still relevant.
+ * A follow-up can dismiss an ask_question request before the user clicks one
+ * of its rendered controls. A later click must become a new user turn, even if
+ * another question is pending, so the model can decide whether that old
+ * selection is still relevant.
  */
 export default defineEval({
   tags: ["real-model"],
@@ -56,12 +56,10 @@ export default defineEval({
       throw new Error("The second ask_question call reused the stale request ID.");
     }
 
-    const staleSelection = await t.respond([
-      {
-        requestId: request.requestId,
-        optionId: "candidate",
-      },
-    ]);
+    const staleSelection = await t.respond({
+      requestId: request.requestId,
+      optionId: "candidate",
+    });
     staleSelection.expectOk();
     staleSelection.event("message.received", {
       count: 1,

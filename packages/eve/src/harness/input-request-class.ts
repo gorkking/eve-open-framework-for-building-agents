@@ -13,10 +13,9 @@ export function isApprovalRequest(request: InputRequest): boolean {
 /**
  * Behavioral class of a pending input request.
  *
- * `"required"` — the request must be explicitly answered before the turn can
- * move on. While one is unanswered, any other arriving input is queued and
- * replayed on the step after the answer. The pending batch never churns, so
- * the request ids the user is answering stay valid.
+ * `"required"` — the request must receive a terminal response before the turn
+ * can move on. A follow-up message denies a pending approval, while an
+ * unanswered session-limit prompt continues to gate the turn.
  *
  * `"dismissable"` — a plain follow-up message counts as the user moving on.
  * The request resolves as a real `tool-result` with `status: "ignored"` and
@@ -27,8 +26,8 @@ export type InputRequestClass = "dismissable" | "required";
 /** Classifies one pending request; see {@link InputRequestClass}. */
 export function classifyInputRequest(request: InputRequest): InputRequestClass {
   switch (request.kind) {
-    // AI SDK requires a tool approval to resolve in isolation. Skipping it
-    // would leave the intercepted call permanently unadjudicated.
+    // AI SDK requires a tool approval to resolve in isolation. A follow-up
+    // message supplies a denial before the conversation continues.
     case "tool-approval":
       return "required";
     // Ignoring a session-limit continuation cannot move forward. The next

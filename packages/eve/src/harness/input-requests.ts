@@ -122,13 +122,10 @@ export function hasDeferredStepInput(session: HarnessSession): boolean {
 /**
  * Resolves pending input at the start of a harness step.
  *
- * Each pending request is either `"required"` or `"dismissable"` — see
- * {@link classifyInputRequest}. While a required request is unanswered,
- * follow-up input is deferred instead of dismissing and recreating the
- * request; {@link consumeDeferredStepInput} replays it on the subsequent
- * step. Tool approval responses additionally resolve in isolation because
- * AI SDK cannot process an approval response and a new user message in the
- * same request.
+ * A follow-up message denies unanswered approvals and dismisses unanswered
+ * questions. Session-limit prompts remain required. AI SDK approval responses
+ * resolve in isolation; {@link consumeDeferredStepInput} replays an ordinary
+ * follow-up message on the subsequent step.
  */
 export function resolvePendingInput(input: {
   readonly history?: readonly ModelMessage[];
@@ -147,21 +144,22 @@ export function resolvePendingInput(input: {
     return { outcome: "continue", messages: baseHistory, session };
   }
 
-  // Pending batch exists -- only resolve if we have actual responses.
-  const resolvedStepInput = resolveTextMessageInput(pendingBatch, stepInput);
-  const responses = resolvedStepInput?.inputResponses ?? [];
+  const { consumedMessage, responses } = resolveStepInputResponses(
+    pendingBatch.requests,
+    stepInput,
+  );
   const resolvesApprovalBatch = pendingBatch.requests.some((request) => isApprovalRequest(request));
 
-  if (responses.length === 0 && resolvedStepInput?.message === undefined) {
+  if (responses.length === 0 && stepInput?.message === undefined) {
     return { outcome: "unresolved", messages: baseHistory, session };
   }
 
   if (hasUnansweredRequiredRequest({ pendingBatch, responses })) {
-    session = queueDeferredStepInput(session, compactStepInput(resolvedStepInput));
+    session = queueDeferredStepInput(session, compactStepInput(stepInput));
     return { deferredMessage: true, outcome: "unresolved", messages: baseHistory, session };
   }
 
-  if (responses.length === 0 && resolvedStepInput?.message !== undefined) {
+  if (responses.length === 0 && stepInput?.message !== undefined) {
     // A follow-up message arrived and every pending request is dismissable
     // (a required one would have deferred above): mark the unanswered
     // requests ignored so the model can continue with the message.
@@ -175,7 +173,6 @@ export function resolvePendingInput(input: {
     session = clearPendingInputBatch(session);
 
     return {
-      consumedMessage: resolvedStepInput?.messageConsumed,
       outcome: "resolved",
       messages,
       rejectedActions,
@@ -215,18 +212,18 @@ export function resolvePendingInput(input: {
       context?: StepInput["context"];
       message?: StepInput["message"];
     } = {};
-    if ((resolvedStepInput?.context?.length ?? 0) > 0) {
-      deferredInput.context = resolvedStepInput?.context;
+    if ((stepInput?.context?.length ?? 0) > 0) {
+      deferredInput.context = stepInput?.context;
     }
-    if (resolvedStepInput?.message !== undefined) {
-      deferredInput.message = resolvedStepInput.message;
+    if (stepInput?.message !== undefined && !consumedMessage) {
+      deferredInput.message = stepInput.message;
     }
 
     if (deferredInput.context !== undefined || deferredInput.message !== undefined) {
       session = queueDeferredStepInput(session, deferredInput);
 
       return {
-        consumedMessage: resolvedStepInput?.messageConsumed,
+        consumedMessage: consumedMessage || undefined,
         deferredContext: deferredInput.context === undefined ? undefined : true,
         deferredMessage: deferredInput.message === undefined ? undefined : true,
         limitContinuation,
@@ -239,7 +236,7 @@ export function resolvePendingInput(input: {
   }
 
   return {
-    consumedMessage: resolvedStepInput?.messageConsumed,
+    consumedMessage: consumedMessage || undefined,
     limitContinuation,
     outcome: "resolved",
     messages,
@@ -248,30 +245,7 @@ export function resolvePendingInput(input: {
   };
 }
 
-function resolveTextMessageInput(
-  pendingBatch: PendingInputBatch,
-  stepInput: StepInput | undefined,
-): (StepInput & { readonly messageConsumed?: boolean }) | undefined {
-  if (typeof stepInput?.message !== "string" || (stepInput.inputResponses?.length ?? 0) > 0) {
-    return stepInput;
-  }
-
-  const responses = resolveTextToResponses(stepInput.message, pendingBatch.requests);
-  if (responses.length === 0) {
-    return stepInput;
-  }
-
-  return compactStepInput({
-    ...stepInput,
-    inputResponses: responses,
-    messageConsumed: true,
-    message: undefined,
-  });
-}
-
-function compactStepInput(
-  input: (StepInput & { readonly messageConsumed?: boolean }) | undefined,
-): StepInput & { readonly messageConsumed?: boolean } {
+function compactStepInput(input: StepInput | undefined): StepInput {
   if (input === undefined) {
     return {};
   }
@@ -280,7 +254,6 @@ function compactStepInput(
     context?: StepInput["context"];
     inputResponses?: StepInput["inputResponses"];
     message?: StepInput["message"];
-    messageConsumed?: boolean;
     outputSchema?: StepInput["outputSchema"];
   } = {};
 
@@ -293,14 +266,47 @@ function compactStepInput(
   if (input.message !== undefined) {
     result.message = input.message;
   }
-  if (input.messageConsumed === true) {
-    result.messageConsumed = true;
-  }
   if (input.outputSchema !== undefined) {
     result.outputSchema = input.outputSchema;
   }
 
   return result;
+}
+
+function resolveStepInputResponses(
+  requests: readonly InputRequest[],
+  stepInput: StepInput | undefined,
+): { readonly consumedMessage: boolean; readonly responses: InputResponse[] } {
+  const explicitResponses = stepInput?.inputResponses ?? [];
+  if (stepInput?.message === undefined) {
+    return { consumedMessage: false, responses: [...explicitResponses] };
+  }
+
+  const explicitResponseIds = new Set(explicitResponses.map((response) => response.requestId));
+  const sessionLimitTextResponses =
+    typeof stepInput.message === "string"
+      ? resolveTextToResponses(
+          stepInput.message,
+          requests.filter((request) => request.kind === "session-limit"),
+        )
+      : [];
+  const sessionLimitResponses = sessionLimitTextResponses.filter(
+    (response) => !explicitResponseIds.has(response.requestId),
+  );
+  const responseIds = new Set(
+    [...explicitResponses, ...sessionLimitResponses].map((response) => response.requestId),
+  );
+  const approvalDenials = requests.flatMap((request): InputResponse[] => {
+    if (request.kind !== "tool-approval" || responseIds.has(request.requestId)) {
+      return [];
+    }
+    return [{ optionId: "deny", requestId: request.requestId }];
+  });
+
+  return {
+    consumedMessage: sessionLimitTextResponses.length > 0,
+    responses: [...explicitResponses, ...sessionLimitResponses, ...approvalDenials],
+  };
 }
 
 /**
