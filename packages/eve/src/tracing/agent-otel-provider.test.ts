@@ -29,12 +29,16 @@ interface TestRuntime {
   readonly runInContext: InstrumentationContextRunner;
 }
 
-function createRuntime(stateStore = new InMemoryAgentTraceStateStore()): TestRuntime {
+function createRuntime(
+  stateStore = new InMemoryAgentTraceStateStore(),
+  content: { readonly recordInputs?: boolean; readonly recordOutputs?: boolean } = {},
+): TestRuntime {
   const exporter = new InMemorySpanExporter();
   const provider = new BasicTracerProvider({
     spanProcessors: [new SimpleSpanProcessor(exporter)],
   });
   const agentOtel = createAgentOtelInstrumentation({
+    ...content,
     frameworkVersion: "test",
     stateStore,
     tracer: provider.getTracer("eve.agent"),
@@ -376,7 +380,8 @@ describe("createAgentOtelInstrumentation", () => {
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
     const agentOtel = createAgentOtelInstrumentation({
-      captureContent: false,
+      recordInputs: false,
+      recordOutputs: false,
       frameworkVersion: "test",
       stateStore: new InMemoryAgentTraceStateStore(),
       tracer: provider.getTracer("eve.agent"),
@@ -397,6 +402,44 @@ describe("createAgentOtelInstrumentation", () => {
     expect(JSON.stringify(spans.map((span) => span.attributes))).not.toContain("private");
     expect(JSON.stringify(spans.map((span) => span.attributes))).not.toContain("real user text");
     expect(JSON.stringify(spans.map((span) => span.attributes))).not.toContain("system prompt");
+  });
+
+  it("records outputs without inputs when only output capture is enabled", async () => {
+    const runtime = createRuntime(undefined, { recordInputs: false });
+    await emitAttempt({
+      hooks: runtime.hooks,
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const attributes = JSON.stringify(
+      runtime.exporter.getFinishedSpans().map((span) => span.attributes),
+    );
+    expect(attributes).not.toContain("secret");
+    expect(attributes).not.toContain("real user text");
+    expect(attributes).toContain("temperature");
+  });
+
+  it("records inputs without outputs when only input capture is enabled", async () => {
+    const runtime = createRuntime(undefined, { recordOutputs: false });
+    await emitAttempt({
+      hooks: runtime.hooks,
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const attributes = JSON.stringify(
+      runtime.exporter.getFinishedSpans().map((span) => span.attributes),
+    );
+    expect(attributes).toContain("secret");
+    expect(attributes).toContain("real user text");
+    expect(attributes).not.toContain("temperature");
   });
 
   it("writes gateway cost attributes on the step span when the gateway reports them", async () => {

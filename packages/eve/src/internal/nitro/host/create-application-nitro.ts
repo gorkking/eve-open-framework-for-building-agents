@@ -661,7 +661,12 @@ function createApplicationNitroPlugins(preparedHost: PreparedApplicationHost): s
     );
   }
   if (preparedHost.compiledArtifacts.instrumentationPluginPath !== undefined) {
-    nitroPlugins.push(preparedHost.compiledArtifacts.instrumentationPluginPath);
+    nitroPlugins.push(
+      preparedHost.compiledArtifacts.instrumentationPluginPath,
+      resolvePackageSourceFilePath(
+        "src/internal/nitro/host/agent-instrumentation-runtime-plugin.ts",
+      ),
+    );
   }
 
   return nitroPlugins;

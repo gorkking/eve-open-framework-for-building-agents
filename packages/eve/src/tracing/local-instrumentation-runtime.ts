@@ -1,16 +1,11 @@
 import { context, trace } from "#compiled/@opentelemetry/api/index.js";
 import { registerOTel } from "#compiled/@vercel/otel/index.js";
 
-import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
-import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
+import { installAgentInstrumentationRuntime } from "#tracing/agent-instrumentation-runtime.js";
 import { AgentTraceSpanProcessor } from "#tracing/agent-trace-span-processor.js";
-import {
-  createInstrumentationHooks,
-  type InstrumentationProviderDefinition,
-} from "#harness/instrumentation-lifecycle.js";
+import type { InstrumentationProviderDefinition } from "#harness/instrumentation-lifecycle.js";
 import {
   getInstrumentationRuntime,
-  registerInstrumentationRuntime,
   type InstrumentationRuntime,
 } from "#harness/instrumentation-runtime.js";
 import {
@@ -48,12 +43,6 @@ export function installLocalInstrumentationRuntime(input: {
   if (!processor.isAttached() || !contextAttached) {
     throw new Error("eve could not register OpenTelemetry because another runtime already exists.");
   }
-  const agentOtel = createAgentOtelInstrumentation({
-    captureContent: process.env.EVE_TRACES_CONTENT !== "off",
-    frameworkVersion: input.frameworkVersion,
-    stateStore: new ContextAgentTraceStateStore(),
-    tracer: trace.getTracer("eve.agent", input.frameworkVersion),
-  });
   const releaseTrace: InstrumentationProviderDefinition = {
     events: {
       "session.completed": releaseSessionTrace,
@@ -64,10 +53,13 @@ export function installLocalInstrumentationRuntime(input: {
   // before this worker adds to it.
   requestPrune();
 
-  return registerInstrumentationRuntime({
+  const recordContent = process.env.EVE_TRACES_CONTENT !== "off";
+  return installAgentInstrumentationRuntime({
     forceFlush: () => processor.forceFlush(),
-    hooks: createInstrumentationHooks([agentOtel.hook, releaseTrace]),
-    runInContext: agentOtel.runInContext,
+    frameworkVersion: input.frameworkVersion,
+    providers: [releaseTrace],
+    recordInputs: recordContent,
+    recordOutputs: recordContent,
   });
 
   async function releaseSessionTrace(event: { readonly sessionId: string }): Promise<void> {

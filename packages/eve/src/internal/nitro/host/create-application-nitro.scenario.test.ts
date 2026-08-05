@@ -210,7 +210,7 @@ describe("application Nitro creation", () => {
     );
   });
 
-  it("preserves authored instrumentation instead of installing local tracing", async () => {
+  it("preserves authored instrumentation and installs agent tracing without the local spool", async () => {
     const nitroStub = createNitroStub();
     createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
     const { createDevelopmentApplicationNitro } =
@@ -221,10 +221,34 @@ describe("application Nitro creation", () => {
     await createDevelopmentApplicationNitro(preparedHost);
 
     const plugins = createNitroMock.mock.calls[0]?.[0].plugins as string[];
-    expect(plugins).toContain("/app/instrumentation.mjs");
+    const authoredInstrumentation = plugins.indexOf("/app/instrumentation.mjs");
+    const agentTracing = plugins.findIndex((plugin) =>
+      plugin.includes("agent-instrumentation-runtime-plugin.ts"),
+    );
+    expect(authoredInstrumentation).toBeGreaterThanOrEqual(0);
+    expect(agentTracing).toBeGreaterThan(authoredInstrumentation);
     expect(plugins).not.toEqual(
       expect.arrayContaining([expect.stringContaining("local-tracing-runtime-plugin.ts")]),
     );
+  });
+
+  it("installs agent tracing after authored instrumentation in production", async () => {
+    const nitroStub = createNitroStub();
+    createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
+    const { createProductionApplicationNitro } =
+      await import("#internal/nitro/host/create-application-nitro.js");
+    const preparedHost = createPreparedHost();
+    preparedHost.compiledArtifacts.instrumentationPluginPath = "/app/instrumentation.mjs";
+
+    await createProductionApplicationNitro(preparedHost, createProductionOptions(preparedHost));
+
+    const plugins = createNitroMock.mock.calls[0]?.[0].plugins as string[];
+    const authoredInstrumentation = plugins.indexOf("/app/instrumentation.mjs");
+    const agentTracing = plugins.findIndex((plugin) =>
+      plugin.includes("agent-instrumentation-runtime-plugin.ts"),
+    );
+    expect(authoredInstrumentation).toBeGreaterThanOrEqual(0);
+    expect(agentTracing).toBeGreaterThan(authoredInstrumentation);
   });
 
   it("preserves workflow bundle side effects and skips workflow transform for cached bundles", async () => {

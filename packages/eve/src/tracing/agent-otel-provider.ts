@@ -117,12 +117,10 @@ export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
 }
 
 export interface AgentOtelInstrumentationInput {
-  /**
-   * Capture model prompts/responses and tool call inputs/outputs as span
-   * attributes. Content stays on the local machine — this provider only
-   * wires the dev-time local spool — but can be turned off per project.
-   */
-  readonly captureContent?: boolean;
+  /** Capture model prompts and tool call inputs as span attributes. */
+  readonly recordInputs?: boolean;
+  /** Capture model responses and tool call outputs as span attributes. */
+  readonly recordOutputs?: boolean;
   readonly frameworkVersion: string;
   readonly stateStore: AgentTraceStateStore;
   readonly tracer: Tracer;
@@ -138,7 +136,8 @@ export interface AgentOtelInstrumentation {
 export function createAgentOtelInstrumentation(
   input: AgentOtelInstrumentationInput,
 ): AgentOtelInstrumentation {
-  const captureContent = input.captureContent ?? true;
+  const recordInputs = input.recordInputs ?? true;
+  const recordOutputs = input.recordOutputs ?? true;
   const executionContexts = new WeakMap<
     InstrumentationAttemptScope,
     { readonly models: Map<string, Context>; readonly tools: Map<string, Context> }
@@ -316,7 +315,7 @@ export function createAgentOtelInstrumentation(
       },
       attempt.operation.context,
     );
-    if (captureContent) {
+    if (recordInputs) {
       const messages = messagesContentAttribute(event.source.messages);
       if (messages !== undefined) span.setAttribute("ai.prompt.messages", messages);
       const system = systemPromptAttribute(event.source.instructions);
@@ -336,7 +335,7 @@ export function createAgentOtelInstrumentation(
       setUsage(state.span, event.source.usage);
       const attempt = steps.get(event.scope);
       if (attempt !== undefined) setUsage(attempt.step.span, event.source.usage);
-      if (captureContent) {
+      if (recordOutputs) {
         state.span.setAttribute("ai.response.finish_reason", event.source.finishReason);
         const reasoning = textContentAttribute(
           event.source.content
@@ -414,7 +413,7 @@ export function createAgentOtelInstrumentation(
       },
       actionContext,
     );
-    if (captureContent) {
+    if (recordInputs) {
       const args = contentAttribute(event.source.toolCall.input, false);
       if (args !== undefined) toolSpan.setAttribute("gen_ai.tool.call.arguments", args);
     }
@@ -436,7 +435,7 @@ export function createAgentOtelInstrumentation(
     } else if (event.source.toolOutput.type !== "tool-result") {
       recordError(state.toolSpan, event.source.toolOutput.error);
       recordError(state.span, event.source.toolOutput.error);
-    } else if (captureContent) {
+    } else if (recordOutputs) {
       const result = contentAttribute(event.source.toolOutput.output, false);
       if (result !== undefined) state.toolSpan.setAttribute("gen_ai.tool.call.result", result);
     }
