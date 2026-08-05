@@ -1,3 +1,4 @@
+import { normalizeApproval } from "#internal/authored-definition/approval.js";
 import type { McpClientConnectionDefinition } from "#public/definitions/connections/mcp.js";
 import type { OpenAPIConnectionDefinition } from "#public/definitions/connections/openapi.js";
 import type {
@@ -89,10 +90,7 @@ export function normalizeMcpClientConnectionDefinition(
   }
 
   if (record.approval !== undefined) {
-    if (typeof record.approval !== "function") {
-      throw new Error(`${message} The "approval" field must be a function when provided.`);
-    }
-    result.approval = record.approval as McpClientConnectionDefinition["approval"];
+    result.approval = normalizeApproval(record.approval, message);
   }
 
   return result;
@@ -151,10 +149,7 @@ export function normalizeOpenApiConnectionDefinition(
   }
 
   if (record.approval !== undefined) {
-    if (typeof record.approval !== "function") {
-      throw new Error(`${message} The "approval" field must be a function when provided.`);
-    }
-    result.approval = record.approval as OpenAPIConnectionDefinition["approval"];
+    result.approval = normalizeApproval(record.approval, message);
   }
 
   return result;
