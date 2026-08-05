@@ -126,8 +126,19 @@ Together these implementations favor a layered authoring model:
 
 1. tools publish structured snapshots or tool-owned progress contributions;
 2. eve owns the default action/child tree and lifecycle invariants;
-3. an agent-level policy selects, combines, and summarizes contributions;
-4. the root channel reconciles the projection, including timer-driven refresh.
+3. the agent level materializes a deterministic canonical progress graph;
+4. the root channel selects and summarizes that graph, then reconciles the
+   presentation, including timer-driven refresh.
+
+Other internal agents reinforce this boundary. Revoa executes approved plans
+with deterministic per-step callbacks carrying step index, total, description,
+and result, then maps those facts to one updated Slack message. CSE maintains a
+durable investigation budget from `actions.requested`: deadline, maximum
+subagent calls, and calls used. Devbox maps known tools to authored activity
+labels and deliberately suppresses noisy polling while retaining task state.
+None of the inspected channel implementations invokes an LLM to derive status
+from lifecycle events. They use typed state, stable identities, and explicit
+policy, then apply opinion only while rendering.
 
 ## Proposed semantic split
 
@@ -154,10 +165,15 @@ partial output. An authored reducer can interpret a tool's domain-specific
 snapshot; a future tool-level projector could explicitly map `TOutput` to a
 small progress contribution without changing what clients or the model see.
 
-### Progress reducer
+### Canonical agent projection
 
-A reducer folds facts into durable desired state. It must be deterministic and
-side-effect free so workflow retries produce the same result.
+The agent-level reducer folds facts into durable canonical state. It must be
+deterministic, side-effect free, and deliberately low-loss so workflow retries
+produce the same result and every parent receives enough structure to choose a
+different presentation. It may compact transport detail, such as replacing ten
+partials for one call with the latest typed contribution, but should retain
+active action identities, child projections, plan items, phases, timestamps,
+errors, and terminal outcomes.
 
 A default reducer can preserve today's broad behavior while producing a
 channel-neutral tree:
@@ -188,11 +204,18 @@ ProgressNode`. Every channel can understand the result, but the shared shape
 
 Do not require an agent author to reconstruct the action map, child revision
 checks, or terminal precedence. Those are framework invariants. Agent-level
-authoring should wrap a default structural reducer or configure policies such
-as which completed nodes to retain, how to summarize parallel children, and
-whether a structured plan supersedes low-level actions. Tool-level projectors
-answer what one operation's output means; the agent policy answers what matters
-across the whole tree.
+authoring should primarily add typed domain contributions and configure bounded
+retention, not collapse the graph to one display string. Tool-level projectors
+answer what one operation's output means; the canonical reducer combines those
+contributions without deciding what a particular audience should see.
+
+A child may publish an explicit semantic summary because it understands its own
+domain, but that summary is one field alongside its canonical child projection,
+not a replacement for it. Automatically invoking a summarization model at each
+subagent boundary would add latency, cost, nondeterminism, and cumulative
+information loss. If a very wide tree eventually requires hierarchical model
+summaries, store them as optional derived annotations keyed by the source
+projection fingerprint and always propagate the source projection too.
 
 Start with the constrained internal projection to establish semantics. Do not
 expose a public reducer until the tree survives nested delegation without
@@ -200,18 +223,29 @@ channel-specific fields.
 
 ### Channel reconciler
 
-The root channel receives a complete desired projection and reconciles it with
-external state. It owns effectful and presentation-specific concerns:
+The root channel receives a complete desired projection and reduces it into a
+presentation before reconciling external state. It owns effectful and
+presentation-specific concerns:
 
+- select which canonical nodes matter for this channel and audience;
+- optionally summarize them with authored code or a cheap model;
 - choose an indicator, one updated message, multiple posts, or blocks;
 - create and remember external resource ids;
 - update or clear prior presentation;
 - truncate, throttle, debounce, and refresh according to platform limits;
 - decide how completed children remain visible.
 
-The reconciler's durable channel state contains external ids and the last
-successfully rendered projection fingerprint. Reducer state must not contain
-those values. Reconciliation is best-effort and must not fail the agent turn.
+A model summarizer is an optional, best-effort presentation stage. Its input is
+the bounded canonical graph; its output is cached by projection fingerprint in
+channel state. Failure falls back to deterministic copy. A timer refresh with
+an unchanged fingerprint reuses the cached summary and repeats only the channel
+effect, so a 75-second Slack refresh neither calls the model again nor creates a
+progress revision.
+
+The reconciler's durable channel state contains external ids, the last
+successfully rendered projection fingerprint, and any cached presentation.
+Canonical reducer state must not contain those values. Reconciliation is
+best-effort and must not fail the agent turn.
 
 ## Hierarchical propagation
 
@@ -315,6 +349,12 @@ and child propagation are unchanged in either case.
     progress without confusing "no recent event" with failure?
 12. Can root and child structured plans use one projection while retaining e0's
     policy that completed root plans remain visible and child plans disappear?
+13. What size bound on the canonical graph permits low-loss propagation without
+    unbounded session growth? Retention should be explicit and deterministic,
+    not delegated to a summarization model.
+14. Does the channel summarizer receive auth/audience metadata so it can avoid
+    exposing child details inappropriate for a shared thread, or must the
+    canonical projection be visibility-labeled before it reaches the channel?
 
 ## Implementation sequence
 
