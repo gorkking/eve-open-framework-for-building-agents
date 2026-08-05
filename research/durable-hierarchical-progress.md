@@ -239,6 +239,399 @@ operation-local progress. None is evidence for lossy or model-based reduction
 inside every child. An optional channel summarizer remains a novel but natural
 consumer-owned stage, and should cache by canonical projection fingerprint.
 
+## Public API design space
+
+The public API needs boundaries at four levels: producers contribute meaning,
+the agent materializes canonical state, delegated sessions publish canonical
+snapshots, and the root channel projects and reconciles a presentation. These
+levels should not share one generic `reduce(event)` callback.
+
+### Canonical types
+
+Three shapes are plausible.
+
+#### Recursive activity tree
+
+```ts
+interface ProgressSnapshot {
+  readonly revision: number;
+  readonly root: ProgressScope;
+}
+
+interface ProgressScope {
+  readonly id: string;
+  readonly kind: "agent";
+  readonly name: string;
+  readonly phase: ProgressPhase;
+  readonly summary?: string;
+  readonly startedAt: string;
+  readonly updatedAt: string;
+  readonly activities: readonly ProgressActivity[];
+}
+
+type ProgressActivity = ProgressAction | ProgressChild | ProgressPlan | ProgressBlocker;
+
+interface ProgressChild extends ProgressActivityBase {
+  readonly kind: "agent";
+  readonly callId: string;
+  readonly sessionId: string;
+  readonly progress: ProgressScope;
+}
+```
+
+This is easiest for renderers and naturally represents nested agents. Updating a
+deep child replaces a path and can duplicate large subtrees on the wire unless
+snapshots are bounded or structurally shared internally.
+
+#### Normalized graph
+
+```ts
+interface ProgressSnapshot {
+  readonly revision: number;
+  readonly rootId: string;
+  readonly nodes: Readonly<Record<string, ProgressNode>>;
+}
+
+interface ProgressNode {
+  readonly id: string;
+  readonly parentId?: string;
+  readonly kind: "agent" | "action" | "plan" | "blocker";
+  readonly phase: ProgressPhase;
+  readonly children: readonly string[];
+  readonly contribution?: ProgressContribution;
+}
+```
+
+This is compact, stable under replacement, and convenient for stale-revision
+checks. It is less pleasant for ordinary channel authors and exposes graph
+integrity concerns they should not need to maintain.
+
+#### Snapshot plus opaque extension contributions
+
+```ts
+interface ProgressActivity {
+  readonly id: string;
+  readonly kind: string;
+  readonly phase: ProgressPhase;
+  readonly label?: string;
+  readonly data?: JsonValue;
+}
+```
+
+This is extensible but gives channels little portable structure. Every renderer
+would eventually switch on tool-specific `kind` values.
+
+The recommended public read shape is a recursive tree with a bounded canonical
+schema. The runtime may store or propagate it as a normalized graph. Domain data
+can ride in namespaced optional annotations, but core identity, phase, nesting,
+counts, timestamps, and errors remain portable.
+
+```ts
+type ProgressPhase = "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+
+interface ProgressContribution {
+  readonly label?: string;
+  readonly detail?: string;
+  readonly completed?: number;
+  readonly total?: number;
+  readonly unit?: string;
+}
+```
+
+`label` and `detail` are semantic authored copy, not channel markup. They are
+optional because an action's tool or agent name is already a deterministic
+fallback.
+
+### Producer APIs
+
+There are three useful producer shapes, and eve likely needs two of them.
+
+#### Explicit operation-local reporting
+
+```ts
+export default defineTool({
+  async execute(input, ctx) {
+    await ctx.progress.report({
+      label: "Indexing documents",
+      completed: 250,
+      total: 1_000,
+      unit: "documents",
+    });
+  },
+});
+```
+
+This is natural for callbacks, MCP progress, and long operations that know when
+a meaningful milestone occurs. `report` must be asynchronous and revisioned.
+Its durability semantics must be explicit: it sends an out-of-band checkpoint
+rather than pretending an atomic tool step committed early. Rapid reports may
+coalesce latest-per-call while preserving the latest accepted checkpoint.
+
+#### Projection from tool lifecycle and partial output
+
+```ts
+export default defineTool({
+  async *execute(input) {
+    yield { indexed: 250, total: 1_000 };
+    yield { indexed: 1_000, total: 1_000 };
+  },
+  progress: {
+    started(input) {
+      return { label: `Indexing ${input.collection}` };
+    },
+    updated(output) {
+      return {
+        completed: output.indexed,
+        total: output.total,
+        unit: "documents",
+      };
+    },
+    completed(output) {
+      return { label: `Indexed ${output.total} documents` };
+    },
+  },
+});
+```
+
+This keeps a typed relation to tool input/output and lets `action.partial`
+remain a richer client stream. It cannot describe milestones that are not
+represented in yielded output.
+
+#### Generic progress tool
+
+A model-facing `report_progress` tool is useful for semantic work between tools,
+but should be additive. Requiring the model to narrate every operation is noisy
+and unreliable. Structured `todo` remains the better source for multi-step
+plans.
+
+Recommended producer API: support explicit `ctx.progress.report()` and an
+optional typed `progress` projector on `defineTool`. Both normalize to the same
+`ProgressContribution`; the last accepted explicit report wins over an inferred
+partial contribution until another lifecycle boundary.
+
+### Agent-level authoring
+
+A raw `(state, event) => state` replacement API is too easy to make lossy or
+break child and terminal invariants. Consider three levels of power.
+
+#### Declarative policy
+
+```ts
+export default defineAgent({
+  model: "openai/gpt-5.4",
+  progress: {
+    retainCompletedActions: 5,
+    retainCompletedChildren: "turn",
+    plans: "prefer-over-actions",
+  },
+});
+```
+
+This handles common retention choices but cannot add domain-specific aggregate
+state.
+
+#### Canonical annotations
+
+```ts
+export default defineAgent({
+  model: "openai/gpt-5.4",
+  progress: defineProgress({
+    annotate(snapshot, update) {
+      if (update.kind === "plan.updated") {
+        return { focus: update.plan.items.find((item) => item.phase === "running")?.label };
+      }
+    },
+  }),
+});
+```
+
+Annotations add bounded, serializable information while the framework still
+owns the canonical graph. They do not remove or rewrite nodes.
+
+#### Reducer middleware
+
+```ts
+progress: defineProgress({
+  reduce(base, update) {
+    const next = base(update);
+    return { ...next, annotations: updateAnnotations(next, update) };
+  },
+});
+```
+
+This is flexible but exposes ordering and replay semantics. If offered, `base`
+must always establish structural invariants first, and the callback should only
+be able to change an owned extension state or derived annotations, not core
+nodes.
+
+Recommended initial API: an optional `progress` field on `defineAgent` with
+declarative retention plus typed `annotate`. Every subagent definition gets the
+same surface. Do not add a separate filesystem slot until multiple independent
+progress modules need composition.
+
+The canonical projection should also be observable without being mutable:
+
+```ts
+export default defineHook({
+  events: {
+    "progress.updated"(event, ctx) {
+      console.info(event.data.progress.revision);
+    },
+  },
+});
+```
+
+This event fires only when canonical state changes, not on channel refresh.
+
+### Delegated-agent boundary
+
+The child-to-parent contract should remain framework-owned. Public authors read
+the same `ProgressSnapshot` whether a scope is root or nested; they do not send
+`subagent-progress` hook payloads themselves. A child may attach an authored
+semantic annotation or summary, but cannot choose what the parent discards.
+
+For remote agents, capability negotiation can accept either:
+
+```ts
+{
+  kind: ("progress.snapshot", revision, progress);
+}
+```
+
+or a coarse A2A-style task status that eve adapts into one child node. Lack of
+progress capability leaves the child as a running node until its terminal
+result.
+
+### Channel APIs
+
+The channel boundary needs to distinguish pure/derived presentation from
+external effects and refresh. Three shapes are plausible.
+
+#### One effectful callback
+
+```ts
+progress: async ({ progress, reason }, channel, ctx) => {
+  await channel.thread.startTyping(selectStatus(progress));
+  return { refreshAfterMs: 75_000 };
+};
+```
+
+This is simple and fits existing channel event handlers. It makes model-summary
+caching, create-versus-update state, and testability the author's problem.
+
+#### Project then reconcile
+
+```ts
+progress: defineChannelProgress({
+  async project(progress, ctx) {
+    return summarizeForSlack(progress, ctx);
+  },
+  async reconcile(view, channel, ctx) {
+    await channel.thread.startTyping(view.status);
+    return { refreshAfterMs: 75_000 };
+  },
+});
+```
+
+`project` runs only for a changed canonical fingerprint. It may call a cheap
+model and must return serializable presentation state. `reconcile` runs for
+`changed`, `refresh`, and `terminal` reasons and owns effects. On refresh it
+receives the cached view.
+
+#### Event reducer over canonical changes
+
+```ts
+progress: {
+  initial: () => ({ messageTs: null, view: null }),
+  reduce(state, event) { /* changed | refresh | terminal */ },
+}
+```
+
+This resembles UI reducers but mixes pure state and effects unless another
+command layer is introduced.
+
+Recommended channel API: project then reconcile.
+
+```ts
+interface ChannelProgressProjectContext {
+  readonly reason: "changed" | "terminal";
+  readonly previous?: ChannelProgressPresentation;
+  readonly session: SessionContext["session"];
+}
+
+interface ChannelProgressReconcileContext<TPresentation> {
+  readonly presentation: TPresentation;
+  readonly previous?: TPresentation;
+  readonly reason: "changed" | "refresh" | "terminal";
+}
+
+interface ChannelProgressReconcileResult {
+  readonly refreshAfterMs?: number;
+}
+```
+
+For a custom channel:
+
+```ts
+export default defineChannel({
+  state: { progressMessageId: null },
+  progress: defineChannelProgress({
+    project(progress) {
+      return mechanicalSummary(progress);
+    },
+    async reconcile(input, channel) {
+      channel.state.progressMessageId = await upsertProgressMessage(
+        channel.state.progressMessageId,
+        input.presentation,
+      );
+      return {};
+    },
+  }),
+});
+```
+
+For Slack, the built-in offers presets and an escape hatch:
+
+```ts
+slackChannel({
+  progress: slackProgress.status(),
+});
+
+slackChannel({
+  progress: slackProgress.message({
+    blocks(progress) {
+      return renderParallelAgentBlocks(progress);
+    },
+  }),
+});
+
+slackChannel({
+  progress: defineSlackProgress({ project, reconcile }),
+});
+```
+
+`slackProgress.status()` refreshes the cached status presentation before Slack
+expires it. `slackProgress.message()` updates a thread message and normally
+requests no refresh. `progress: false` suppresses the built-in renderer without
+suppressing canonical progress or `progress.updated` observation.
+
+### API recommendation
+
+The smallest coherent first public surface is:
+
+1. `ProgressContribution`, `ProgressSnapshot`, and recursive read-only node
+   types;
+2. `ctx.progress.report()` for operation-local milestones;
+3. optional typed tool `progress` projectors;
+4. agent `progress` retention/annotation policy, not arbitrary core reduction;
+5. `progress.updated` as an observe-only hook event;
+6. `defineChannelProgress({ project, reconcile })` with cached project output
+   and refresh reasons;
+7. Slack status and message presets built on the same channel contract.
+
+The runtime child propagation protocol remains internal until remote capability
+negotiation requires a public wire contract.
+
 ## Proposed semantic split
 
 ### Progress facts
