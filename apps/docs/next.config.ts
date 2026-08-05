@@ -20,10 +20,10 @@ const config: NextConfig = {
       process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL ?? localSiteHost,
   },
 
-  // The integrations gallery sources identity from the workspace package
-  // `@eve/catalog`; transpile it from source so dev and build compile
-  // its TypeScript without a separate prebuild step.
-  transpilePackages: ["@eve/catalog"],
+  // The integrations gallery consumes `@eve/catalog` directly from source.
+  // Keep Shiki bundled because Turbopack's dev external loader preserves its
+  // synthetic symlink and loses pnpm's sibling links to the Shiki engines.
+  transpilePackages: ["@eve/catalog", "shiki"],
 
   experimental: {
     globalNotFound: true,
