@@ -18,9 +18,9 @@ eve owns only two pieces:
 The provider owns everything else: storage, recall, capture, model tools, formatting, extraction, ranking, limits, retention, and any record or document model. A hosted semantic service and a pair of bounded text files can therefore implement the same memory slot without pretending to share lower-level semantics.
 
 ```text
-turn prepared    eve scope + visible session ---> provider events ---> transient context
-                 eve scope + visible session ---> provider tools  ---> scoped model tools
-turn completed   eve scope + settled session ---> provider events ---> provider side effects
+turn prepared    scope + session ---> events ---> transient context
+                 scope + session ---> tools  ---> scoped model tools
+turn completed   scope + session ---> events ---> provider side effects
 ```
 
 This document defines that authoring boundary and its observable lifecycle. Provider packaging, vendor configuration, and provider-specific persistence remain follow-up work.
