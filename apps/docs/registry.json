@@ -4,6 +4,31 @@
   "homepage": "https://eve.dev",
   "items": [
     {
+      "name": "linear",
+      "type": "registry:item",
+      "title": "Linear",
+      "description": "Receive delegated Linear work and give your agent tools for issues, projects, and comments.",
+      "meta": {
+        "eve": {
+          "requires": ">=0.30.6",
+          "components": [
+            {
+              "item": "channel/linear-agent",
+              "label": "Linear Agent",
+              "description": "Receive delegated issues and Agent Sessions",
+              "default": true
+            },
+            {
+              "item": "connection/linear",
+              "label": "Linear tools",
+              "description": "Search and update issues, projects, cycles, and comments",
+              "default": true
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "extension/agent-browser",
       "type": "registry:item",
       "title": "agent-browser",

@@ -87,6 +87,7 @@ Commands for installing and discovering [shadcn registry](https://ui.shadcn.com/
 
 ```bash
 eve add extension/agent-browser
+eve add linear
 eve add channel/slack --skip-install
 eve add https://example.com/r/my-extension.json --overwrite
 eve registry add @acme=https://example.com/r/{name}.json
@@ -97,7 +98,9 @@ eve registry view @acme/my-extension
 eve add @acme/my-extension
 ```
 
-`eve add` asks before running setup declared by an official item and runs multiple declared flows in declaration order. It prints the matching `eve add <item> --skip-install` command when setup is skipped or cancelled. `--skip-install` reruns every declared flow from the beginning without reinstalling the item.
+`eve add` asks before running setup declared by an official item and runs multiple declared flows in declaration order. Product-level packages can offer independently installable components: `eve add linear` lets you select the Linear Agent channel, Linear tools, or both, with both selected by default. `--yes` installs a package's default components.
+
+When setup is skipped or cancelled, eve prints the matching `eve add <item> --skip-install` command. `--skip-install` reruns the selected components' declared flows from the beginning without reinstalling them.
 
 `eve registry add` records configured sources in `package.json#registries`. `eve registry list` aggregates the official catalog and all configured sources by default. `eve registry search` also includes [skills.sh](https://skills.sh), available without configuration at `@skills`, and groups results by source with each source's available result count. Search returns up to 10 matches per source by default; pass `--limit <count>` to request between 1 and 100. Either command can browse one supplied URL or namespace. Official and other universal items with explicit file targets do not require shadcn project configuration.
 

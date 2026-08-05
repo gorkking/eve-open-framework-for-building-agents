@@ -15,6 +15,7 @@ import { isEveProject } from "#setup/scaffold/index.js";
 import { WizardCancelledError } from "#setup/step.js";
 
 import { NOT_AN_AGENT_MESSAGE } from "./preconditions.js";
+import { RegistryPackageComponentSchema, runRegistryPackage } from "./registry-package.js";
 import type { runRegistrySetupCommand } from "./registry-setup-command.js";
 import { addRegistryMappings, readRegistryConfig } from "./registry-project.js";
 
@@ -160,6 +161,7 @@ const EveRegistryItemMetadataSchema = z.object({
             .union([RegistrySetupSchema, z.array(RegistrySetupSchema).min(1)])
             .transform((setup) => (Array.isArray(setup) ? setup : [setup]))
             .optional(),
+          components: z.array(RegistryPackageComponentSchema).min(1).optional(),
         })
         .optional(),
     })
@@ -479,8 +481,8 @@ async function runDeclaredSetups(
   setups: NonNullable<ReturnType<typeof eveMetadataFromRegistryItem>>["setup"],
   options: SetupCommandOptions,
   dependencies: RegistrySetupDependencies,
-): Promise<void> {
-  if (setups === undefined) return;
+): Promise<boolean> {
+  if (setups === undefined) return true;
   const runSetupCommand = await dependencies.loadSetupCommandRunner();
   const prompter = options.prompter ?? createPrompter();
   try {
@@ -493,10 +495,11 @@ async function runDeclaredSetups(
       );
       if (result.kind === "cancelled") {
         logger.log(setupReminder(item, "cancelled"));
-        return;
+        return false;
       }
       for (const line of result.output) logger.log(line);
     }
+    return true;
   } catch (error) {
     throw new Error(`${errorMessage(error)} Try again with \`${setupResumeCommand(item)}\`.`);
   }
@@ -553,6 +556,36 @@ export async function runAddCommand(
       ? eveMetadataFromRegistryItem(registryItem)
       : undefined;
     assertCompatibleEveVersion(eveMetadata?.requires);
+
+    if (eveMetadata?.components !== undefined) {
+      if (!isOfficialItemAddress(address))
+        throw new Error("Registry packages require the official eve registry.");
+      await runRegistryPackage({
+        logger,
+        appRoot,
+        item,
+        components: eveMetadata.components,
+        config,
+        options,
+        dependencies,
+        operations: {
+          itemAddress,
+          metadata: eveMetadataFromRegistryItem,
+          assertCompatibleVersion: assertCompatibleEveVersion,
+          runSetups: ({ item: packageItem, setups, prompter }) =>
+            runDeclaredSetups(
+              logger,
+              appRoot,
+              packageItem,
+              setups,
+              { yes: options.yes, prompter, signal: options.signal },
+              dependencies,
+            ),
+          setupReminder: (packageItem) => setupReminder(packageItem, "skipped"),
+        },
+      });
+      return;
+    }
 
     if (options.skipInstall === true) {
       if (eveMetadata?.setup === undefined) {

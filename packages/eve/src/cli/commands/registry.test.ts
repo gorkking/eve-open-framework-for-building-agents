@@ -170,6 +170,116 @@ describe("registry commands", () => {
     },
   );
 
+  it("lets interactive users select components from an official registry package", async () => {
+    const logger = createLogger();
+    const runSetupCommand = vi.fn(async () => ({ kind: "completed" as const, output: [] }));
+    const fake = createFakePrompter({
+      multiple: (options) => {
+        expect(options).toMatchObject({
+          message: "Add linear",
+          description: "Select what you want to add to your agent.",
+          initialValues: ["channel/linear-agent", "connection/linear"],
+        });
+        return ["connection/linear"];
+      },
+    });
+    getRegistryItems
+      .mockResolvedValueOnce([
+        {
+          meta: {
+            eve: {
+              components: [
+                {
+                  item: "channel/linear-agent",
+                  label: "Linear Agent",
+                  description: "Receive delegated issues and Agent Sessions",
+                  default: true,
+                },
+                {
+                  item: "connection/linear",
+                  label: "Linear tools",
+                  description: "Search and update Linear issues",
+                  default: true,
+                },
+              ],
+            },
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          meta: {
+            eve: {
+              setup: [
+                {
+                  package: "eve",
+                  bin: "eve",
+                  args: ["integration", "connect", "linear", "mcp.linear.app", "linear"],
+                },
+              ],
+            },
+          },
+        },
+      ]);
+
+    await runAddCommand(
+      logger,
+      "/project",
+      "linear",
+      { prompter: fake.prompter },
+      { isInteractive: () => true, loadSetupCommandRunner: async () => runSetupCommand },
+    );
+
+    expect(addRegistryItems).toHaveBeenCalledWith(
+      ["https://eve.dev/r/connection/linear.json"],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+    expect(runSetupCommand).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({
+        args: ["integration", "connect", "linear", "mcp.linear.app", "linear"],
+      }),
+      "linear",
+      expect.objectContaining({ prompter: fake.prompter }),
+    );
+  });
+
+  it("installs a registry package's default components with --yes", async () => {
+    const logger = createLogger();
+    const runSetupCommand = vi.fn(async () => ({ kind: "completed" as const, output: [] }));
+    getRegistryItems
+      .mockResolvedValueOnce([
+        {
+          meta: {
+            eve: {
+              components: [
+                { item: "channel/linear-agent", label: "Linear Agent", default: true },
+                { item: "connection/linear", label: "Linear tools", default: true },
+              ],
+            },
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        { meta: { eve: { setup: [{ package: "eve", bin: "eve", args: ["channel-setup"] }] } } },
+        { meta: { eve: { setup: [{ package: "eve", bin: "eve", args: ["connection-setup"] }] } } },
+      ]);
+
+    await runAddCommand(
+      logger,
+      "/project",
+      "linear",
+      { yes: true },
+      { loadSetupCommandRunner: async () => runSetupCommand },
+    );
+
+    expect(addRegistryItems).toHaveBeenCalledWith(
+      ["https://eve.dev/r/channel/linear-agent.json", "https://eve.dev/r/connection/linear.json"],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+    expect(runSetupCommand).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts a legacy singular setup command", async () => {
     const logger = createLogger();
     const runSetupCommand = vi.fn(async () => ({ kind: "completed" as const, output: [] }));
