@@ -79,6 +79,14 @@ subagents do not use those as a general child event stream. A hierarchical
 progress design therefore needs a new durable child-progress lane rather than
 assuming the parent can reduce its child's existing public stream.
 
+PR [#1665](https://github.com/vercel/eve/pull/1665) adds another useful source:
+streaming tools may yield complete intermediate output snapshots, exposed as
+`action.partial`. This is an incremental tool-output data plane rather than a
+progress model. The snapshots are arbitrary tool output, can be much richer
+and more frequent than useful status changes, and are independently valuable
+to clients. Progress reduction may consume them without making every partial a
+progress revision or forwarding raw partials through the subagent tree.
+
 ## Proposed semantic split
 
 ### Progress facts
@@ -91,12 +99,18 @@ instructions. Initial facts should cover:
 - actions requested and actions settled, keyed by call id;
 - authorization or human input required and resumed;
 - delegated child started, updated, and settled, keyed by call id and child
-  session id.
+  session id;
+- a streaming tool published a new intermediate output snapshot, keyed by call
+  id.
 
 Facts need stable identities and ordering coordinates. They must not contain
 Slack text, blocks, message timestamps, refresh intervals, or API operations.
-High-frequency stream deltas may be coalesced before reduction, but the latest
-desired projection must cross the next durable boundary.
+High-frequency stream deltas and tool partials may be ignored or coalesced
+before reduction, but the latest desired projection must cross the next
+durable boundary. A default reducer should not guess status text from arbitrary
+partial output. An authored reducer can interpret a tool's domain-specific
+snapshot; a future tool-level projector could explicitly map `TOutput` to a
+small progress contribution without changing what clients or the model see.
 
 ### Progress reducer
 
@@ -236,7 +250,13 @@ and child propagation are unchanged in either case.
    workflow steps while preserving prompt updates?
 6. Should a parent receive only the child's default projection, or can a child
    publish structured domain-specific progress explicitly?
-7. How long do completed child nodes remain in the projection, especially when
+7. Should tools declare a `toProgress`-style projector for `action.partial`
+   snapshots, rely on the agent reducer to recognize their output, or gain a
+   separate explicit progress-reporting API?
+8. At what boundary are rapid tool partials coalesced so clients retain the
+   full incremental stream while parent progress receives only meaningful
+   snapshots?
+9. How long do completed child nodes remain in the projection, especially when
    persistent subagent sessions are continued by a later call?
 
 ## Implementation sequence
