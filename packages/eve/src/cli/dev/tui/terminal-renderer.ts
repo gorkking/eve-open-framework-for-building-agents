@@ -1678,6 +1678,9 @@ export class TerminalRenderer implements AgentTUIRenderer {
       lines: [],
       outputBuffer: [],
     };
+    this.#live.clear();
+    this.#live.reset();
+    this.#altScreen.enter();
     // The ticker runs for the whole flow: the idle pulse, the status indicator,
     // and the output preview all animate through it.
     this.#startTicker();
@@ -1701,6 +1704,8 @@ export class TerminalRenderer implements AgentTUIRenderer {
     // elbow should stay adjacent even though closing the panel repaints first.
     const latest = this.#blocks.at(-1);
     if (latest?.kind === "command") latest.live = true;
+
+    this.#altScreen.exit();
 
     if (preserveDiagnostics) {
       let evidence: string[] = [];
@@ -2619,8 +2624,12 @@ export class TerminalRenderer implements AgentTUIRenderer {
     this.#disarmFlowIdleTrap();
     this.#detachInput();
     this.#stopTicker();
-    this.#live.clear();
-    this.#live.showCursor();
+    if (this.#altScreen.active) {
+      this.#altScreen.handoff();
+    } else {
+      this.#live.clear();
+      this.#live.showCursor();
+    }
     this.#removeLogCapture();
     if (this.#input.isTTY) this.#input.setRawMode?.(false);
     this.#input.pause();
@@ -2633,13 +2642,17 @@ export class TerminalRenderer implements AgentTUIRenderer {
       this.#input.resume();
       this.#keyBuffer = "";
       this.#clearKeyFlush();
-      this.#live.hideCursor();
+      if (this.#altScreen.active) {
+        this.#altScreen.resume();
+      } else {
+        this.#live.hideCursor();
+      }
       this.#installLogCapture();
       if (this.#setupFlow !== undefined) {
         this.#startTicker();
         this.#armFlowIdleTrap();
       }
-      this.#live.reset();
+      if (!this.#altScreen.active) this.#live.reset();
       this.#paint();
     }
   }
@@ -2818,6 +2831,7 @@ export class TerminalRenderer implements AgentTUIRenderer {
     }
     this.#paint();
 
+    this.#altScreen.exit();
     this.#live.clear();
     this.#live.showCursor();
     // Restore the real `process.stdout` before the trailing newline so it is
@@ -3641,8 +3655,9 @@ export class TerminalRenderer implements AgentTUIRenderer {
     }
 
     const width = this.#width();
-    const footer = this.#footerRows(width);
-    const maxBlockRows = Math.max(1, this.#height() - footer.length);
+    const height = this.#height();
+    const footer = fitFooterRows(this.#footerRows(width), height, width, this.#theme);
+    const maxBlockRows = Math.max(0, height - footer.length);
     const committed: string[] = [];
     let previous = this.#lastCommitted;
 
@@ -3695,15 +3710,19 @@ export class TerminalRenderer implements AgentTUIRenderer {
     }
 
     const liveRows = [
-      ...clipLiveRows(
-        flat.map((entry) => entry.row),
-        maxBlockRows,
-        width,
-        this.#theme,
-      ),
+      ...(maxBlockRows === 0
+        ? []
+        : clipLiveRows(
+            flat.map((entry) => entry.row),
+            maxBlockRows,
+            width,
+            this.#theme,
+          )),
       ...footer,
     ];
-    if (committed.length > 0) {
+    if (this.#setupFlow !== undefined && this.#altScreen.active) {
+      this.#altScreen.paint(liveRows, this.#height());
+    } else if (committed.length > 0) {
       this.#live.flush(committed, liveRows);
     } else {
       this.#live.update(liveRows);
@@ -3713,8 +3732,9 @@ export class TerminalRenderer implements AgentTUIRenderer {
   #replayTranscript(): void {
     if (!this.#isInteractive) return;
     const width = this.#width();
-    const footer = this.#footerRows(width);
-    const maxBlockRows = Math.max(1, this.#height() - footer.length);
+    const height = this.#height();
+    const footer = fitFooterRows(this.#footerRows(width), height, width, this.#theme);
+    const maxBlockRows = Math.max(0, height - footer.length);
     let previous = this.#lastCommitted;
     const flat: string[] = [];
 
@@ -3725,7 +3745,10 @@ export class TerminalRenderer implements AgentTUIRenderer {
       flat.push(...rows);
     }
 
-    const liveRows = [...clipLiveRows(flat, maxBlockRows, width, this.#theme), ...footer];
+    const liveRows = [
+      ...(maxBlockRows === 0 ? [] : clipLiveRows(flat, maxBlockRows, width, this.#theme)),
+      ...footer,
+    ];
     this.#live.clearAll();
     this.#live.flush(
       [...this.#renderAgentHeaderRows(), ...this.#committedTranscriptRows],
@@ -4715,6 +4738,25 @@ function isLowValueSandboxLogLine(message: string): boolean {
       message,
     )
   );
+}
+
+function fitFooterRows(
+  rows: readonly string[],
+  maxRows: number,
+  width: number,
+  theme: Theme,
+): string[] {
+  if (rows.length <= maxRows) return [...rows];
+  if (maxRows <= 1) return [clip(hiddenRowsMarker(rows.length, theme), width)];
+  if (maxRows === 2) return [rows[0]!, clip(hiddenRowsMarker(rows.length - 1, theme), width)];
+
+  const visibleTailCount = maxRows - 2;
+  const hidden = rows.length - visibleTailCount - 1;
+  return [
+    rows[0]!,
+    clip(hiddenRowsMarker(hidden, theme), width),
+    ...rows.slice(rows.length - visibleTailCount),
+  ];
 }
 
 function clipLiveRows(

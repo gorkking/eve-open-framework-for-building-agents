@@ -3880,6 +3880,37 @@ describe("TerminalRenderer setup panel", () => {
 });
 
 describe("TerminalRenderer setup flow session", () => {
+  it("renders setup on the alternate screen and restores the transcript when done", () => {
+    const { screen, renderer } = makeRenderer();
+
+    renderer.renderNotice("transcript anchor");
+    renderer.setupFlow.begin("Add integration", "pulse");
+
+    expect(screen.rawOutput()).toContain("\x1b[?1049h");
+    expect(screen.snapshot()).toContain("Add integration");
+
+    renderer.setupFlow.end();
+
+    expect(screen.rawOutput()).toContain("\x1b[?1049l");
+    expect(screen.snapshot()).toContain("transcript anchor");
+    expect(screen.snapshot()).not.toContain("Add integration");
+    renderer.shutdown();
+  });
+
+  it("keeps an oversized setup panel within the terminal height", () => {
+    const { screen, renderer } = makeRenderer(80, 8);
+
+    renderer.setupFlow.begin("Add integration", "pulse");
+    for (let index = 0; index < 10; index += 1) {
+      renderer.setupFlow.renderLine(`setup step ${index}`, "info");
+    }
+
+    expect(screen.snapshot().split("\n")).toHaveLength(8);
+    expect(screen.snapshot()).toContain("earlier rows hidden while streaming");
+    renderer.setupFlow.end();
+    renderer.shutdown();
+  });
+
   it("restores the terminal while a child process inherits stdio", async () => {
     const { screen, input, renderer } = makeRenderer();
 

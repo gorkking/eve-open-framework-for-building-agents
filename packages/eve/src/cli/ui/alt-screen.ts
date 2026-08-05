@@ -76,6 +76,18 @@ export class AltScreen {
     this.#write(chunk);
   }
 
+  /** Gives a child process the alternate buffer without exposing the main transcript. */
+  handoff(): void {
+    if (!this.#active) return;
+    this.#write(`${MOUSE_OFF}${SHOW_CURSOR}${CURSOR_HOME}${CLEAR_TO_END}`);
+  }
+
+  /** Retakes the alternate buffer after a child process exits. */
+  resume(): void {
+    if (!this.#active) return;
+    this.#write(`${HIDE_CURSOR}${MOUSE_ON}`);
+  }
+
   /** Restores the main screen, cursor, and mouse reporting. */
   exit(): void {
     if (!this.#active) return;
