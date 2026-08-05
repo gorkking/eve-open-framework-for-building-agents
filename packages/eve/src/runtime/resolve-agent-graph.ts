@@ -8,6 +8,7 @@ import type {
 import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
 import type { HeadersValue } from "#client/types.js";
+import { createMemoryHookDefinitions } from "#context/memory-lifecycle.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
 import { createResolvedRuntimeTurnAgent } from "#runtime/agent/bootstrap.js";
 import {
@@ -239,7 +240,10 @@ async function resolveRuntimeAgentNode(
   const node: ResolvedAgentGraphBundle["root"] = {
     agent: resolvedAgent,
     channels,
-    hookRegistry: createRuntimeHookRegistry(resolvedAgent.hooks),
+    hookRegistry: createRuntimeHookRegistry([
+      ...resolvedAgent.hooks,
+      ...createMemoryHookDefinitions(resolvedAgent.memories),
+    ]),
     nodeId,
     sandboxRegistry,
     sourceId: input.sourceId,

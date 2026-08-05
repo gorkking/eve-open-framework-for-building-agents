@@ -20,7 +20,7 @@ export const AGENT_SOURCE_MANIFEST_KIND = "eve-agent-discovery-manifest";
 /**
  * Current manifest schema version.
  */
-export const AGENT_SOURCE_MANIFEST_VERSION = 12;
+export const AGENT_SOURCE_MANIFEST_VERSION = 13;
 
 /**
  * Channel source reference preserved by the discovery manifest.
@@ -46,6 +46,11 @@ export interface ConnectionSourceRef extends ModuleSourceRef {
  * Hook source reference preserved by the discovery manifest.
  */
 export type HookSourceRef = ModuleSourceRef;
+
+/** Memory source reference with path-derived slot identity. */
+export interface MemorySourceRef extends ModuleSourceRef {
+  readonly slot: string;
+}
 
 /**
  * Instructions source reference preserved by discovery for compiler
@@ -200,6 +205,7 @@ export interface AgentSourceManifest {
    */
   resolvedExtensions: ResolvedExtensionMount[];
   hooks: ModuleSourceRef[];
+  memories: MemorySourceRef[];
   lib: LibSourceRef[];
   kind: typeof AGENT_SOURCE_MANIFEST_KIND;
   /**
@@ -246,6 +252,7 @@ export interface CreateAgentSourceManifestInput {
   extensions?: readonly ExtensionSourceRef[];
   resolvedExtensions?: readonly ResolvedExtensionMount[];
   hooks?: readonly ModuleSourceRef[];
+  memories?: readonly MemorySourceRef[];
   lib?: readonly LibSourceRef[];
   /**
    * Optional package name read from the app root's package.json.
@@ -321,6 +328,7 @@ export function createAgentSourceManifest(
     extensions: [...(input.extensions ?? [])],
     resolvedExtensions: [...(input.resolvedExtensions ?? [])],
     hooks: [...(input.hooks ?? [])],
+    memories: [...(input.memories ?? [])],
     instructions: [...(input.instructions ?? [])],
     lib: [...(input.lib ?? [])],
     kind: AGENT_SOURCE_MANIFEST_KIND,

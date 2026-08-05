@@ -136,6 +136,11 @@
       "import": "./dist/src/public/hooks/index.js",
       "default": "./dist/src/public/hooks/index.js"
     },
+    "./memory": {
+      "types": "./dist/src/public/memory/index.d.ts",
+      "import": "./dist/src/public/memory/index.js",
+      "default": "./dist/src/public/memory/index.js"
+    },
     "./sandbox": {
       "types": "./dist/src/public/sandbox/index.d.ts",
       "import": "./dist/src/public/sandbox/index.js",

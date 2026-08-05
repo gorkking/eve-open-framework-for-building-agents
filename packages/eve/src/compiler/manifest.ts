@@ -252,6 +252,11 @@ export interface CompiledHookDefinition extends ModuleSourceRef {
   readonly slug: string;
 }
 
+/** Compiled path-authored memory slot. */
+export interface CompiledMemoryDefinition extends ModuleSourceRef {
+  readonly slot: string;
+}
+
 /**
  * Non-recursive compiled authored agent payload shared by the root agent and
  * every flattened subagent node.
@@ -676,6 +681,16 @@ const compiledExtensionMountSchema: z.ZodType<CompiledExtensionMount> = z
   })
   .strict();
 
+const compiledMemoryDefinitionSchema: z.ZodType<CompiledMemoryDefinition> = z
+  .object({
+    exportName: z.string().optional(),
+    logicalPath: z.string(),
+    slot: z.string(),
+    sourceId: z.string(),
+    sourceKind: z.literal("module"),
+  })
+  .strict();
+
 /**
  * Zod schema for one non-recursive compiled authored agent payload.
  */
@@ -693,6 +708,7 @@ const compiledAgentResourceFields = {
   dynamicTools: z.array(compiledDynamicToolDefinitionSchema).default([]),
   extensionMounts: z.array(compiledExtensionMountSchema).default([]),
   hooks: z.array(compiledHookDefinitionSchema),
+  memories: z.array(compiledMemoryDefinitionSchema).default([]),
   sandbox: compiledSandboxDefinitionSchema.nullable(),
   sandboxWorkspaces: z.array(compiledSandboxWorkspaceSchema),
   schedules: z.array(compiledScheduleDefinitionSchema),
@@ -800,6 +816,7 @@ export const compiledAgentManifestSchema = z
     dynamicSkills: z.array(compiledDynamicSkillDefinitionSchema).default([]),
     dynamicTools: z.array(compiledDynamicToolDefinitionSchema).default([]),
     hooks: z.array(compiledHookDefinitionSchema),
+    memories: z.array(compiledMemoryDefinitionSchema).default([]),
     kind: z.literal(COMPILED_AGENT_MANIFEST_KIND),
     remoteAgents: z.array(compiledRemoteAgentNodeSchema),
     sandbox: compiledSandboxDefinitionSchema.nullable(),
@@ -829,6 +846,7 @@ export interface CreateCompiledAgentResourcesInput {
   readonly dynamicTools?: readonly CompiledDynamicToolDefinition[];
   readonly extensionMounts?: readonly CompiledExtensionMount[];
   readonly hooks?: readonly CompiledHookDefinition[];
+  readonly memories?: readonly CompiledMemoryDefinition[];
   readonly remoteAgents?: readonly CompiledRemoteAgentNode[];
   readonly sandbox?: CompiledSandboxDefinition | null;
   readonly sandboxWorkspaces?: readonly CompiledSandboxWorkspace[];
@@ -863,6 +881,7 @@ export function createCompiledAgentResources(
     dynamicTools: [...(input.dynamicTools ?? [])],
     extensionMounts: [...(input.extensionMounts ?? [])],
     hooks: [...(input.hooks ?? [])],
+    memories: [...(input.memories ?? [])],
     remoteAgents: [...(input.remoteAgents ?? [])],
     sandbox: input.sandbox ?? null,
     sandboxWorkspaces: [...(input.sandboxWorkspaces ?? [])],
@@ -1010,6 +1029,7 @@ export function createCompiledAgentManifest(input: {
   readonly dynamicSkills?: readonly CompiledDynamicSkillDefinition[];
   readonly dynamicTools?: readonly CompiledDynamicToolDefinition[];
   readonly hooks?: readonly CompiledHookDefinition[];
+  readonly memories?: readonly CompiledMemoryDefinition[];
   readonly remoteAgents?: readonly CompiledRemoteAgentNode[];
   readonly sandbox?: CompiledSandboxDefinition | null;
   readonly sandboxWorkspaces?: readonly CompiledSandboxWorkspace[];

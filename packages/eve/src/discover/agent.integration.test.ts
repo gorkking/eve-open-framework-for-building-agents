@@ -12,6 +12,7 @@ import {
   DISCOVER_EXTENSION_CAPABILITY_INCOMPATIBLE,
   DISCOVER_EXTENSION_COMPATIBILITY_INVALID,
   DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
+  DISCOVER_EXTENSION_MEMORY_UNSUPPORTED,
   DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
   DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED,
   DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
@@ -29,6 +30,7 @@ import {
   DISCOVER_UNSUPPORTED_DIRECTORY,
 } from "#discover/grammar.js";
 import { DISCOVER_LIB_DIRECTORY_INVALID, DISCOVER_LIB_ENTRY_UNSUPPORTED } from "#discover/lib.js";
+import { DISCOVER_MEMORY_SLOT_AMBIGUOUS } from "#discover/memory.js";
 import {
   DISCOVER_SCHEDULE_FILE_UNSUPPORTED,
   DISCOVER_SCHEDULES_DIRECTORY_INVALID,
@@ -52,6 +54,70 @@ const EXTENSION_COMPATIBILITY_MANIFEST = JSON.stringify({
  * here against an in-memory {@link buildMemoryAgentProject} tree.
  */
 describe("discoverAgent (memory)", () => {
+  it("discovers flat and named memory slots with path-derived identity", async () => {
+    const flatProject = buildMemoryAgentProject({
+      agentFiles: {
+        "instructions.md": "You are a precise assistant.",
+        "memory.ts": "export default {};\n",
+      },
+    });
+    const namedProject = buildMemoryAgentProject({
+      agentFiles: {
+        "instructions.md": "You are a precise assistant.",
+        "memory/user.ts": "export default {};\n",
+        "memory/workspace.ts": "export default {};\n",
+      },
+    });
+
+    const flat = await discoverAgent({
+      agentRoot: flatProject.agentRoot,
+      appRoot: flatProject.appRoot,
+      source: flatProject.source,
+    });
+    const named = await discoverAgent({
+      agentRoot: namedProject.agentRoot,
+      appRoot: namedProject.appRoot,
+      source: namedProject.source,
+    });
+
+    expect(flat.diagnostics).toEqual([]);
+    expect(flat.manifest.memories).toEqual([
+      {
+        logicalPath: "memory.ts",
+        slot: "memory",
+        sourceId: "memory.ts",
+        sourceKind: "module",
+      },
+    ]);
+    expect(named.manifest.memories.map(({ logicalPath, slot }) => ({ logicalPath, slot }))).toEqual(
+      [
+        { logicalPath: "memory/user.ts", slot: "user" },
+        { logicalPath: "memory/workspace.ts", slot: "workspace" },
+      ],
+    );
+  });
+
+  it("rejects simultaneous flat and directory memory forms", async () => {
+    const project = buildMemoryAgentProject({
+      agentFiles: {
+        "instructions.md": "You are a precise assistant.",
+        "memory.ts": "export default {};\n",
+        "memory/user.ts": "export default {};\n",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      DISCOVER_MEMORY_SLOT_AMBIGUOUS,
+    );
+    expect(result.manifest.memories).toEqual([]);
+  });
+
   it("discovers single-file schedules in both module and markdown forms with recursive nesting", async () => {
     const project = buildMemoryAgentProject({
       agentFiles: {
@@ -808,6 +874,33 @@ describe("discoverAgent (memory)", () => {
 
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "discover/extension-agent-config-unsupported",
+    );
+  });
+
+  it("rejects an extension package that declares memory", async () => {
+    const project = buildMemoryAgentProject({
+      appFiles: {
+        "node_modules/@acme/crm/package.json": JSON.stringify({
+          name: "@acme/crm",
+          eve: { extension: { source: "source", dist: "extension" } },
+        }),
+        "node_modules/@acme/crm/extension/_manifest.json": EXTENSION_COMPATIBILITY_MANIFEST,
+        "node_modules/@acme/crm/extension/memory.ts": "export default {};\n",
+      },
+      agentFiles: {
+        "extensions/crm.ts": 'export { default } from "@acme/crm";\n',
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      DISCOVER_EXTENSION_MEMORY_UNSUPPORTED,
     );
   });
 

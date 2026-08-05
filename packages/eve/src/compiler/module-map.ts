@@ -237,6 +237,15 @@ export function collectModuleRefsForManifest(
     });
   }
 
+  for (const memory of manifest.memories) {
+    moduleSourceRefs.set(memory.sourceId, {
+      exportName: memory.exportName,
+      sourceKind: "module",
+      logicalPath: memory.logicalPath,
+      sourceId: memory.sourceId,
+    });
+  }
+
   for (const schedule of manifest.schedules) {
     // Only `run`-handler schedules need their source loaded at dispatch
     // time. Markdown schedules execute from `manifest.markdown`.

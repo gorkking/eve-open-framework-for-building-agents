@@ -72,6 +72,12 @@ export const DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED =
   "discover/extension-agent-config-unsupported";
 
 /**
+ * Emitted when an extension source tree declares memory. Memory partitions and
+ * lifecycle ownership belong to the consuming agent.
+ */
+export const DISCOVER_EXTENSION_MEMORY_UNSUPPORTED = "discover/extension-memory-unsupported";
+
+/**
  * Emitted when an extension source tree declares a `sandbox`, which is the
  * consuming agent's to own.
  */

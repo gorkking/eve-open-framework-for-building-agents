@@ -196,6 +196,24 @@ export const TurnDynamicToolMetadataKey = new ContextKey<readonly DurableDynamic
  */
 export const LiveStepToolsKey = new ContextKey<HarnessToolDefinition[]>("eve.liveStepTools");
 
+export interface DurableMemorySlotState {
+  readonly scope: {
+    readonly key: string;
+    readonly parts: readonly string[];
+  };
+  readonly slot: string;
+}
+
+export interface DurableTurnMemoryState {
+  readonly deferred: boolean;
+  readonly pendingApprovalPrincipal?: string;
+  readonly sequence: number;
+  readonly slots: readonly DurableMemorySlotState[];
+  readonly turnId: string;
+}
+
+/** Memory scopes locked for the active turn. */
+export const TurnMemoryStateKey = new ContextKey<DurableTurnMemoryState>("eve.turnMemoryState");
 export type DurableDynamicSubagentSelection =
   | {
       readonly agentConfig: DynamicSubagentAgentConfig;

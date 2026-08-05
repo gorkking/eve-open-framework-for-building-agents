@@ -3,6 +3,7 @@ import { callAdapterEventHandler, defaultDeliverResult } from "#channel/adapter.
 import type { DeliverHookPayload } from "#channel/types.js";
 import { contextStorage } from "#context/container.js";
 import { dispatchStreamEventHooks } from "#context/hook-lifecycle.js";
+import { prepareMemoryLifecycleEvent } from "#context/memory-lifecycle.js";
 import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-lifecycle.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
@@ -383,6 +384,15 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   ): Promise<void> => {
     if (messages !== undefined) lifecycleMessages = messages;
     const emitted = await emit(event);
+    prepareMemoryLifecycleEvent({
+      ctx,
+      event: emitted,
+      identity: {
+        agentId: effectiveNode.turnAgent.id,
+        nodeId: effectiveNode.nodeId,
+      },
+      memories: effectiveNode.agent?.memories ?? [],
+    });
     await dispatchStreamEventHooks({
       abortSignal,
       ctx,

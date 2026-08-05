@@ -27,6 +27,7 @@ my-agent/
 ├── agent/
 │   ├── agent.ts
 │   ├── instructions.md
+│   ├── memory.ts
 │   ├── instrumentation.ts
 │   ├── channels/
 │   ├── connections/
@@ -54,6 +55,7 @@ The Subagents column states whether a local subagent (`subagents/<id>/`) can aut
 | `channels/`                                             | HTTP / messaging entrypoints                | No        | Root-only.                                                                                                                                                                                                            |
 | `connections/`                                          | External service connections (MCP, OpenAPI) | Yes       | One connection per file; name derived from filename.                                                                                                                                                                  |
 | `hooks/`                                                | Lifecycle and stream-event subscribers      | Yes       | Module-backed only. Recursive directories supported.                                                                                                                                                                  |
+| `memory.ts` or `memory/`                                | Provider-owned cross-session memory         | Yes       | One flat slot or a directory of named slots. The forms are mutually exclusive. See [Memory](../memory).                                                                                                               |
 | `skills/`                                               | On-demand procedures and capability packs   | Yes       | Flat markdown, module-backed skills, or packaged skills. Seeded into `$HOME/.agents/skills/...`, with `/workspace/skills/...` as a fallback if `$HOME` is unavailable.                                                |
 | `lib/`                                                  | Shared authored helper code                 | Yes       | Import-only; not mounted into the workspace.                                                                                                                                                                          |
 | `sandbox.ts` or `sandbox/sandbox.ts`                    | The agent's single sandbox                  | Yes       | Use top-level `sandbox.ts` for a definition-only override; use `sandbox/sandbox.ts` + `sandbox/workspace/**` to also seed files. Framework default applies when neither is authored.                                  |
@@ -80,6 +82,7 @@ A local subagent lives under `subagents/<id>/` and uses the same `agent.ts` shap
 agent/subagents/researcher/
 ├── agent.ts
 ├── instructions.md
+├── memory.ts
 ├── connections/
 ├── hooks/
 ├── skills/
@@ -93,7 +96,7 @@ Rules:
 
 - `agent.ts` is required. A static subagent's definition must declare a `description`; a dynamic subagent's resolver must return a definition with one. The parent reads it on the lowered subagent tool to decide when to delegate.
 - `instructions.md` / `instructions.ts` is optional (unlike the root agent, where it is required).
-- `connections/`, `hooks/`, `skills/`, `lib/`, `sandbox/`, and `tools/` are all supported, discovered from the subagent's own directory.
+- `connections/`, `hooks/`, `memory.ts` / `memory/`, `skills/`, `lib/`, `sandbox/`, and `tools/` are all supported, discovered from the subagent's own directory.
 - `channels/` and `schedules/` are not supported inside local subagents.
 - Nested subagents are supported.
 

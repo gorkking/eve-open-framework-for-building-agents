@@ -4,11 +4,13 @@ import {
   type CompiledAgentDefinition,
   type CompiledAgentManifest,
   type CompiledSkillDefinition,
+  type CompiledMemoryDefinition,
   type CompiledToolDefinition,
   createCompiledAgentManifest,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { MemoryDefinition } from "#public/memory/index.js";
 
 /**
  * Declarative description of an in-memory authored agent used by the test
@@ -47,6 +49,8 @@ export interface CompileFromMemoryInput {
    * Authored markdown skills to include in the manifest.
    */
   readonly skills?: readonly CompileFromMemorySkillInput[];
+  /** Test-local authored memory definitions projected into the module map. */
+  readonly memories?: readonly CompileFromMemoryMemoryInput[];
 }
 
 /**
@@ -73,6 +77,12 @@ export interface CompileFromMemorySkillInput {
   readonly name: string;
   readonly description: string;
   readonly markdown?: string;
+}
+
+/** Per-memory descriptor consumed by the in-memory integration harness. */
+export interface CompileFromMemoryMemoryInput {
+  readonly definition: MemoryDefinition;
+  readonly slot: string;
 }
 
 /**
@@ -127,10 +137,20 @@ export function compileFromMemory(input: CompileFromMemoryInput): CompileFromMem
     sourceKind: "markdown",
   }));
 
+  const memories: CompiledMemoryDefinition[] = (input.memories ?? []).map((memoryInput) => ({
+    logicalPath: memoryInput.slot === "memory" ? "memory.ts" : `memory/${memoryInput.slot}.ts`,
+    slot: memoryInput.slot,
+    sourceId: createMemorySourceId(
+      memoryInput.slot === "memory" ? "memory.ts" : `memory/${memoryInput.slot}.ts`,
+    ),
+    sourceKind: "module",
+  }));
+
   const manifest = createCompiledAgentManifest({
     agentRoot,
     appRoot,
     config,
+    memories,
     skills,
     tools,
   });
@@ -138,9 +158,18 @@ export function compileFromMemory(input: CompileFromMemoryInput): CompileFromMem
   const moduleMap: CompiledModuleMap = {
     nodes: {
       [ROOT_COMPILED_AGENT_NODE_ID]: {
-        modules: Object.fromEntries(
-          tools.map((tool) => [tool.sourceId, Object.freeze({}) as Record<string, unknown>]),
-        ),
+        modules: Object.fromEntries([
+          ...tools.map(
+            (tool) => [tool.sourceId, Object.freeze({}) as Record<string, unknown>] as const,
+          ),
+          ...memories.map(
+            (memory, index) =>
+              [
+                memory.sourceId,
+                Object.freeze({ default: input.memories?.[index]?.definition }),
+              ] as const,
+          ),
+        ]),
       },
     },
   };
