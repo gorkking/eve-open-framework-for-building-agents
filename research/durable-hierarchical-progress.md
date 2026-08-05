@@ -140,6 +140,105 @@ None of the inspected channel implementations invokes an LLM to derive status
 from lifecycle events. They use typed state, stable identities, and explicit
 policy, then apply opinion only while rendering.
 
+## External prior art
+
+No inspected framework provides the complete combination of durable canonical
+progress, hierarchical child rollup, and channel-specific summarization. The
+closest systems support distinct pieces and generally preserve structured facts
+before rendering them.
+
+### AG-UI activities
+
+[AG-UI](https://github.com/ag-ui-protocol/ag-ui) is the closest presentation
+protocol. `ACTIVITY_SNAPSHOT` carries a stable `messageId`, open
+`activityType`, and arbitrary structured `content`; `ACTIVITY_DELTA` applies
+RFC 6902 patches to that content. Its Mastra background-agent example maps a
+long-running tool to an activity whose content includes task id, tool name,
+status, arguments, outputs, and result, while a custom renderer displays a
+Background Task card. Normal tool rendering can be suppressed without losing
+the structured activity.
+
+This supports snapshot identity, replace-in-place semantics, open activity
+types, and renderer-owned presentation. It does not define how nested agents
+reduce their activity into a parent, durability/replay semantics, or a canonical
+cross-agent schema. eve can potentially project its root canonical graph into
+AG-UI activity snapshots without adopting AG-UI as internal durable state.
+
+### A2A tasks
+
+The [Agent2Agent protocol](https://github.com/a2aproject/A2A) separates a
+retrievable `Task` snapshot from streamed updates. A task has lifecycle state,
+status message, artifacts, history, and metadata. `TaskStatusUpdateEvent`
+replaces status using stable task and context ids; `TaskArtifactUpdateEvent`
+updates an artifact independently and supports append/final-chunk semantics.
+Disconnected clients receive significant notifications and then fetch the
+complete current task.
+
+A2A validates the snapshot-plus-notification model and the separation between
+status and incremental output. Its lifecycle is intentionally coarse
+(`working`, `input-required`, `auth-required`, terminal states), its status
+message is agent-authored prose, and it does not standardize nested child trees
+or presentation reduction.
+
+### LangGraph state and stream projections
+
+[LangGraph](https://github.com/langchain-ai/langgraph) combines deterministic
+state-channel reducers with separate stream modes. Nodes can emit arbitrary
+`custom` stream data through a runtime writer. Stream events carry namespaces,
+and subgraph streaming preserves nested namespaces. Its newer stream
+transformers observe the event mux and build typed derived projections without
+changing graph state; async derived work can land on an independent projection.
+
+This is strong precedent for keeping durable execution state separate from
+consumer projections and for preserving hierarchy through namespaces. The
+custom writer remains an untyped data plane, however, and LangGraph does not
+supply an opinionated agent-progress graph or channel refresh contract.
+
+### Agent SDK lifecycle streams
+
+OpenAI Agents SDK and AutoGen expose normalized higher-level events for tool
+calls/results, handoffs or agent changes, messages, and reasoning. AutoGen
+explicitly describes agent events as observable by users and applications, not
+agent-to-agent communication. These are useful fact sources but leave state
+materialization and presentation to consumers. They resemble eve's existing
+stream more than the proposed canonical progress layer.
+
+Google ADK preserves hierarchy more explicitly: events carry workflow node
+paths, parent run identity, branch/isolation scope, output ownership, and state
+deltas. This is relevant to canonical child identity and visibility, but it is
+still a session event model rather than a reduced progress projection.
+
+### Operation-local progress
+
+MCP progress notifications correlate `progress`, optional `total`, and optional
+message to one request token. Temporal activity heartbeats persist arbitrary
+latest details, support retry resumption, and double as liveness/cancellation
+checkpoints. Both reinforce operation-local typed progress with stable identity.
+Neither performs agent-level rollup. Temporal heartbeats are control-plane
+state, not a user-facing event stream, which is a useful warning not to equate
+liveness with presentation.
+
+### Design consequence
+
+The recurring external shape is:
+
+```text
+operation events or snapshots
+        │ stable id + structured state
+        ▼
+durable task/graph state
+        │ notification or projection stream
+        ▼
+consumer-owned renderer
+```
+
+AG-UI is the strongest precedent for the outer activity/rendering boundary;
+A2A for durable task snapshots and reconnect; LangGraph and Google ADK for
+hierarchical identity and derived projections; MCP and Temporal for
+operation-local progress. None is evidence for lossy or model-based reduction
+inside every child. An optional channel summarizer remains a novel but natural
+consumer-owned stage, and should cache by canonical projection fingerprint.
+
 ## Proposed semantic split
 
 ### Progress facts
