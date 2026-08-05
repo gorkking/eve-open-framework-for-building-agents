@@ -194,69 +194,44 @@ export type InstrumentationToolCallTerminalEvent =
   | InstrumentationToolCallCompletedEvent
   | InstrumentationToolCallFailedEvent;
 
-export interface RelatedLifecycleHook<TStart, TTerminal> {
-  readonly before?: (event: TStart) => unknown | PromiseLike<unknown>;
-  readonly after?: (event: TTerminal, state: unknown) => void | PromiseLike<void>;
-}
+/**
+ * eve balances every start with exactly one terminal — the bridge terminalizes
+ * open operations on abort and error, and a retry gets a fresh attempt id — so
+ * a provider that needs to carry a handle from a start to its terminal can keep
+ * its own map keyed by `event.id` and delete on the terminal.
+ */
+export type InstrumentationEventHandler<TEvent> = (event: TEvent) => void | PromiseLike<void>;
 
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
   readonly events?: {
-    readonly "model.call"?: RelatedLifecycleHook<
-      InstrumentationModelCallStartedEvent,
-      InstrumentationModelCallTerminalEvent
-    >;
-    readonly "attempt.started"?: (
-      event: InstrumentationAttemptStartedEvent,
-    ) => void | PromiseLike<void>;
-    readonly "attempt.completed"?: (
-      event: InstrumentationAttemptTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "attempt.failed"?: (
-      event: InstrumentationAttemptTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "attempt.metadata"?: (
-      event: InstrumentationAttemptMetadataEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.completed"?: (
-      event: InstrumentationSessionTransitionEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.failed"?: (
-      event: InstrumentationSessionTransitionEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.started"?: (
-      event: InstrumentationSessionStartedEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.waiting"?: (
-      event: InstrumentationSessionTransitionEvent,
-    ) => void | PromiseLike<void>;
-    readonly "tool.call"?: RelatedLifecycleHook<
-      InstrumentationToolCallStartedEvent,
-      InstrumentationToolCallTerminalEvent
-    >;
-    readonly "turn.cancelled"?: (
-      event: InstrumentationTurnTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "turn.completed"?: (
-      event: InstrumentationTurnTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "turn.failed"?: (event: InstrumentationTurnTerminalEvent) => void | PromiseLike<void>;
-    readonly "turn.started"?: (event: InstrumentationTurnStartedEvent) => void | PromiseLike<void>;
+    readonly "attempt.started"?: InstrumentationEventHandler<InstrumentationAttemptStartedEvent>;
+    readonly "attempt.completed"?: InstrumentationEventHandler<InstrumentationAttemptTerminalEvent>;
+    readonly "attempt.failed"?: InstrumentationEventHandler<InstrumentationAttemptTerminalEvent>;
+    readonly "attempt.metadata"?: InstrumentationEventHandler<InstrumentationAttemptMetadataEvent>;
+    readonly "model.call.started"?: InstrumentationEventHandler<InstrumentationModelCallStartedEvent>;
+    readonly "model.call.completed"?: InstrumentationEventHandler<InstrumentationModelCallCompletedEvent>;
+    readonly "model.call.failed"?: InstrumentationEventHandler<InstrumentationModelCallFailedEvent>;
+    readonly "session.completed"?: InstrumentationEventHandler<InstrumentationSessionTransitionEvent>;
+    readonly "session.failed"?: InstrumentationEventHandler<InstrumentationSessionTransitionEvent>;
+    readonly "session.started"?: InstrumentationEventHandler<InstrumentationSessionStartedEvent>;
+    readonly "session.waiting"?: InstrumentationEventHandler<InstrumentationSessionTransitionEvent>;
+    readonly "tool.call.started"?: InstrumentationEventHandler<InstrumentationToolCallStartedEvent>;
+    readonly "tool.call.completed"?: InstrumentationEventHandler<InstrumentationToolCallCompletedEvent>;
+    readonly "tool.call.failed"?: InstrumentationEventHandler<InstrumentationToolCallFailedEvent>;
+    readonly "turn.cancelled"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.completed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
 }
 
-export interface InstrumentationRelatedEventMap {
-  readonly "model.call": {
-    readonly start: InstrumentationModelCallStartedEvent;
-    readonly terminal: InstrumentationModelCallTerminalEvent;
-  };
-  readonly "tool.call": {
-    readonly start: InstrumentationToolCallStartedEvent;
-    readonly terminal: InstrumentationToolCallTerminalEvent;
-  };
-}
-
-export type InstrumentationRelatedEventName = keyof InstrumentationRelatedEventMap;
+/** Events that carry an operation `id`, pairing a start with its terminal. */
+export type InstrumentationCorrelatedEvent =
+  | InstrumentationModelCallStartedEvent
+  | InstrumentationModelCallTerminalEvent
+  | InstrumentationToolCallStartedEvent
+  | InstrumentationToolCallTerminalEvent;
 
 export type InstrumentationPointEvent =
   | InstrumentationAttemptStartedEvent
@@ -266,6 +241,8 @@ export type InstrumentationPointEvent =
   | InstrumentationSessionTransitionEvent
   | InstrumentationTurnStartedEvent
   | InstrumentationTurnTerminalEvent;
+
+export type InstrumentationEvent = InstrumentationCorrelatedEvent | InstrumentationPointEvent;
 
 /** Trusted framework operation for activating context around AI SDK execution. */
 export type InstrumentationContextRunner = <T>(
@@ -288,15 +265,7 @@ export type InstrumentationExecutionOperation =
 
 /** Provider-neutral hook operations consumed by the AI SDK bridge. */
 export interface InstrumentationHooks {
-  after<TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["terminal"],
-  ): Promise<void>;
-  before<TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["start"],
-  ): Promise<void>;
-  publish(event: InstrumentationPointEvent): Promise<void>;
+  publish(event: InstrumentationEvent): Promise<void>;
 }
 
 const log = createLogger("harness.instrumentation-lifecycle");
@@ -305,71 +274,20 @@ const log = createLogger("harness.instrumentation-lifecycle");
 export function createInstrumentationHooks(
   providers: readonly InstrumentationProviderDefinition[],
 ): InstrumentationHooks {
-  const relatedState = new WeakMap<InstrumentationAttemptScope, Map<string, unknown>>();
-
-  const publish = async (event: InstrumentationPointEvent): Promise<void> => {
+  const publish = async (event: InstrumentationEvent): Promise<void> => {
     for (const provider of providers) {
       const handler = provider.events?.[event.type];
       if (handler === undefined) continue;
       try {
-        await (handler as (value: typeof event) => void | PromiseLike<void>)(event);
+        await (handler as InstrumentationEventHandler<InstrumentationEvent>)(event);
       } catch (error) {
-        warn(event.type, error);
+        log.warn("instrumentation provider failed", {
+          boundary: event.type,
+          error: formatError(error),
+        });
       }
     }
   };
 
-  const before = async <TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["start"],
-  ): Promise<void> => {
-    const attemptState = relatedState.get(event.scope) ?? new Map<string, unknown>();
-    relatedState.set(event.scope, attemptState);
-    for (const [providerIndex, provider] of providers.entries()) {
-      const handler = provider.events?.[name]?.before;
-      if (handler === undefined) continue;
-      try {
-        const state = await (handler as (value: typeof event) => unknown)(event);
-        attemptState.set(relatedStateKey(providerIndex, event.id), state);
-      } catch (error) {
-        warn(`${name}.before`, error);
-      }
-    }
-  };
-
-  const after = async <TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["terminal"],
-  ): Promise<void> => {
-    const attemptState = relatedState.get(event.scope);
-    for (const [providerIndex, provider] of providers.entries()) {
-      const handler = provider.events?.[name]?.after;
-      const stateKey = relatedStateKey(providerIndex, event.id);
-      if (handler === undefined || !attemptState?.has(stateKey)) continue;
-      const state = attemptState.get(stateKey);
-      attemptState.delete(stateKey);
-      try {
-        await (handler as (value: typeof event, state: unknown) => void | PromiseLike<void>)(
-          event,
-          state,
-        );
-      } catch (error) {
-        warn(`${name}.after`, error);
-      }
-    }
-  };
-
-  const warn = (boundary: string, error: unknown): void => {
-    log.warn("instrumentation provider failed", { boundary, error: formatError(error) });
-  };
-
-  return {
-    after,
-    before,
-    publish,
-  };
-}
-
-function relatedStateKey(providerIndex: number, operationId: string): string {
-  return `${providerIndex}:${operationId}`;
+  return { publish };
 }

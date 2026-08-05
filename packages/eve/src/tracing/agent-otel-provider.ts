@@ -10,6 +10,11 @@ import {
 } from "#compiled/@opentelemetry/api/index.js";
 
 import {
+  SESSION_WINDOW_TURN_LIMIT,
+  type AgentSessionTraceState,
+  type AgentTraceStateStore,
+} from "#tracing/agent-trace-state.js";
+import {
   contentAttribute,
   messagesContentAttribute,
   systemPromptAttribute,
@@ -50,73 +55,6 @@ interface ToolSpanState extends SpanState {
   readonly toolSpan: Span;
 }
 
-/** Sized so an ordinary session stays one trace and only an outsized one rolls. */
-export const SESSION_WINDOW_TURN_LIMIT = 200;
-
-export interface AgentSessionTraceState {
-  readonly agentName?: string;
-  readonly channelKind?: string;
-  readonly context: SpanContext;
-  readonly rootSessionId: string;
-  readonly turnsInWindow: number;
-  readonly window: number;
-}
-
-export interface AgentTurnTraceState {
-  readonly context: SpanContext;
-  readonly rootSessionId: string;
-  readonly sequence: number;
-  readonly terminal?: {
-    readonly error?: unknown;
-    readonly type: InstrumentationTurnTerminalEvent["type"];
-  };
-}
-
-/** Provider-owned serializable storage for durable agent trace state. */
-export interface AgentTraceStateStore {
-  deleteSession(sessionId: string): void | PromiseLike<void>;
-  deleteTurn(sessionId: string, turnId: string): void | PromiseLike<void>;
-  getSession(
-    sessionId: string,
-  ): AgentSessionTraceState | undefined | PromiseLike<AgentSessionTraceState | undefined>;
-  getTurn(
-    sessionId: string,
-    turnId: string,
-  ): AgentTurnTraceState | undefined | PromiseLike<AgentTurnTraceState | undefined>;
-  setSession(sessionId: string, state: AgentSessionTraceState): void | PromiseLike<void>;
-  setTurn(sessionId: string, turnId: string, state: AgentTurnTraceState): void | PromiseLike<void>;
-}
-
-/** In-memory trace state used by tests and non-durable runtimes. */
-export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
-  readonly #sessions = new Map<string, AgentSessionTraceState>();
-  readonly #turns = new Map<string, AgentTurnTraceState>();
-
-  deleteSession(sessionId: string): void {
-    this.#sessions.delete(sessionId);
-  }
-
-  deleteTurn(sessionId: string, turnId: string): void {
-    this.#turns.delete(turnKey(sessionId, turnId));
-  }
-
-  getSession(sessionId: string): AgentSessionTraceState | undefined {
-    return this.#sessions.get(sessionId);
-  }
-
-  getTurn(sessionId: string, turnId: string): AgentTurnTraceState | undefined {
-    return this.#turns.get(turnKey(sessionId, turnId));
-  }
-
-  setSession(sessionId: string, state: AgentSessionTraceState): void {
-    this.#sessions.set(sessionId, state);
-  }
-
-  setTurn(sessionId: string, turnId: string, state: AgentTurnTraceState): void {
-    this.#turns.set(turnKey(sessionId, turnId), state);
-  }
-}
-
 export interface AgentOtelInstrumentationInput {
   /**
    * Capture model prompts/responses and tool call inputs/outputs as span
@@ -148,6 +86,10 @@ export function createAgentOtelInstrumentation(
   // that worker is lost, Workflow retries the whole step from entry rather
   // than resuming this callback sequence in a replacement process.
   const steps = new WeakMap<InstrumentationAttemptScope, AttemptSpanState>();
+  // eve balances every start with one terminal, so these are set on the start
+  // and deleted on the terminal; a lost worker takes them with it.
+  const modelSpans = new Map<string, SpanState>();
+  const toolSpans = new Map<string, ToolSpanState>();
 
   const onSessionStarted = async (event: InstrumentationSessionStartedEvent): Promise<void> => {
     await ensureSessionContext(event);
@@ -301,9 +243,9 @@ export function createAgentOtelInstrumentation(
     }
   };
 
-  const beforeModelCall = (event: InstrumentationModelCallStartedEvent): SpanState | undefined => {
+  const onModelCallStarted = (event: InstrumentationModelCallStartedEvent): void => {
     const attempt = steps.get(event.scope);
-    if (attempt === undefined) return undefined;
+    if (attempt === undefined) return;
     attempt.step.span.setAttribute("agent.model.id", event.model.modelId);
     attempt.step.span.setAttribute("agent.model.provider", event.model.provider);
     const span = input.tracer.startSpan(
@@ -325,12 +267,14 @@ export function createAgentOtelInstrumentation(
     }
     const state = { context: trace.setSpan(attempt.operation.context, span), span };
     getExecutionContexts(event.scope).models.set(event.id, state.context);
-    return state;
+    modelSpans.set(event.id, state);
   };
 
-  const afterModelCall = (event: InstrumentationModelCallTerminalEvent, state: unknown): void => {
+  const onModelCallTerminal = (event: InstrumentationModelCallTerminalEvent): void => {
     executionContexts.get(event.scope)?.models.delete(event.id);
-    if (!isSpanState(state)) return;
+    const state = modelSpans.get(event.id);
+    modelSpans.delete(event.id);
+    if (state === undefined) return;
     if (event.type === "model.call.failed") {
       recordError(state.span, event.error);
     } else {
@@ -380,11 +324,9 @@ export function createAgentOtelInstrumentation(
     state.span.end();
   };
 
-  const beforeToolCall = (
-    event: InstrumentationToolCallStartedEvent,
-  ): ToolSpanState | undefined => {
+  const onToolCallStarted = (event: InstrumentationToolCallStartedEvent): void => {
     const attempt = steps.get(event.scope);
-    if (attempt === undefined) return undefined;
+    if (attempt === undefined) return;
     const actionSpan = input.tracer.startSpan(
       "agent.action",
       {
@@ -425,12 +367,14 @@ export function createAgentOtelInstrumentation(
       toolSpan,
     };
     getExecutionContexts(event.scope).tools.set(event.id, state.context);
-    return state;
+    toolSpans.set(event.id, state);
   };
 
-  const afterToolCall = (event: InstrumentationToolCallTerminalEvent, state: unknown): void => {
+  const onToolCallTerminal = (event: InstrumentationToolCallTerminalEvent): void => {
     executionContexts.get(event.scope)?.tools.delete(event.id);
-    if (!isToolSpanState(state)) return;
+    const state = toolSpans.get(event.id);
+    toolSpans.delete(event.id);
+    if (state === undefined) return;
     if (event.type === "tool.call.failed") {
       recordError(state.toolSpan, event.error);
       recordError(state.span, event.error);
@@ -539,12 +483,16 @@ export function createAgentOtelInstrumentation(
         "attempt.failed": onAttemptTerminal,
         "attempt.metadata": onAttemptMetadata,
         "attempt.started": onAttemptStarted,
-        "model.call": { after: afterModelCall, before: beforeModelCall },
+        "model.call.completed": onModelCallTerminal,
+        "model.call.failed": onModelCallTerminal,
+        "model.call.started": onModelCallStarted,
         "session.completed": onSessionTransition,
         "session.failed": onSessionTransition,
         "session.started": onSessionStarted,
         "session.waiting": onSessionTransition,
-        "tool.call": { after: afterToolCall, before: beforeToolCall },
+        "tool.call.completed": onToolCallTerminal,
+        "tool.call.failed": onToolCallTerminal,
+        "tool.call.started": onToolCallStarted,
         "turn.cancelled": onTurnTerminal,
         "turn.completed": onTurnTerminal,
         "turn.failed": onTurnTerminal,
@@ -572,10 +520,6 @@ export function createAgentOtelInstrumentation(
     }
     return state;
   }
-}
-
-function turnKey(sessionId: string, turnId: string): string {
-  return `${sessionId}:${turnId}`;
 }
 
 function parentLineageAttributes(
@@ -639,14 +583,6 @@ function readUsd(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function isSpanState(value: unknown): value is SpanState {
-  return typeof value === "object" && value !== null && "context" in value && "span" in value;
-}
-
-function isToolSpanState(value: unknown): value is ToolSpanState {
-  return isSpanState(value) && "toolSpan" in value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -8,11 +8,11 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
+import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import {
-  createAgentOtelInstrumentation,
   InMemoryAgentTraceStateStore,
   SESSION_WINDOW_TURN_LIMIT,
-} from "#tracing/agent-otel-provider.js";
+} from "#tracing/agent-trace-state.js";
 import {
   createInstrumentationHooks,
   type InstrumentationAttemptScope,
