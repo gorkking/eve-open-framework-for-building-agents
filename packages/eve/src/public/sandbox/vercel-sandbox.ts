@@ -25,6 +25,20 @@ export type VercelSandboxSource =
   | VercelSandboxTarballSource
   | VercelSandboxSnapshotSource;
 
+/** Access mode for a drive mounted into a Vercel Sandbox. */
+export type VercelSandboxMountMode = "read-only" | "read-write";
+
+/** A drive mounted at one absolute path in a Vercel Sandbox. */
+export interface VercelSandboxMount {
+  /** Name returned by `Drive.getOrCreate()`. */
+  readonly drive: string;
+  /** Defaults to `read-write`. */
+  readonly mode?: VercelSandboxMountMode;
+}
+
+/** Drive mounts keyed by absolute path. */
+export type VercelSandboxMounts = Record<string, VercelSandboxMount>;
+
 /**
  * Options applied when a Vercel Sandbox session starts. These are accepted by
  * a template's `create()` and `getOrCreate()` methods.
@@ -38,6 +52,8 @@ export interface VercelSandboxSessionOptions {
     readonly deleteEvicted?: boolean;
     readonly expiration?: number;
   };
+  /** Drives attached when the live sandbox is created. */
+  readonly mounts?: VercelSandboxMounts;
   /** Network access granted to the sandbox. */
   readonly networkPolicy?: SandboxNetworkPolicy;
   /** Ports exposed by the sandbox. */

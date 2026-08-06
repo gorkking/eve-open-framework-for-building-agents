@@ -1,6 +1,12 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { VercelSandbox, type VercelSandboxCreateOptions } from "#public/sandbox/vercel.js";
+import {
+  Drive,
+  VercelSandbox,
+  type VercelSandboxCreateOptions,
+  type VercelSandboxSessionOptions,
+  type VercelSandboxTemplateOptions,
+} from "#public/sandbox/vercel.js";
 import { getSandboxTemplateInternal } from "#shared/sandbox-template.js";
 
 describe("VercelSandbox.template", () => {
@@ -37,5 +43,21 @@ describe("VercelSandbox.template", () => {
     expect(() => VercelSandbox.template(options)).not.toThrow();
     expectTypeOf<VercelSandboxCreateOptions>().not.toHaveProperty("fetch");
     expectTypeOf<VercelSandboxCreateOptions>().not.toHaveProperty("token");
+  });
+
+  it("accepts drive mounts only when creating the live sandbox", () => {
+    const template = VercelSandbox.template();
+    const options = {
+      mounts: {
+        "/workspace": { drive: "repo-acme", mode: "read-write" },
+      },
+    } satisfies VercelSandboxSessionOptions;
+
+    expectTypeOf(Drive.getOrCreate).toBeFunction();
+    expectTypeOf(template.create)
+      .parameter(0)
+      .toEqualTypeOf<VercelSandboxSessionOptions | undefined>();
+    expect(options.mounts["/workspace"]?.drive).toBe("repo-acme");
+    expectTypeOf<VercelSandboxTemplateOptions>().not.toHaveProperty("mounts");
   });
 });

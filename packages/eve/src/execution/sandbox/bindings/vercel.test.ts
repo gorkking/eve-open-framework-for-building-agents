@@ -293,6 +293,34 @@ describe("prewarmVercelSandboxTemplate", () => {
 });
 
 describe("createVercelSandboxResource", () => {
+  it("forwards session drive mounts to Sandbox.create", async () => {
+    const sessionSandbox = createMockSandbox({ name: "session-key" });
+    const sandboxModule = {
+      Sandbox: {
+        create: vi.fn().mockResolvedValue(sessionSandbox),
+        get: vi.fn().mockResolvedValue(null),
+      },
+    };
+
+    await createVercelSandboxResource({
+      context: providerContext("session-key"),
+      dependencies: dependencies(sandboxModule),
+      sessionOptions: {
+        mounts: {
+          "/workspace": { drive: "repo-acme", mode: "read-write" },
+        },
+      },
+    });
+
+    expect(sandboxModule.Sandbox.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mounts: {
+          "/workspace": { drive: "repo-acme", mode: "read-write" },
+        },
+      }),
+    );
+  });
+
   it("creates one persistent resource from an exact template reference", async () => {
     const sessionSandbox = createMockSandbox({ name: "session-key" });
     const sandboxModule = {
