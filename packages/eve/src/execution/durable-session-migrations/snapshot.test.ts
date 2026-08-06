@@ -77,21 +77,15 @@ describe("migrateDurableSessionSnapshot", () => {
     expect(migrated.session.state).toMatchObject({
       retained: true,
       "eve.runtime.pendingInputBatch": {
-        nextSuffixGroupSequence: 1,
-        requestsById: {
-          "request-1": {
-            position: 0,
-            request: { requestId: "request-1" },
-            suffixGroupId: "group_0",
-          },
-        },
-        suffixGroupsById: {
-          group_0: {
+        groups: [
+          {
             event: { sequence: 1, stepIndex: 2, turnId: "turn_1" },
-            position: 0,
+            id: "group_0",
+            requests: [{ requestId: "request-1" }],
             responseMessages: [{ content: "suffix", role: "assistant" }],
           },
-        },
+        ],
+        nextGroupSequence: 1,
       },
     });
   });

@@ -15,7 +15,7 @@ import {
   requestIds,
   type PendingInputBatch,
   type PendingInputBatchEvent,
-} from "#harness/pending-input-store.js";
+} from "#harness/pending-input-state.js";
 import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
 import {
   isSessionLimitContinuationRequest,

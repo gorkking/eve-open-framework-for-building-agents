@@ -22,17 +22,6 @@ export const snapshotV1ToV2: VersionMigration = {
       return { ...(snapshot ?? {}), version: 2 };
     }
 
-    const requestsById: Record<string, unknown> = {};
-    for (const [position, request] of batch.requests.entries()) {
-      const requestRecord = asRecord(request);
-      if (typeof requestRecord?.requestId !== "string") continue;
-      requestsById[requestRecord.requestId] = {
-        position,
-        request,
-        suffixGroupId: "group_0",
-      };
-    }
-
     return {
       ...snapshot,
       session: {
@@ -40,15 +29,15 @@ export const snapshotV1ToV2: VersionMigration = {
         state: {
           ...state,
           [PENDING_INPUT_BATCH_KEY]: {
-            nextSuffixGroupSequence: 1,
-            requestsById,
-            suffixGroupsById: {
-              group_0: {
+            groups: [
+              {
                 event: batch.event,
-                position: 0,
+                id: "group_0",
+                requests: batch.requests,
                 responseMessages: batch.responseMessages,
               },
-            },
+            ],
+            nextGroupSequence: 1,
           },
         },
       },
