@@ -14,7 +14,7 @@ import { migrateDurableSessionSnapshot } from "./snapshot.js";
  * Generic chain behavior is covered in `chain.test.ts`.
  */
 describe("migrateDurableSessionSnapshot", () => {
-  it("returns a v1 snapshot unchanged", () => {
+  it("returns a current snapshot unchanged", () => {
     const snapshot: DurableSessionSnapshot = {
       session: projectToDurableSession(buildSession()),
       version: DURABLE_SESSION_VERSION,
@@ -57,18 +57,43 @@ describe("migrateDurableSessionSnapshot", () => {
     );
   });
 
-  it("throws when no migration is registered for an older version", () => {
-    // Unreachable until `DURABLE_SESSION_VERSION` moves past 1.
-    // Guards the "bumped version but forgot a migration" failure mode.
-    if (DURABLE_SESSION_VERSION === 1) {
-      return;
-    }
-    expect(() =>
-      migrateDurableSessionSnapshot({
-        session: {},
-        version: 1,
-      }),
-    ).toThrow(/no migration registered for version 1 → 2/);
+  it("migrates a v1 pending batch into one suffix group", () => {
+    const migrated = migrateDurableSessionSnapshot({
+      session: {
+        ...projectToDurableSession(buildSession()),
+        state: {
+          retained: true,
+          "eve.runtime.pendingInputBatch": {
+            event: { sequence: 1, stepIndex: 2, turnId: "turn_1" },
+            requests: [{ requestId: "request-1" }],
+            responseMessages: [{ content: "suffix", role: "assistant" }],
+          },
+        },
+      },
+      version: 1,
+    });
+
+    expect(migrated.version).toBe(2);
+    expect(migrated.session.state).toMatchObject({
+      retained: true,
+      "eve.runtime.pendingInputBatch": {
+        nextSuffixGroupSequence: 1,
+        requestsById: {
+          "request-1": {
+            position: 0,
+            request: { requestId: "request-1" },
+            suffixGroupId: "group_0",
+          },
+        },
+        suffixGroupsById: {
+          group_0: {
+            event: { sequence: 1, stepIndex: 2, turnId: "turn_1" },
+            position: 0,
+            responseMessages: [{ content: "suffix", role: "assistant" }],
+          },
+        },
+      },
+    });
   });
 });
 

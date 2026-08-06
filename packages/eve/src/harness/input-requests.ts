@@ -8,6 +8,14 @@ import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import { resolveTextToResponses } from "#channel/resolve-text.js";
 import { classifyInputRequest, isApprovalRequest } from "#harness/input-request-class.js";
 import { coalesceTurnInputs } from "#harness/messages.js";
+import {
+  append,
+  oldest as getPendingInputBatch,
+  removeOldest,
+  requestIds,
+  type PendingInputBatch,
+  type PendingInputBatchEvent,
+} from "#harness/pending-input-store.js";
 import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
 import {
   isSessionLimitContinuationRequest,
@@ -15,7 +23,6 @@ import {
 } from "#harness/session-limit-continuation.js";
 import type { HarnessSession, SessionStateMap, StepInput } from "#harness/types.js";
 
-const PENDING_INPUT_BATCH_KEY = "eve.runtime.pendingInputBatch";
 const APPROVED_TOOLS_KEY = "eve.runtime.hitl.approvedTools";
 const DEFERRED_STEP_INPUT_KEY = "eve.runtime.deferredStepInput";
 
@@ -26,25 +33,6 @@ const TOOL_EXECUTION_DENIED_MESSAGE = "Tool execution was denied.";
 const TOOL_EXECUTION_INVALID_APPROVAL_MESSAGE = "Invalid approval response.";
 
 type ToolResponsePart = Extract<ModelMessage, { role: "tool" }>["content"][number];
-
-/**
- * Stream-emit coordinates carried so a parked batch's resolution can attribute
- * its events to the turn and step that requested the input.
- */
-interface PendingInputBatchEvent {
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}
-
-/**
- * Serializable pending input batch stored on the session state.
- */
-interface PendingInputBatch {
-  readonly event?: PendingInputBatchEvent;
-  readonly requests: readonly InputRequest[];
-  readonly responseMessages: readonly ModelMessage[];
-}
 
 /**
  * Denied tool-call approvals from one resolved batch, ready for the caller to
@@ -369,23 +357,7 @@ export function hasPendingInputBatch(state: SessionStateMap | undefined): boolea
  * Returns the request IDs in the currently pending HITL batch.
  */
 export function getPendingInputRequestIds(state: SessionStateMap | undefined): ReadonlySet<string> {
-  return new Set(getPendingInputBatch(state)?.requests.map((request) => request.requestId));
-}
-
-function getPendingInputBatch(state: SessionStateMap | undefined): PendingInputBatch | undefined {
-  const value = state?.[PENDING_INPUT_BATCH_KEY];
-
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-
-  const batch = value as PendingInputBatch;
-
-  if (!Array.isArray(batch.requests) || !Array.isArray(batch.responseMessages)) {
-    return undefined;
-  }
-
-  return batch;
+  return requestIds(state);
 }
 
 /**
@@ -397,25 +369,11 @@ export function setPendingInputBatch(input: {
   readonly responseMessages: readonly ModelMessage[];
   readonly session: HarnessSession;
 }): HarnessSession {
-  const state = { ...input.session.state };
-  state[PENDING_INPUT_BATCH_KEY] = {
-    event: input.event,
-    requests: [...input.requests],
-    responseMessages: [...input.responseMessages],
-  } satisfies PendingInputBatch;
-
-  return { ...input.session, state };
+  return append(input);
 }
 
 function clearPendingInputBatch(session: HarnessSession): HarnessSession {
-  if (session.state?.[PENDING_INPUT_BATCH_KEY] === undefined) {
-    return session;
-  }
-
-  const state = { ...session.state };
-  delete state[PENDING_INPUT_BATCH_KEY];
-
-  return { ...session, state: Object.keys(state).length > 0 ? state : undefined };
+  return removeOldest(session);
 }
 
 // ---------------------------------------------------------------------------

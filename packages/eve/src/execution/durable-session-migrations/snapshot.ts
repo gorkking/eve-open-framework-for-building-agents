@@ -18,12 +18,13 @@ import type { DurableSessionSnapshot } from "#execution/durable-session-store.js
 import { DURABLE_SESSION_VERSION } from "#execution/durable-session-store.js";
 
 import { runMigrationChain, type VersionMigration } from "./chain.js";
+import { snapshotV1ToV2 } from "./snapshot-v1-to-v2.js";
 
 /**
  * Ordered list of registered snapshot migrations. Empty today since
  * only v1 exists; new migrations append to the tail.
  */
-const snapshotMigrations: readonly VersionMigration[] = [];
+const snapshotMigrations: readonly VersionMigration[] = [snapshotV1ToV2];
 
 /**
  * Migrates a {@link DurableSessionSnapshot} up to

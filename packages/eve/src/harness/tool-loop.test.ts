@@ -6030,9 +6030,9 @@ describe("createToolLoopHarness", () => {
 
     const pendingResponseMessages = (
       result.session.state?.["eve.runtime.pendingInputBatch"] as
-        | { responseMessages?: readonly ModelMessage[] }
+        | { suffixGroupsById?: { group_0?: { responseMessages?: readonly ModelMessage[] } } }
         | undefined
-    )?.responseMessages;
+    )?.suffixGroupsById?.group_0?.responseMessages;
 
     expect(result.next).toBeNull();
     expect(pendingResponseMessages).toEqual([

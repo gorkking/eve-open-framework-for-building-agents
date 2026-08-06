@@ -29,7 +29,7 @@ import { getRun } from "#internal/workflow/runtime.js";
 const EVE_SESSION_STREAM_NAMESPACE = "eve.session";
 
 /** Current wire version for {@link DurableSessionState} and {@link DurableSessionSnapshot}. */
-export const DURABLE_SESSION_VERSION = 1;
+export const DURABLE_SESSION_VERSION = 2;
 
 const DURABLE_SESSION_READ_TIMEOUT_MS = 10_000;
 
@@ -50,7 +50,7 @@ const DURABLE_SESSION_READ_TIMEOUT_MS = 10_000;
  * from the legacy `eve.session` fallback.
  */
 export interface DurableSessionState {
-  readonly version: typeof DURABLE_SESSION_VERSION;
+  readonly version: number;
   readonly sessionId: string;
   readonly continuationToken: string;
   readonly hasProxyInputRequests: boolean;
@@ -98,7 +98,7 @@ export interface DurableSession {
 
 /** Versioned wrapper around a {@link DurableSession} on the wire. */
 export interface DurableSessionSnapshot {
-  readonly version: typeof DURABLE_SESSION_VERSION;
+  readonly version: number;
   readonly session: DurableSession;
 }
 

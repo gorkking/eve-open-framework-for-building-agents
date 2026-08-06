@@ -11,6 +11,7 @@ import {
   consumeDeferredStepInput,
   createRuntimeToolCallActionFromToolCall,
   getApprovedTools,
+  getPendingInputRequestIds,
   hasDeferredStepInput,
   hasStepInput,
   resolvePendingInput,
@@ -36,6 +37,69 @@ function createHarnessSession(): HarnessSession {
     sessionId: "sess-test",
   };
 }
+
+function createQuestion(requestId: string): InputRequest {
+  return {
+    action: {
+      callId: requestId,
+      input: { prompt: `Question ${requestId}` },
+      kind: "tool-call",
+      toolName: "ask_question",
+    },
+    allowFreeform: true,
+    display: "text",
+    kind: "question",
+    prompt: `Question ${requestId}`,
+    requestId,
+  };
+}
+
+describe("pending input store", () => {
+  it("keeps multiple suffix groups and resolves only the oldest group", () => {
+    const first = setPendingInputBatch({
+      requests: [createQuestion("question-1")],
+      responseMessages: [{ content: "first suffix", role: "assistant" }],
+      session: createHarnessSession(),
+    });
+    const session = setPendingInputBatch({
+      requests: [createQuestion("question-2")],
+      responseMessages: [{ content: "second suffix", role: "assistant" }],
+      session: first,
+    });
+
+    expect([...getPendingInputRequestIds(session.state)]).toEqual(["question-1", "question-2"]);
+
+    const resolvedFirst = resolvePendingInput({
+      session,
+      stepInput: { inputResponses: [{ requestId: "question-1", text: "one" }] },
+    });
+    expect(resolvedFirst.messages).toContainEqual({ content: "first suffix", role: "assistant" });
+    expect([...getPendingInputRequestIds(resolvedFirst.session.state)]).toEqual(["question-2"]);
+
+    const resolvedSecond = resolvePendingInput({
+      session: resolvedFirst.session,
+      stepInput: { inputResponses: [{ requestId: "question-2", text: "two" }] },
+    });
+    expect(resolvedSecond.messages).toContainEqual({ content: "second suffix", role: "assistant" });
+    expect(getPendingInputRequestIds(resolvedSecond.session.state).size).toBe(0);
+  });
+
+  it("rejects duplicate request ids across suffix groups", () => {
+    const session = setPendingInputBatch({
+      requests: [createQuestion("question-1")],
+      responseMessages: [],
+      session: createHarnessSession(),
+    });
+
+    expect(() =>
+      setPendingInputBatch({
+        requests: [createQuestion("question-1")],
+        responseMessages: [],
+        session,
+      }),
+    ).toThrow('Pending input request "question-1" already exists.');
+  });
+});
 
 describe("hasStepInput", () => {
   it("returns false when input is undefined", () => {
