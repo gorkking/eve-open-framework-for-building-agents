@@ -20,7 +20,12 @@ afterEach(() => {
 
 function createView(taskId: string, status: TaskView["status"]): TaskView {
   return {
-    metadata: { kind: "subagent", mode: "local", name: "research" },
+    metadata: {
+      agentId: "ag_research:abcdef123456",
+      kind: "subagent",
+      mode: "local",
+      name: "research",
+    },
     status,
     taskId,
   };
@@ -30,8 +35,8 @@ const INPUT = {
   callId: "call-await-1",
   replyToken: "turn-inbox-token",
   tasks: [
-    { taskId: "task_a", taskRunId: "run-a" },
-    { taskId: "task_b", taskRunId: "run-b" },
+    { metadata: createView("task_a", "working").metadata, taskId: "task_a", taskRunId: "run-a" },
+    { metadata: createView("task_b", "working").metadata, taskId: "task_b", taskRunId: "run-b" },
   ],
   toolName: "task_await",
 };

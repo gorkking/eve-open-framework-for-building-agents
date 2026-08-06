@@ -6,11 +6,21 @@ import {
   WorkflowRunNotFoundError,
 } from "#compiled/@workflow/errors/index.js";
 
-import type { DeliverHookPayload } from "#channel/types.js";
+import type {
+  SessionAuthContext,
+  SessionCommand,
+  SubagentInputRequestHookPayload,
+} from "#channel/types.js";
 import { resumeHook } from "#internal/workflow/runtime.js";
 import { createLogger } from "#internal/logging.js";
 import { walkCauseChain } from "#shared/errors.js";
-import { TASK_SNAPSHOT_STREAM_NAMESPACE, type TaskStatus, type TaskView } from "#tasks/types.js";
+import {
+  TASK_SNAPSHOT_STREAM_NAMESPACE,
+  type TaskInboundAnswerInput,
+  type TaskInboundInputRequest,
+  type TaskStatus,
+  type TaskView,
+} from "#tasks/types.js";
 
 const log = createLogger("execution.tasks.run");
 
@@ -45,20 +55,18 @@ export async function wakeTaskParentStep(input: {
 }): Promise<void> {
   "use step";
 
-  const payload: DeliverHookPayload = {
-    kind: "deliver",
-    payloads: [
-      {
-        message: formatTaskNotification(input.view),
-        taskNotification: {
-          status: readyNotificationStatus(input.view.status),
-          taskId: input.view.taskId,
-        },
+  const command: SessionCommand = {
+    kind: "send",
+    payload: {
+      message: formatTaskNotification(input.view),
+      taskNotification: {
+        status: readyNotificationStatus(input.view.status),
+        taskId: input.view.taskId,
       },
-    ],
+    },
   };
   try {
-    await resumeHook(input.token, payload);
+    await resumeHook(input.token, command);
   } catch (error) {
     if (isGoneParentTarget(error)) {
       log.warn("task wake target is gone; the parent session already ended", {
@@ -66,6 +74,73 @@ export async function wakeTaskParentStep(input: {
         taskId: input.view.taskId,
       });
       return;
+    }
+    throw error;
+  }
+}
+
+/** Sends an exact local-task HITL batch to the parent's pre-model router. */
+export async function wakeTaskInputRequestParentStep(input: {
+  readonly request: TaskInboundInputRequest;
+  readonly taskId: string;
+  readonly token: string;
+}): Promise<void> {
+  "use step";
+
+  const command: SessionCommand = {
+    kind: "send",
+    payload: {
+      taskInputRequests: [
+        {
+          hookPayload: input.request as SubagentInputRequestHookPayload,
+          taskId: input.taskId,
+        },
+      ],
+    },
+  };
+  try {
+    await resumeHook(input.token, command);
+  } catch (error) {
+    if (isGoneParentTarget(error)) return;
+    throw error;
+  }
+}
+
+/**
+ * Forwards answered input to the blocked child.
+ *
+ * The task run performs this itself so the child unblocks and the
+ * snapshot leaves `input_required` under one durable decision. Returns
+ * `unreachable` when the child hook is already gone, which leaves the
+ * outstanding batch untouched rather than reporting a task as working
+ * when nothing received the answer.
+ */
+export async function deliverTaskInputResponsesStep(input: {
+  readonly answer: TaskInboundAnswerInput;
+  readonly requestIds: readonly string[];
+}): Promise<"delivered" | "unreachable"> {
+  "use step";
+
+  const answered = new Set(input.requestIds);
+  const command: SessionCommand = {
+    auth: input.answer.auth as SessionAuthContext | null | undefined,
+    kind: "send",
+    payload: {
+      inputResponses: input.answer.inputResponses.filter((response) =>
+        answered.has(response.requestId),
+      ),
+    },
+    taskDeliveryId: `${input.answer.taskId}:${[...input.requestIds].sort().join(",")}`,
+  };
+  try {
+    await resumeHook(input.answer.childContinuationToken, command);
+    return "delivered";
+  } catch (error) {
+    if (isGoneParentTarget(error)) {
+      log.warn("task input answer target is gone; the child turn already ended", {
+        taskId: input.answer.taskId,
+      });
+      return "unreachable";
     }
     throw error;
   }

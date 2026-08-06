@@ -17,6 +17,7 @@ import {
   isReadyTaskStatus,
   type TaskCommand,
   type TaskCommandHookPayload,
+  type TaskRunInboundPayload,
   type TaskView,
 } from "#tasks/types.js";
 
@@ -51,21 +52,61 @@ export async function sendTaskCommand(input: {
   readonly commandToken: string;
   readonly retryUnreachable?: { readonly attempts: number; readonly delayMs: number };
 }): Promise<"delivered" | "unreachable"> {
+  return (await sendTaskCommandToOwner(input)) === undefined ? "unreachable" : "delivered";
+}
+
+/** Delivers one command and returns the accepting task workflow's run id. */
+export async function sendTaskCommandToOwner(input: {
+  readonly command: TaskCommand;
+  readonly commandToken: string;
+  readonly retryUnreachable?: { readonly attempts: number; readonly delayMs: number };
+}): Promise<{ readonly runId: string } | undefined> {
   const payload: TaskCommandHookPayload = { command: input.command, kind: "task-command" };
   const attempts = Math.max(1, input.retryUnreachable?.attempts ?? 1);
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await resumeHook(input.commandToken, payload);
-      return "delivered";
+      const owner = await resumeHook(input.commandToken, payload);
+      if (
+        typeof owner !== "object" ||
+        owner === null ||
+        !("runId" in owner) ||
+        typeof owner.runId !== "string"
+      ) {
+        throw new Error(`Task command hook "${input.commandToken}" returned no owner run id.`);
+      }
+      return { runId: owner.runId };
     } catch (error) {
       if (!isFinishedTaskRunTarget(error)) {
         throw error;
       }
       if (attempt + 1 >= attempts) {
-        return "unreachable";
+        return undefined;
       }
       await new Promise((resolve) => setTimeout(resolve, input.retryUnreachable?.delayMs ?? 250));
     }
+  }
+}
+
+/**
+ * Hands one non-command inbound payload to a task run.
+ *
+ * Used for payloads the run must act on before it may record them —
+ * today only answered input batches, which it forwards to the child
+ * first. `unreachable` means the task already finished and disposed its
+ * hook, so the payload is stale by definition.
+ */
+export async function sendTaskInboundPayload(input: {
+  readonly commandToken: string;
+  readonly payload: TaskRunInboundPayload;
+}): Promise<"delivered" | "unreachable"> {
+  try {
+    await resumeHook(input.commandToken, input.payload);
+    return "delivered";
+  } catch (error) {
+    if (!isFinishedTaskRunTarget(error)) {
+      throw error;
+    }
+    return "unreachable";
   }
 }
 

@@ -36,6 +36,32 @@ describe("session callback route", () => {
     expect([...names].some((name) => name.startsWith(".well-known/"))).toBe(false);
   });
 
+  it("forwards remote task turn-start identity to the task hook", async () => {
+    resumeHookMock.mockResolvedValue(undefined);
+    const response = await handleSessionCallbackRequest(
+      new Request("https://app.example.com/eve/v1/callback/task-token", {
+        body: JSON.stringify({
+          callId: "call-task",
+          kind: "turn.started",
+          sessionId: "child-session",
+          subagentName: "research",
+          taskId: "task-1",
+          turnId: "turn_child_7",
+        }),
+        method: "POST",
+      }),
+      createRouteContext({ token: "task-token" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(resumeHookMock).toHaveBeenCalledWith("task-token", {
+      childSessionId: "child-session",
+      childTurnId: "turn_child_7",
+      kind: "task-child-turn-started",
+      taskId: "task-1",
+    });
+  });
+
   it("synthesizes a terminal outcome envelope for session.completed", async () => {
     resumeHookMock.mockResolvedValue(undefined);
 

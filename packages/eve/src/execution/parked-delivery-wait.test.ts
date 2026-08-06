@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DeliverHookPayload } from "#channel/types.js";
 import { nextTurnDelivery } from "#execution/parked-delivery-wait.js";
@@ -15,6 +15,7 @@ vi.mock("./route-child-delivery.js", () => ({
 }));
 
 describe("nextTurnDelivery task wake suppression", () => {
+  beforeEach(() => vi.clearAllMocks());
   it("routes only unsuppressed payloads and carries the updated session state", async () => {
     const taskWake = {
       kind: "deliver",
@@ -41,6 +42,8 @@ describe("nextTurnDelivery task wake suppression", () => {
     vi.mocked(routeDeliverToChildren).mockResolvedValue({
       kind: "continue",
       remainder: { message: "ordinary delivery" },
+      serializedContext: {},
+      sessionState: filteredState,
     });
     const commandInbox: SessionCommandInbox = {
       claimStable: vi.fn(),
@@ -69,5 +72,54 @@ describe("nextTurnDelivery task wake suppression", () => {
         sessionState: filteredState,
       }),
     );
+  });
+
+  it("keeps waiting instead of starting a parent turn for a fully routed task response", async () => {
+    const sessionState = {
+      continuationToken: "token",
+      emissionState: { sequence: 0, sessionStarted: false, stepIndex: 0, turnId: "turn" },
+      hasProxyInputRequests: true,
+      sessionId: "session",
+      version: 1,
+    } as const;
+    vi.mocked(filterAwaitedTaskWakePayloadsStep).mockImplementation(async ({ payloads }) => ({
+      payloads,
+      sessionState,
+    }));
+    vi.mocked(routeDeliverToChildren)
+      .mockResolvedValueOnce({
+        kind: "continue",
+        remainder: undefined,
+        serializedContext: {},
+        sessionState,
+      })
+      .mockResolvedValueOnce({
+        kind: "continue",
+        remainder: { message: "ordinary" },
+        serializedContext: {},
+        sessionState,
+      });
+    const commands = [
+      { kind: "send" as const, payload: { inputResponses: [{ requestId: "task-request" }] } },
+      { kind: "send" as const, payload: { message: "ordinary" } },
+    ];
+    const commandInbox: SessionCommandInbox = {
+      claimStable: vi.fn(),
+      consumeNext: vi.fn(),
+      next: vi.fn(async () => ({ done: false as const, value: commands.shift()! })),
+      rekeyContinuation: vi.fn(),
+    };
+
+    const result = await nextTurnDelivery({
+      bufferedDeliveries: [],
+      bufferedSessionControls: [],
+      commandInbox,
+      driverWritable: new WritableStream<Uint8Array>(),
+      serializedContext: {},
+      sessionState,
+    });
+
+    expect(result).toMatchObject({ kind: "turn", remainder: { message: "ordinary" } });
+    expect(routeDeliverToChildren).toHaveBeenCalledTimes(2);
   });
 });

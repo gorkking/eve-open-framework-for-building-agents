@@ -6,7 +6,7 @@ import type { TaskCommand, TaskStatus, TaskView } from "#tasks/types.js";
 function createView(status: TaskStatus, overrides: Partial<TaskView> = {}): TaskView {
   return {
     metadata: {
-      childSessionId: "child-session-1",
+      agentId: "ag_research:abcdef123456",
       kind: "subagent",
       mode: "local",
       name: "research",
@@ -23,8 +23,8 @@ const ALL_COMMANDS: readonly TaskCommand[] = [
   { data: { message: "boom" }, kind: "fail" },
   { kind: "cancel" },
   { inputRequests: [{ question: "which?" }], kind: "require-input" },
-  { kind: "resume-working" },
-  { childSessionId: "child-session-2", kind: "describe" },
+  { kind: "ready" },
+  { kind: "answered", requestIds: ["req-1"] },
 ];
 
 describe("applyTaskTransition", () => {
@@ -61,18 +61,53 @@ describe("applyTaskTransition", () => {
     expect(result.view.inputRequests).toEqual([{ question: "which region?" }]);
   });
 
-  it("returns input_required to working and clears the batch", () => {
+  it("returns input_required to working once the whole batch is answered", () => {
     const blocked = applyTaskTransition(createView("working"), {
-      inputRequests: [{ question: "which region?" }],
+      inputRequests: [{ question: "which region?", requestId: "req-1" }],
       kind: "require-input",
     });
     expect(blocked.outcome).toBe("accepted");
 
-    const result = applyTaskTransition(blocked.view, { kind: "resume-working" });
+    const result = applyTaskTransition(blocked.view, { kind: "answered", requestIds: ["req-1"] });
 
     expect(result.outcome).toBe("accepted");
     expect(result.view.status).toBe("working");
     expect(result.view.inputRequests).toBeUndefined();
+  });
+
+  it("keeps the task blocked on the remainder of a partly answered batch", () => {
+    const blocked = applyTaskTransition(createView("working"), {
+      inputRequests: [
+        { question: "which region?", requestId: "req-1" },
+        { question: "which size?", requestId: "req-2" },
+      ],
+      kind: "require-input",
+    });
+    expect(blocked.outcome).toBe("accepted");
+
+    const result = applyTaskTransition(blocked.view, { kind: "answered", requestIds: ["req-1"] });
+
+    expect(result.outcome).toBe("accepted");
+    expect(result.view.status).toBe("input_required");
+    expect(result.view.inputRequests).toEqual([{ question: "which size?", requestId: "req-2" }]);
+  });
+
+  it("ignores an answer to a batch that was already replaced", () => {
+    const first = applyTaskTransition(createView("working"), {
+      inputRequests: [{ question: "first", requestId: "req-1" }],
+      kind: "require-input",
+    });
+    const second = applyTaskTransition(first.view, {
+      inputRequests: [{ question: "second", requestId: "req-2" }],
+      kind: "require-input",
+    });
+    expect(second.outcome).toBe("accepted");
+
+    const stale = applyTaskTransition(second.view, { kind: "answered", requestIds: ["req-1"] });
+
+    expect(stale.outcome).toBe("noop");
+    expect(stale.view.status).toBe("input_required");
+    expect(stale.view.inputRequests).toEqual([{ question: "second", requestId: "req-2" }]);
   });
 
   it("replaces the outstanding batch on repeated require-input", () => {
@@ -107,8 +142,11 @@ describe("applyTaskTransition", () => {
     expect(cancelled.view.status).toBe("cancelled");
   });
 
-  it("treats resume-working on a working task as a noop", () => {
-    const result = applyTaskTransition(createView("working"), { kind: "resume-working" });
+  it("treats an answer to a working task as a noop", () => {
+    const result = applyTaskTransition(createView("working"), {
+      kind: "answered",
+      requestIds: ["req-1"],
+    });
 
     expect(result.outcome).toBe("noop");
     expect(result.view.status).toBe("working");
@@ -152,25 +190,6 @@ describe("applyTaskTransition", () => {
     }
   });
 
-  it("attaches the child session through describe without changing status", () => {
-    const described = applyTaskTransition(
-      createView("working", {
-        metadata: { kind: "subagent", mode: "local", name: "research" },
-      }),
-      { childSessionId: "child-session-9", kind: "describe" },
-    );
-
-    expect(described.outcome).toBe("accepted");
-    expect(described.view.status).toBe("working");
-    expect(described.view.metadata.childSessionId).toBe("child-session-9");
-
-    const again = applyTaskTransition(described.view, {
-      childSessionId: "child-session-9",
-      kind: "describe",
-    });
-    expect(again.outcome).toBe("noop");
-  });
-
   it("is deterministic for replayed commands", () => {
     const view = createView("working");
     const command: TaskCommand = { data: { answer: 1 }, kind: "complete" };
@@ -179,5 +198,28 @@ describe("applyTaskTransition", () => {
     const second = applyTaskTransition(view, command);
 
     expect(first).toEqual(second);
+  });
+
+  it("never rebinds a task turn to a different child session", () => {
+    const result = applyTaskTransition(
+      createView("working", {
+        metadata: {
+          agentId: "ag_research:abcdef123456",
+          childSessionId: "child-session-1",
+          kind: "subagent",
+          mode: "local",
+          name: "research",
+        },
+      }),
+      {
+        childSessionId: "other-child",
+        childTurnId: "turn_9",
+        kind: "start-turn",
+        taskId: "task_abc123",
+      },
+    );
+
+    expect(result.outcome).toBe("rejected");
+    expect(result.view.metadata.childSessionId).toBe("child-session-1");
   });
 });

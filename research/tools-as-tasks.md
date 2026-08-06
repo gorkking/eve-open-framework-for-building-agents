@@ -92,6 +92,11 @@ model step in the same turn.
 A **background task** is owned by the parent session, not the originating turn. It may complete,
 request input, or emit progress after that turn ends.
 
+An **agent address** is the persistent identity and private routing record for one child session.
+Tasks own execution lifecycle and availability; agent addresses do not duplicate `working` or
+`input_required`. At most one nonterminal task may target one child session. The model-visible
+`<agents>` projection keeps an occupied agent visible as busy and names its active task.
+
 **Delegated execution** is a runtime execution mode, not a tool-authoring surface. A delegated
 dispatch returns once the executor acknowledges the work; the task stays `working`, and every
 later transition arrives over the task wire.
@@ -121,15 +126,14 @@ The parent receives these framework-owned tools:
 interface TaskParentTools {
   task_cancel(input: { taskIds: string[] }): Promise<TaskToolResult<boolean>>;
   task_peek(input: { taskIds: string[] }): Promise<TaskToolResult<TaskView[]>>;
-  task_send(input: { taskId: string; input: unknown }): Promise<TaskToolResult<TaskView>>;
+  task_send(input: { taskId: string; message: string }): Promise<TaskToolResult<TaskView>>;
   task_await(input: { taskIds: string[] }): Promise<TaskToolResult<TaskView[]>>;
   task_sleep(input: { durationMs: number }): Promise<TaskToolResult<boolean>>;
 }
 ```
 
-The exact `TaskToolResult` error shape and `task_send.input` union remain open. Before
-implementation, `task_send.input` should become a discriminated eve-owned type that separates an
-`InputResponse[]` batch from an arbitrary child message.
+Human responses are not a model capability. Clients answer the ordinary `input.requested` event
+on the parent session, and eve routes matching responses directly to the blocked child.
 
 The controls have distinct behavior:
 
@@ -137,9 +141,8 @@ The controls have distinct behavior:
   handles.
 - `task_await` durably pauses the current turn until every selected task is terminal or
   `input_required`. An already-ready task returns immediately.
-- `task_send` answers an `input_required` task or sends a follow-up message to the addressed child
-  session. A message sent after the prior task became terminal creates a new task bound to the
-  same child session; it never reopens the terminal task.
+- `task_send` sends a follow-up message after the prior task became terminal, creating a new task
+  bound to the same child session. It never reopens a terminal task or answers HITL.
 - `task_cancel` requests cooperative cancellation. A committed terminal state is final, so a late
   child result cannot revive a cancelled task.
 - `task_sleep` durably pauses the current turn for paced checks. It does not poll or mutate a task.
@@ -178,11 +181,10 @@ interface TaskView {
 }
 
 interface TaskMetadata {
+  readonly agentId: string;
   readonly kind: "subagent";
   readonly mode: "local" | "remote";
   readonly name: string;
-  readonly childSessionId: string;
-  readonly url: string;
 }
 
 type TaskOutput =
@@ -205,6 +207,7 @@ gets one receipt:
 
 ```json
 {
+  "agentId": "ag_research:...",
   "taskId": "task_01K...",
   "status": "working"
 }
@@ -224,6 +227,7 @@ The parent session stores only a live-task index:
 
 ```ts
 interface SessionTaskIndexEntry {
+  readonly metadata: TaskMetadata;
   readonly taskId: string;
   readonly taskRunId: string;
 }
@@ -263,7 +267,7 @@ replaces the park-and-wait mechanism in the same dispatch codepath:
 
 1. The harness creates a durable `working` task for the subagent call.
 2. It dispatches the child with the task binding.
-3. The child acknowledges its `childSessionId`, which is persisted immediately.
+3. The child acknowledges its private address, which is persisted on the agent record immediately.
 4. The originating call receives its receipt and the turn continues.
 
 Everything after acknowledgement — progress, input requests, authorization, terminal outcome —
@@ -297,8 +301,8 @@ type ParentInbound =
 
 An `input_required` transition carries the full outstanding request batch in its task snapshot.
 The parent emits those requests through the normal `input.requested` stream contract. Matching
-responses route back through `task_send`. Authorization uses the same task binding but remains a
-distinct event because it has different disclosure rules.
+responses sent to the parent session route directly through its private child proxy. Authorization
+uses the same task binding but remains a distinct event because it has different disclosure rules.
 
 The five flows that split across two transports today all converge on this one contract, for
 local and remote children alike:
@@ -308,7 +312,7 @@ local and remote children alike:
 | Terminal result or failure        | `task.update` with a terminal snapshot                        |
 | Input request, including approval | `task.update` with `input_required` and the outstanding batch |
 | Authorization event               | `task.authorization`                                          |
-| Input response                    | `task_send` addressed to the owning task                      |
+| Input response                    | Parent-session proxy addressed by the recorded request id     |
 | Cancellation                      | `task_cancel`, committed then propagated to the executor      |
 
 Progress is the sixth flow, new in this plan: `task.message` from the child's `task_message`
@@ -347,7 +351,7 @@ one record:
 
 - the task identifies the current unit of work;
 - the handle identifies the reusable child session;
-- the task's private `TaskExecutorBinding` lets `task_send` address in-flight work;
+- the task's private binding lets the parent session route HITL and guarded cancellation;
 - resuming that child creates a new task bound to the same handle.
 
 The A2A draft currently records a handle after the child's first result. That is too late for
@@ -413,27 +417,26 @@ than MCP compatibility.
 - `task_await` returns on terminal status and `input_required`, including when the task was already
   ready before the call.
 - `task_peek` observes current state without waking or mutating the executor.
-- `task_send` routes each response or message to the intended child session and cannot cross
-  parent-session ownership.
+- Parent-session responses route directly to the intended local task child without a parent model
+  turn and cannot cross task or session ownership. `task_send` accepts terminal follow-up messages only.
+- One child session owns at most one nonterminal task; repeated sends return `AGENT_BUSY` and do
+  not queue.
 - Cancellation is cooperative and idempotent. A late completion cannot overwrite `cancelled`.
 - Progress is durable latest state and a client-visible event, but does not create unbounded model
   history or unsolicited model turns.
 - Replay returns the same task ID for the same originating call and never dispatches the child
   twice.
 - Completing the parent session cancels its live tasks.
-- Resuming an existing child session creates a new task with a new task ID and the same
-  `childSessionId`.
+- Resuming an existing child session creates a new task with a new task ID and the same `agentId`.
 
 ## Open questions
 
-1. What is the exact discriminated input for `task_send`, including arbitrary messages and
-   `InputResponse[]` batches?
-2. Should `TaskView` include a monotonic revision for notification deduplication, or can the task
+1. Should `TaskView` include a monotonic revision for notification deduplication, or can the task
    run's stream index remain internal?
-3. What retention and TTL apply to terminal records and unanswered `input_required` tasks?
-4. What is the cross-deployment version negotiation for task callbacks during rolling deploys?
-5. Which task events enter model context, and how are repeated progress messages coalesced?
-6. How are child token usage and remaining parent budgets accounted after a background child
+2. What retention and TTL apply to terminal records and unanswered `input_required` tasks?
+3. What is the cross-deployment version negotiation for task callbacks during rolling deploys?
+4. Which task events enter model context, and how are repeated progress messages coalesced?
+5. How are child token usage and remaining parent budgets accounted after a background child
    completes on a later turn?
 
 Two former open questions are settled and recorded in the [delivery plan]: failure taxonomy

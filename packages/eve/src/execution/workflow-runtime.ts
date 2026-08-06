@@ -186,7 +186,6 @@ export function createWorkflowRuntime(config: {
         throw error;
       }
 
-      await waitForOwnedCommandHook(sessionCommandHookToken(run.runId), run.runId);
       if (input.continuationToken) {
         const owner = await waitForCommandHookOwner(input.continuationToken);
         if (owner.runId !== run.runId) {
@@ -197,6 +196,7 @@ export function createWorkflowRuntime(config: {
           });
         }
       }
+      await waitForOwnedCommandHook(sessionCommandHookToken(run.runId), run.runId);
 
       let events: ReadableStream<MessageStreamEvent> | undefined;
       const getEvents = () => {
@@ -320,6 +320,7 @@ export async function requestWorkflowTurnCancellation(
 ): Promise<CancelTurnResult> {
   return await dispatchWorkflowCommand(sessionCommandHookToken(input.sessionId), {
     kind: "cancel",
+    ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
     turnId: input.turnId,
   });
 }

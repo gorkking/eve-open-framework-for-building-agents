@@ -45,8 +45,7 @@ export async function readAwaitedTaskViewsStep(input: {
   const views = await Promise.all(
     input.tasks.map(
       async (task) =>
-        (await readLatestTaskSnapshot({ taskRunId: task.taskRunId })) ??
-        createPendingView(task.taskId),
+        (await readLatestTaskSnapshot({ taskRunId: task.taskRunId })) ?? createPendingView(task),
     ),
   );
   return { kind: "views", views };
@@ -81,11 +80,11 @@ export async function postTaskAwaitResultStep(input: {
   }
 }
 
-function createPendingView(taskId: string): TaskView {
+function createPendingView(task: AwaitedTaskRef): TaskView {
   return {
-    metadata: { kind: "subagent", mode: "local", name: "unknown" },
+    metadata: task.metadata,
     status: "working",
-    taskId,
+    taskId: task.taskId,
   };
 }
 

@@ -3,7 +3,11 @@ import { readLatestTaskSnapshot } from "#execution/tasks/run-control.js";
 import { getAgentHandleStore, type AgentHandle } from "#harness/handles/store.js";
 import type { RuntimeActionResult, RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
 import { taskViewsToJson } from "#tasks/json.js";
-import { findSessionTaskEntry, type SessionTaskIndexEntry } from "#tasks/session-index.js";
+import {
+  findSessionTaskEntry,
+  getSessionTaskIndex,
+  type SessionTaskIndexEntry,
+} from "#tasks/session-index.js";
 import type { TaskView } from "#tasks/types.js";
 
 /**
@@ -40,33 +44,53 @@ export async function readTaskViews(
     entries.map(
       async (entry) =>
         (await readLatestTaskSnapshot({ taskRunId: entry.taskRunId })) ??
-        createPendingTaskView(entry.taskId),
+        createPendingTaskView(entry),
     ),
   );
 }
 
 /** The view of a run that has not published its first snapshot yet. */
-export function createPendingTaskView(taskId: string): TaskView {
+export function createPendingTaskView(entry: SessionTaskIndexEntry): TaskView {
   return {
-    metadata: { kind: "subagent", mode: "local", name: "unknown" },
+    metadata: entry.metadata,
     status: "working",
-    taskId,
+    taskId: entry.taskId,
   };
 }
 
-/** Finds the handle owning one child session's address, any live phase. */
-export function findAddressableHandle(
+/** Finds the persistent address record for one task-owned agent. */
+export function findTaskAgentAddress(
   session: RuntimeSession,
-  childSessionId: string | undefined,
-): Extract<AgentHandle, { phase: "running" | "parked" }> | undefined {
-  if (childSessionId === undefined) return undefined;
+  agentId: string,
+): Extract<AgentHandle, { phase: "addressed" }> | undefined {
   const handles = getAgentHandleStore(session.state)?.handles ?? [];
-  return handles
-    .filter(
-      (candidate): candidate is Extract<AgentHandle, { phase: "running" | "parked" }> =>
-        candidate.phase === "running" || candidate.phase === "parked",
-    )
-    .find((candidate) => candidate.address.sessionId === childSessionId);
+  return handles.find(
+    (candidate): candidate is Extract<AgentHandle, { phase: "addressed" }> =>
+      candidate.phase === "addressed" && candidate.identity.id === agentId,
+  );
+}
+
+/** Returns the one nonterminal task owning an agent, if any. */
+export async function findActiveTaskForAgent(
+  session: RuntimeSession,
+  agentId: string,
+  parentTurnId?: string,
+  parentStepIndex?: number,
+): Promise<{ readonly entry: SessionTaskIndexEntry; readonly view: TaskView } | undefined> {
+  const entries = getSessionTaskIndex(session.state).filter(
+    (entry) => entry.metadata.agentId === agentId,
+  );
+  const views = await readTaskViews(entries);
+  const active = entries.flatMap((entry, index) => {
+    const view = views[index];
+    return view !== undefined &&
+      ((entry.createdByTurnId === parentTurnId && entry.createdByStepIndex === parentStepIndex) ||
+        view.status === "working" ||
+        view.status === "input_required")
+      ? [{ entry, view }]
+      : [];
+  });
+  return active[0];
 }
 
 /** One successful task-control result carrying full task views. */

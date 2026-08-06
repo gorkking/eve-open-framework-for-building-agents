@@ -2,9 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHook, type Hook } from "#compiled/@workflow/core/index.js";
 
 import { claimHookOwnership, disposeHook } from "#execution/hook-ownership.js";
-import { appendTaskSnapshotStep, wakeTaskParentStep } from "#execution/tasks/run-steps.js";
+import {
+  appendTaskSnapshotStep,
+  deliverTaskInputResponsesStep,
+  wakeTaskInputRequestParentStep,
+  wakeTaskParentStep,
+} from "#execution/tasks/run-steps.js";
 import { taskRunWorkflow } from "#execution/tasks/run-workflow.js";
-import type { TaskCommandHookPayload, TaskRunInboundPayload, TaskView } from "#tasks/types.js";
+import type {
+  TaskCommandHookPayload,
+  TaskInboundAnswerInput,
+  TaskRunInboundPayload,
+  TaskView,
+} from "#tasks/types.js";
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: vi.fn(),
@@ -18,6 +28,8 @@ vi.mock("../hook-ownership.js", async (importOriginal) => ({
 
 vi.mock("./run-steps.js", () => ({
   appendTaskSnapshotStep: vi.fn(),
+  deliverTaskInputResponsesStep: vi.fn(),
+  wakeTaskInputRequestParentStep: vi.fn(),
   wakeTaskParentStep: vi.fn(),
 }));
 
@@ -28,7 +40,7 @@ afterEach(() => {
 function createWorkingView(): TaskView {
   return {
     metadata: {
-      childSessionId: "child-session-1",
+      agentId: "ag_research:abcdef123456",
       kind: "subagent",
       mode: "local",
       name: "research",
@@ -60,10 +72,13 @@ describe("taskRunWorkflow", () => {
   it("publishes the initial snapshot, applies commands, and stops at terminal", async () => {
     mockCommandHook([
       {
-        command: { inputRequests: [{ question: "which?" }], kind: "require-input" },
+        command: {
+          inputRequests: [{ question: "which?", requestId: "req-1" }],
+          kind: "require-input",
+        },
         kind: "task-command",
       },
-      { command: { kind: "resume-working" }, kind: "task-command" },
+      { command: { kind: "answered", requestIds: ["req-1"] }, kind: "task-command" },
       { command: { data: "done", kind: "complete" }, kind: "task-command" },
       // Never consumed: the run stops at the terminal transition.
       { command: { kind: "cancel" }, kind: "task-command" },
@@ -77,7 +92,7 @@ describe("taskRunWorkflow", () => {
 
   it("skips snapshots for rejected and noop commands", async () => {
     mockCommandHook([
-      { command: { kind: "resume-working" }, kind: "task-command" }, // noop on working
+      { command: { kind: "answered", requestIds: ["req-1"] }, kind: "task-command" }, // noop on working
       { command: { kind: "cancel" }, kind: "task-command" },
     ]);
 
@@ -112,7 +127,6 @@ describe("taskRunWorkflow", () => {
   it("translates a settled child turn from the wire and wakes the parent once ready", async () => {
     const ZERO = { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 };
     mockCommandHook([
-      { command: { childSessionId: "child-session-1", kind: "describe" }, kind: "task-command" },
       {
         kind: "runtime-action-result",
         results: [
@@ -132,17 +146,84 @@ describe("taskRunWorkflow", () => {
       commandToken: "task-token",
       initialView: {
         ...createWorkingView(),
-        metadata: { kind: "subagent", mode: "local", name: "research" },
+        metadata: {
+          agentId: "ag_research:abcdef123456",
+          kind: "subagent",
+          mode: "local",
+          name: "research",
+        },
       },
       wakeToken: "parent-session-token",
     });
 
-    expect(appendedStatuses()).toEqual(["working", "working", "completed"]);
+    expect(appendedStatuses()).toEqual(["working", "completed"]);
     expect(wakeTaskParentStep).toHaveBeenCalledTimes(1);
     expect(vi.mocked(wakeTaskParentStep).mock.calls[0]?.[0]).toMatchObject({
       token: "parent-session-token",
       view: { status: "completed", taskId: "task_abc123" },
     });
+  });
+
+  it("keeps a fast terminal task hook alive until dispatch acknowledgement", async () => {
+    mockCommandHook([
+      {
+        kind: "runtime-action-result",
+        results: [
+          {
+            outcome: {
+              kind: "parked",
+              result: { kind: "succeeded", output: "fast" },
+            },
+            output: "fast",
+          },
+        ],
+      },
+      { command: { kind: "ready" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({
+      commandToken: "task-token",
+      initialView: createWorkingView(),
+      wakeToken: "parent-session-token",
+    });
+
+    expect(appendedStatuses()).toEqual(["working", "completed"]);
+    expect(disposeHook).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a fast input request when the readiness barrier arrives", async () => {
+    mockCommandHook([
+      {
+        callId: "call-task",
+        childContinuationToken: "child-token",
+        childSessionId: "child-session",
+        event: {
+          requests: [
+            {
+              action: { callId: "call-q", input: {}, kind: "tool-call", toolName: "ask" },
+              kind: "question",
+              prompt: "Which?",
+              requestId: "q1",
+            },
+          ],
+          sequence: 1,
+          stepIndex: 2,
+          turnId: "turn-child",
+        },
+        kind: "subagent-input-request",
+        subagentName: "research",
+      },
+      { command: { kind: "ready" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({
+      commandToken: "task-token",
+      initialView: createWorkingView(),
+      wakeToken: "parent-session-token",
+    });
+
+    expect(wakeTaskInputRequestParentStep).toHaveBeenCalledTimes(1);
+    expect(wakeTaskParentStep).not.toHaveBeenCalled();
   });
 
   it("does not wake without a wake token and never wakes twice for one blocked child", async () => {
@@ -159,13 +240,119 @@ describe("taskRunWorkflow", () => {
     });
 
     // input_required wakes once; the second require-input replaces the
-    // batch without leaving the ready state, and completing from ready
-    // does not re-wake.
-    expect(wakeTaskParentStep).toHaveBeenCalledTimes(1);
+    // batch without leaving the ready state, while terminal settlement
+    // still wakes independently after direct HITL responses.
+    expect(wakeTaskParentStep).toHaveBeenCalledTimes(2);
 
     vi.mocked(wakeTaskParentStep).mockClear();
     mockCommandHook([{ command: { data: "done", kind: "complete" }, kind: "task-command" }]);
     await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
     expect(wakeTaskParentStep).not.toHaveBeenCalled();
+  });
+});
+describe("taskRunWorkflow answered input", () => {
+  function requireInput(...requestIds: readonly string[]): TaskRunInboundPayload {
+    return {
+      command: {
+        inputRequests: requestIds.map((requestId) => ({ prompt: requestId, requestId })),
+        kind: "require-input",
+      },
+      kind: "task-command",
+    };
+  }
+
+  function answer(...requestIds: readonly string[]): TaskInboundAnswerInput {
+    return {
+      childContinuationToken: "child-token",
+      inputResponses: requestIds.map((requestId) => ({ requestId, text: "answer" })),
+      kind: "task-answer-input",
+      taskId: "task_abc123",
+    };
+  }
+
+  it("forwards the answer to the child before recording it as unblocked", async () => {
+    vi.mocked(deliverTaskInputResponsesStep).mockResolvedValue("delivered");
+    mockCommandHook([
+      requireInput("q1"),
+      answer("q1"),
+      { command: { data: "done", kind: "complete" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
+
+    expect(deliverTaskInputResponsesStep).toHaveBeenCalledWith({
+      answer: answer("q1"),
+      requestIds: ["q1"],
+    });
+    expect(appendedStatuses()).toEqual(["working", "input_required", "working", "completed"]);
+    const deliveryOrder = vi.mocked(deliverTaskInputResponsesStep).mock.invocationCallOrder[0] ?? 0;
+    const unblockOrder = vi.mocked(appendTaskSnapshotStep).mock.invocationCallOrder[2] ?? 0;
+    expect(deliveryOrder).toBeLessThan(unblockOrder);
+  });
+
+  it("never lets an answer to a superseded batch reach the child", async () => {
+    vi.mocked(deliverTaskInputResponsesStep).mockResolvedValue("delivered");
+    mockCommandHook([
+      requireInput("q1"),
+      requireInput("q2"),
+      answer("q1"),
+      { command: { data: "done", kind: "complete" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
+
+    expect(deliverTaskInputResponsesStep).not.toHaveBeenCalled();
+    expect(appendedStatuses()).toEqual([
+      "working",
+      "input_required",
+      "input_required",
+      "completed",
+    ]);
+  });
+
+  it("stays blocked on the requests an answer did not cover", async () => {
+    vi.mocked(deliverTaskInputResponsesStep).mockResolvedValue("delivered");
+    mockCommandHook([
+      requireInput("q1", "q2"),
+      answer("q1", "unknown"),
+      { command: { data: "done", kind: "complete" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
+
+    expect(deliverTaskInputResponsesStep).toHaveBeenCalledWith({
+      answer: answer("q1", "unknown"),
+      requestIds: ["q1"],
+    });
+    const blockedAgain = vi.mocked(appendTaskSnapshotStep).mock.calls[2]?.[0].view;
+    expect(blockedAgain?.status).toBe("input_required");
+    expect(blockedAgain?.inputRequests).toEqual([{ prompt: "q2", requestId: "q2" }]);
+  });
+
+  it("keeps the task blocked when the child never received the answer", async () => {
+    vi.mocked(deliverTaskInputResponsesStep).mockResolvedValue("unreachable");
+    mockCommandHook([
+      requireInput("q1"),
+      answer("q1"),
+      { command: { data: "done", kind: "complete" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
+
+    expect(appendedStatuses()).toEqual(["working", "input_required", "completed"]);
+  });
+
+  it("ignores an answer addressed to a different task", async () => {
+    vi.mocked(deliverTaskInputResponsesStep).mockResolvedValue("delivered");
+    mockCommandHook([
+      requireInput("q1"),
+      { ...answer("q1"), taskId: "task_other" },
+      { command: { data: "done", kind: "complete" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
+
+    expect(deliverTaskInputResponsesStep).not.toHaveBeenCalled();
+    expect(appendedStatuses()).toEqual(["working", "input_required", "completed"]);
   });
 });

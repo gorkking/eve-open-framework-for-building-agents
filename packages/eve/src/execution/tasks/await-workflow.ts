@@ -2,11 +2,13 @@ import { sleep } from "#compiled/@workflow/core/index.js";
 
 import { postTaskAwaitResultStep, readAwaitedTaskViewsStep } from "#execution/tasks/await-steps.js";
 import { isReadyTaskStatus } from "#tasks/types.js";
+import type { TaskMetadata } from "#tasks/types.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
 /** One awaited task: the model-visible id plus its run's read coordinates. */
 export interface AwaitedTaskRef {
+  readonly metadata: TaskMetadata;
   readonly taskId: string;
   readonly taskRunId: string;
 }

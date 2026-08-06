@@ -8,7 +8,7 @@ import {
   createTaskControlError,
   createTaskViewsResult,
   createUnknownTasksError,
-  findAddressableHandle,
+  findTaskAgentAddress,
   lookupTaskEntries,
   readTaskViews,
 } from "#execution/tasks/control-shared.js";
@@ -35,7 +35,7 @@ import {
   TASK_SEND_TOOL_NAME,
 } from "#runtime/framework-tools/tasks.js";
 import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
-import { isReadyTaskStatus, type TaskView } from "#tasks/types.js";
+import { isReadyTaskStatus, isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
 import { suppressAwaitedTaskWakes } from "#tasks/wake-suppression.js";
 
 export {
@@ -71,6 +71,7 @@ export async function executeTaskControlAction(input: {
   readonly action: RuntimeToolCallActionRequest;
   readonly bundle: CompiledBundle;
   readonly parentContinuationToken: string | undefined;
+  readonly parentStepIndex?: number;
   readonly parentTurnId: string;
   readonly session: RuntimeSession;
 }): Promise<{
@@ -103,9 +104,10 @@ export async function executeTaskControlAction(input: {
       return { result: createTaskViewsResult(action, views), session };
     }
     case TASK_CANCEL_TOOL_NAME: {
-      const views = await Promise.all(
-        entries.map((entry) => cancelOneTask({ bundle: input.bundle, entry, session })),
-      );
+      const views: TaskView[] = [];
+      for (const entry of entries) {
+        views.push(await cancelOneTask({ bundle: input.bundle, entry, session }));
+      }
       return { result: createTaskViewsResult(action, views), session };
     }
     case TASK_AWAIT_TOOL_NAME: {
@@ -126,6 +128,7 @@ export async function executeTaskControlAction(input: {
         };
       }
       const tasks: AwaitedTaskRef[] = entries.map((entry) => ({
+        metadata: entry.metadata,
         taskId: entry.taskId,
         taskRunId: entry.taskRunId,
       }));
@@ -156,7 +159,10 @@ async function cancelOneTask(input: {
   readonly session: RuntimeSession;
 }): Promise<TaskView> {
   const { entry } = input;
-  await sendTaskCommand({ command: { kind: "cancel" }, commandToken: entry.commandToken });
+  const delivery = await sendTaskCommand({
+    command: { kind: "cancel" },
+    commandToken: entry.commandToken,
+  });
 
   // The `cancelled` state must commit before the executor abort
   // propagates, so a late child result can never revive the task.
@@ -164,15 +170,15 @@ async function cancelOneTask(input: {
   for (
     let attempt = 0;
     attempt < CANCEL_COMMIT_POLL_ATTEMPTS &&
-    !(view !== undefined && isReadyTaskStatus(view.status));
+    !(view !== undefined && isTerminalTaskStatus(view.status));
     attempt += 1
   ) {
     await new Promise((resolve) => setTimeout(resolve, CANCEL_COMMIT_POLL_DELAY_MS));
     view = await readLatestTaskSnapshot({ taskRunId: entry.taskRunId });
   }
-  const settledView = view ?? createPendingTaskView(entry.taskId);
+  const settledView = view ?? createPendingTaskView(entry);
 
-  if (settledView.status === "cancelled") {
+  if (settledView.status === "cancelled" && delivery === "delivered") {
     await propagateTaskCancel({ bundle: input.bundle, session: input.session, view: settledView });
   }
   return settledView;
@@ -188,9 +194,16 @@ async function propagateTaskCancel(input: {
   readonly session: RuntimeSession;
   readonly view: TaskView;
 }): Promise<void> {
-  const childSessionId = input.view.metadata.childSessionId;
-  if (childSessionId === undefined) return;
-  const handle = findAddressableHandle(input.session, childSessionId);
+  const handle = findTaskAgentAddress(input.session, input.view.metadata.agentId);
+  if (handle === undefined) return;
+  const childSessionId = handle.address.sessionId;
+  const childTurnId = input.view.metadata.childTurnId;
+  if (
+    input.view.metadata.childSessionId !== undefined &&
+    input.view.metadata.childSessionId !== childSessionId
+  ) {
+    return;
+  }
 
   try {
     if (handle !== undefined && handle.address.kind === "agent/remote") {
@@ -199,13 +212,32 @@ async function propagateTaskCancel(input: {
         remoteAgentName: handle.identity.name,
         registry: input.bundle.subagentRegistry.subagentsByNodeId,
       });
-      await cancelRemoteAgentTurn({
+      const result = await cancelRemoteAgentTurn({
         remote: { ...resolved, url: handle.address.url },
         sessionId: childSessionId,
+        taskId: input.view.taskId,
+        ...(childTurnId === undefined ? {} : { turnId: childTurnId }),
       });
+      if (result.status === "no_active_turn") {
+        await cancelRemoteAgentTurn({
+          remote: { ...resolved, url: handle.address.url },
+          sessionId: childSessionId,
+          taskId: input.view.taskId,
+        });
+      }
       return;
     }
-    await requestWorkflowTurnCancellation({ sessionId: childSessionId });
+    const result = await requestWorkflowTurnCancellation({
+      sessionId: childSessionId,
+      taskId: input.view.taskId,
+      ...(childTurnId === undefined ? {} : { turnId: childTurnId }),
+    });
+    if (result.status === "no_active_turn") {
+      await requestWorkflowTurnCancellation({
+        sessionId: childSessionId,
+        taskId: input.view.taskId,
+      });
+    }
   } catch (error) {
     logError(log, "task cancel propagation failed; the child may run to completion", error, {
       childSessionId,

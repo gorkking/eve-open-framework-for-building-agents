@@ -41,6 +41,14 @@ curl -X POST https://<deployment>/eve/v1/session \
 # {"continuationToken":"eve:7f3c...","ok":true,"sessionId":"ses_01h..."}
 ```
 
+A caller that may retry a create request can pass its own `operationId` to get create-once semantics. eve derives that operation's continuation token from the id and the authenticated caller, so a retry with the same id returns the session it already created instead of starting a second one, and one caller's id can never address another caller's session. The guarantee holds while that session is still resumable; eve keeps no record of operations whose session has already ended.
+
+```bash
+curl -X POST https://<deployment>/eve/v1/session \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is the weather in Paris?","operationId":"order-4213-research"}'
+```
+
 Stream that session's events as newline-delimited JSON (`application/x-ndjson; charset=utf-8`), one event object per line:
 
 ```bash
