@@ -4,7 +4,7 @@ import type { SandboxAccess, SandboxState } from "#sandbox/state.js";
 import { type ChannelAdapter, getAdapterKind } from "#channel/adapter.js";
 import type { ContextContainer } from "#context/container.js";
 import { contextStorage } from "#context/container.js";
-import { SandboxKey, SessionIdKey } from "#context/keys.js";
+import { SandboxKey, SessionIdKey, SessionKey } from "#context/keys.js";
 import {
   BundleKey,
   ChannelKey,
@@ -22,6 +22,7 @@ export const sandboxProvider: FrameworkContextProvider<SandboxAccess> = {
     const node = getActiveRuntimeNode(ctx);
     const registry = node.sandboxRegistry;
     const sessionId = ctx.require(SessionIdKey);
+    const activeSession = ctx.require(SessionKey);
     const channel = ctx.get(ChannelKey);
     const adapterState = channel?.state as Record<string, unknown> | undefined;
     const sandboxSessionId = (adapterState?.sandboxSessionId as string | undefined) ?? sessionId;
@@ -33,6 +34,12 @@ export const sandboxProvider: FrameworkContextProvider<SandboxAccess> = {
         nodeId: node.nodeId,
         registry,
         runOnSession: async (callback) => await contextStorage.run(ctx, callback),
+        session: {
+          auth: activeSession.auth,
+          id: activeSession.sessionId,
+          parent: activeSession.parent,
+          turn: activeSession.turn,
+        },
         sessionId: sandboxSessionId,
         state: session.sandboxState ?? parentSandboxState ?? null,
         tags: {

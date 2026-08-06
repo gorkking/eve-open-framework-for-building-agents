@@ -25,6 +25,8 @@ import type {
 import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
 import type {
   VercelSandboxBootstrapUseOptions,
+  VercelSandboxSessionCreateContext,
+  VercelSandboxSessionCreateOptions,
   VercelSandboxSessionUseOptions,
 } from "#public/sandbox/vercel-sandbox.js";
 import { WORKSPACE_ROOT } from "#runtime/workspace/types.js";
@@ -54,6 +56,9 @@ export interface CreateVercelSandboxInput {
   readonly createSandbox?: CreateVercelSandbox;
   readonly createOptions?: VercelCreateOptions;
   readonly loadSandboxModule?: () => Promise<VercelModule>;
+  readonly resolveSessionCreateOptions?: (
+    context: VercelSandboxSessionCreateContext,
+  ) => Promise<VercelSandboxSessionCreateOptions> | VercelSandboxSessionCreateOptions;
 }
 /**
  * Creates the Vercel-backed sandbox backend.
@@ -101,7 +106,9 @@ export function createVercelSandbox(
           createOptions,
           createSandbox,
           existingMetadata: createInput.existingMetadata,
+          resolveSessionCreateOptions: input.resolveSessionCreateOptions,
           sandboxModule,
+          session: createInput.session,
           sessionKey: createInput.sessionKey,
           snapshotId: template?.snapshotId,
           tags,
@@ -357,7 +364,11 @@ interface EnsureSessionInput {
   readonly createOptions: VercelCreateOptions;
   readonly createSandbox: CreateVercelSandbox;
   readonly existingMetadata?: Record<string, unknown>;
+  readonly resolveSessionCreateOptions?: (
+    context: VercelSandboxSessionCreateContext,
+  ) => Promise<VercelSandboxSessionCreateOptions> | VercelSandboxSessionCreateOptions;
   readonly sandboxModule: VercelModule;
+  readonly session?: VercelSandboxSessionCreateContext["session"];
   readonly sessionKey: string;
   readonly snapshotId?: string;
   readonly tags: Record<string, string> | undefined;
@@ -381,7 +392,14 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
     return { created: false, sandbox: existing };
   }
 
-  const createParams = createSessionCreateParams(input, sandboxName);
+  let sessionCreateOptions: VercelSandboxSessionCreateOptions | undefined;
+  if (input.resolveSessionCreateOptions !== undefined) {
+    if (input.session === undefined) {
+      throw new Error("Vercel session create options require active session metadata");
+    }
+    sessionCreateOptions = await input.resolveSessionCreateOptions({ session: input.session });
+  }
+  const createParams = createSessionCreateParams(input, sandboxName, sessionCreateOptions);
   if (input.tags !== undefined) {
     createParams.tags = input.tags;
   }
@@ -398,10 +416,12 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
 function createSessionCreateParams(
   input: EnsureSessionInput,
   sandboxName: string,
+  sessionCreateOptions: VercelSandboxSessionCreateOptions = {},
 ): VercelSandboxCreateParams {
+  const createOptions = { ...input.createOptions, ...sessionCreateOptions };
   if (input.snapshotId === undefined) {
     return withBaseSetupNetworkPolicy({
-      ...input.createOptions,
+      ...createOptions,
       name: sandboxName,
       persistent: true,
     });
@@ -417,12 +437,12 @@ function createSessionCreateParams(
     image: _image,
     runtime: _runtime,
     source: _source,
-    ...sessionCreateOptions
-  } = input.createOptions as VercelCreateOptions &
+    ...baseSessionCreateOptions
+  } = createOptions as VercelCreateOptions &
     Partial<Record<"image" | "runtime" | "source", unknown>>;
 
   return {
-    ...sessionCreateOptions,
+    ...baseSessionCreateOptions,
     name: sandboxName,
     persistent: true,
     source: { snapshotId: input.snapshotId, type: "snapshot" as const },

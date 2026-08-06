@@ -1,9 +1,10 @@
 import { Readable } from "node:stream";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { SandboxTemplateNotProvisionedError } from "#public/definitions/sandbox-backend.js";
 import { vercel } from "#public/sandbox/backends/vercel.js";
+import { Drive } from "#public/sandbox/vercel.js";
 import { createVercelSandbox } from "#execution/sandbox/bindings/vercel.js";
 
 // The credential fallback consults the developer's Vercel CLI auth and the
@@ -748,6 +749,49 @@ describe("createVercelSandbox", () => {
     expect(templateSandbox.update).toHaveBeenCalledWith({ networkPolicy: "deny-all" });
   });
 
+  it("resolves drive mounts only for a fresh live session", async () => {
+    const templateSandbox = createMockSandbox({ name: "template" });
+    const sessionSandbox = createMockSandbox({ name: "session" });
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(templateSandbox)
+      .mockResolvedValueOnce(sessionSandbox);
+    const resolveSessionCreateOptions = vi.fn(async ({ session }) => ({
+      mounts: {
+        "/workspace": { drive: `e0-${session.id}`, mode: "read-write" as const },
+      },
+    }));
+    const backend = createTestVercelSandbox({
+      loadSandboxModule: async () =>
+        ({ Sandbox: { create, get: vi.fn().mockResolvedValue(null) } }) as never,
+      resolveSessionCreateOptions,
+    });
+
+    await backend.prewarm({
+      runtimeContext: { appRoot: "/tmp/test-app-root" },
+      seedFiles: [],
+      templateKey: "template-key",
+    });
+    await backend.create({
+      runtimeContext: { appRoot: "/tmp/test-app-root" },
+      session: { id: "session-123" } as never,
+      sessionKey: "session-key",
+      templateKey: "template-key",
+    });
+
+    expect(resolveSessionCreateOptions).toHaveBeenCalledWith({
+      session: expect.objectContaining({ id: "session-123" }),
+    });
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("mounts");
+    expect(create.mock.calls[1]?.[0]).toMatchObject({
+      mounts: {
+        "/workspace": { drive: "e0-session-123", mode: "read-write" },
+      },
+      name: "session-key",
+      persistent: true,
+    });
+  });
+
   it("forwards author source to template create as the base layer", async () => {
     /*
      * The real Vercel SDK pre-populates `currentSnapshotId` on a
@@ -1075,8 +1119,12 @@ describe("createVercelSandbox", () => {
       },
     };
 
+    const resolveSessionCreateOptions = vi.fn(() => ({
+      mounts: { "/workspace": { drive: "e0-session-123" } },
+    }));
     const backend = createTestVercelSandbox({
       loadSandboxModule: async () => sandboxModule as never,
+      resolveSessionCreateOptions,
     });
 
     await backend.prewarm({
@@ -1088,6 +1136,7 @@ describe("createVercelSandbox", () => {
     const handle = await backend.create({
       existingMetadata: { sandboxName: "deleted-sandbox" },
       runtimeContext: { appRoot: "/tmp/test-app-root" },
+      session: { id: "session-123" } as never,
       sessionKey: "session-key",
       templateKey: "template-key",
     });
@@ -1101,10 +1150,12 @@ describe("createVercelSandbox", () => {
     expect(sandboxModule.Sandbox.create).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "deleted-sandbox",
+        mounts: { "/workspace": { drive: "e0-session-123" } },
         persistent: true,
         source: { snapshotId: "template-snapshot", type: "snapshot" },
       }),
     );
+    expect(resolveSessionCreateOptions).toHaveBeenCalledOnce();
     expect(handle.session).toBeDefined();
   });
 
@@ -1125,9 +1176,13 @@ describe("createVercelSandbox", () => {
       },
     };
 
+    const resolveSessionCreateOptions = vi.fn(() => ({
+      mounts: { "/workspace": { drive: "must-not-resolve" } },
+    }));
     const backend = createTestVercelSandbox({
       createOptions: { networkPolicy: "deny-all" },
       loadSandboxModule: async () => sandboxModule as never,
+      resolveSessionCreateOptions,
     });
 
     await backend.prewarm({
@@ -1143,6 +1198,7 @@ describe("createVercelSandbox", () => {
     });
 
     expect(sandboxModule.Sandbox.create).not.toHaveBeenCalled();
+    expect(resolveSessionCreateOptions).not.toHaveBeenCalled();
     // The factory's networkPolicy must NOT leak into a sandbox.update on resume.
     const updateCalls = vi.mocked(sessionSandbox.update).mock.calls;
     for (const call of updateCalls) {
@@ -1779,5 +1835,16 @@ describe("vercel (public factory)", () => {
     expect(backend.name).toBe("vercel");
     expect(typeof backend.create).toBe("function");
     expect(typeof backend.prewarm).toBe("function");
+  });
+
+  it("accepts session-scoped drive mounts", () => {
+    const backend = vercel({
+      sessionCreateOptions: ({ session }) => ({
+        mounts: { "/workspace": { drive: `e0-${session.id}` } },
+      }),
+    });
+
+    expectTypeOf(Drive.getOrCreate).toBeFunction();
+    expect(backend.name).toBe("vercel");
   });
 });

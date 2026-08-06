@@ -1,4 +1,5 @@
 import type * as Vercel from "#compiled/@vercel/sandbox/index.js";
+import type { SessionContext } from "#public/definitions/callback-context.js";
 
 type VercelCreateOptions = NonNullable<Parameters<typeof Vercel.Sandbox.create>[0]>;
 
@@ -9,15 +10,16 @@ type VercelSandboxInternalCreateOptions = {
 };
 
 type VercelSandboxAuthorCreateOptions<T> = T extends unknown
-  ? Omit<T, "name" | "onResume" | "persistent" | "runtime" | "signal"> &
+  ? Omit<T, "mounts" | "name" | "onResume" | "persistent" | "runtime" | "signal"> &
       VercelSandboxInternalCreateOptions
   : never;
 
 /**
- * Options accepted by `vercel(opts)`. Forwarded to Vercel
+ * Static creation options accepted by `vercel(opts)`. Forwarded to Vercel
  * Sandbox creation for every fresh sandbox the framework creates
  * (template at prewarm time, session at first-time session-create).
- * Skipped on resume (`Sandbox.get`) since no create happens there.
+ * Skipped on resume (`Sandbox.get`) since no create happens there. Drive mounts
+ * are session-specific and therefore configured through `sessionCreateOptions`.
  *
  * `networkPolicy` is deferred until after framework-owned base setup
  * for fresh templates and template-less sessions, so eve can install
@@ -43,6 +45,21 @@ type VercelSandboxAuthorCreateOptions<T> = T extends unknown
  * definition so its template key changes).
  */
 export type VercelSandboxCreateOptions = VercelSandboxAuthorCreateOptions<VercelCreateOptions>;
+
+/** Options applied only when eve creates a live Vercel session sandbox. */
+export type VercelSandboxSessionCreateOptions = Pick<VercelCreateOptions, "mounts">;
+
+/** Context for resolving session-specific Vercel create options. */
+export interface VercelSandboxSessionCreateContext {
+  readonly session: SessionContext["session"];
+}
+
+/** Full options accepted by `vercel()` and `defaultBackend({ vercel })`. */
+export type VercelSandboxOptions = VercelSandboxCreateOptions & {
+  readonly sessionCreateOptions?: (
+    context: VercelSandboxSessionCreateContext,
+  ) => Promise<VercelSandboxSessionCreateOptions> | VercelSandboxSessionCreateOptions;
+};
 
 /**
  * Options accepted by the Vercel backend's `bootstrap({ use })` hook.

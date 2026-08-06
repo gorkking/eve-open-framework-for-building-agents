@@ -4,7 +4,7 @@ import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
 import type { HarnessSession } from "#harness/types.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
-import { SessionIdKey } from "#context/keys.js";
+import { SessionIdKey, SessionKey } from "#context/keys.js";
 import {
   BundleKey,
   ChannelKey,
@@ -70,6 +70,11 @@ describe("sandboxProvider", () => {
     ctx.set(BundleKey, createBundle({ agentName: "weather-agent", registry }));
     ctx.set(ChannelKey, { kind: "slack" });
     ctx.set(SessionIdKey, "session_1");
+    ctx.set(SessionKey, {
+      auth: { current: null, initiator: null },
+      sessionId: "session_1",
+      turn: { id: "turn_1", sequence: 0 },
+    });
 
     await sandboxProvider.create(ctx, createHarnessSession());
 
@@ -80,6 +85,7 @@ describe("sandboxProvider", () => {
           channel: "slack",
           sessionId: "session_1",
         },
+        session: expect.objectContaining({ id: "session_1" }),
       }),
     );
   });

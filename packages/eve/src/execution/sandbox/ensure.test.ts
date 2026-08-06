@@ -23,6 +23,7 @@ import {
 } from "#execution/sandbox/active-handles.js";
 import { ensureSandboxAccess } from "#execution/sandbox/ensure.js";
 import type { SandboxState } from "#sandbox/state.js";
+import type { SessionContext } from "#public/definitions/callback-context.js";
 
 const mocks = vi.hoisted(() => ({
   prewarmAppSandboxes: vi.fn(async () => {}),
@@ -83,6 +84,7 @@ async function ensure(input: {
   readonly compiledArtifactsSource?: RuntimeCompiledArtifactsSource;
   readonly runOnSession?: (callback: () => Promise<void>) => Promise<void>;
   readonly registry: RuntimeSandboxRegistry;
+  readonly session?: SessionContext["session"];
   readonly state?: SandboxState;
   readonly tags?: Record<string, string>;
 }) {
@@ -92,6 +94,7 @@ async function ensure(input: {
     nodeId: "__root__",
     registry: input.registry,
     runOnSession: input.runOnSession,
+    session: input.session,
     sessionId: "session_1",
     state: input.state ?? null,
     tags: input.tags,
@@ -255,6 +258,11 @@ describe("ensureSandboxAccess", () => {
     const access = await ensure({
       registry,
       runOnSession: async (callback) => await contextStorage.run(ctx, callback),
+      session: {
+        auth: session.auth,
+        id: session.sessionId,
+        turn: session.turn,
+      },
     });
     await access.get();
 
@@ -266,6 +274,11 @@ describe("ensureSandboxAccess", () => {
       }),
       use: expect.any(Function),
     });
+    expect(backend.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: expect.objectContaining({ id: "session_1" }),
+      }),
+    );
   });
 
   it("reattaches with persisted metadata and skips onSession when the session key matches", async () => {

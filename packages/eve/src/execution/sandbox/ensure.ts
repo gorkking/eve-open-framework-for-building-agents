@@ -1,4 +1,5 @@
 import type { SandboxSession } from "#public/definitions/sandbox.js";
+import type { SessionContext } from "#public/definitions/callback-context.js";
 import type {
   SandboxBackend,
   SandboxBackendCreateInput,
@@ -30,6 +31,7 @@ export interface EnsureSandboxAccessInput {
   readonly registry: RuntimeSandboxRegistry;
   readonly sessionId: string;
   readonly runOnSession?: (callback: () => Promise<void>) => Promise<void>;
+  readonly session?: SessionContext["session"];
   readonly state: SandboxState | null;
   readonly tags?: SandboxBackendTags;
 }
@@ -122,6 +124,7 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
     const createInput: SandboxBackendCreateInput = {
       existingMetadata: reattachSession?.metadata,
       runtimeContext: { appRoot },
+      session: input.session,
       sessionKey: keys.sessionKey,
       tags: input.tags,
       templateKey: keys.templateKey,

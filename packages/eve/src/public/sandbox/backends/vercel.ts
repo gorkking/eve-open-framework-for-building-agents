@@ -2,7 +2,7 @@ import { createVercelSandbox } from "#execution/sandbox/bindings/vercel.js";
 import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";
 import type {
   VercelSandboxBootstrapUseOptions,
-  VercelSandboxCreateOptions,
+  VercelSandboxOptions,
   VercelSandboxSessionUseOptions,
 } from "#public/sandbox/vercel-sandbox.js";
 
@@ -31,9 +31,15 @@ import type {
  * `onSession({ use })` applies its options to the live session via the
  * SDK's `update` under the hood, overriding any overlapping field
  * from `opts`.
+ *
+ * `sessionCreateOptions({ session })` runs only when eve must create a fresh
+ * live session sandbox. Use it for creation-only values such as drive mounts;
+ * it is skipped for template prewarm and when `Sandbox.get` finds the existing
+ * session sandbox.
  */
 export function vercel(
-  opts?: VercelSandboxCreateOptions,
+  opts?: VercelSandboxOptions,
 ): SandboxBackend<VercelSandboxBootstrapUseOptions, VercelSandboxSessionUseOptions> {
-  return createVercelSandbox({ createOptions: opts });
+  const { sessionCreateOptions, ...createOptions } = opts ?? {};
+  return createVercelSandbox({ createOptions, resolveSessionCreateOptions: sessionCreateOptions });
 }

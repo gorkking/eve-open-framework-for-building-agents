@@ -1,5 +1,6 @@
 import type { SandboxBootstrapContext, SandboxSessionUseFn } from "#shared/sandbox-definition.js";
 import type { SandboxSession } from "#shared/sandbox-session.js";
+import type { SessionContext } from "#public/definitions/callback-context.js";
 
 /**
  * Live sandbox handle returned by a {@link SandboxBackend}.
@@ -80,6 +81,8 @@ export interface SandboxBackendCreateInput {
   readonly templateKey: string | null;
   readonly sessionKey: string;
   readonly existingMetadata?: Record<string, unknown>;
+  /** Active authored session metadata available to provider create hooks. */
+  readonly session?: SessionContext["session"];
   /**
    * Runtime tags the backend should attach to sandbox resources when
    * the underlying provider supports tags.
