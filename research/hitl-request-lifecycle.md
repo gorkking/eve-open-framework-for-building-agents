@@ -223,37 +223,23 @@ only a client-side optimistic update
 
 ## Closed when this ships
 
-- [#1224](https://github.com/vercel/eve/issues/1224): freeform reply to a
-  pending approval mutes the session forever. Rule 1 deletes the deferral
-  path; the message runs and the approval stays answerable. The issue asked
-  for deny-on-freeform instead — the wedge is gone either way, without
-  destroying the pending call.
-- [#1201](https://github.com/vercel/eve/issues/1201): approval silently
-  dropped when a step also requests a subagent call, then
-  `MissingToolResultsError` on resume. The request-created rule mandates
-  exactly the fix the issue describes: persist and emit the request, or fail
-  the turn.
-- [#1608](https://github.com/vercel/eve/issues/1608): a duplicate input
-  response hits a stale proxy mapping and fails the parent with
-  `HookNotFoundError`. Routes close on settlement or
-  `input.dismissed(route-lost)`; a response to a closed route is a stale
-  response, rejected visibly instead of resumed into a disposed hook.
+Fixes [#1224](https://github.com/vercel/eve/issues/1224) - freeform reply to a
+pending approval mutes the session forever.
+Fixes [#1201](https://github.com/vercel/eve/issues/1201) - approval silently
+dropped when a step also requests a subagent call.
+Fixes [#1608](https://github.com/vercel/eve/issues/1608) - duplicate input
+response resumes a disposed child hook and fails the parent.
 
 ## Related, not closed by this
 
-- [#786](https://github.com/vercel/eve/issues/786): the
-  consumed-as-answer-to-a-later-prompt half is fixed by ordered evaluation.
-  The steering half — applying a mid-turn message at the current turn's next
-  step boundary — is out of scope here.
-- [#1095](https://github.com/vercel/eve/issues/1095): recording the user's
-  answer on the durable stream is PR #1368's settlement events. Rule 3
-  requires them but this contract does not define them.
-- [#1021](https://github.com/vercel/eve/issues/1021): responder authorization,
-  owned by PR #1368.
-- [#1658](https://github.com/vercel/eve/issues/1658): denial failing the
-  session on OpenAI is a provider transcript-shape bug. The late-splice
-  acceptance gate will exercise the same territory but this contract does not
-  fix it.
+- [#786](https://github.com/vercel/eve/issues/786) - consumed-as-answer half
+  is fixed; mid-turn steering is out of scope.
+- [#1095](https://github.com/vercel/eve/issues/1095) - settlement events are
+  PR #1368.
+- [#1021](https://github.com/vercel/eve/issues/1021) - responder
+  authorization, owned by PR #1368.
+- [#1658](https://github.com/vercel/eve/issues/1658) - OpenAI provider
+  transcript-shape bug; not fixed here.
 
 ## Related work
 
