@@ -230,6 +230,12 @@ prompt the user saw and which reply targets it. That mapped reply is a
 response with full attribution, identical to a button click. The runtime
 contract stays structured-only.
 
+Future work: an opt-in NLU step may classify a plain reply into a structured
+response. Its input is restricted to the verified sender's message and the
+rendered request — never the agent's ambient context, so injected tool output
+cannot forge consent — and its output is a response attributed to that sender.
+Until then, natural language is handled semantically by the agent in the turn.
+
 #### AP-7: Response and message arrive together
 
 - **Given:** A's approval request is the last open request in its assistant-turn
