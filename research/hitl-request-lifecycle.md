@@ -13,7 +13,7 @@ response.
 
 ```text
 approval waits
-  -> user sends unrelated message
+  -> user sends a message
   -> eve hides the message in deferredStepInput
   -> eve waits for the approval again
 ```
@@ -23,9 +23,9 @@ The session looks broken.
 
 This proposal sets three rules:
 
-1. **Pending requests never block the conversation.** An unrelated message runs
-   as a normal turn. The request just stays unanswered.
-2. **Do not steal someone else's request.** An unrelated message cannot approve,
+1. **Pending requests never block the conversation.** A message runs as a
+   normal turn. The request just stays unanswered.
+2. **Do not steal someone else's request.** A message cannot approve,
    deny, cancel, dismiss, or replace an existing HITL request.
 3. **Show request closure.** Emit `input.requested` before waiting, then emit a
    settlement event or `input.dismissed` when the request stops being usable.
@@ -50,9 +50,15 @@ Terms used below:
 - **Open:** the request can still be answered.
 - **Settled:** an accepted response closed the request.
 - **Dismissed:** the request closed without an accepted response.
-- **Unrelated message:** a message not accepted as a response to the request.
-- **Correlated response:** a response naming one open `requestId`, or plain text
-  that matches exactly one open request under that request's text policy.
+- **Response:** a structured `InputResponse` naming an open `requestId`. Only
+  channels construct responses, from an explicit user interaction with the
+  rendered request — a button, select, modal, or a channel-owned reply mapping
+  where the channel knows exactly which prompt the user saw.
+- **Message:** any delivery content that is not a response. The runtime never
+  reinterprets message text as a response. Whether a message semantically
+  relates to an open request is the agent's job inside the turn, not an
+  adjudication the runtime performs.
+- **Correlated response:** a response naming one open `requestId`.
 - **Accepted response:** a correlated response accepted by the gate for that
   decision. Allow uses the tool's response authorizer. Cancel requires an
   authenticated actor and bypasses the Allow authorizer. Question answers and
@@ -191,45 +197,45 @@ after closure.
   B, then a normal turn's model output, then `session.waiting`. No settlement
   or dismissal event appears for the request.
 
-#### AP-4: Originating actor sends an unrelated message
+#### AP-4: Originating actor sends a message
 
 - **Given:** A's approval request is open.
-- **When:** A sends an unrelated message.
+- **When:** A sends a message.
 - **Then:** The approval remains open. The message runs as a normal turn.
 - **Observed:** Eve emits `message.received`; it emits no settlement or
   `input.dismissed` event for the approval.
 
-#### AP-5: Another actor sends an unrelated message
+#### AP-5: Another actor sends a message
 
 - **Given:** A's approval request is open.
-- **When:** B sends an unrelated message.
+- **When:** B sends a message.
 - **Then:** The approval remains open and owned by its original session. B's
   message runs as a normal turn.
 - **Observed:** Eve emits `message.received` for B; it emits no settlement or
   `input.dismissed` event for A's approval.
 
-#### AP-6: Plain text looks like an approval response
+#### AP-6: Plain text is never a response
 
 - **Given:** A's approval request is open.
 - **When:** an actor sends the plain message `approve`.
-- **Then:** Eve treats it as an approval response only when exactly one open
-  request matches, that request allows text matching, and its response policy
-  accepts the actor. Zero or multiple matches settle no request through text
-  matching; Eve then applies each request's unrelated-message rule.
-- **Observed:** Text matching alone never settles the request.
+- **Then:** That is a message, not a response. The runtime does not match
+  message text against open requests. AP-4 or AP-5 applies: the request stays
+  open, and the agent's turn can tell the actor how to actually respond.
+- **Observed:** `message.received`, model output, `session.waiting`; no request
+  event of any kind.
 
-When zero or multiple requests match, Eve settles none and then applies each
-open request's unrelated-message rule. An originating actor may therefore
-supersede their question under Q-2 while approvals remain open.
+A channel that renders requests as text — SMS, a comment thread — may map an
+explicit reply to a structured response in its adapter, because it knows which
+prompt the user saw and which reply targets it. That mapped reply is a
+response with full attribution, identical to a button click. The runtime
+contract stays structured-only.
 
-#### AP-7: Response and unrelated message arrive together
+#### AP-7: Response and message arrive together
 
 - **Given:** A's approval request is the last open request in its assistant-turn
   input batch.
-- **When:** one delivery contains an accepted response plus an unrelated
-  message.
-- **Then:** Eve settles the approval and runs the unrelated message as a normal
-  turn. Each part is processed exactly once.
+- **When:** one delivery contains an accepted response plus a message.
+- **Then:** Eve settles the approval and runs the message as a normal turn. Each part is processed exactly once.
 - **Observed:** Processing is serialized: `input.responded`, restored batch
   output, batch `action.result` events, resumed assistant output, then
   `message.received`.
@@ -237,8 +243,8 @@ supersede their question under Q-2 while approvals remain open.
 #### AP-7B: Response closes one request but siblings remain open
 
 - **Given:** A's approval belongs to a batch with other open requests.
-- **When:** one delivery contains an accepted approval response plus an
-  unrelated message.
+- **When:** one delivery contains an accepted approval response plus a
+  message.
 - **Then:** Eve settles that approval and runs the message. It keeps the batch's
   stored model output pending and runs no batch tool yet.
 - **Observed:** `input.responded` precedes `message.received`; `action.result`
@@ -264,11 +270,10 @@ supersede their question under Q-2 while approvals remain open.
 - **Observed:** `input.response.rejected(reason: stale)`, then model output,
   then `session.waiting`.
 
-#### AP-10: Stale response and unrelated message arrive together
+#### AP-10: Stale response and message arrive together
 
 - **Given:** an approval request is no longer open.
-- **When:** one delivery contains a response for that request plus an unrelated
-  message.
+- **When:** one delivery contains a response for that request plus a message.
 - **Then:** Eve rejects the stale response and runs the message as a normal
   turn. It changes no request and runs no stale tool call.
 - **Observed:** `input.response.rejected(reason: stale)` precedes
@@ -374,25 +379,26 @@ candidate and never opens a second authorization challenge.
 
 - **Given:** A's question is open and its tool declares that A may supersede it
   with a follow-up.
-- **When:** A sends an unrelated message.
+- **When:** A sends a message.
 - **Then:** The question is dismissed as `superseded`. The message runs as a
-  normal turn.
+  normal turn. If the message was in fact A's answer typed as text, the agent
+  handles it semantically in that turn — the runtime does not guess.
 - **Observed:** `input.dismissed` precedes `message.received`.
 
-#### Q-3: Another actor sends an unrelated message
+#### Q-3: Another actor sends a message
 
 - **Given:** A's question is open.
-- **When:** B sends an unrelated message.
+- **When:** B sends a message.
 - **Then:** A's question remains open. B's message runs as a normal turn.
 - **Observed:** Eve emits `message.received` for B and no closure event for the
   question.
 
-#### Q-4: Accepted answer and unrelated message arrive together
+#### Q-4: Accepted answer and message arrive together
 
 - **Given:** A's question is open.
-- **When:** one delivery contains an accepted answer plus an unrelated message.
+- **When:** one delivery contains an accepted answer plus a message.
 - **Then:** The answer settles the question; supersession does not run. The
-  unrelated message runs after any closing assistant-turn batch work.
+  message runs after any closing assistant-turn batch work.
 - **Observed:** `input.responded` precedes `message.received`.
 
 ### Assistant-turn input batches
@@ -517,7 +523,7 @@ The fallback does not fabricate a verified principal for response policy.
 
 - **Given:** A's connection authorization challenge is open with an
   `authorizationId` bound to A and the blocked operation.
-- **When:** A or B sends an unrelated message.
+- **When:** A or B sends a message.
 - **Then:** The challenge remains open. The message runs as a normal turn.
 - **Observed:** Eve emits `message.received` and no
   `authorization.completed` event.
@@ -718,7 +724,7 @@ The current harness marks approvals as `"required"` and questions as
 `"dismissable"`, without considering the current actor
 ([`classifyInputRequest`](../packages/eve/src/harness/input-request-class.ts#L27-L44)).
 
-An unrelated message behind a required request is compacted into
+A message behind a required request is compacted into
 `deferredStepInput`; the model is not called and the session waits again
 ([`input-requests.ts`](../packages/eve/src/harness/input-requests.ts#L150-L162),
 [`tool-loop.ts`](../packages/eve/src/harness/tool-loop.ts#L680-L700)).
@@ -784,7 +790,7 @@ response resumes a disposed child hook and fails the parent.
 Five PRs plus the eval matrix. Each lands alone, each has its own test gate.
 
 The decision logic stays a small pure function — settle correlated authorized
-responses, reject stale ones, let unrelated messages run, apply question
+responses, reject stale ones, let messages run, apply question
 supersession — extracted from `resolvePendingInput` in the PR that uses it,
 not staged as a standalone module. A module with no consumer is dead code
 waiting to drift, and evals must not import it: an eval that asserts the
@@ -811,7 +817,7 @@ refactor, verified by the existing suite passing unchanged.
 
 Rewrite `resolvePendingInput`: the decision logic becomes a pure function in
 the same area; transcript assembly applies its decisions. Deletes the
-`deferredStepInput` gating path. Unrelated messages run; requests stay
+`deferredStepInput` gating path. Messages run; requests stay
 pending; late responses restore their assistant-turn batch; batches close as a
 unit; `ask_question` supersession; stale means not-pending. Unit tests are the scenario matrix as
 literal tables. Fixes #1224 and the consumed-as-answer half of #786.
@@ -840,7 +846,7 @@ dimensions are coverage tags, not a Cartesian product:
 | Players        | single-player, two principals                                 |
 | Request kind   | approval, question, session-limit, authorization              |
 | Batch          | single request, assistant-turn input batch                    |
-| Delivery       | structured response, plain message, response + message        |
+| Delivery       | structured response, message, response + message              |
 | Actor relation | originating actor, other actor                                |
 | Timing         | while waiting, after intervening turns, after closure (stale) |
 
