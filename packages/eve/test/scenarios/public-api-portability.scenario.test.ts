@@ -46,7 +46,7 @@ const PORTABILITY_CASES: readonly PortabilityCase[] = [
 import { DockerSandbox } from "eve/sandbox/docker";
 import { JustBashSandbox } from "eve/sandbox/just-bash";
 import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
-import { VercelSandbox } from "eve/sandbox/vercel";
+import { Drive, VercelSandbox } from "eve/sandbox/vercel";
 import {
   defineSandboxAdapter,
   defineSandboxTemplate,
@@ -57,6 +57,7 @@ import {
 void DockerSandbox;
 void JustBashSandbox;
 void MicrosandboxSandbox;
+void Drive;
 void defineSandboxAdapter;
 void defineSandboxTemplate;
 void ({} as Sandbox);

@@ -16,8 +16,13 @@ import type {
 } from "#public/sandbox/vercel-sandbox.js";
 import { parseJsonObject } from "#shared/json.js";
 
+export { Drive } from "#compiled/@vercel/sandbox/index.js";
+
 export type {
   VercelSandboxCreateOptions,
+  VercelSandboxMount,
+  VercelSandboxMountMode,
+  VercelSandboxMounts,
   VercelSandboxSessionOptions,
   VercelSandboxSource,
 } from "#public/sandbox/vercel-sandbox.js";
@@ -25,12 +30,14 @@ export type {
 /**
  * Build-time options for a Vercel Sandbox template.
  */
-export type VercelSandboxTemplateOptions = VercelSandboxCreateOptions & {
+export type VercelSandboxTemplateOptions = WithoutMounts<VercelSandboxCreateOptions> & {
   /**
    * Runs during template prewarm after eve hydrates the managed workspace.
    */
   readonly prepare?: (sandbox: Sandbox) => Promise<void> | void;
 };
+
+type WithoutMounts<T> = T extends unknown ? Omit<T, "mounts"> : never;
 
 /**
  * Options for intentionally sharing a named Vercel Sandbox.
