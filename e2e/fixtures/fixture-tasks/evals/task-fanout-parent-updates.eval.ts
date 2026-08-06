@@ -1,6 +1,8 @@
 import { defineEval, type EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 
+import { sendAndFollowQueuedTurn } from "./shared.js";
+
 const FANOUT_SIZE = 10;
 
 /** Many background tasks complete independently and publish lifecycle updates to their parent. */
@@ -22,8 +24,16 @@ export default defineEval({
       ),
     );
 
-    const updated = new Set(completedTaskUpdates(started, taskIds));
-    let startIndex = t.state.streamIndex;
+    const interactive = await sendAndFollowQueuedTurn(t, "TASK-FANOUT-INTERACTIVE-CHECK");
+    interactive.turn.expectOk();
+    interactive.turn.messageIncludes("TASK-FANOUT-INTERACTIVE-OK");
+    interactive.turn.usedNoTools();
+
+    const updated = new Set([
+      ...completedTaskUpdates(started, taskIds),
+      ...completedTaskUpdates(interactive.turn, taskIds),
+    ]);
+    let startIndex = interactive.session.state.streamIndex;
     for (let attempt = 0; attempt < FANOUT_SIZE && updated.size < FANOUT_SIZE; attempt += 1) {
       const sessionId = t.sessionId;
       if (sessionId === undefined) throw new Error("Task fanout has no parent session id.");

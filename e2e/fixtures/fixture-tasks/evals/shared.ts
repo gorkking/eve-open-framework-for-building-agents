@@ -11,6 +11,11 @@ export interface PendingTaskInput {
   readonly session: SessionDriver;
 }
 
+export interface FollowedQueuedTurn {
+  readonly session: SessionDriver;
+  readonly turn: EveEvalTurn;
+}
+
 /** Waits across server-initiated parent turns for one task-owned input request. */
 export async function waitForTaskInput(
   t: EveEvalContext,
@@ -41,6 +46,28 @@ export function requireBackgroundTaskId(turn: EveEvalTurn): string {
     }
   }
   throw new Error("Turn completed without a background task receipt.");
+}
+
+/** Follows queued server turns until the requested user message owns a turn. */
+export async function sendAndFollowQueuedTurn(
+  t: EveEvalContext,
+  message: string,
+): Promise<FollowedQueuedTurn> {
+  let session: SessionDriver = t;
+  let turn = await session.send(message);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const received = turn.events.some(
+      (event) => event.type === "message.received" && event.data.message === message,
+    );
+    if (received) return { session, turn };
+
+    const sessionId = session.sessionId;
+    if (sessionId === undefined) throw new Error("Queued turn follow-up has no session id.");
+    const live = t.target.watchTurn(sessionId, { startIndex: session.state.streamIndex });
+    turn = await live.result();
+    session = live.session;
+  }
+  throw new Error(`Queued message "${message}" was not received after 20 turns.`);
 }
 
 /** Polls the non-blocking task view until the expected task is completed. */

@@ -1,7 +1,11 @@
-import { defineEval, type EveEvalContext, type EveEvalToolCall, type EveEvalTurn } from "eve/evals";
+import { defineEval, type EveEvalToolCall } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 
-import { requireBackgroundTaskId, waitForCompletedTask } from "./shared.js";
+import {
+  requireBackgroundTaskId,
+  sendAndFollowQueuedTurn,
+  waitForCompletedTask,
+} from "./shared.js";
 
 /** One persistent child session admits at most one nonterminal task. */
 export default defineEval({
@@ -17,7 +21,7 @@ export default defineEval({
     await waitForCompletedTask(t, t, "CHILD-TASK-EXCLUSIVITY-VERIFY", initialTaskId);
 
     t.log("sending two same-batch continuations");
-    const raced = await sendAndFollowQueuedTurn(t, "CHILD-TASK-EXCLUSIVITY-RACE");
+    const { turn: raced } = await sendAndFollowQueuedTurn(t, "CHILD-TASK-EXCLUSIVITY-RACE");
     t.log("same-batch continuation turn settled");
     raced.expectOk();
     raced.messageIncludes("CHILD-TASK-EXCLUSIVITY-RACE-DONE");
@@ -38,21 +42,3 @@ export default defineEval({
     );
   },
 });
-
-async function sendAndFollowQueuedTurn(t: EveEvalContext, message: string): Promise<EveEvalTurn> {
-  let turn = await t.send(message);
-  let startIndex = t.state.streamIndex;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const received = turn.events.some(
-      (event) => event.type === "message.received" && event.data.message === message,
-    );
-    if (received) return turn;
-
-    const sessionId = t.sessionId;
-    if (sessionId === undefined) throw new Error("Queued turn follow-up has no session id.");
-    const live = t.target.watchTurn(sessionId, { startIndex });
-    turn = await live.result();
-    startIndex = live.session.state.streamIndex;
-  }
-  throw new Error(`Queued message "${message}" was not received after five turns.`);
-}

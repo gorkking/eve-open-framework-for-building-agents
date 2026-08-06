@@ -14,6 +14,7 @@ function respond(request: MockModelRequest): MockModelResponse | string {
   if (message.startsWith("Background task ")) return "TASK-NOTIFICATION-ACK";
 
   if (message === "TASK-FANOUT-PARENT-UPDATES") return fanoutTasks(request);
+  if (message === "TASK-FANOUT-INTERACTIVE-CHECK") return "TASK-FANOUT-INTERACTIVE-OK";
 
   if (message.startsWith("TASK-HITL-VERIFY ")) {
     return peekTask(request, "task-hitl-verify", "TASK-HITL-STATUS", message);
