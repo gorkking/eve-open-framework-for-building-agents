@@ -835,6 +835,7 @@ describe("eveChannel — create session idempotency", () => {
     expect(response.status).toBe(202);
     const token = handler.send.mock.calls[0]?.[1]?.continuationToken;
     expect(token).toMatch(/^eve:op:[0-9a-f]{32}$/);
+    expect(handler.send.mock.calls[0]?.[1]?.intent).toBe("create-once");
     expect(handler.resolveActiveSession).toHaveBeenCalledWith({ continuationToken: token });
   });
 

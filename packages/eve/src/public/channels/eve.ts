@@ -297,6 +297,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           continuationToken: token,
           mode: body.mode,
         };
+        if (operationToken !== undefined) sendOptions.intent = "create-once";
         if (forwarded.accepted) {
           sendOptions.initiatorAuth = forwarded.initiatorAuth;
         }
