@@ -250,6 +250,81 @@ response resumes a disposed child hook and fails the parent.
 - [PR #142](https://github.com/vercel/eve/pull/142): Slack-specific responder
   enforcement.
 
+## Staging
+
+Six PRs. Each lands alone, each has its own test gate. The core principle:
+**policy is a pure module, separate from the data it reads and the executors
+that apply it.** The harness applies its decisions; evals import the same
+module and assert them. Neither can drift.
+
+### 1. Acceptance gate
+
+Extend
+[`tool-loop-generate-approval-resume.integration.test.ts`](../packages/eve/src/harness/tool-loop-generate-approval-resume.integration.test.ts)
+with a normal turn between the approval request and its response. This
+falsifies the late-splice bet against real providers before anything is built.
+No runtime changes.
+
+### 2. Policy module, pure
+
+`harness/pending-requests/policy.ts`. Types in, decisions out, no I/O:
+
+```ts
+decide(pending: PendingRequest[], delivery: DeliveryComponent[], actor: Actor)
+  -> Disposition[]
+```
+
+`PendingRequest` covers all kinds: `tool-approval`, `question`,
+`session-limit`, and `authorization`. Unit tests are the full scenario matrix
+below, one case per row. Nothing consumes the module yet.
+
+### 3. Data: per-request collection
+
+Replace the singleton pending batch with a collection keyed by `requestId`:
+kind, suffix-group id, originating actor `{ issuer, principalId }`, stored
+suffix. Resolution behavior stays exactly as today — this PR is a pure data
+refactor, verified by the existing suite passing unchanged.
+
+### 4. Behavior: non-blocking resolution
+
+`resolvePendingInput` consumes the policy module. Deletes the
+`deferredStepInput` gating path. Unrelated messages run; requests stay
+pending; late responses splice; suffix groups close as a unit; `ask_question`
+supersession; stale means not-pending. Fixes #1224 and the consumed-as-answer
+half of #786.
+
+### 5. Lifecycle events
+
+`input.dismissed` with its four reasons; fail-closed request creation on the
+runtime-action and metadata-loss paths (fixes #1201); session-limit re-prompt
+closes its predecessor; authorization parks get boundary parity so clients
+stop hanging (#1525 is the candidate closure here — verify its repro).
+
+### 6. Multiplayer and routing
+
+Actor partitioning in delivery coalescing; proxy routes accumulate per request
+and close only via settlement or `input.dismissed(route-lost)`. Fixes #1608.
+
+### 7. Eval matrix
+
+One e2e fixture with a deterministic mock model and a two-principal custom
+channel. Every cell asserts dispositions from the same policy module plus the
+observed stream events:
+
+| Dimension      | Values                                                         |
+| -------------- | -------------------------------------------------------------- |
+| Players        | single-player, two principals                                  |
+| Request kind   | approval, question, session-limit, authorization               |
+| Batch          | single request, suffix group (approval + question in one step) |
+| Delivery       | structured response, plain message, response + message         |
+| Actor relation | originating actor, other actor                                 |
+| Timing         | while waiting, after intervening turns, after closure (stale)  |
+
+Authorization rows assert event parity only: parks already do not block
+deliveries — `pendingAuthorization` is never read by the resolution path, only
+by the park gate and callback extraction
+([`authorization.ts`](../packages/eve/src/harness/authorization.ts#L277-L289)).
+
 ## Decisions
 
 1. **Unrelated messages run as normal turns.** The pending request stays
