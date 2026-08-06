@@ -29,15 +29,15 @@ export const snapshotV1ToV2: VersionMigration = {
         state: {
           ...state,
           [PENDING_INPUT_BATCH_KEY]: {
-            groups: [
+            batches: [
               {
                 event: batch.event,
-                id: "group_0",
+                id: "batch_0",
                 requests: batch.requests,
                 responseMessages: batch.responseMessages,
               },
             ],
-            nextGroupSequence: 1,
+            nextBatchSequence: 1,
           },
         },
       },

@@ -9,11 +9,11 @@ import { resolveTextToResponses } from "#channel/resolve-text.js";
 import { classifyInputRequest, isApprovalRequest } from "#harness/input-request-class.js";
 import { coalesceTurnInputs } from "#harness/messages.js";
 import {
-  append,
-  oldest as getPendingInputBatch,
-  removeOldest,
-  requestIds,
-  type PendingInputBatch,
+  appendAssistantTurnInputBatch,
+  getOldestAssistantTurnInputBatch as getPendingInputBatch,
+  getPendingInputRequestIdsFromState,
+  removeOldestAssistantTurnInputBatch,
+  type AssistantTurnInputBatch,
   type PendingInputBatchEvent,
 } from "#harness/pending-input-state.js";
 import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
@@ -237,7 +237,7 @@ export function resolvePendingInput(input: {
 }
 
 function resolveTextMessageInput(
-  pendingBatch: PendingInputBatch,
+  pendingBatch: AssistantTurnInputBatch,
   stepInput: StepInput | undefined,
 ): (StepInput & { readonly messageConsumed?: boolean }) | undefined {
   if (typeof stepInput?.message !== "string" || (stepInput.inputResponses?.length ?? 0) > 0) {
@@ -315,7 +315,7 @@ export function clearPendingSessionLimitPrompt(session: HarnessSession): Harness
 }
 
 function hasUnansweredRequiredRequest(input: {
-  readonly pendingBatch: PendingInputBatch;
+  readonly pendingBatch: AssistantTurnInputBatch;
   readonly responses: readonly InputResponse[];
 }): boolean {
   const responseIds = new Set(input.responses.map((response) => response.requestId));
@@ -357,7 +357,7 @@ export function hasPendingInputBatch(state: SessionStateMap | undefined): boolea
  * Returns the request IDs in the currently pending HITL batch.
  */
 export function getPendingInputRequestIds(state: SessionStateMap | undefined): ReadonlySet<string> {
-  return requestIds(state);
+  return getPendingInputRequestIdsFromState(state);
 }
 
 /**
@@ -369,11 +369,11 @@ export function setPendingInputBatch(input: {
   readonly responseMessages: readonly ModelMessage[];
   readonly session: HarnessSession;
 }): HarnessSession {
-  return append(input);
+  return appendAssistantTurnInputBatch(input);
 }
 
 function clearPendingInputBatch(session: HarnessSession): HarnessSession {
-  return removeOldest(session);
+  return removeOldestAssistantTurnInputBatch(session);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +434,7 @@ export function getApprovedTools(session: HarnessSession): ReadonlySet<string> {
  * instead of the bare tool name.
  */
 function recordApprovedTools(input: {
-  readonly pendingBatch: PendingInputBatch;
+  readonly pendingBatch: AssistantTurnInputBatch;
   readonly resolveApprovalKey?: (request: InputRequest) => string | undefined;
   readonly responses: readonly InputResponse[];
   readonly session: HarnessSession;
@@ -508,7 +508,7 @@ function resolveApprovalOutcome(response: InputResponse | undefined): {
  * the stream records denials that otherwise live only in model history.
  */
 function buildRejectedActionBatch(
-  batch: PendingInputBatch,
+  batch: AssistantTurnInputBatch,
   responses: readonly InputResponse[],
 ): RejectedActionBatch | undefined {
   if (batch.event === undefined) {
@@ -550,7 +550,7 @@ function buildRejectedActionBatch(
 }
 
 function buildToolResponseParts(
-  batch: PendingInputBatch,
+  batch: AssistantTurnInputBatch,
   responses: readonly InputResponse[],
 ): ToolResponsePart[] {
   const responseMap = new Map(responses.map((r) => [r.requestId, r]));
