@@ -885,10 +885,17 @@ and close only via settlement or `input.dismissed(route-lost)`. Fixes #1608.
 
 ### 6. Eval matrix
 
-One e2e fixture with a deterministic mock model and a two-principal custom
-channel. It covers every applicable normative scenario ID. Expected event
-sequences are written literally and never computed from runtime code. These
-dimensions are coverage tags, not a Cartesian product:
+The scenario evals are checked in beside this contract, working backwards:
+[`e2e/fixtures/agent-tools-hitl/evals/lifecycle/`](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md)
+holds one eval per expressible scenario flow, gated by
+`EVE_HITL_LIFECYCLE_CONTRACT=1` and skipped until the behavior and
+lifecycle-event stages land. `coverage.md` maps every scenario ID to its
+owner: a lifecycle eval, a unit or integration tier, or the blocking
+dependency (two-principal channel, PR #1368 Cancel/candidates, session-limit
+and subagent fixtures). Multiplayer rows need the two-principal custom
+channel from the routing stage. Expected event sequences are written
+literally and never computed from runtime code. These dimensions are coverage
+tags, not a Cartesian product:
 
 | Dimension      | Values                                                        |
 | -------------- | ------------------------------------------------------------- |
