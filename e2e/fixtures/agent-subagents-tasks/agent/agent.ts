@@ -13,23 +13,28 @@ function respond(request: MockModelRequest): MockModelResponse | string {
   const message = request.lastUserMessage ?? "";
   if (message.startsWith("Background task ")) return "TASK-NOTIFICATION-ACK";
 
-  if (message.startsWith("FINDING-01-VERIFY ")) {
-    return peekTask(request, "finding01-verify", "FINDING-01-STATUS", message);
+  if (message.startsWith("TASK-HITL-VERIFY ")) {
+    return peekTask(request, "task-hitl-verify", "TASK-HITL-STATUS", message);
   }
-  if (message.startsWith("FINDING-04-VERIFY ")) {
-    return peekTask(request, "finding04-verify", "FINDING-04-STATUS", message);
+  if (message.startsWith("TASK-INPUT-BATCH-VERIFY ")) {
+    return peekTask(request, "task-input-batch-verify", "TASK-INPUT-BATCH-STATUS", message);
   }
-  if (message.startsWith("FINDING-05-VERIFY ")) {
-    return peekTask(request, "finding05-verify", "FINDING-05-STATUS", message);
+  if (message.startsWith("CHILD-TASK-EXCLUSIVITY-VERIFY ")) {
+    return peekTask(
+      request,
+      "child-task-exclusivity-verify",
+      "CHILD-TASK-EXCLUSIVITY-STATUS",
+      message,
+    );
   }
-  if (message === "FINDING-01-DIRECT-HITL") {
-    return startApprovalWorker(request, "finding01-worker", "FINDING-01-STARTED");
+  if (message === "TASK-HITL-ROUTING") {
+    return startApprovalWorker(request, "task-hitl-worker", "TASK-HITL-STARTED");
   }
-  if (message === "FINDING-04-STALE-ANSWER") {
-    return startApprovalWorker(request, "finding04-worker", "FINDING-04-STARTED");
+  if (message === "TASK-INPUT-BATCH-ORDERING") {
+    return startApprovalWorker(request, "task-input-batch-worker", "TASK-INPUT-BATCH-STARTED");
   }
-  if (message === "FINDING-05-SETUP") return setupBusyWorker(request);
-  if (message === "FINDING-05-RACE") return raceBusyWorker(request);
+  if (message === "CHILD-TASK-EXCLUSIVITY-SETUP") return setupBusyWorker(request);
+  if (message === "CHILD-TASK-EXCLUSIVITY-RACE") return raceBusyWorker(request);
 
   return `Mock reply: ${message}`;
 }
@@ -69,12 +74,12 @@ function peekTask(
 }
 
 function setupBusyWorker(request: MockModelRequest): MockModelResponse | string {
-  const delegated = resultById(request, "finding05-initial-worker");
+  const delegated = resultById(request, "child-task-exclusivity-initial-worker");
   if (delegated === undefined) {
     return {
       toolCalls: [
         {
-          id: "finding05-initial-worker",
+          id: "child-task-exclusivity-initial-worker",
           input: { message: "Return BUSY-WORKER-INITIAL." },
           name: "busy-worker",
         },
@@ -82,32 +87,32 @@ function setupBusyWorker(request: MockModelRequest): MockModelResponse | string 
     };
   }
 
-  return "FINDING-05-READY";
+  return "CHILD-TASK-EXCLUSIVITY-READY";
 }
 
 function raceBusyWorker(request: MockModelRequest): MockModelResponse | string {
-  const first = resultById(request, "finding05-send-a");
-  const second = resultById(request, "finding05-send-b");
+  const first = resultById(request, "child-task-exclusivity-send-a");
+  const second = resultById(request, "child-task-exclusivity-send-b");
   if (first === undefined && second === undefined) {
-    const initial = resultById(request, "finding05-initial-worker");
+    const initial = resultById(request, "child-task-exclusivity-initial-worker");
     const taskId = findTaskId(initial?.output);
     if (taskId === undefined) throw new Error("Busy-worker race has no initial task id.");
     return {
       toolCalls: [
         {
-          id: "finding05-send-a",
+          id: "child-task-exclusivity-send-a",
           input: { message: "Return BUSY-WORKER-A.", taskId },
           name: "task_send",
         },
         {
-          id: "finding05-send-b",
+          id: "child-task-exclusivity-send-b",
           input: { message: "Return BUSY-WORKER-B.", taskId },
           name: "task_send",
         },
       ],
     };
   }
-  return "FINDING-05-RACE-DONE";
+  return "CHILD-TASK-EXCLUSIVITY-RACE-DONE";
 }
 
 function resultById(request: MockModelRequest, id: string): MockModelToolResult | undefined {

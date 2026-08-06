@@ -3,24 +3,24 @@ import { satisfies } from "eve/evals/expect";
 
 import { requireBackgroundTaskId, waitForCompletedTask } from "./shared.js";
 
-/** Finding 05: one persistent child session admits at most one nonterminal task. */
+/** One persistent child session admits at most one nonterminal task. */
 export default defineEval({
   description:
     "Two same-batch task_send calls to one child admit one task and reject the other as AGENT_BUSY.",
   async test(t) {
     t.log("starting initial busy-worker task");
-    const setup = await t.send("FINDING-05-SETUP");
+    const setup = await t.send("CHILD-TASK-EXCLUSIVITY-SETUP");
     t.log("initial busy-worker task settled");
     setup.expectOk();
-    setup.messageIncludes("FINDING-05-READY");
+    setup.messageIncludes("CHILD-TASK-EXCLUSIVITY-READY");
     const initialTaskId = requireBackgroundTaskId(setup);
-    await waitForCompletedTask(t, t, "FINDING-05-VERIFY", initialTaskId);
+    await waitForCompletedTask(t, t, "CHILD-TASK-EXCLUSIVITY-VERIFY", initialTaskId);
 
     t.log("sending two same-batch continuations");
-    const raced = await sendAndFollowQueuedTurn(t, "FINDING-05-RACE");
+    const raced = await sendAndFollowQueuedTurn(t, "CHILD-TASK-EXCLUSIVITY-RACE");
     t.log("same-batch continuation turn settled");
     raced.expectOk();
-    raced.messageIncludes("FINDING-05-RACE-DONE");
+    raced.messageIncludes("CHILD-TASK-EXCLUSIVITY-RACE-DONE");
 
     const sends = raced.toolCalls.filter((call) => call.name === "task_send");
     await t.require(

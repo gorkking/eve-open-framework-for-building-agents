@@ -3,14 +3,14 @@ import { defineEval } from "eve/evals";
 import { requireBackgroundTaskId, waitForCompletedTask, waitForTaskInput } from "./shared.js";
 
 /**
- * Finding 01: task-owned child HITL must surface on the parent session, and
- * answering it must route to the child without running the parent model.
+ * Task-owned child HITL must surface on the parent session, and answering it
+ * must route to the child without running the parent model.
  */
 export default defineEval({
   description:
     "A background child's approval surfaces on the parent and routes back without a parent model step.",
   async test(t) {
-    const started = await t.send("FINDING-01-DIRECT-HITL");
+    const started = await t.send("TASK-HITL-ROUTING");
     started.expectOk();
     started.event("subagent.completed", {
       count: 1,
@@ -35,9 +35,9 @@ export default defineEval({
     });
     finished.expectOk();
 
-    const verified = await waitForCompletedTask(t, second.session, "FINDING-01-VERIFY", taskId);
+    const verified = await waitForCompletedTask(t, second.session, "TASK-HITL-VERIFY", taskId);
     verified.expectOk();
-    verified.messageIncludes("FINDING-01-STATUS");
+    verified.messageIncludes("TASK-HITL-STATUS");
 
     t.event("input.requested", { data: { requests: [{ action: { toolName: "first_gate" } }] } });
     t.noFailedActions();

@@ -10,12 +10,12 @@ interface CreateSessionResponse {
 const PRINCIPAL_A = "Bearer e2e-task-operation-a";
 const PRINCIPAL_B = "Bearer e2e-task-operation-b";
 
-/** Finding 03: retried remote create is idempotent and scoped to its transport principal. */
+/** Retried remote create is idempotent and scoped to its transport principal. */
 export default defineEval({
   description:
     "An operationId returns one active session per authenticated principal across retried creates.",
   async test(t) {
-    const operationId = `finding-03-${crypto.randomUUID()}`;
+    const operationId = `session-create-idempotency-${crypto.randomUUID()}`;
     const first = await createSession(t.target, PRINCIPAL_A, operationId, "first create");
     const replay = await createSession(t.target, PRINCIPAL_A, operationId, "replayed create");
     const otherPrincipal = await createSession(

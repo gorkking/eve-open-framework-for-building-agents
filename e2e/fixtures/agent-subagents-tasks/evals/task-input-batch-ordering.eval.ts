@@ -3,13 +3,13 @@ import { defineEval } from "eve/evals";
 import { requireBackgroundTaskId, waitForCompletedTask, waitForTaskInput } from "./shared.js";
 
 /**
- * Finding 04: replaying Q1 after the child has raised Q2 must neither deliver
- * Q1 again nor clear Q2 from the task snapshot.
+ * Replaying Q1 after the child has raised Q2 must neither deliver Q1 again nor
+ * clear Q2 from the task snapshot.
  */
 export default defineEval({
   description: "A stale task answer cannot unblock or erase the child's newer approval request.",
   async test(t) {
-    const started = await t.send("FINDING-04-STALE-ANSWER");
+    const started = await t.send("TASK-INPUT-BATCH-ORDERING");
     started.expectOk();
     const taskId = requireBackgroundTaskId(started);
 
@@ -35,9 +35,14 @@ export default defineEval({
     });
     secondAnswer.expectOk();
 
-    const verified = await waitForCompletedTask(t, second.session, "FINDING-04-VERIFY", taskId);
+    const verified = await waitForCompletedTask(
+      t,
+      second.session,
+      "TASK-INPUT-BATCH-VERIFY",
+      taskId,
+    );
     verified.expectOk();
-    verified.messageIncludes("FINDING-04-STATUS");
+    verified.messageIncludes("TASK-INPUT-BATCH-STATUS");
     t.noFailedActions();
   },
 });
