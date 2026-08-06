@@ -46,7 +46,7 @@ function findApprovalRequest(messages: readonly ModelMessage[]): ToolApprovalReq
 }
 
 describe("AI SDK approval-resume streaming contract", () => {
-  it("streams a cross-invocation result and includes it in call-wide response messages", async () => {
+  it("streams a late cross-invocation result after an intervening completed turn", async () => {
     const execute = vi.fn(async ({ note }: { readonly note: string }) => ({ echoed: note }));
     const model = new MockLanguageModelV4({
       doStream: [
@@ -116,8 +116,16 @@ describe("AI SDK approval-resume streaming contract", () => {
       throw new Error("AI SDK did not produce a tool approval request.");
     }
 
+    const interveningMessages: ModelMessage[] = [
+      { content: "While that waits, summarize the request.", role: "user" },
+      {
+        content: [{ text: "The request is waiting for approval.", type: "text" }],
+        role: "assistant",
+      },
+    ];
     const resumeMessages: ModelMessage[] = [
       ...initialMessages,
+      ...interveningMessages,
       ...approvalResponseMessages,
       {
         content: [
@@ -174,6 +182,22 @@ describe("AI SDK approval-resume streaming contract", () => {
     });
 
     const providerPrompt = model.doStreamCalls[1]?.prompt ?? [];
+    const interveningAnswerIndex = providerPrompt.findIndex(
+      (message) =>
+        message.role === "assistant" &&
+        Array.isArray(message.content) &&
+        message.content.some(
+          (part) => part.type === "text" && part.text === "The request is waiting for approval.",
+        ),
+    );
+    const approvalCallIndex = providerPrompt.findIndex(
+      (message) =>
+        message.role === "assistant" &&
+        Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "tool-call" && part.toolCallId === "call-1"),
+    );
+    expect(interveningAnswerIndex).toBeGreaterThanOrEqual(0);
+    expect(approvalCallIndex).toBeGreaterThan(interveningAnswerIndex);
     const providerToolResults = providerPrompt.flatMap((message) =>
       message.role === "tool" ? message.content.filter((part) => part.type === "tool-result") : [],
     );
