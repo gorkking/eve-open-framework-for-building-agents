@@ -252,10 +252,15 @@ response resumes a disposed child hook and fails the parent.
 
 ## Staging
 
-Six PRs. Each lands alone, each has its own test gate. The core principle:
-**policy is a pure module, separate from the data it reads and the executors
-that apply it.** The harness applies its decisions; evals import the same
-module and assert them. Neither can drift.
+Five PRs plus the eval matrix. Each lands alone, each has its own test gate.
+
+The decision logic stays a small pure function — settle correlated authorized
+responses, reject stale ones, let unrelated messages run, apply question
+supersession — extracted from `resolvePendingInput` in the PR that uses it,
+not staged as a standalone module. A module with no consumer is dead code
+waiting to drift, and evals must not import it: an eval that asserts the
+policy's own output proves nothing. Expected outcomes live in tests as
+literal event-sequence expectations.
 
 ### 1. Acceptance gate
 
@@ -265,51 +270,39 @@ with a normal turn between the approval request and its response. This
 falsifies the late-splice bet against real providers before anything is built.
 No runtime changes.
 
-### 2. Policy module, pure
-
-`harness/pending-requests/policy.ts`. Types in, decisions out, no I/O:
-
-```ts
-decide(pending: PendingRequest[], delivery: DeliveryComponent[], actor: Actor)
-  -> Disposition[]
-```
-
-`PendingRequest` covers all kinds: `tool-approval`, `question`,
-`session-limit`, and `authorization`. Unit tests are the full scenario matrix
-below, one case per row. Nothing consumes the module yet.
-
-### 3. Data: per-request collection
+### 2. Data: per-request collection
 
 Replace the singleton pending batch with a collection keyed by `requestId`:
 kind, suffix-group id, originating actor `{ issuer, principalId }`, stored
 suffix. Resolution behavior stays exactly as today — this PR is a pure data
 refactor, verified by the existing suite passing unchanged.
 
-### 4. Behavior: non-blocking resolution
+### 3. Behavior: non-blocking resolution
 
-`resolvePendingInput` consumes the policy module. Deletes the
+Rewrite `resolvePendingInput`: the decision logic becomes a pure function in
+the same area; transcript assembly applies its decisions. Deletes the
 `deferredStepInput` gating path. Unrelated messages run; requests stay
 pending; late responses splice; suffix groups close as a unit; `ask_question`
-supersession; stale means not-pending. Fixes #1224 and the consumed-as-answer
-half of #786.
+supersession; stale means not-pending. Unit tests are the scenario matrix as
+literal tables. Fixes #1224 and the consumed-as-answer half of #786.
 
-### 5. Lifecycle events
+### 4. Lifecycle events
 
 `input.dismissed` with its four reasons; fail-closed request creation on the
 runtime-action and metadata-loss paths (fixes #1201); session-limit re-prompt
 closes its predecessor; authorization parks get boundary parity so clients
 stop hanging (#1525 is the candidate closure here — verify its repro).
 
-### 6. Multiplayer and routing
+### 5. Multiplayer and routing
 
 Actor partitioning in delivery coalescing; proxy routes accumulate per request
 and close only via settlement or `input.dismissed(route-lost)`. Fixes #1608.
 
-### 7. Eval matrix
+### 6. Eval matrix
 
 One e2e fixture with a deterministic mock model and a two-principal custom
-channel. Every cell asserts dispositions from the same policy module plus the
-observed stream events:
+channel. Every cell asserts a literal expected event sequence — what the
+stream must show, written out, never computed from runtime code:
 
 | Dimension      | Values                                                         |
 | -------------- | -------------------------------------------------------------- |
