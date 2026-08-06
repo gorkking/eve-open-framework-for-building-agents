@@ -13,6 +13,8 @@ function respond(request: MockModelRequest): MockModelResponse | string {
   const message = request.lastUserMessage ?? "";
   if (message.startsWith("Background task ")) return "TASK-NOTIFICATION-ACK";
 
+  if (message === "TASK-FANOUT-PARENT-UPDATES") return fanoutTasks(request);
+
   if (message.startsWith("TASK-HITL-VERIFY ")) {
     return peekTask(request, "task-hitl-verify", "TASK-HITL-STATUS", message);
   }
@@ -37,6 +39,22 @@ function respond(request: MockModelRequest): MockModelResponse | string {
   if (message === "CHILD-TASK-EXCLUSIVITY-RACE") return raceBusyWorker(request);
 
   return `Mock reply: ${message}`;
+}
+
+function fanoutTasks(request: MockModelRequest): MockModelResponse | string {
+  const pending = Array.from({ length: 10 }, (_, index) => index + 1).filter(
+    (index) => resultById(request, `task-fanout-${index}`) === undefined,
+  );
+  if (pending.length > 0) {
+    return {
+      toolCalls: pending.map((index) => ({
+        id: `task-fanout-${index}`,
+        input: { message: `FANOUT-WORKER-${index}` },
+        name: "fanout-worker",
+      })),
+    };
+  }
+  return "TASK-FANOUT-STARTED";
 }
 
 function startApprovalWorker(
