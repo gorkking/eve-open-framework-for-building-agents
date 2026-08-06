@@ -135,10 +135,12 @@ type InputDismissedData = InputLifecycleData & {
 Owner events use the request's originating turn coordinates. Projection events
 keep those coordinates and change only `scope`.
 
-Eve derives `candidateId` from `{ requestId, deliveryId }`; ingress supplies the
-durable `deliveryId`, not a candidate ID. Retrying the same delivery reuses the
+Eve derives `candidateId` from `{ requestId, deliveryId }`, where `deliveryId`
+is assigned by the server at admission — the HTTP API gains no new request
+field. A workflow-level redelivery of the same admitted delivery reuses the
 candidate. A new delivery creates a new candidate and participates in the
-request's atomic single-winner transition.
+request's atomic single-winner transition. A client-supplied idempotency key is
+possible later as an optional, additive field.
 
 Every request has at most one `input.responded`. Competing or duplicate
 responses after the winner emit `input.response.rejected(reason: stale)`, for
@@ -690,6 +692,47 @@ by the child.
   `route-lost`. It does not settle the child-owned requests.
 - **Observed:** Every `input.dismissed(scope: projection, reason: route-lost)`
   precedes the parent terminal event.
+
+## Compatibility
+
+The contract is implementable without breaking any existing consumer. The
+rules, in order of strictness:
+
+**Unchanged — guaranteed.** No existing event type changes shape or meaning:
+`input.requested`, `message.received`, `session.waiting`, `action.result`,
+`turn.*`, and `session.*` stay byte-compatible. `InputRequest` and
+`InputResponse` wire shapes are unchanged. The HTTP API gains no new required
+field on create, continue, stream, or cancel. Continuation tokens, session
+IDs, and NDJSON framing are untouched.
+
+**Additive — new events and fields only.** All net-new wire schema lands in
+one stage (lifecycle events) behind one stream-version bump. Existing clients
+ignore unknown event types — the default reducer returns state unchanged
+([`message-reducer.ts`](../packages/eve/src/client/message-reducer.ts#L286-L287))
+— so old clients render nothing new but never break. `authorizationId` is an
+optional added field on existing authorization events. `cancelled` is an
+additive `AuthorizationOutcome` value. The data and behavior stages introduce
+zero wire changes: correctness never depends on the new events, which exist
+for deterministic tests and native channel UI.
+
+**One settlement family.** If PR #1368's settlement events land first,
+`input.responded` is that family generalized to every request kind — not a
+competing event. Exactly one settlement event family may exist on the wire.
+
+**Durable state.** The pending-state shape change bumps the snapshot version
+with a registered v1-to-v2 migrator, per the repository's documented
+convention. In-flight v1 sessions migrate on first read. Legacy
+`deferredStepInput` content — messages wedged behind an approval today — is
+released as an ordinary message turn on the first delivery after upgrade, so
+upgrading retroactively un-wedges stuck sessions instead of dropping their
+messages.
+
+**Deliberately breaking, behavior not wire.** Runtime text matching is
+removed: plain `approve` stops settling approvals through the resolution path.
+`resolveTextToResponses` remains exported for channel adapters that render
+prompts as text and own their reply mapping. This is a documented behavior
+change (`docs/tools/human-in-the-loop.md`), acceptable under the pre-1.0
+breaking-changes policy, and the docs update ships in the same stage.
 
 ## What implementation needs
 
