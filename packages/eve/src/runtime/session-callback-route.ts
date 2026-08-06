@@ -7,6 +7,7 @@ import type { RuntimeSubagentChildResult } from "#runtime/actions/types.js";
 import { agentTurnOutcomeSchema, type AgentTurnOutcome } from "#shared/agent-turn-outcome.js";
 import type { JsonValue } from "#shared/json.js";
 import { tokenUsageSchema, type TokenUsage } from "#shared/token-usage.js";
+import type { TaskInboundTurnStarted } from "#tasks/types.js";
 
 export const HTTP_SESSION_CALLBACK_CHANNEL_NAME_PREFIX = "eve/v1/callback";
 
@@ -27,6 +28,14 @@ const ZERO_TOKEN_USAGE: TokenUsage = {
  * deployments may omit it.
  */
 type SessionCallbackPayload =
+  | {
+      readonly callId: string;
+      readonly kind: "turn.started";
+      readonly sessionId: string;
+      readonly subagentName: string;
+      readonly taskId: string;
+      readonly turnId: string;
+    }
   | {
       readonly callId: string;
       readonly kind: "session.completed";
@@ -101,6 +110,17 @@ export async function handleSessionCallbackRequest(
     return Response.json({ error: "Invalid JSON body.", ok: false }, { status: 400 });
   }
 
+  const started = projectTaskTurnStarted(body);
+  if (started instanceof Response) return started;
+  if (started !== undefined) {
+    try {
+      await resumeHook(token, started);
+    } catch {
+      return Response.json({ error: "Session callback not pending.", ok: false }, { status: 404 });
+    }
+    return Response.json({ ok: true }, { status: 202 });
+  }
+
   const result = projectSessionCallbackResult(body);
   if (result instanceof Response) {
     return result;
@@ -116,6 +136,31 @@ export async function handleSessionCallbackRequest(
   }
 
   return Response.json({ ok: true }, { status: 202 });
+}
+
+function projectTaskTurnStarted(value: unknown): TaskInboundTurnStarted | Response | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const payload = value as Partial<SessionCallbackPayload>;
+  if (payload.kind !== "turn.started") return undefined;
+  if (
+    typeof payload.sessionId !== "string" ||
+    payload.sessionId.length === 0 ||
+    typeof payload.taskId !== "string" ||
+    payload.taskId.length === 0 ||
+    typeof payload.turnId !== "string" ||
+    payload.turnId.length === 0
+  ) {
+    return Response.json(
+      { error: "Invalid task turn-start callback.", ok: false },
+      { status: 400 },
+    );
+  }
+  return {
+    childSessionId: payload.sessionId,
+    childTurnId: payload.turnId,
+    kind: "task-child-turn-started",
+    taskId: payload.taskId,
+  };
 }
 
 function projectSessionCallbackResult(value: unknown): RuntimeSubagentChildResult | Response {

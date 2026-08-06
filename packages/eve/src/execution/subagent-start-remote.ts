@@ -82,6 +82,7 @@ export async function startRemoteSubagent(input: {
       callbackBaseUrl,
       callbackToken: input.parentContinuationToken,
       initiatorAuth: input.initiatorAuth,
+      operationId: operation.id,
       persistentSessions: input.persistentSessions,
       remote: resolvedRemote,
       session: input.session,

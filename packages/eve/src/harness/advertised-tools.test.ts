@@ -150,7 +150,6 @@ describe("getAdvertisedTools for definition arrays", () => {
   it("removes the task tools from delegated sessions", () => {
     const tools = new Map([
       ["add", createTool("add")],
-      ["task_await", createTaskControlTool("task_await")],
       ["task_cancel", createTaskControlTool("task_cancel")],
       ["task_peek", createTaskControlTool("task_peek")],
       ["task_sleep", createTool("task_sleep")],

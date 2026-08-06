@@ -32,13 +32,7 @@ import {
   type RuntimeSession,
 } from "#execution/agent-handle-dispatch.js";
 import { createAgentContinuationBundle } from "#execution/agent-continuation-bundle.js";
-import { SUBAGENT_START_FAILED } from "#harness/agent-handle-errors.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
-import {
-  confirmAgentStarted,
-  prepareAgentStart,
-  rejectAgentEffect,
-} from "#harness/handles/transitions.js";
 import { getPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import {
   createSubagentCalledEvent,
@@ -56,7 +50,6 @@ import type {
 import {
   beginDelegatedTask,
   executeTaskControlAction,
-  failDelegatedDispatch,
   isTaskControlAction,
   settleDelegatedDispatch,
 } from "#execution/tasks/dispatch.js";
@@ -70,17 +63,23 @@ import {
   createUnavailableDynamicSubagentResult,
   getSubagentName,
 } from "#execution/dispatch-action-failures.js";
-import { mintStartOperation } from "#execution/dispatch-start-operation.js";
+import { startLocalSubagent } from "#execution/subagent-start-local.js";
 import { startRemoteSubagent } from "#execution/subagent-start-remote.js";
 import { hydrateDurableSession } from "#execution/session.js";
 import { buildSubagentRunInput, type SubagentInputSource } from "#execution/subagent-tool.js";
-import { createWorkflowRuntime, workflowEntryReference } from "#execution/workflow-runtime.js";
+import { workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
-import { toErrorMessage } from "#shared/errors.js";
 import { readSessionTraceContext } from "#tracing/agent-trace-context-store.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { getDynamicSubagentSelection } from "#context/dynamic-subagent-lifecycle.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
+import { reconcileSettledTaskHandles } from "#execution/tasks/control-shared.js";
+import {
+  checkTaskContinuationAdmission,
+  reserveTaskContinuation,
+  settleTaskDispatchError,
+  type ReservedTaskContinuation,
+} from "#execution/tasks/continuation-admission.js";
 
 const log = createLogger("execution.dispatch-runtime-actions");
 
@@ -145,7 +144,7 @@ export async function dispatchRuntimeActionsStep(input: {
   const ctx = await deserializeContext(input.serializedContext);
   const bundle = ctx.require(BundleKey);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
-  const session = hydrateDurableSession({
+  let session = hydrateDurableSession({
     compactionOverrides: {
       thresholdPercent: effectiveAgent.thresholdPercent,
     },
@@ -159,10 +158,9 @@ export async function dispatchRuntimeActionsStep(input: {
   const initiatorAuth = ctx.get(InitiatorAuthKey) ?? null;
 
   const adapterCtx = buildAdapterContext(adapter, ctx);
-  // Read here, not in the child: trace state is scoped to one session's
-  // context, so this is the last place the parent's window is visible.
   const parentTraceContext = readSessionTraceContext(input.serializedContext, session.sessionId);
   const tasksEnabled = bundle.resolvedAgent.config.experimental?.tasks === true;
+  if (tasksEnabled) session = await reconcileSettledTaskHandles(session);
   // Background tasks require resumable children: the flag implies
   // conversation-mode dispatch so `experimental.tasks` and
   // `experimental.subagentPersistentSessions` never produce a third mode.
@@ -199,7 +197,7 @@ export async function dispatchRuntimeActionsStep(input: {
         const control = await executeTaskControlAction({
           action: entry.action,
           bundle,
-          parentContinuationToken: input.parentContinuationToken,
+          parentStepIndex: batch.event.stepIndex,
           parentTurnId: batch.event.turnId,
           session: nextSession,
         });
@@ -210,18 +208,40 @@ export async function dispatchRuntimeActionsStep(input: {
         continue;
       }
 
-      // Delegated execution: the durable task record exists before the
-      // child dispatch side effect, and the child's reply address is the
-      // task run's private hook instead of the parent turn's inbox.
+      if (tasksEnabled && entry.kind === "resume") {
+        const busy = await checkTaskContinuationAdmission({
+          action: entry.action,
+          agentId: entry.agentId,
+          parentStepIndex: batch.event.stepIndex,
+          parentTurnId: batch.event.turnId,
+          session: nextSession,
+        });
+        if (busy !== undefined) {
+          results.push(busy);
+          continue;
+        }
+      }
+
       const delegated = tasksEnabled
         ? await beginDelegatedTask({
             ...describeDelegatedEntry(entry),
             parentSessionId: session.sessionId,
+            parentStepIndex: batch.event.stepIndex,
             parentTurnId: batch.event.turnId,
             session: nextSession,
           })
         : undefined;
       const delegatedParentToken = delegated?.commandToken;
+      let reservedContinuation: ReservedTaskContinuation | undefined;
+      if (entry.kind === "resume") {
+        reservedContinuation = await reserveTaskContinuation({
+          action: entry.action,
+          agentId: entry.agentId,
+          delegated,
+          session: nextSession,
+        });
+        nextSession = reservedContinuation?.session ?? nextSession;
+      }
 
       let outcome: DispatchOutcome;
       switch (entry.kind) {
@@ -262,23 +282,32 @@ export async function dispatchRuntimeActionsStep(input: {
 
       nextSession = outcome.session;
       if (outcome.kind === "error") {
-        if (delegated !== undefined) {
-          await failDelegatedDispatch({ error: outcome.result.output, task: delegated });
-        }
-        results.push(outcome.result);
+        results.push(
+          await settleTaskDispatchError({
+            agentId: entry.kind === "resume" ? entry.agentId : undefined,
+            delegated,
+            outcome,
+            reserved: reservedContinuation,
+            session: nextSession,
+          }),
+        );
         continue;
       }
 
       if (delegated !== undefined) {
-        const settled = await settleDelegatedDispatch({
-          callId: outcome.callId,
-          childSessionId: outcome.address.sessionId,
-          session: nextSession,
-          subagentName: outcome.toolName,
-          task: delegated,
-        });
-        nextSession = settled.session;
-        results.push(settled.receipt);
+        if (reservedContinuation !== undefined) {
+          results.push(reservedContinuation.receipt);
+        } else {
+          const settled = await settleDelegatedDispatch({
+            callId: outcome.callId,
+            childSessionId: outcome.address.sessionId,
+            session: nextSession,
+            subagentName: outcome.toolName,
+            task: delegated,
+          });
+          nextSession = settled.session;
+          results.push(settled.receipt);
+        }
       }
 
       // Emission is observability, not control flow: a failure here must not
@@ -532,111 +561,6 @@ async function startSubagent(input: {
       return _exhaustive;
     }
   }
-}
-
-async function startLocalSubagent(input: {
-  readonly action: RuntimeSubagentCallActionRequest;
-  readonly auth: Parameters<typeof buildSubagentRunInput>[0]["auth"];
-  readonly batchEvent: { readonly sequence: number; readonly turnId: string };
-  readonly bundle: CompiledBundle;
-  readonly capabilities: Parameters<typeof buildSubagentRunInput>[0]["capabilities"];
-  readonly channelMetadata: Parameters<typeof buildSubagentRunInput>[0]["channelMetadata"];
-  readonly currentSession: RuntimeSession;
-  readonly dynamicSubagentAgentConfig?: DynamicSubagentAgentConfig;
-  readonly fanoutSize: number;
-  readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
-  readonly parentContinuationToken: string | undefined;
-  readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
-  readonly persistentSessions: boolean;
-  readonly session: RuntimeSession;
-  readonly source: SubagentInputSource;
-}): Promise<DispatchOutcome> {
-  const { action, source } = input;
-  const childRuntime = createWorkflowRuntime({
-    compiledArtifactsSource: input.bundle.compiledArtifactsSource,
-    dynamicSubagentAgentConfig: input.dynamicSubagentAgentConfig,
-    nodeId: action.nodeId,
-  });
-  const { childContinuationToken, runInput } = buildSubagentRunInput({
-    action,
-    auth: input.auth,
-    batchEvent: input.batchEvent,
-    capabilities: input.capabilities,
-    channelMetadata: input.channelMetadata,
-    fanoutSize: input.fanoutSize,
-    initiatorAuth: input.initiatorAuth,
-    parentContinuationToken: input.parentContinuationToken,
-    parentTraceContext: input.parentTraceContext,
-    persistentSessions: input.persistentSessions,
-    session: input.session,
-    source,
-  });
-
-  const targetKind = source.type === "runtime" ? ("agent/self" as const) : ("agent/local" as const);
-  const { identity, operation } = mintStartOperation({
-    callId: action.callId,
-    name: action.subagentName,
-    nodeId: action.nodeId,
-    parentSessionId: input.session.sessionId,
-    parentTurnId: input.batchEvent.turnId,
-  });
-  // Ownership is recorded before the start side effect, and the prepared
-  // (or rejected) store rides every outcome into the step result. The
-  // guarantee is intra-step: a crash between the accepted start and the
-  // step-result commit still replays the whole dispatch step, so the
-  // orphan window shrinks to that boundary rather than disappearing.
-  const preparedSession = prepareAgentStart(input.currentSession, {
-    identity,
-    operation,
-    target: { continuationToken: childContinuationToken, kind: targetKind },
-  });
-
-  let childSessionId: string;
-  try {
-    const handle = await childRuntime.createSession(runInput);
-    childSessionId = handle.sessionId;
-  } catch (error) {
-    logError(log, "local subagent start failed", error, {
-      callId: action.callId,
-      nodeId: action.nodeId,
-      subagentName: action.subagentName,
-    });
-    return {
-      kind: "error",
-      result: {
-        callId: action.callId,
-        isError: true,
-        kind: "subagent-result",
-        origin: "dispatch",
-        output: {
-          code: SUBAGENT_START_FAILED,
-          message: toErrorMessage(error),
-        },
-        subagentName: action.subagentName,
-      },
-      session: rejectAgentEffect(preparedSession, {
-        disposition: "dead",
-        operationId: operation.id,
-      }),
-    };
-  }
-
-  const address = {
-    continuationToken: childContinuationToken,
-    kind: targetKind,
-    sessionId: childSessionId,
-  } as const;
-  return {
-    address,
-    callId: action.callId,
-    kind: "called",
-    name: action.name,
-    session: confirmAgentStarted(preparedSession, {
-      address,
-      operationId: operation.id,
-    }),
-    toolName: action.subagentName,
-  };
 }
 
 /** Names one delegated dispatch for its task record, before any child exists. */

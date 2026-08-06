@@ -238,6 +238,11 @@ export async function resolvePendingRuntimeActions(input: {
     if (result.kind !== "subagent-result" || result.origin !== "child") {
       continue;
     }
+    // A background receipt confirms task admission, not child-turn settlement.
+    // The task snapshot later carries the actual parked/terminal outcome.
+    if (readBackgroundTaskReceipt(result) !== undefined) {
+      continue;
+    }
     const handle = findRunningAgentHandle(nextSession.state, { callId: result.callId });
     if (handle === undefined) {
       continue;

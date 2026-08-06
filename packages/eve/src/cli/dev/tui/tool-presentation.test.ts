@@ -178,7 +178,6 @@ describe("presentTool", () => {
       grep: { pattern: "useEve" },
       load_skill: { skill: "commit" },
       read_file: { filePath: "/workspace/a.ts" },
-      task_await: { taskIds: ["task_abc"] },
       task_cancel: { taskIds: ["task_abc"] },
       task_peek: { taskIds: ["task_abc"] },
       task_send: { message: "Continue with the next region.", taskId: "task_abc" },

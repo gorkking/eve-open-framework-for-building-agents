@@ -1,7 +1,12 @@
 import type { DeliverPayload, SessionAuthContext } from "#channel/types.js";
 import { coalesceDeliverPayloads } from "#execution/deliver-payloads.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
-import { routeProxiedDeliverStep, type RoutedDeliverResult } from "#execution/workflow-steps.js";
+import {
+  routeProxiedDeliverStep,
+  type RoutedDeliverResult,
+} from "#execution/proxied-deliver-step.js";
+import { emitRecordedTaskInputRequestStep } from "#execution/subagent-event-proxy-step.js";
+import { recordTaskInputRequestStep } from "#execution/tasks/hitl-proxy-steps.js";
 
 /**
  * Coalesces inbound deliver payloads and routes any descendant-bound input
@@ -18,16 +23,50 @@ export async function routeDeliverToChildren(input: {
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly payloads: readonly DeliverPayload[];
   readonly sessionState: DurableSessionState;
+  readonly serializedContext: Record<string, unknown>;
 }): Promise<RoutedDeliverResult> {
-  const payload = coalesceDeliverPayloads(input.payloads);
-  if (!input.sessionState.hasProxyInputRequests) {
-    return { kind: "continue", remainder: payload };
+  let payload = coalesceDeliverPayloads(input.payloads);
+  let serializedContext = input.serializedContext;
+  let sessionState = input.sessionState;
+
+  for (const request of payload.taskInputRequests ?? []) {
+    const recorded = await recordTaskInputRequestStep({
+      hookPayload: request.hookPayload,
+      serializedContext,
+      sessionState,
+      taskId: request.taskId,
+    });
+    sessionState = recorded.sessionState;
+    if (!recorded.accepted) continue;
+    const emitted = await emitRecordedTaskInputRequestStep({
+      hookPayload: request.hookPayload,
+      parentWritable: input.parentWritable,
+      serializedContext,
+      sessionState,
+    });
+    serializedContext = emitted.serializedContext;
+    sessionState = emitted.sessionState;
+  }
+
+  if (payload.taskInputRequests !== undefined) {
+    const ordinaryPayload = { ...payload };
+    delete ordinaryPayload.taskInputRequests;
+    payload = ordinaryPayload;
+  }
+  if (!sessionState.hasProxyInputRequests) {
+    return {
+      kind: "continue",
+      remainder: Object.keys(payload).length === 0 ? undefined : payload,
+      serializedContext,
+      sessionState,
+    };
   }
 
   return await routeProxiedDeliverStep({
     auth: input.auth,
     parentWritable: input.parentWritable,
     payload,
-    sessionState: input.sessionState,
+    serializedContext,
+    sessionState,
   });
 }

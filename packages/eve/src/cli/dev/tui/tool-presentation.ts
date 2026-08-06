@@ -123,14 +123,6 @@ const BUILTIN_TOOL_COPY: Readonly<Record<string, BuiltinToolCopy>> = {
     singularNoun: "file",
     pluralNoun: "files",
   },
-  task_await: {
-    verb: "Await",
-    pastVerb: "Awaited",
-    argKey: "taskIds",
-    extractItem: taskIdsArg,
-    singularNoun: "task",
-    pluralNoun: "tasks",
-  },
   task_cancel: {
     verb: "Cancel",
     pastVerb: "Cancelled",
