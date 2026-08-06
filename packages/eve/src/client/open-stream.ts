@@ -2,7 +2,11 @@ import type { MessageStreamEvent } from "#protocol/message.js";
 import { EVE_STREAM_TAIL_INDEX_HEADER } from "#protocol/message.js";
 import { createEveSessionStreamRoutePath } from "#protocol/routes.js";
 import { ClientError } from "#client/client-error.js";
-import { isStreamDisconnectError, readNdjsonStream } from "#client/ndjson.js";
+import {
+  isStreamDisconnectError,
+  isStreamIdleTimeoutError,
+  readNdjsonStream,
+} from "#client/ndjson.js";
 import type {
   ClientRedirectPolicy,
   ResolvedStreamReconnectPolicy as StreamReconnectPolicyOptions,
@@ -20,12 +24,16 @@ interface RetryPolicy {
 interface ResolvedStreamReconnectPolicy {
   readonly retryableErrorStatuses: ReadonlySet<number>;
   readonly streamIdleReconnectPolicy: RetryPolicy;
+  readonly streamIdleTimeoutMs: number | undefined;
   readonly streamOpenReconnectPolicy: RetryPolicy;
 }
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 const DEFAULT_STREAM_RECONNECT_POLICY: ResolvedStreamReconnectPolicy = {
   retryableErrorStatuses: new Set([404, 409, 425, 500, 502, 503, 504]),
   streamIdleReconnectPolicy: { baseDelayMs: 250, maxAttempts: 5, maxDelayMs: 4_000 },
+  streamIdleTimeoutMs: 30_000,
   streamOpenReconnectPolicy: { baseDelayMs: 250, maxAttempts: 12, maxDelayMs: 5_000 },
 };
 
@@ -35,6 +43,7 @@ const NO_STREAM_RECONNECT_POLICY: ResolvedStreamReconnectPolicy = {
     ...DEFAULT_STREAM_RECONNECT_POLICY.streamIdleReconnectPolicy,
     maxAttempts: 0,
   },
+  streamIdleTimeoutMs: undefined,
   streamOpenReconnectPolicy: {
     ...DEFAULT_STREAM_RECONNECT_POLICY.streamOpenReconnectPolicy,
     maxAttempts: 1,
@@ -64,11 +73,25 @@ function resolveStreamReconnectPolicy(
       configured?.streamIdleReconnectPolicy,
       DEFAULT_STREAM_RECONNECT_POLICY.streamIdleReconnectPolicy,
     ),
+    streamIdleTimeoutMs: resolveStreamIdleTimeoutMs(configured?.streamIdleTimeoutMs),
     streamOpenReconnectPolicy: resolveRetryPolicy(
       configured?.streamOpenReconnectPolicy,
       DEFAULT_STREAM_RECONNECT_POLICY.streamOpenReconnectPolicy,
     ),
   };
+}
+
+/** @internal Validates reconnect options before a turn is submitted. */
+export function validateStreamReconnectPolicy(policy: StreamReconnectPolicy | undefined): void {
+  resolveStreamReconnectPolicy(policy);
+}
+
+function resolveStreamIdleTimeoutMs(value: number | undefined): number | undefined {
+  if (value === undefined) return DEFAULT_STREAM_RECONNECT_POLICY.streamIdleTimeoutMs;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_TIMER_DELAY_MS) {
+    throw new Error(`streamIdleTimeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}.`);
+  }
+  return value === 0 ? undefined : value;
 }
 
 /**
@@ -154,8 +177,14 @@ export async function* followStreamIterable(
     }
 
     let deliveredEvent = false;
+    let timedOutIdle = false;
     try {
-      for await (const event of readNdjsonStream(connection.body)) {
+      for await (const event of readNdjsonStream(connection.body, {
+        idleTimeoutMs:
+          input.startIndex < 0 || idleRetryPolicy.maxAttempts === 0
+            ? undefined
+            : retryPolicy.streamIdleTimeoutMs,
+      })) {
         startIndex += 1;
         deliveredEvent = true;
         reconnectDelayMs = idleRetryPolicy.baseDelayMs;
@@ -167,7 +196,9 @@ export async function* followStreamIterable(
         }
       }
     } catch (error) {
-      if (!isStreamDisconnectError(error)) {
+      if (isStreamIdleTimeoutError(error)) {
+        timedOutIdle = true;
+      } else if (!isStreamDisconnectError(error)) {
         throw error;
       }
     }
@@ -176,7 +207,9 @@ export async function* followStreamIterable(
       return;
     }
 
-    if (
+    if (timedOutIdle) {
+      reconnectDelayMs = idleRetryPolicy.baseDelayMs;
+    } else if (
       !deliveredEvent &&
       !initialConnection &&
       (idleReconnects += 1) >= idleRetryPolicy.maxAttempts

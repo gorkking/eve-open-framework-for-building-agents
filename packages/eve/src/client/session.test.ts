@@ -647,20 +647,152 @@ describe("ClientSession", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("does not reconnect a manually opened stream when disabled", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(createStreamResponse([{ type: "turn.started", data: {} }]));
+  it("does not apply idle timeouts to tail-relative streams", async () => {
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }),
+      ),
+    );
     const session = createSession({ sessionId: "session_1", streamIndex: 0 });
 
-    const eventTypes: string[] = [];
-    for await (const event of session.stream({ streamReconnectPolicy: { reconnect: false } })) {
-      eventTypes.push(event.type);
+    vi.useFakeTimers();
+    try {
+      const consumed = (async () => {
+        for await (const _event of session.stream({
+          startIndex: -1,
+          streamReconnectPolicy: { streamIdleTimeoutMs: 10 },
+        })) {
+          // Drain the delayed event.
+        }
+      })();
+      await vi.advanceTimersByTimeAsync(20);
+      streamController?.enqueue(
+        encoder.encode(
+          `${JSON.stringify({
+            type: "session.waiting",
+            data: { continuationToken: "session-id", wait: "next-user-message" },
+          })}\n`,
+        ),
+      );
+      streamController?.close();
+      await consumed;
+    } finally {
+      vi.useRealTimers();
     }
 
-    expect(eventTypes).toEqual(["turn.started"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not apply idle timeouts when stream reconnection is disabled", async () => {
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }),
+      ),
+    );
+    const session = createSession({ sessionId: "session_1", streamIndex: 0 });
+
+    vi.useFakeTimers();
+    try {
+      const consumed = (async () => {
+        for await (const _event of session.stream({
+          streamReconnectPolicy: { reconnect: false },
+        })) {
+          // Drain the delayed event.
+        }
+      })();
+      await vi.advanceTimersByTimeAsync(31_000);
+      streamController?.enqueue(
+        encoder.encode(`${JSON.stringify({ type: "turn.started", data: {} })}\n`),
+      );
+      streamController?.close();
+      await consumed;
+    } finally {
+      vi.useRealTimers();
+    }
+
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(session.state.streamIndex).toBe(1);
+  });
+
+  it("does not apply idle timeouts when idle reconnect attempts are disabled", async () => {
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }),
+      ),
+    );
+    const session = createSession({ sessionId: "session_1", streamIndex: 0 });
+
+    vi.useFakeTimers();
+    try {
+      const consumed = (async () => {
+        for await (const _event of session.stream({
+          streamReconnectPolicy: {
+            streamIdleReconnectPolicy: { maxAttempts: 0 },
+            streamIdleTimeoutMs: 10,
+          },
+        })) {
+          // Drain the delayed event.
+        }
+      })();
+      await vi.advanceTimersByTimeAsync(20);
+      streamController?.enqueue(
+        encoder.encode(`${JSON.stringify({ type: "turn.started", data: {} })}\n`),
+      );
+      streamController?.close();
+      await consumed;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(session.state.streamIndex).toBe(1);
+  });
+
+  it.each([-1, 1.5, 2_147_483_648, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects an invalid stream idle timeout (%s)",
+    async (streamIdleTimeoutMs) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const session = createSession({ sessionId: "session_1", streamIndex: 0 });
+
+      await expect(async () => {
+        for await (const _event of session.stream({
+          streamReconnectPolicy: { streamIdleTimeoutMs },
+        })) {
+          // Policy validation happens before opening the stream.
+        }
+      }).rejects.toThrow("streamIdleTimeoutMs must be an integer between 0 and 2147483647.");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an invalid stream idle timeout before submitting a turn", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const session = createSession({ sessionId: "session_1", streamIndex: 0 });
+
+    await expect(
+      session.send("first", {
+        streamReconnectPolicy: { streamIdleTimeoutMs: -1 },
+      }),
+    ).rejects.toThrow("streamIdleTimeoutMs must be an integer between 0 and 2147483647.");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not reconnect a sent turn's response stream when disabled", async () => {

@@ -126,7 +126,17 @@ If you support refresh while an authorization prompt is pending, keep the sessio
 
 ## Reconnection
 
-HTTP connections can end before a run does. The client reconnects from the number of events already consumed, so long turns continue without replaying events. It stops at a turn boundary, when aborted, or when the stream can no longer make progress.
+HTTP connections can end or remain open without delivering more bytes before a run does. The client reconnects from the number of events already consumed, so long turns continue without replaying events. By default, an open stream that produces no bytes for 30 seconds is canceled and reopened from the durable cursor. It stops at a turn boundary, when aborted, or when the stream can no longer make progress.
+
+Tune the idle-read deadline with `streamIdleTimeoutMs`:
+
+```ts
+const response = await session.send("Run the long operation.", {
+  streamReconnectPolicy: { streamIdleTimeoutMs: 15_000 },
+});
+```
+
+A step can legitimately run for minutes without emitting an event, so reopening a quiet stream does not count against `streamIdleReconnectPolicy`. Set `streamIdleTimeoutMs: 0` to disable idle-read reconnects. Tail-relative streams opened with a negative `startIndex` remain single-connection streams because their absolute cursor cannot be advanced safely.
 
 If your consumer persists events, key on `event.meta.id`. It is stable across reconnects and rewinds, so an overlapping replay is safe to ingest twice. See [the event envelope](../../concepts/sessions-runs-and-streaming#the-event-envelope).
 

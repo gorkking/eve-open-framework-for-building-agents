@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { Client } from "./client.js";
 import { followStreamIterable } from "./open-stream.js";
+import type { StreamReconnectPolicy } from "./types.js";
 
 const servers: Server[] = [];
 
@@ -27,13 +28,17 @@ function startIndexOf(url: string | undefined): number {
   return Number(new URL(url ?? "", "http://127.0.0.1").searchParams.get("startIndex") ?? "0");
 }
 
-function follow(host: string, options?: { follow?: boolean }) {
+function follow(
+  host: string,
+  options?: { follow?: boolean; streamReconnectPolicy?: StreamReconnectPolicy },
+) {
   return followStreamIterable({
     follow: options?.follow,
     host,
     resolveHeaders: () => Promise.resolve(new Headers()),
     sessionId: "s",
     startIndex: 0,
+    streamReconnectPolicy: options?.streamReconnectPolicy,
   });
 }
 
@@ -221,4 +226,124 @@ describe("stream following over real sockets", () => {
     expect(received).toEqual(events);
     expect(connections).toBe(3 * events.length);
   }, 30_000);
+
+  it("reconnects an open silent response from the last durable cursor", async () => {
+    const startIndexes: number[] = [];
+    let firstConnectionClosed = false;
+    const host = await listen(
+      createServer((req, res) => {
+        const startIndex = startIndexOf(req.url);
+        startIndexes.push(startIndex);
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+
+        if (startIndex === 0) {
+          req.once("close", () => {
+            firstConnectionClosed = true;
+          });
+          res.write(`${JSON.stringify({ type: "step.started", data: {} })}\n`);
+          return;
+        }
+
+        res.end(`${JSON.stringify({ type: "session.completed", data: {} })}\n`);
+      }),
+    );
+
+    const received: string[] = [];
+    for await (const event of follow(host, {
+      streamReconnectPolicy: {
+        streamIdleReconnectPolicy: { baseDelayMs: 1, maxAttempts: 1, maxDelayMs: 1 },
+        streamIdleTimeoutMs: 25,
+      },
+    })) {
+      received.push(event.type);
+      if (event.type === "session.completed") break;
+    }
+
+    expect(received).toEqual(["step.started", "session.completed"]);
+    expect(startIndexes).toEqual([0, 1]);
+    expect(firstConnectionClosed).toBe(true);
+  });
+
+  it("keeps a connection when bytes arrive within the idle deadline", async () => {
+    let connections = 0;
+    const event = `${JSON.stringify({ type: "session.completed", data: {} })}\n`;
+    const host = await listen(
+      createServer(async (_req, res) => {
+        connections += 1;
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        for (let index = 0; index < event.length; index += 10) {
+          res.write(event.slice(index, index + 10));
+          await new Promise((resolve) => setTimeout(resolve, 15));
+        }
+        res.end();
+      }),
+    );
+
+    const received: string[] = [];
+    for await (const streamEvent of follow(host, {
+      streamReconnectPolicy: { streamIdleTimeoutMs: 25 },
+    })) {
+      received.push(streamEvent.type);
+      if (streamEvent.type === "session.completed") break;
+    }
+
+    expect(received).toEqual(["session.completed"]);
+    expect(connections).toBe(1);
+  });
+
+  it("allows idle-read reconnects to be disabled", async () => {
+    let connections = 0;
+    const host = await listen(
+      createServer((_req, res) => {
+        connections += 1;
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        setTimeout(
+          () => res.end(`${JSON.stringify({ type: "session.completed", data: {} })}\n`),
+          40,
+        );
+      }),
+    );
+
+    const received: string[] = [];
+    for await (const event of follow(host, {
+      streamReconnectPolicy: {
+        streamIdleReconnectPolicy: { baseDelayMs: 1, maxAttempts: 1, maxDelayMs: 1 },
+        streamIdleTimeoutMs: 0,
+      },
+    })) {
+      received.push(event.type);
+      if (event.type === "session.completed") break;
+    }
+
+    expect(received).toEqual(["session.completed"]);
+    expect(connections).toBe(1);
+  });
+
+  it("does not spend the empty-stream retry budget on silent open responses", async () => {
+    let connections = 0;
+    const host = await listen(
+      createServer((_req, res) => {
+        connections += 1;
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        res.flushHeaders();
+        if (connections === 3) {
+          res.end(`${JSON.stringify({ type: "session.completed", data: {} })}\n`);
+        }
+      }),
+    );
+
+    const received: string[] = [];
+    for await (const event of follow(host, {
+      streamReconnectPolicy: {
+        streamIdleReconnectPolicy: { baseDelayMs: 1, maxAttempts: 1, maxDelayMs: 1 },
+        streamIdleTimeoutMs: 25,
+      },
+    })) {
+      received.push(event.type);
+      if (event.type === "session.completed") break;
+    }
+
+    expect(received).toEqual(["session.completed"]);
+    expect(connections).toBe(3);
+  });
 });

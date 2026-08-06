@@ -3,7 +3,7 @@ import { EVE_SESSION_ID_HEADER, isCurrentTurnBoundaryEvent } from "#protocol/mes
 import { EVE_SESSION_ROUTE_PATH, createEveSessionRoutePath } from "#protocol/routes.js";
 import { ClientError } from "#client/client-error.js";
 import { MessageResponse } from "#client/message-response.js";
-import { followStreamIterable } from "#client/open-stream.js";
+import { followStreamIterable, validateStreamReconnectPolicy } from "#client/open-stream.js";
 import {
   cancelClientSession,
   clearClientSession,
@@ -248,6 +248,7 @@ async function postTurn(
   input: SendTurnPayload,
   requireMessage: boolean,
 ): Promise<Response> {
+  validateStreamReconnectPolicy(input.streamReconnectPolicy);
   const body = createMessageBody(input, requireMessage);
   if (body === null) {
     throw new Error(
