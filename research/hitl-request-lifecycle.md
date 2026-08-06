@@ -57,6 +57,12 @@ Terms used below:
   decision. Allow uses the tool's response authorizer. Cancel requires an
   authenticated actor and bypasses the Allow authorizer. Question answers and
   session-limit Continue/Stop use their owning tool or runtime gate.
+- **Adjudication:** the response policy's verdict on a correlated approval
+  response: `allow`, `deny`, or `ignore`. `allow` and `deny` are terminal
+  settlements and propagate to the model as the tool result. `ignore` keeps
+  the request open for a different responder. A rejected responder maps to
+  `deny` unless the policy explicitly returns `ignore`. Policy throw or
+  timeout is not an adjudication.
 - **Normal turn:** a turn that emits `message.received` and may call the model.
 
 `Observed` lists the required events and their relative order. Ordinary turn
@@ -103,7 +109,7 @@ type InputResponseLifecycleData = InputLifecycleData & {
 
 type InputRespondedData = InputResponseLifecycleData & {
   response: InputResponse;
-  outcome: "allowed" | "cancelled" | "answered" | "continued" | "stopped";
+  outcome: "allowed" | "denied" | "cancelled" | "answered" | "continued" | "stopped";
 };
 
 type InputResponseRejectedData = InputResponseLifecycleData & {
@@ -138,11 +144,12 @@ session-end races all use that transition. After one wins, later responses are
 stale and later dismissals are no-ops. Tool dispatch rechecks turn and session
 cancellation after winning and before execution.
 
-A response is not conversation input. A delivery whose every component is a
-rejected, stale, or pending response starts no turn and calls no model; the
-session returns to `session.waiting`. A turn runs only when the delivery
-carries a message, or when a settlement closes a batch and the restored model
-output continues.
+A response is not conversation input. A delivery whose every component is an
+invalid, stale, ignored, or pending response starts no turn and calls no
+model; the session returns to `session.waiting`. A turn runs when the delivery
+carries a message, or when a settlement — including a `deny` adjudication —
+closes a batch and the restored model output plus tool results continue to the
+model.
 
 Authorization lifecycle events carry one `authorizationId`, the verified actor
 or null, and the blocked operation identity. `authorization.required`, its
@@ -171,16 +178,28 @@ after closure.
 - **Observed:** The result is identical to AP-1 except the verified responder
   is B.
 
-#### AP-3: Response policy rejects the responder
+#### AP-3: Response policy denies the responder
 
 - **Given:** A's approval request is open.
-- **When:** B sends a correlated response and the response policy rejects B.
-- **Then:** The request remains open. The tool does not run. No turn runs: the
-  rejected response is not conversation input, so the delivery ends back at
-  the waiting boundary.
-- **Observed:** Eve emits `input.response.rejected(reason: unauthorized)` and
-  then `session.waiting`. It emits no `input.responded`, no dismissal event,
-  and no model output for the request.
+- **When:** B sends a correlated response and the response policy adjudicates
+  `deny`.
+- **Then:** The request settles as denied and the tool does not run. The denial
+  propagates to the model as an execution-denied tool result when the batch
+  closes; the model may explain the denial or re-request approval with a fresh
+  request.
+- **Observed:** `input.responded(outcome: denied)` with responder B; when this
+  closes the batch, the execution-denied tool result and continued model output
+  follow before `session.waiting`.
+
+#### AP-3B: Response policy ignores the responder
+
+- **Given:** A's approval request is open.
+- **When:** B sends a correlated response and the response policy explicitly
+  returns `ignore`.
+- **Then:** The request remains open for a different responder. The tool does
+  not run and no turn runs.
+- **Observed:** `input.response.rejected(reason: unauthorized)`, then
+  `session.waiting`; no settlement event and no model output.
 
 #### AP-4: Originating actor sends an unrelated message
 
@@ -300,16 +319,15 @@ supersede their question under Q-2 while approvals remain open.
 - **Then:** Eve does not settle or execute again.
 - **Observed:** `input.response.rejected(reason: stale)` and no model call.
 
-#### AP-15: Response policy rejects or fails
+#### AP-15: Response policy throws or times out
 
 - **Given:** A's approval request is open.
-- **When:** a correlated Allow response is denied, throws, or times out in the
-  response policy.
+- **When:** a correlated Allow response reaches a response policy that throws
+  or times out. This is an infrastructure failure, not an adjudication.
 - **Then:** The approval remains open and the tool does not run. A
   response-only delivery starts no turn and returns to waiting.
-- **Observed:** Policy denial emits `reason: unauthorized`; throw or timeout
-  emits `reason: policy-failed`. No terminal request event appears;
-  `session.waiting` follows.
+- **Observed:** `input.response.rejected(reason: policy-failed)`, then
+  `session.waiting`. No terminal request event appears.
 
 #### AP-15B: Response value is invalid
 
@@ -402,7 +420,7 @@ candidate and never opens a second authorization challenge.
   runnable.
 - **Then:** Eve restores the batch's stored model output exactly once, appends
   every request outcome, and runs each allowed tool exactly once. Tools whose
-  request settled as cancelled do not run. Rejected candidates do not change a
+  request settled as denied or cancelled do not run. Rejected candidates do not change a
   request's later eligibility.
 - **Observed:** Each tool call, response, and tool result appears exactly once.
 
