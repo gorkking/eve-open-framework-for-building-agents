@@ -138,6 +138,12 @@ session-end races all use that transition. After one wins, later responses are
 stale and later dismissals are no-ops. Tool dispatch rechecks turn and session
 cancellation after winning and before execution.
 
+A response is not conversation input. A delivery whose every component is a
+rejected, stale, or pending response starts no turn and calls no model; the
+session returns to `session.waiting`. A turn runs only when the delivery
+carries a message, or when a settlement closes a batch and the restored model
+output continues.
+
 Authorization lifecycle events carry one `authorizationId`, the verified actor
 or null, and the blocked operation identity. `authorization.required`, its
 callback, and `authorization.completed` use that ID.
@@ -169,9 +175,12 @@ after closure.
 
 - **Given:** A's approval request is open.
 - **When:** B sends a correlated response and the response policy rejects B.
-- **Then:** The request remains open. The tool does not run.
-- **Observed:** Eve emits `input.response.rejected(reason: unauthorized)`. It
-  emits no `input.responded` or dismissal event for the request.
+- **Then:** The request remains open. The tool does not run. No turn runs: the
+  rejected response is not conversation input, so the delivery ends back at
+  the waiting boundary.
+- **Observed:** Eve emits `input.response.rejected(reason: unauthorized)` and
+  then `session.waiting`. It emits no `input.responded`, no dismissal event,
+  and no model output for the request.
 
 #### AP-4: Originating actor sends an unrelated message
 
@@ -296,18 +305,21 @@ supersede their question under Q-2 while approvals remain open.
 - **Given:** A's approval request is open.
 - **When:** a correlated Allow response is denied, throws, or times out in the
   response policy.
-- **Then:** The approval remains open and the tool does not run.
+- **Then:** The approval remains open and the tool does not run. A
+  response-only delivery starts no turn and returns to waiting.
 - **Observed:** Policy denial emits `reason: unauthorized`; throw or timeout
-  emits `reason: policy-failed`. No terminal request event appears.
+  emits `reason: policy-failed`. No terminal request event appears;
+  `session.waiting` follows.
 
 #### AP-15B: Response value is invalid
 
 - **Given:** A's approval request is open.
 - **When:** a correlated response carries an unknown option ID or malformed
   value.
-- **Then:** The request remains open and the tool does not run.
-- **Observed:** `input.response.rejected(reason: invalid)` and no terminal
-  request event.
+- **Then:** The request remains open and the tool does not run. A response-only
+  delivery starts no turn.
+- **Observed:** `input.response.rejected(reason: invalid)`, then
+  `session.waiting`; no terminal request event.
 
 #### AP-16: Allow candidate requires authorization
 
@@ -315,7 +327,8 @@ supersede their question under Q-2 while approvals remain open.
 - **When:** an Allow candidate requires a separate authorization flow.
 - **Then:** Eve keeps a durable pending candidate bound to
   `{ candidateId, requestId, responder }`. The request remains open and the tool
-  does not run.
+  does not run. A response-only delivery starts no turn while the candidate
+  waits.
 - **Observed:** `input.response.pending(reason: authorization-required)` opens
   an authorization challenge linked to that candidate.
 
