@@ -50,8 +50,8 @@ An unrelated message runs as a normal turn and emits `message.received` before
 the next `session.waiting`, `session.completed`, or `session.failed`. There is
 no outcome where eve stores the message and waits silently.
 
-This works because the unresolved approval suffix is already kept out of
-committed history; only the pending batch holds it
+This works because the model output that created the unresolved approval is
+already kept out of committed history; only the pending batch holds it
 ([`tool-loop.ts`](../packages/eve/src/harness/tool-loop.ts#L2098-L2131)). The
 transcript stays valid without the approval. Blocking is a policy choice in
 `resolvePendingInput`, not an AI SDK requirement.
@@ -76,19 +76,20 @@ message from the originating actor supersede its own question. That emits
 ### Answer late, answer fine
 
 A pending request stays answerable after other turns run. When a valid
-authorized response arrives, eve splices the stored approval suffix plus the
+authorized response arrives, eve restores the stored model output plus the
 response into the transcript at that point, exactly as resume works today
 ([`input-requests.ts`](../packages/eve/src/harness/input-requests.ts#L186-L239)).
 
 "Stale" changes meaning: a response is stale only when its request is no longer
 pending, not merely because other turns ran in between.
 
-One constraint: requests raised by the same model step share one stored suffix,
-so they form a **suffix group**. Each request in the group keeps its own
-lifecycle, but the suffix splices into the transcript once, when the last
-member settles or dismisses. An approved tool in a group therefore runs only
-after its sibling requests close. Splicing per member would either duplicate
-the assistant tool-call message or leave a sibling's call dangling; the AI
+One constraint: requests raised by the same assistant turn share one stored
+model output, so they form an **assistant-turn input batch**. A batch containing
+only approvals is an **assistant-turn approval batch**. Each request keeps its
+own lifecycle, but the model output is restored once, when the last request
+settles or dismisses. An approved tool therefore runs only after sibling
+requests close. Restoring the output per request would either duplicate the
+assistant tool-call message or leave a sibling's call dangling; the AI
 SDK's prompt conversion throws `MissingToolResultsError` for a dangling call
 without an approval response (`convert-to-language-model-prompt.ts` in
 `ai@7.0.38`).
@@ -163,8 +164,8 @@ Two structural changes carry all of this:
    the whole pending state
    ([`input-requests.ts`](../packages/eve/src/harness/input-requests.ts#L394-L405)).
    If a later turn raises its own HITL while an earlier request is open, the
-   batch would be overwritten. Key pending requests by `requestId`, each with
-   its stored approval suffix and originating actor.
+   batch would be overwritten. Key pending requests by `requestId`, each linked
+   to its assistant-turn input batch and originating actor.
 2. **Requests bind their originating actor.** Snapshot the verified
    `{ issuer, principalId }` at request creation. When the channel has no
    verified principal, treat all deliveries in the session as the same actor.
@@ -174,8 +175,8 @@ Two structural changes carry all of this:
 The acceptance gate for the late splice is an integration test extending
 [`tool-loop-generate-approval-resume.integration.test.ts`](../packages/eve/src/harness/tool-loop-generate-approval-resume.integration.test.ts)
 with a normal turn between the approval request and its response. SDK core
-accepts the resulting consecutive-assistant shape; provider converters are the
-remaining risk to verify.
+accepts restoring the assistant-turn approval batch after that intervening
+turn; provider converters are the remaining risk to verify.
 
 ## Current behavior to remove
 
@@ -272,18 +273,19 @@ No runtime changes.
 
 ### 2. Data: per-request collection
 
-Replace the singleton pending batch with a collection keyed by `requestId`:
-kind, suffix-group id, originating actor `{ issuer, principalId }`, stored
-suffix. Resolution behavior stays exactly as today — this PR is a pure data
-refactor, verified by the existing suite passing unchanged.
+Replace the singleton pending batch with ordered assistant-turn input batches.
+Each request links to its batch and originating actor `{ issuer, principalId }`;
+each batch stores the model output once. Resolution behavior stays exactly as
+today — this PR is a pure data refactor, verified by the existing suite passing
+unchanged.
 
 ### 3. Behavior: non-blocking resolution
 
 Rewrite `resolvePendingInput`: the decision logic becomes a pure function in
 the same area; transcript assembly applies its decisions. Deletes the
 `deferredStepInput` gating path. Unrelated messages run; requests stay
-pending; late responses splice; suffix groups close as a unit; `ask_question`
-supersession; stale means not-pending. Unit tests are the scenario matrix as
+pending; late responses restore their assistant-turn batch; batches close as a
+unit; `ask_question` supersession; stale means not-pending. Unit tests are the scenario matrix as
 literal tables. Fixes #1224 and the consumed-as-answer half of #786.
 
 ### 4. Lifecycle events
@@ -304,14 +306,14 @@ One e2e fixture with a deterministic mock model and a two-principal custom
 channel. Every cell asserts a literal expected event sequence — what the
 stream must show, written out, never computed from runtime code:
 
-| Dimension      | Values                                                         |
-| -------------- | -------------------------------------------------------------- |
-| Players        | single-player, two principals                                  |
-| Request kind   | approval, question, session-limit, authorization               |
-| Batch          | single request, suffix group (approval + question in one step) |
-| Delivery       | structured response, plain message, response + message         |
-| Actor relation | originating actor, other actor                                 |
-| Timing         | while waiting, after intervening turns, after closure (stale)  |
+| Dimension      | Values                                                        |
+| -------------- | ------------------------------------------------------------- |
+| Players        | single-player, two principals                                 |
+| Request kind   | approval, question, session-limit, authorization              |
+| Batch          | single request, assistant-turn input batch                    |
+| Delivery       | structured response, plain message, response + message        |
+| Actor relation | originating actor, other actor                                |
+| Timing         | while waiting, after intervening turns, after closure (stale) |
 
 Authorization rows assert event parity only: parks already do not block
 deliveries — `pendingAuthorization` is never read by the resolution path, only
