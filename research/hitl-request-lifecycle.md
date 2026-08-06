@@ -1,5 +1,5 @@
 ---
-issue: TBD
+issue: https://github.com/vercel/eve/issues/1224
 status: proposed
 last_updated: "2026-08-03"
 ---
@@ -220,6 +220,28 @@ so routes must accumulate per request and close only with a settlement or
 The server has no authoritative response event. `client.input.responded` is
 only a client-side optimistic update
 ([`ClientInputRespondedEvent`](../packages/eve/src/client/reducer.ts#L33-L52)).
+
+## Impacted issues
+
+- [#1224](https://github.com/vercel/eve/issues/1224): freeform reply to a
+  pending approval mutes the session. Rule 1 removes the deferral entirely.
+- [#786](https://github.com/vercel/eve/issues/786): a message sent before a
+  prompt existed gets consumed as its answer. Ordered evaluation plus
+  correlation makes that impossible; nothing drains deferred input into a
+  request anymore.
+- [#1201](https://github.com/vercel/eve/issues/1201): approval dropped when a
+  step also requests a subagent call. The request-created rule makes this fail
+  closed: expose the request or fail the turn.
+- [#1608](https://github.com/vercel/eve/issues/1608): stale proxy mapping
+  resumes a disposed child hook. Routes accumulate per request and close only
+  via settlement or `input.dismissed(route-lost)`.
+- [#1095](https://github.com/vercel/eve/issues/1095): HITL answers never reach
+  the durable stream. Rule 3 requires every closure to be a stream event.
+- [#1021](https://github.com/vercel/eve/issues/1021): responder authorization,
+  owned by PR #1368; this contract consumes its decision.
+- [#1658](https://github.com/vercel/eve/issues/1658): denial fails the session
+  on OpenAI. Same transcript-shape territory as the late-splice acceptance
+  gate.
 
 ## Related work
 
