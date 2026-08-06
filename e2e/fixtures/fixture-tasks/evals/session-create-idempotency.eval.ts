@@ -13,11 +13,14 @@ const PRINCIPAL_B = "Bearer e2e-task-operation-b";
 /** Retried remote create is idempotent and scoped to its transport principal. */
 export default defineEval({
   description:
-    "An operationId returns one active session per authenticated principal across retried creates.",
+    "Concurrent retries with one operationId resolve one session identity per authenticated principal.",
   async test(t) {
     const operationId = `session-create-idempotency-${crypto.randomUUID()}`;
-    const first = await createSession(t.target, PRINCIPAL_A, operationId, "first create");
-    const replay = await createSession(t.target, PRINCIPAL_A, operationId, "replayed create");
+    const [first, concurrentRetry] = await Promise.all([
+      createSession(t.target, PRINCIPAL_A, operationId, "concurrent create A"),
+      createSession(t.target, PRINCIPAL_A, operationId, "concurrent create B"),
+    ]);
+    const replay = await createSession(t.target, PRINCIPAL_A, operationId, "serial replay");
     const otherPrincipal = await createSession(
       t.target,
       PRINCIPAL_B,
@@ -25,8 +28,10 @@ export default defineEval({
       "other principal",
     );
 
-    await t.require(replay.sessionId, equals(first.sessionId));
-    await t.require(replay.continuationToken, equals(first.continuationToken));
+    for (const retry of [concurrentRetry, replay]) {
+      await t.require(retry.sessionId, equals(first.sessionId));
+      await t.require(retry.continuationToken, equals(first.continuationToken));
+    }
     await t.require(
       otherPrincipal,
       satisfies(
@@ -42,6 +47,8 @@ export default defineEval({
       t.target.watchTurn(otherPrincipal.sessionId).result(),
     ]);
     firstTurn.expectOk();
+    firstTurn.event("message.received", { count: 1 });
+    firstTurn.event("step.started", { count: 1 });
     otherTurn.expectOk();
   },
 });

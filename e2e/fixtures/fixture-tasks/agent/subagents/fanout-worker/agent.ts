@@ -2,9 +2,9 @@ import { defineAgent } from "eve";
 import { mockModel, type MockModelRequest, type MockModelResponse } from "eve/evals";
 
 function respond(request: MockModelRequest): MockModelResponse | string {
-  const held = request.toolResults.find((result) => result.name === "hold");
-  if (held === undefined) {
-    return { toolCalls: [{ input: { milliseconds: 3_000 }, name: "hold" }] };
+  const released = request.toolResults.find((result) => result.name === "release");
+  if (released === undefined) {
+    return { toolCalls: [{ input: { marker: "RELEASE" }, name: "release" }] };
   }
   return `FANOUT-COMPLETE:${request.lastUserMessage ?? ""}`;
 }
