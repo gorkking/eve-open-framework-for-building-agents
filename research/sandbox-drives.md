@@ -166,8 +166,25 @@ const userDrive = `user-${session.auth.current?.principalId}`;
 const globalDrive = "shared-model-cache";
 ```
 
+A scope is a claim about attachment concurrency, so it must be chosen against the platform's IO
+limitation (P1). Today a drive supports exactly one attachment: one writer, and no additional
+readers, because read-only mounts consume the same single slot. Under that constraint:
+
+| Scope             | Concurrent attachment demand          | Fit under P1                                                           |
+| ----------------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| `session-${id}`   | One sandbox per drive by construction | Safe; no collisions                                                    |
+| `user-${id}`      | One user's overlapping sessions       | Collides when the same user runs sessions concurrently                 |
+| `repo-${id}`      | Every session touching the repository | Collides under normal overlap; sequential handoff only                 |
+| `shared-…` global | All sessions of the application       | Collides constantly; unusable as a live mount until multi-reader ships |
+
+Planned multi-reader support relaxes only the read side: a read-mostly scope such as a shared
+model or dependency cache becomes viable as `mode: "read-only"` for many sandboxes with one
+writer. It does not change the write side — a repository workspace scope still admits exactly one
+live writer, so multi-writer workloads must keep using clone-and-synchronize regardless.
+
 A wider scope increases reuse and attachment collisions. A narrower scope increases isolation. eve
-does not arbitrate this application-level decision.
+does not arbitrate this application-level decision, but examples should name the concurrency claim
+each scope makes so authors choose deliberately.
 
 The expected lifecycle is:
 
