@@ -18,7 +18,6 @@ import {
   TASK_SNAPSHOT_STREAM_NAMESPACE,
   type TaskInboundAnswerInput,
   type TaskInboundInputRequest,
-  type TaskStatus,
   type TaskView,
 } from "#tasks/types.js";
 
@@ -59,10 +58,6 @@ export async function wakeTaskParentStep(input: {
     kind: "send",
     payload: {
       message: formatTaskNotification(input.view),
-      taskNotification: {
-        status: readyNotificationStatus(input.view.status),
-        taskId: input.view.taskId,
-      },
     },
   };
   try {
@@ -144,13 +139,6 @@ export async function deliverTaskInputResponsesStep(input: {
     }
     throw error;
   }
-}
-
-function readyNotificationStatus(status: TaskStatus): Exclude<TaskStatus, "working"> {
-  if (status === "working") {
-    throw new Error("Cannot wake a parent for a working task.");
-  }
-  return status;
 }
 
 function formatTaskNotification(view: TaskView): string {

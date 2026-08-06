@@ -15,9 +15,8 @@ import type { JsonValue } from "#shared/json.js";
  * Task lifecycle status.
  *
  * `completed`, `failed`, and `cancelled` are terminal and final.
- * `input_required` is not terminal but is ready for parent action, so
- * `task_await` returns for it — a parent must never deadlock while its
- * child waits for input.
+ * `input_required` is not terminal but is ready for parent action; the
+ * child must wake its parent rather than deadlock while waiting for input.
  */
 export type TaskStatus = "working" | "input_required" | "completed" | "failed" | "cancelled";
 
@@ -218,7 +217,7 @@ export function isTerminalTaskStatus(status: TaskStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-/** True when `task_await` should stop waiting on this status. */
+/** True when a transition into this status should wake the parent. */
 export function isReadyTaskStatus(status: TaskStatus): boolean {
   return status === "input_required" || isTerminalTaskStatus(status);
 }

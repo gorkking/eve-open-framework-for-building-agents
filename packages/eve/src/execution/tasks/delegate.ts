@@ -4,13 +4,13 @@ import {
   sendTaskCommandToOwner,
   startTaskRun,
 } from "#execution/tasks/run-control.js";
+import { sessionCommandHookToken } from "#execution/session-command-token.js";
+import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 import type { RuntimeSubagentChildResult } from "#runtime/actions/types.js";
 import type { JsonValue } from "#shared/json.js";
 import { recordSessionTask } from "#tasks/session-index.js";
 import { deriveTaskCommandToken, deriveTaskId } from "#tasks/task-id.js";
 import type { TaskMetadata } from "#tasks/types.js";
-import { sessionCommandHookToken } from "#execution/session-command-token.js";
-import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 
 /** A prepared delegated task: identity plus its started durable run. */
 export interface DelegatedTask {

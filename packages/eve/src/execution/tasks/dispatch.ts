@@ -14,12 +14,7 @@ import {
 } from "#execution/tasks/control-shared.js";
 import { executeTaskSend } from "#execution/tasks/send.js";
 import { readLatestTaskSnapshot, sendTaskCommand } from "#execution/tasks/run-control.js";
-import type { AwaitedTaskRef } from "#execution/tasks/await-workflow.js";
-import {
-  requestWorkflowTurnCancellation,
-  startWorkflowPreferLatest,
-  taskAwaitWorkflowReference,
-} from "#execution/workflow-runtime.js";
+import { requestWorkflowTurnCancellation } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
 import type {
   RuntimeActionRequest,
@@ -28,15 +23,13 @@ import type {
 } from "#runtime/actions/types.js";
 import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import {
-  TASK_AWAIT_TOOL_NAME,
   TASK_CANCEL_TOOL_NAME,
   TASK_CONTROL_TOOL_NAMES,
   TASK_PEEK_TOOL_NAME,
   TASK_SEND_TOOL_NAME,
 } from "#runtime/framework-tools/tasks.js";
 import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
-import { isReadyTaskStatus, isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
-import { suppressAwaitedTaskWakes } from "#tasks/wake-suppression.js";
+import { isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
 
 export {
   beginDelegatedTask,
@@ -50,7 +43,7 @@ const log = createLogger("execution.tasks.dispatch");
 const CANCEL_COMMIT_POLL_ATTEMPTS = 10;
 const CANCEL_COMMIT_POLL_DELAY_MS = 250;
 
-/** True for `task_peek` / `task_await` / `task_cancel` / `task_send` calls. */
+/** True for `task_peek` / `task_cancel` / `task_send` calls. */
 export function isTaskControlAction(
   action: RuntimeActionRequest,
 ): action is RuntimeToolCallActionRequest {
@@ -60,9 +53,7 @@ export function isTaskControlAction(
 /**
  * Executes one task-control call inside the dispatch step, which holds
  * the durable session state (ownership index) and world access the
- * tools need. `task_await` is the exception: when any selected task is
- * still working it starts the aggregation run and returns no result,
- * leaving the pending key to the turn's existing inbox wait.
+ * tools need.
  *
  * Returns the (possibly updated) session: `task_send` follow-ups record
  * new tasks and settle the continued agent handle.
@@ -70,7 +61,6 @@ export function isTaskControlAction(
 export async function executeTaskControlAction(input: {
   readonly action: RuntimeToolCallActionRequest;
   readonly bundle: CompiledBundle;
-  readonly parentContinuationToken: string | undefined;
   readonly parentStepIndex?: number;
   readonly parentTurnId: string;
   readonly session: RuntimeSession;
@@ -109,41 +99,6 @@ export async function executeTaskControlAction(input: {
         views.push(await cancelOneTask({ bundle: input.bundle, entry, session }));
       }
       return { result: createTaskViewsResult(action, views), session };
-    }
-    case TASK_AWAIT_TOOL_NAME: {
-      const views = await readTaskViews(entries);
-      if (views.every((view) => isReadyTaskStatus(view.status))) {
-        return {
-          result: createTaskViewsResult(action, views),
-          session: suppressAwaitedTaskWakes(session, taskIds),
-        };
-      }
-      if (input.parentContinuationToken === undefined) {
-        return {
-          result: createTaskControlError(
-            action,
-            "task_await is unavailable on this session driver.",
-          ),
-          session,
-        };
-      }
-      const tasks: AwaitedTaskRef[] = entries.map((entry) => ({
-        metadata: entry.metadata,
-        taskId: entry.taskId,
-        taskRunId: entry.taskRunId,
-      }));
-      await startWorkflowPreferLatest(taskAwaitWorkflowReference, [
-        {
-          callId: action.callId,
-          replyToken: input.parentContinuationToken,
-          tasks,
-          toolName: action.toolName,
-        },
-      ]);
-      return {
-        result: undefined,
-        session: suppressAwaitedTaskWakes(session, taskIds),
-      };
     }
     default:
       return {
@@ -212,12 +167,18 @@ async function propagateTaskCancel(input: {
         remoteAgentName: handle.identity.name,
         registry: input.bundle.subagentRegistry.subagentsByNodeId,
       });
-      const result = await cancelRemoteAgentTurn({
+      const cancelInput: {
+        readonly remote: typeof resolved & { readonly url: string };
+        readonly sessionId: string;
+        readonly taskId: string;
+        turnId?: string;
+      } = {
         remote: { ...resolved, url: handle.address.url },
         sessionId: childSessionId,
         taskId: input.view.taskId,
-        ...(childTurnId === undefined ? {} : { turnId: childTurnId }),
-      });
+      };
+      if (childTurnId !== undefined) cancelInput.turnId = childTurnId;
+      const result = await cancelRemoteAgentTurn(cancelInput);
       if (result.status === "no_active_turn") {
         await cancelRemoteAgentTurn({
           remote: { ...resolved, url: handle.address.url },
@@ -227,11 +188,16 @@ async function propagateTaskCancel(input: {
       }
       return;
     }
-    const result = await requestWorkflowTurnCancellation({
+    const cancelInput: {
+      readonly sessionId: string;
+      readonly taskId: string;
+      turnId?: string;
+    } = {
       sessionId: childSessionId,
       taskId: input.view.taskId,
-      ...(childTurnId === undefined ? {} : { turnId: childTurnId }),
-    });
+    };
+    if (childTurnId !== undefined) cancelInput.turnId = childTurnId;
+    const result = await requestWorkflowTurnCancellation(cancelInput);
     if (result.status === "no_active_turn") {
       await requestWorkflowTurnCancellation({
         sessionId: childSessionId,

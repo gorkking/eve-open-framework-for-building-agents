@@ -109,7 +109,6 @@ describe("task cancellation identity", () => {
       const result = await executeTaskControlAction({
         action,
         bundle: { subagentRegistry: { subagentsByNodeId: new Map() } } as never,
-        parentContinuationToken: "parent-turn-token",
         parentTurnId: "turn-parent",
         session: createSession(mode),
       });
@@ -148,7 +147,6 @@ describe("task cancellation identity", () => {
     await executeTaskControlAction({
       action,
       bundle: {} as CompiledBundle,
-      parentContinuationToken: "parent-turn-token",
       parentTurnId: "turn-parent",
       session: createSession("local"),
     });
@@ -166,7 +164,6 @@ describe("task cancellation identity", () => {
     await executeTaskControlAction({
       action,
       bundle: {} as CompiledBundle,
-      parentContinuationToken: "parent-turn-token",
       parentTurnId: "turn-parent",
       session: createSession("local"),
     });

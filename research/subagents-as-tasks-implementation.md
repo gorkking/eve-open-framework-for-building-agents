@@ -37,7 +37,7 @@ Tasks must not build a second addressing mechanism. The task record composes wit
 - the **handle** identifies the reusable child session (agent-messaging owns it);
 - the **task** identifies one unit of work against that handle and adds what handles lack:
   a durable record that survives terminal settlement, `working` / `input_required` status,
-  progress messages, receipts instead of turn-blocking, and `task_await`.
+  progress messages, and receipts instead of turn-blocking.
 
 Task identity reuses the operation-id derivation, `hash(parentSessionId, parentTurnId, callId)`,
 so replayed creation for the same originating call yields the same task without new machinery.
@@ -102,7 +102,7 @@ lifecycle path.
 
 ### Stage 2 — task tools, undiscoverable
 
-Register the parent tools (`task_peek`, `task_await`, `task_send`, `task_cancel`, `task_sleep`)
+Register the parent tools (`task_peek`, `task_send`, `task_cancel`, `task_sleep`)
 as framework tools, filtered out of the tool set unless the flag is on, plus the child
 `task_message` tool advertised only when a task binding is present (the same capability-gating
 pattern as `ask_question`).
@@ -110,11 +110,6 @@ pattern as `ask_question`).
 - `task_sleep` reuses the existing durable turn-sleep request.
 - `task_peek`, `task_cancel`, and `task_send` read the session task index; `task_send` resolves a
   terminal task's child address through the agent handle store and starts a new task.
-- `task_await` introduces the one new turn-workflow wait: a new optional wait arm on the durable
-  step result that subscribes to selected task runs and returns when every selected task is
-  terminal or `input_required` (already-ready tasks return immediately). This is the only piece
-  of stage 2 that touches the turn workflow, and it rides an optional field nothing produces
-  when the flag is off.
 
 Verification: unit tests per tool; a scenario test that the tools are absent from advertised
 tool sets and `/agent-info` when the flag is off.
@@ -133,8 +128,8 @@ In the runtime-action dispatch step, add a delegated mode alongside the existing
 
 Step 4 is what keeps the parent turn moving and history provider-valid: the receipt is the one
 result the existing key-based batch matching consumes, so the turn continues without a second
-result path. The eventual outcome reaches the model only through `task_await`, `task_peek`, or a
-task notification. Nothing selects this mode yet.
+result path. A task notification starts or nudges a parent turn, and the model can read additional
+current state through `task_peek`. Nothing selects this mode yet.
 
 Verification: integration tests invoking the mode directly; replay tests proving the same
 originating call returns the same task and never dispatches twice.

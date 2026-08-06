@@ -12,7 +12,7 @@ import type { TaskView } from "#tasks/types.js";
 
 /**
  * Result and lookup helpers shared by the task-control executors
- * (`task_peek`/`task_await`/`task_cancel` in the dispatch module,
+ * (`task_peek`/`task_cancel` in the dispatch module,
  * `task_send` in its own).
  */
 

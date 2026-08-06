@@ -2,7 +2,6 @@ import type { DeliverHookPayload, DeliverPayload, SessionCommand } from "#channe
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import type { SessionCommandInbox } from "#execution/session-command-inbox.js";
-import { filterAwaitedTaskWakePayloadsStep } from "#execution/tasks/wake-suppression-step.js";
 import { coalesceDeliveries } from "#harness/messages.js";
 
 type NextSessionAction =
@@ -74,21 +73,10 @@ export async function nextTurnDelivery(input: {
       return { kind: "closed", serializedContext, sessionState };
     }
 
-    const filtered = await filterAwaitedTaskWakePayloadsStep({
-      payloads: deliver.payloads,
-      serializedContext: input.serializedContext,
-      sessionState,
-    });
-    sessionState = filtered.sessionState;
-    if (filtered.payloads.length === 0) {
-      // A completed task_await already reported every task in this delivery.
-      continue;
-    }
-
     const routed = await routeDeliverToChildren({
       auth: deliver.auth,
       parentWritable: input.driverWritable,
-      payloads: filtered.payloads,
+      payloads: deliver.payloads,
       serializedContext,
       sessionState,
     });

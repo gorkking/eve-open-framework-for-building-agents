@@ -60,7 +60,7 @@ export async function executeTaskSend(input: {
     return {
       result: createTaskControlError(
         action,
-        `${AGENT_BUSY}: task "${view.taskId}" is still working. Wait for it with task_await, or cancel it first.`,
+        `${AGENT_BUSY}: task "${view.taskId}" is still working. Let it finish, or cancel it first.`,
       ),
       session,
     };
@@ -122,7 +122,6 @@ async function followUpTerminalTask(input: {
       session: input.session,
     };
   }
-
   const continuation: RuntimeAgentHandleAction =
     handle.address.kind === "agent/remote"
       ? {

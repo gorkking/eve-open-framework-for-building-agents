@@ -5,9 +5,9 @@ import {
   toProxyInputRequestEntries,
   upsertProxyInputRequestState,
 } from "#harness/proxy-input-requests.js";
-import { findSessionTaskEntry } from "#tasks/session-index.js";
-import { isInputRequest } from "#runtime/input/types.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
+import { isInputRequest } from "#runtime/input/types.js";
+import { findSessionTaskEntry } from "#tasks/session-index.js";
 
 /** Validates and durably records one task-owned child HITL route batch. */
 export async function recordTaskInputRequestStep(input: {

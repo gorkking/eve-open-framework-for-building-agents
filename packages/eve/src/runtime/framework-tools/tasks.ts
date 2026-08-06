@@ -9,14 +9,13 @@ import type { ResolvedToolDefinition } from "#runtime/types.js";
  *
  * With the flag on, subagent calls return a task receipt instead of
  * blocking the parent turn; these tools are the model's controls over
- * that delegated work. `task_peek`, `task_await`, and `task_cancel` are
+ * that delegated work. `task_peek` and `task_cancel` are
  * execute-less runtime actions — they need durable session state and
  * world access, so the runtime-action dispatch step executes them.
  * `task_sleep` only records a durable pause and executes in-loop.
  */
 
 export const TASK_PEEK_TOOL_NAME = "task_peek";
-export const TASK_AWAIT_TOOL_NAME = "task_await";
 export const TASK_CANCEL_TOOL_NAME = "task_cancel";
 export const TASK_SEND_TOOL_NAME = "task_send";
 export const TASK_SLEEP_TOOL_NAME = "task_sleep";
@@ -24,7 +23,6 @@ export const TASK_SLEEP_TOOL_NAME = "task_sleep";
 /** Every model-visible task tool name, for gating and dispatch matching. */
 export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set([
   TASK_PEEK_TOOL_NAME,
-  TASK_AWAIT_TOOL_NAME,
   TASK_CANCEL_TOOL_NAME,
   TASK_SEND_TOOL_NAME,
   TASK_SLEEP_TOOL_NAME,
@@ -33,7 +31,6 @@ export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set([
 /** Task-control tools executed by the runtime-action dispatch step. */
 export const TASK_CONTROL_TOOL_NAMES: ReadonlySet<string> = new Set([
   TASK_PEEK_TOOL_NAME,
-  TASK_AWAIT_TOOL_NAME,
   TASK_CANCEL_TOOL_NAME,
   TASK_SEND_TOOL_NAME,
 ]);
@@ -44,7 +41,6 @@ const TASK_IDS_SCHEMA = z
   .describe("Task ids from earlier subagent task receipts.");
 
 export const TASK_PEEK_INPUT_SCHEMA = z.strictObject({ taskIds: TASK_IDS_SCHEMA });
-export const TASK_AWAIT_INPUT_SCHEMA = z.strictObject({ taskIds: TASK_IDS_SCHEMA });
 export const TASK_CANCEL_INPUT_SCHEMA = z.strictObject({ taskIds: TASK_IDS_SCHEMA });
 
 export const TASK_SEND_INPUT_SCHEMA = z.strictObject({
@@ -93,10 +89,6 @@ const TASK_PEEK_DESCRIPTION =
   "Read the current state of one or more background tasks without waiting. " +
   "Returns each task's status and, for finished tasks, its output. Does not wake or change the task.";
 
-const TASK_AWAIT_DESCRIPTION =
-  "Wait until every selected background task is finished (completed, failed, or cancelled) or needs input. " +
-  "Tasks that are already in one of those states return immediately. Returns the same views as task_peek.";
-
 const TASK_CANCEL_DESCRIPTION =
   "Request cooperative cancellation of one or more background tasks. " +
   "Cancellation is final: a task that finishes after you cancel it stays cancelled. Cancelling an already-finished task changes nothing.";
@@ -109,7 +101,7 @@ const TASK_SEND_DESCRIPTION =
 
 const TASK_SLEEP_DESCRIPTION =
   "Pause durably before continuing, for paced background-task checks. " +
-  "Does not read or change any task; follow it with task_peek or task_await.";
+  "Does not read or change any task; follow it with task_peek.";
 
 /**
  * Builds the harness definitions injected when the root agent enables
@@ -123,13 +115,6 @@ export function createTaskToolHarnessDefinitions(): readonly HarnessToolDefiniti
       description: TASK_PEEK_DESCRIPTION,
       inputSchema: TASK_PEEK_INPUT_SCHEMA,
       name: TASK_PEEK_TOOL_NAME,
-      outputSchema: TASK_VIEWS_OUTPUT_SCHEMA,
-      runtimeAction: { kind: "task-control" },
-    },
-    {
-      description: TASK_AWAIT_DESCRIPTION,
-      inputSchema: TASK_AWAIT_INPUT_SCHEMA,
-      name: TASK_AWAIT_TOOL_NAME,
       outputSchema: TASK_VIEWS_OUTPUT_SCHEMA,
       runtimeAction: { kind: "task-control" },
     },
@@ -203,7 +188,6 @@ function createResolvedTaskToolStub(input: {
  */
 export const TASK_TOOL_DEFINITIONS: readonly ResolvedToolDefinition[] = [
   createResolvedTaskToolStub({ description: TASK_PEEK_DESCRIPTION, name: TASK_PEEK_TOOL_NAME }),
-  createResolvedTaskToolStub({ description: TASK_AWAIT_DESCRIPTION, name: TASK_AWAIT_TOOL_NAME }),
   createResolvedTaskToolStub({ description: TASK_CANCEL_DESCRIPTION, name: TASK_CANCEL_TOOL_NAME }),
   createResolvedTaskToolStub({ description: TASK_SEND_DESCRIPTION, name: TASK_SEND_TOOL_NAME }),
   createResolvedTaskToolStub({ description: TASK_SLEEP_DESCRIPTION, name: TASK_SLEEP_TOOL_NAME }),

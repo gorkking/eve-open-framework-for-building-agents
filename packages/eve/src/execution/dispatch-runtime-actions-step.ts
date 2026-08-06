@@ -197,7 +197,6 @@ export async function dispatchRuntimeActionsStep(input: {
         const control = await executeTaskControlAction({
           action: entry.action,
           bundle,
-          parentContinuationToken: input.parentContinuationToken,
           parentStepIndex: batch.event.stepIndex,
           parentTurnId: batch.event.turnId,
           session: nextSession,

@@ -8,7 +8,6 @@ import {
   recordSessionTask,
 } from "#tasks/session-index.js";
 import { deriveTaskId } from "#tasks/task-id.js";
-
 function createSession(state?: HarnessSession["state"]): HarnessSession {
   return {
     agent: {

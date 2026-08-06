@@ -11,7 +11,7 @@ last_updated: "2026-08-01"
 Under an opt-in `experimental.tasks` mode, eve should represent long-running work as durable,
 addressable tasks. This plan applies that model only to local and remote subagents. A subagent call
 returns a task receipt after dispatch instead of keeping the parent turn blocked until the child
-finishes. The parent can inspect, await, message, or cancel the task with framework-owned tools,
+finishes. The parent can inspect, message, or cancel the task with framework-owned tools,
 and the child can intentionally report progress to its parent with one framework-owned tool.
 
 Without the flag, current tool and subagent behavior must remain unchanged.
@@ -102,7 +102,7 @@ dispatch returns once the executor acknowledges the work; the task stays `workin
 later transition arrives over the task wire.
 
 `completed`, `failed`, and `cancelled` are terminal statuses. `input_required` is not terminal,
-but it is ready for parent action. `task_await` must return for either condition so a parent never
+but it is ready for parent action. Entering either condition wakes the parent so it never
 deadlocks while its child waits for input.
 
 ## Authoring contract
@@ -127,7 +127,6 @@ interface TaskParentTools {
   task_cancel(input: { taskIds: string[] }): Promise<TaskToolResult<boolean>>;
   task_peek(input: { taskIds: string[] }): Promise<TaskToolResult<TaskView[]>>;
   task_send(input: { taskId: string; message: string }): Promise<TaskToolResult<TaskView>>;
-  task_await(input: { taskIds: string[] }): Promise<TaskToolResult<TaskView[]>>;
   task_sleep(input: { durationMs: number }): Promise<TaskToolResult<boolean>>;
 }
 ```
@@ -139,8 +138,6 @@ The controls have distinct behavior:
 
 - `task_peek` reads current state without blocking and does not return credentials or routing
   handles.
-- `task_await` durably pauses the current turn until every selected task is terminal or
-  `input_required`. An already-ready task returns immediately.
 - `task_send` sends a follow-up message after the prior task became terminal, creating a new task
   bound to the same child session. It never reopens a terminal task or answers HITL.
 - `task_cancel` requests cooperative cancellation. A committed terminal state is final, so a late
@@ -213,9 +210,9 @@ gets one receipt:
 }
 ```
 
-The eventual child result must not become a second result for that call. It reaches the model
-through `task_await`, `task_peek`, or a later framework-authored task notification. This keeps
-history append-only and leaves no dangling provider tool call.
+The eventual child result must not become a second result for that call. A framework-authored
+task notification starts or nudges a parent turn, and the model reads any additional current state
+with `task_peek`. This keeps history append-only and leaves no dangling provider tool call.
 
 ## Task state and ownership
 
@@ -335,12 +332,12 @@ sequenceDiagram
     H->>C: dispatch with TaskBinding
     C-->>H: acknowledge childSessionId
     H-->>M: task receipt
-    M->>H: continue turn or task_await
+    M->>H: continue turn
 
     C->>T: task.update, task.message, or authorization
     T->>H: full task snapshot
     H->>H: queue until safe boundary
-    H-->>M: await result or later task notification
+    H-->>M: task notification; task_peek if needed
 ```
 
 ### Agent-to-agent dependency
@@ -355,7 +352,7 @@ one record:
 - resuming that child creates a new task bound to the same handle.
 
 The A2A draft currently records a handle after the child's first result. That is too late for
-`task_send` during `working` or `input_required`. Task dispatch must persist the private executor
+direct HITL and cancellation during `working` or `input_required`. Task dispatch must persist the private executor
 binding as soon as the child acknowledges its session. The same acknowledgement may create or
 update the reusable agent handle. Both records may reuse the A2A inbox route, but routing tokens
 belong in one shared credential store rather than two independent session-addressing mechanisms.
@@ -370,9 +367,8 @@ The current [MCP Tasks extension] provides the closest standard vocabulary:
 - full task snapshots in `notifications/tasks`;
 - terminal states that do not change.
 
-eve's `task_peek`, `task_send`, and `task_cancel` map to those operations. `task_await` and
-`task_sleep` are eve controls, not MCP methods. eve is not implementing the MCP wire protocol in
-this work.
+eve's `task_peek`, `task_send`, and `task_cancel` map to those operations. `task_sleep` is an eve
+control, not an MCP method. eve is not implementing the MCP wire protocol in this work.
 
 One semantic difference is decided. MCP treats a tool-level `isError: true` result as
 `completed`; `failed` is reserved for JSON-RPC execution failure. eve diverges: child failure
@@ -414,8 +410,8 @@ than MCP compatibility.
 - Local and remote subagents support the same six parent-child flows.
 - A child dispatched as a task can call `task_message`; the parent observes the durable latest
   message through `task_peek` without a model turn starting on its own.
-- `task_await` returns on terminal status and `input_required`, including when the task was already
-  ready before the call.
+- Terminal and `input_required` transitions wake the parent; the model can inspect all relevant
+  task views with `task_peek` and decide whether the available state is sufficient.
 - `task_peek` observes current state without waking or mutating the executor.
 - Parent-session responses route directly to the intended local task child without a parent model
   turn and cannot cross task or session ownership. `task_send` accepts terminal follow-up messages only.

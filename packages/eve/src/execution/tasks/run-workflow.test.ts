@@ -249,7 +249,60 @@ describe("taskRunWorkflow", () => {
     await taskRunWorkflow({ commandToken: "task-token", initialView: createWorkingView() });
     expect(wakeTaskParentStep).not.toHaveBeenCalled();
   });
+
+  it("commits and forwards every exact local task HITL batch before terminal wake", async () => {
+    const request = (requestId: string) => ({
+      action: {
+        callId: `call-${requestId}`,
+        input: {},
+        kind: "tool-call" as const,
+        toolName: "ask",
+      },
+      kind: "question" as const,
+      prompt: requestId,
+      requestId,
+    });
+    const inbound = (requestId: string): TaskRunInboundPayload => ({
+      callId: "call-task",
+      childContinuationToken: "child-token",
+      childSessionId: "child-session-1",
+      event: { requests: [request(requestId)], sequence: 1, stepIndex: 2, turnId: "turn_child" },
+      kind: "subagent-input-request",
+      subagentName: "research",
+    });
+    mockCommandHook([
+      { command: { kind: "ready" }, kind: "task-command" },
+      inbound("q1"),
+      inbound("q2"),
+      { command: { data: "done", kind: "complete" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({
+      commandToken: "task-token",
+      initialView: createWorkingView(),
+      wakeToken: "parent-session-token",
+    });
+
+    expect(wakeTaskInputRequestParentStep).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(wakeTaskInputRequestParentStep).mock.calls.map(([input]) => {
+        const request = input.request.event.requests[0];
+        return request !== null && typeof request === "object"
+          ? Reflect.get(request, "requestId")
+          : undefined;
+      }),
+    ).toEqual(["q1", "q2"]);
+    expect(wakeTaskParentStep).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ view: expect.objectContaining({ status: "completed" }) }),
+    );
+    const firstInputWakeOrder =
+      vi.mocked(wakeTaskInputRequestParentStep).mock.invocationCallOrder[0] ?? 0;
+    const firstInputAppendOrder =
+      vi.mocked(appendTaskSnapshotStep).mock.invocationCallOrder[2] ?? 0;
+    expect(firstInputAppendOrder).toBeLessThan(firstInputWakeOrder);
+  });
 });
+
 describe("taskRunWorkflow answered input", () => {
   function requireInput(...requestIds: readonly string[]): TaskRunInboundPayload {
     return {

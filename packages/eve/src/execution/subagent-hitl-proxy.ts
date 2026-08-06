@@ -95,7 +95,7 @@ export function routeDeliverPayload(input: {
     {
       readonly childContinuationToken: string;
       readonly responses: InputResponse[];
-      readonly taskId?: string;
+      taskId?: string;
     }
   >();
   const unroutedResponses: InputResponse[] = [];
@@ -120,22 +120,34 @@ export function routeDeliverPayload(input: {
     const existing = responsesByChild.get(bucketKey);
 
     if (existing === undefined) {
-      responsesByChild.set(bucketKey, {
+      const bucket = {
         childContinuationToken: route.childContinuationToken,
         responses: [response],
-        ...(route.taskId === undefined ? {} : { taskId: route.taskId }),
-      });
+      } as {
+        readonly childContinuationToken: string;
+        readonly responses: InputResponse[];
+        taskId?: string;
+      };
+      if (route.taskId !== undefined) bucket.taskId = route.taskId;
+      responsesByChild.set(bucketKey, bucket);
     } else {
       existing.responses.push(response);
     }
   }
 
   const forChildren: RoutedDeliverPayload["forChildren"] = [...responsesByChild.values()].map(
-    ({ childContinuationToken, responses, taskId }) => ({
-      childContinuationToken,
-      payload: { inputResponses: responses },
-      ...(taskId === undefined ? {} : { taskId }),
-    }),
+    ({ childContinuationToken, responses, taskId }) => {
+      const bucket: {
+        readonly childContinuationToken: string;
+        readonly payload: { readonly inputResponses: readonly InputResponse[] };
+        taskId?: string;
+      } = {
+        childContinuationToken,
+        payload: { inputResponses: responses },
+      };
+      if (taskId !== undefined) bucket.taskId = taskId;
+      return bucket;
+    },
   );
 
   // Preserve every non-`inputResponses` field on the original payload

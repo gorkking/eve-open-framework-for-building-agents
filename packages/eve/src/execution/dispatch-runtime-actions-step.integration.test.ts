@@ -303,6 +303,44 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     });
   });
 
+  it("adopts the child a replayed start already created instead of failing it", async () => {
+    const session = createStartSession({ kind: "local" });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    // A retried dispatch step re-derives the same deterministic child
+    // continuation token, so the first attempt's child owns it.
+    mocks.createSession.mockRejectedValue(
+      new RuntimeSessionOwnershipConflictError({
+        continuationToken: "subagent:parent-session:call-1",
+        ownerSessionId: CHILD_SESSION_ID,
+        sessionId: "duplicate-child",
+      }),
+    );
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({
+      handles: [
+        expect.objectContaining({
+          address: {
+            continuationToken: "subagent:parent-session:call-1",
+            kind: "agent/local",
+            sessionId: CHILD_SESSION_ID,
+          },
+          phase: "running",
+        }),
+      ],
+    });
+  });
+
   it("owns a remote child with its confirmed remote address", async () => {
     const session = createStartSession({ kind: "remote" });
     installContext(session, {

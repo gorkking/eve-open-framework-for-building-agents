@@ -177,11 +177,6 @@ export interface DeliverPayload {
   readonly message?: string | UserContent;
   readonly context?: readonly string[];
   readonly outputSchema?: JsonObject;
-  /** Framework task-ready notification; never authored by a channel caller. */
-  readonly taskNotification?: {
-    readonly status: "input_required" | "completed" | "failed" | "cancelled";
-    readonly taskId: string;
-  };
   /** Framework-only task HITL envelopes consumed before adapter/model delivery. */
   readonly taskInputRequests?: readonly {
     readonly hookPayload: SubagentInputRequestHookPayload;

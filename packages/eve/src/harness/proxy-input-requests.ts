@@ -153,17 +153,18 @@ export function toProxyInputRequestEntries(
   payload: SubagentInputRequestHookPayload,
   taskId?: string,
 ): readonly (readonly [requestId: string, route: ProxyInputRequest])[] {
-  return payload.event.requests.map(
-    (request) =>
-      [
-        request.requestId,
-        {
-          childContinuationToken: payload.childContinuationToken,
-          kind: request.kind,
-          ...(taskId === undefined ? {} : { taskId }),
-        },
-      ] as const,
-  );
+  return payload.event.requests.map((request) => {
+    const route: {
+      readonly childContinuationToken: string;
+      readonly kind: InputRequestKind;
+      taskId?: string;
+    } = {
+      childContinuationToken: payload.childContinuationToken,
+      kind: request.kind,
+    };
+    if (taskId !== undefined) route.taskId = taskId;
+    return [request.requestId, route] as const;
+  });
 }
 
 function readMap(state: SessionStateMap | undefined): ProxyInputRequestMap {
@@ -215,11 +216,16 @@ function parseProxyInputRequest(value: unknown): ProxyInputRequest | undefined {
   if (taskId !== undefined && (typeof taskId !== "string" || taskId.length === 0)) {
     return undefined;
   }
-  return {
+  const request: {
+    readonly childContinuationToken: string;
+    readonly kind: InputRequestKind;
+    taskId?: string;
+  } = {
     childContinuationToken: value.childContinuationToken,
     kind: value.kind,
-    ...(typeof taskId === "string" ? { taskId } : {}),
   };
+  if (typeof taskId === "string") request.taskId = taskId;
+  return request;
 }
 
 function isInputRequestKind(value: unknown): value is InputRequestKind {
