@@ -104,7 +104,7 @@ export default function BlogPost() {
 
           <section
             aria-label={`About ${post.author.name}`}
-            className="mt-12 overflow-hidden rounded-lg border border-gray-alpha-400 bg-gray-100"
+            className="mt-12 overflow-hidden rounded-lg border border-gray-alpha-400 bg-background-100"
           >
             <div className="p-5">
               <Author />
