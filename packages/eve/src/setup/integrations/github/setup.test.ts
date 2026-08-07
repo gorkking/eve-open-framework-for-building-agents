@@ -1,16 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createFakePrompter } from "#internal/testing/fake-prompter.js";
-import type { Asker } from "#setup/ask.js";
+import { headlessAsker, InteractionRequired, withAnswers } from "#setup/ask.js";
 
 import { integrationSetupEnvironment } from "../shared/environment.js";
 import { createIntegrationSetupUi } from "../shared/ui.js";
 import { setupGitHub, type GitHubSetupDeps } from "./setup.js";
 
+const DEFAULT_EVENTS = ["issue_comment", "pull_request_review_comment"];
+
 function deps(): GitHubSetupDeps {
   return {
     deriveConnectorSlug: vi.fn(async () => "agent" as never),
     ensureVercelProject: vi.fn(async () => ({ orgId: "team-id", projectId: "project-id" })),
+    readProjectLink: vi.fn(async () => ({ orgId: "team-id", projectId: "project-id" })),
     provisionConnector: vi.fn(async () => ({
       appSlug: "agent",
       id: "scl_github",
@@ -20,81 +23,79 @@ function deps(): GitHubSetupDeps {
   };
 }
 
+function run(input: { events?: string[]; effects?: GitHubSetupDeps }) {
+  const effects = input.effects ?? deps();
+  return {
+    effects,
+    result: setupGitHub(
+      {
+        appRoot: "/project",
+        environment: integrationSetupEnvironment("authenticated", { kind: "unresolved" }),
+        ui: createIntegrationSetupUi({
+          asker: withAnswers({ "github-events": input.events ?? DEFAULT_EVENTS })(headlessAsker()),
+          prompter: createFakePrompter().prompter,
+          interaction: "headless",
+        }),
+      },
+      effects,
+    ),
+  };
+}
+
 describe("GitHub setup", () => {
-  function asker(events = ["issue_comment", "pull_request_review_comment"]): Asker {
-    return {
-      ask: vi.fn(),
-      askEditable: vi.fn(),
-      askMany: vi.fn(async () => events) as Asker["askMany"],
-    };
-  }
+  it("provisions and scaffolds selected events from a keyed answer", async () => {
+    const events = ["issue_comment", "issues", "pull_request"];
+    const { effects, result } = run({ events });
 
-  it("provisions Connect, routes the selected webhooks, and scaffolds matching handlers", async () => {
-    const fake = createFakePrompter();
-    const effects = deps();
-    const selectedEvents = ["issue_comment", "issues", "pull_request"];
-
-    await expect(
-      setupGitHub(
-        {
-          appRoot: "/project",
-          environment: integrationSetupEnvironment("authenticated", { kind: "unresolved" }),
-          ui: createIntegrationSetupUi({ asker: asker(selectedEvents), prompter: fake.prompter }),
-        },
-        effects,
-      ),
-    ).resolves.toMatchObject({ kind: "done" });
-
-    expect(effects.provisionConnector).toHaveBeenCalledWith(
-      expect.objectContaining({ events: selectedEvents }),
-    );
-    expect(effects.writeTextFile).toHaveBeenCalledWith(
-      "/project/agent/channels/github.ts",
-      expect.stringContaining('connectGitHubCredentials("github/agent")'),
-      { force: undefined },
-    );
+    await expect(result).resolves.toMatchObject({ kind: "done" });
+    expect(effects.provisionConnector).toHaveBeenCalledWith(expect.objectContaining({ events }));
     const scaffold = vi.mocked(effects.writeTextFile).mock.calls[0]?.[1] ?? "";
+    expect(scaffold).toContain('connectGitHubCredentials("github/agent")');
     expect(scaffold).toContain('botName: "agent"');
     expect(scaffold).toContain("onIssue(ctx, issue)");
     expect(scaffold).toContain("onPullRequest(ctx, pullRequest)");
   });
 
-  it("recommends comment events that the default scaffold handles", async () => {
-    const fake = createFakePrompter();
-    const askMany = vi.fn(async () => [
-      "issue_comment",
-      "pull_request_review_comment",
-    ]) as Asker["askMany"];
-
-    await setupGitHub(
+  it("refuses a missing event answer before mutation", async () => {
+    const effects = deps();
+    const result = setupGitHub(
       {
         appRoot: "/project",
         environment: integrationSetupEnvironment("authenticated", { kind: "unresolved" }),
         ui: createIntegrationSetupUi({
-          asker: { ask: vi.fn(), askEditable: vi.fn(), askMany },
-          prompter: fake.prompter,
+          asker: headlessAsker(),
+          prompter: createFakePrompter().prompter,
+          interaction: "headless",
         }),
       },
-      deps(),
+      effects,
     );
 
-    expect(askMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        key: "github-events",
-        recommended: ["issue_comment", "pull_request_review_comment"],
-      }),
-    );
+    await expect(result).rejects.toBeInstanceOf(InteractionRequired);
+    expect(effects.readProjectLink).not.toHaveBeenCalled();
+    expect(effects.provisionConnector).not.toHaveBeenCalled();
+  });
+
+  it("requires an existing Vercel link headlessly before mutation", async () => {
+    const effects = deps();
+    vi.mocked(effects.readProjectLink).mockResolvedValue(undefined);
+    const { result } = run({ effects });
+
+    await expect(result).rejects.toThrow("Run `eve link`");
+    expect(effects.ensureVercelProject).not.toHaveBeenCalled();
+    expect(effects.provisionConnector).not.toHaveBeenCalled();
+    expect(effects.writeTextFile).not.toHaveBeenCalled();
   });
 
   it("requires an authenticated Vercel CLI", async () => {
-    const fake = createFakePrompter();
     await expect(
       setupGitHub({
         appRoot: "/project",
         environment: integrationSetupEnvironment("logged-out", { kind: "unresolved" }),
         ui: createIntegrationSetupUi({
-          asker: asker(),
-          prompter: fake.prompter,
+          asker: headlessAsker(),
+          prompter: createFakePrompter().prompter,
+          interaction: "headless",
         }),
       }),
     ).rejects.toThrow("vercel login");

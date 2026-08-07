@@ -2,10 +2,15 @@ import { join } from "node:path";
 
 import type { MultiSelectQuestion } from "#setup/ask.js";
 import { ensureVercelProject } from "#setup/flows/ensure-vercel-project.js";
+import { readProjectLink } from "#setup/project-resolution.js";
 import { deriveSlackConnectorSlug } from "#setup/scaffold/index.js";
 import { writeTextFile } from "#setup/scaffold/files.js";
 import { WizardCancelledError } from "#setup/step.js";
 
+import {
+  resolveIntegrationVercelProject,
+  type IntegrationVercelProjectDeps,
+} from "../shared/vercel-project.js";
 import type {
   IntegrationSetupContext,
   IntegrationSetupResult,
@@ -16,6 +21,7 @@ import { provisionGitHubConnector } from "./connect.js";
 export interface GitHubSetupDeps {
   deriveConnectorSlug: typeof deriveSlackConnectorSlug;
   ensureVercelProject: typeof ensureVercelProject;
+  readProjectLink: typeof readProjectLink;
   provisionConnector: typeof provisionGitHubConnector;
   writeTextFile: typeof writeTextFile;
 }
@@ -23,6 +29,7 @@ export interface GitHubSetupDeps {
 const defaultDeps: GitHubSetupDeps = {
   deriveConnectorSlug: deriveSlackConnectorSlug,
   ensureVercelProject,
+  readProjectLink,
   provisionConnector: provisionGitHubConnector,
   writeTextFile,
 };
@@ -66,6 +73,7 @@ const githubEventsQuestion: MultiSelectQuestion<GitHubWebhookEvent> = {
   message: "What should this GitHub App respond to?",
   options: GITHUB_EVENT_OPTIONS,
   recommended: DEFAULT_GITHUB_EVENTS,
+  required: true,
   requireSelection: true,
 };
 
@@ -117,10 +125,12 @@ export async function setupGitHub(
       "Vercel Connect creates a GitHub App and routes verified webhooks to your deployed agent.",
     );
     const events = await context.ui.asker.askMany(githubEventsQuestion);
-    const project = await deps.ensureVercelProject({
+    const project = await resolveIntegrationVercelProject({
       appRoot: context.appRoot,
-      prompter: context.ui.prompter,
+      integration: "GitHub",
+      ui: context.ui,
       signal: context.signal,
+      deps: deps satisfies IntegrationVercelProjectDeps,
     });
     const connector = await deps.provisionConnector({
       log: context.ui.prompter.log,
