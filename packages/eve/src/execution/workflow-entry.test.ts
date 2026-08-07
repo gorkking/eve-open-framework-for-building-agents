@@ -66,6 +66,7 @@ vi.mock("./route-child-delivery.js", () => ({
 
 vi.mock("./delegated-parent-notification.js", () => ({
   notifyDelegatedParentStep: vi.fn().mockResolvedValue(undefined),
+  notifyTaskTurnStartedStep: vi.fn().mockResolvedValue(undefined),
   notifyTurnCallerStep: vi.fn().mockResolvedValue(undefined),
   resolveInitialTurnCallerStep: vi.fn().mockResolvedValue(undefined),
 }));
@@ -1100,6 +1101,8 @@ describe("workflowEntry", () => {
     vi.mocked(routeDeliverToChildren).mockResolvedValueOnce({
       kind: "continue",
       remainder: undefined,
+      serializedContext: {},
+      sessionState,
     });
     installHookMocks({
       deliveryHooks: [

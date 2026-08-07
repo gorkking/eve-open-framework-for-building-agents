@@ -223,7 +223,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         return await respond();
       }),
 
-      POST("/eve/v1/session", async (req, { send }) => {
+      POST("/eve/v1/session", async (req, { resolveActiveSession, send }) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
         const sessionAuth = authResult;
@@ -252,6 +252,32 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         const policyRejection = checkUploadPolicy(body, uploadPolicy);
         if (policyRejection !== null) return policyRejection;
 
+        // A caller that supplies an operation id gets create-once semantics:
+        // a retried request resolves the child it already created instead of
+        // starting a second one and re-running `onMessage`.
+        const operationToken =
+          body.operationId === undefined
+            ? undefined
+            : await deriveOperationContinuationToken({
+                auth: sessionAuth,
+                operationId: body.operationId,
+              });
+        if (operationToken !== undefined) {
+          const owner = await resolveActiveSession({ continuationToken: operationToken });
+          if (owner !== undefined) {
+            return Response.json(
+              { continuationToken: operationToken, ok: true, sessionId: owner.sessionId },
+              {
+                headers: {
+                  "cache-control": "no-store",
+                  [EVE_SESSION_ID_HEADER]: owner.sessionId,
+                },
+                status: 202,
+              },
+            );
+          }
+        }
+
         const messageResult = await resolveOnMessage({
           auth: forwarded.auth,
           config: input,
@@ -261,7 +287,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         if (messageResult instanceof Response) return messageResult;
         if (!messageResult.dispatch) return droppedMessageResponse();
 
-        const token = `eve:${crypto.randomUUID()}`;
+        const token = operationToken ?? `eve:${crypto.randomUUID()}`;
         const context = mergeContext(body.context, messageResult.context);
 
         const sendOptions: SendOptions = {
@@ -494,7 +520,11 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           if (agent === undefined) {
             throw new Error("Missing route agent.");
           }
-          result = await agent.cancelTurn({ sessionId, turnId: body.turnId });
+          result = await agent.cancelTurn({
+            sessionId,
+            ...(body.taskId === undefined ? {} : { taskId: body.taskId }),
+            ...(body.turnId === undefined ? {} : { turnId: body.turnId }),
+          });
         } catch (error) {
           const errorId = logError(log, "cancel-turn request failed", error, { sessionId });
           return Response.json(
@@ -683,7 +713,31 @@ interface ParsedCreateBody {
   message: string | UserContent;
   mode?: RunMode;
   context?: readonly string[];
+  operationId?: string;
   outputSchema?: JsonObject;
+}
+
+/**
+ * Derives the replay-stable continuation token for one create operation.
+ *
+ * The authenticated caller is part of the digest, so an operation id alone
+ * never addresses another principal's session: only the principal that
+ * created a child can resolve it again.
+ */
+async function deriveOperationContinuationToken(input: {
+  readonly auth: SessionAuthContext | null;
+  readonly operationId: string;
+}): Promise<string> {
+  const principal =
+    input.auth === null ? "" : `${input.auth.authenticator}\u0000${input.auth.principalId}`;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${principal}\u0000${input.operationId}`),
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  return `eve:op:${hex.slice(0, 32)}`;
 }
 
 function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | Response {
@@ -712,7 +766,23 @@ function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | R
     );
   }
 
-  return { callback, capabilities, message, mode, context, outputSchema };
+  const rawOperationId = payload.operationId;
+  if (rawOperationId !== undefined && (typeof rawOperationId !== "string" || !rawOperationId)) {
+    return Response.json(
+      { error: "Expected 'operationId' to be a non-empty string.", ok: false },
+      { status: 400 },
+    );
+  }
+
+  return {
+    callback,
+    capabilities,
+    message,
+    mode,
+    context,
+    ...(typeof rawOperationId === "string" ? { operationId: rawOperationId } : {}),
+    outputSchema,
+  };
 }
 
 interface ParsedContinueBody {
@@ -775,6 +845,7 @@ function parseContinueBody(payload: Record<string, unknown>): ParsedContinueBody
 }
 
 interface ParsedCancelTurnBody {
+  taskId?: string;
   turnId?: string;
 }
 
@@ -829,16 +900,23 @@ async function parseCancelTurnBody(req: Request): Promise<ParsedCancelTurnBody |
   }
 
   const turnId = (payload as { turnId?: unknown }).turnId;
-  if (turnId === undefined) {
-    return {};
-  }
-  if (typeof turnId !== "string" || turnId.length === 0) {
+  const taskId = (payload as { taskId?: unknown }).taskId;
+  if (turnId !== undefined && (typeof turnId !== "string" || turnId.length === 0)) {
     return Response.json(
       { error: "Expected 'turnId' to be a non-empty string.", ok: false },
       { status: 400 },
     );
   }
-  return { turnId };
+  if (taskId !== undefined && (typeof taskId !== "string" || taskId.length === 0)) {
+    return Response.json(
+      { error: "Expected 'taskId' to be a non-empty string.", ok: false },
+      { status: 400 },
+    );
+  }
+  return {
+    ...(typeof taskId === "string" ? { taskId } : {}),
+    ...(typeof turnId === "string" ? { turnId } : {}),
+  };
 }
 
 function createSendPayload(

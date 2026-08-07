@@ -86,8 +86,8 @@ New `packages/eve/src/tasks/` module cluster:
 
 - `TaskStatus`, `TaskView`, `TaskMetadata`, `TaskOutput`, and a pure transition function
   enforcing the lifecycle rules (terminal is final; `working <-> input_required`). This stage
-  also settles the design doc's open API questions that block types: the discriminated
-  `task_send` input and how `input_required` exposes its outstanding `InputRequest[]`.
+  also settles how `input_required` exposes its outstanding `InputRequest[]`; `task_send`
+  accepts only a message follow-up for a terminal task.
 - The **durable task run**: a dedicated small workflow per task (precedent: the session-timeout
   run). It is the single writer for transitions, consumes commands over its own hook, and
   appends a full `TaskView` snapshot per accepted command. Competing completion, cancellation,
@@ -108,9 +108,8 @@ as framework tools, filtered out of the tool set unless the flag is on, plus the
 pattern as `ask_question`).
 
 - `task_sleep` reuses the existing durable turn-sleep request.
-- `task_peek`, `task_cancel`, and `task_send` read the session task index and command the task
-  run; `task_send` resolves the child address through the agent handle store and the existing
-  continuation dispatch.
+- `task_peek`, `task_cancel`, and `task_send` read the session task index; `task_send` resolves a
+  terminal task's child address through the agent handle store and starts a new task.
 - `task_await` introduces the one new turn-workflow wait: a new optional wait arm on the durable
   step result that subscribes to selected task runs and returns when every selected task is
   terminal or `input_required` (already-ready tasks return immediately). This is the only piece
@@ -150,7 +149,7 @@ Carry the six flows over the task contract for local and remote children alike, 
 | Terminal result or failure | `task.update` command to the task run, terminal snapshot          |
 | Input request / approval   | `task.update` with `input_required` plus the outstanding batch    |
 | Authorization event        | `task.authorization` through the task binding                     |
-| Input response             | `task_send`, routed via the handle address                        |
+| Input response             | Parent-session HITL proxy, routed directly to the blocked child   |
 | Cancellation               | `task_cancel`: commit `cancelled`, then propagate executor abort  |
 | Progress                   | `task_message` from the child, recorded as latest `statusMessage` |
 
@@ -160,9 +159,9 @@ Concretely:
   the parent turn hook; the existing adapter is untouched;
 - the remote callback route gains task payload kinds alongside the existing session and turn
   kinds; old payloads are unchanged and old deployments never receive the new kinds;
-- routing policy: terminal and `input_required` snapshots wake a parked parent through the
-  session delivery path; progress updates task state and client-visible events only. During an
-  active turn, inbound task events wait for the next safe step boundary;
+- routing policy: a local `input_required` snapshot commits task-owned proxy routes and emits the
+  exact request on the parent session; a fully routed response starts no parent model turn.
+  Terminal snapshots still wake the parent through the session delivery path;
 - parent-session finalization extends the existing end-of-session child termination to
   cooperatively cancel live tasks first.
 
@@ -183,11 +182,14 @@ deliberately; they get their own plans if anything nontrivial surfaces.
 2. **`task_send` to a busy child.** A send to a `working` task surfaces `AGENT_BUSY` as a tool
    error, matching handle-continuation semantics. Queuing on the task run is deferred; it is
    the reversible follow-up if busy errors prove noisy in practice.
-3. **Failure taxonomy.** Child failure maps to the `failed` status, and as a consequence of
+3. **One task per child session.** A child session owns at most one nonterminal task. Admission
+   rejects a second task in the same batch or a later turn; cancellation carries the recorded
+   child turn id, and queued task sends are unsupported.
+4. **Failure taxonomy.** Child failure maps to the `failed` status, and as a consequence of
    that transition the task's output carries the error (`TaskOutput.error`). Failure is the
    state; the error output is its consequence. This intentionally diverges from MCP, which
    reserves `failed` for protocol-level errors.
-4. **Progress is deferred.** The child-facing `task_message` tool and the progress flow are cut
+5. **Progress is deferred.** The child-facing `task_message` tool and the progress flow are cut
    from the first implementation; the stage 4 table's progress row lands in a follow-up. The
    five remaining flows ship first.
 

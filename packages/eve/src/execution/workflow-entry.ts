@@ -13,6 +13,7 @@ import type { RunMode } from "#shared/run-mode.js";
 import type { DurableCompiledArtifactsSource } from "#runtime/durable-compiled-artifacts-source.js";
 import {
   notifyDelegatedParentStep,
+  notifyTaskTurnStartedStep,
   notifyTurnCallerStep,
   resolveInitialTurnCallerStep,
 } from "#execution/delegated-parent-notification.js";
@@ -33,6 +34,7 @@ import { emitTerminalSessionFailureStep } from "#execution/terminal-session-fail
 import { fireSessionCallbackStep } from "#execution/session-callback-step.js";
 import { disposeHook } from "#execution/hook-ownership.js";
 import { createSessionCommandInbox } from "#execution/session-command-inbox.js";
+import { activeTurnId } from "#harness/active-turn-id.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
 import { DEFAULT_SESSION_TIMEOUT_MS } from "#execution/session-timeout.js";
 import { emitTerminalSessionCompletionStep } from "#execution/terminal-session-completion-step.js";
@@ -307,6 +309,8 @@ async function runDriverLoop(input: {
 
   const bufferedDeliveries: DeliverHookPayload[] = [];
   const bufferedSessionControls: Array<"clear" | "compact" | "expired" | "reset"> = [];
+  const cancelledTaskIds = new Set<string>();
+  const seenTaskDeliveries = new Set<string>();
   const commandInbox = createSessionCommandInbox();
   const stableCommandToken = sessionCommandHookToken(input.sessionState.sessionId);
   await commandInbox.claimStable(stableCommandToken);
@@ -325,9 +329,19 @@ async function runDriverLoop(input: {
     readonly serializedContext: Record<string, unknown>;
     readonly sessionState: DurableSessionState;
   }): Promise<TurnDriverAction> => {
+    const caller = input.crashCleanupState.caller;
+    if (caller?.taskId !== undefined) {
+      seenTaskDeliveries.add(caller.taskId);
+      await notifyTaskTurnStartedStep({
+        caller,
+        childSessionId: args.sessionState.sessionId,
+        childTurnId: activeTurnId(args.sessionState.emissionState),
+      });
+    }
     const turn = await dispatchAndAwaitTurn({
       bufferedDeliveries,
       bufferedSessionControls,
+      cancelledTaskIds,
       capabilities: input.capabilities,
       commandInbox,
       controlToken: nextTurnControlToken(),
@@ -335,6 +349,7 @@ async function runDriverLoop(input: {
       mode: input.mode,
       parentWritable: input.driverWritable,
       serializedContext: args.serializedContext,
+      seenTaskDeliveries,
       sessionState: args.sessionState,
     });
     await disposeSettledTurnControl?.();
@@ -436,10 +451,19 @@ async function runDriverLoop(input: {
       const next = await nextTurnDelivery({
         bufferedDeliveries,
         bufferedSessionControls,
+        cancelledTaskIds,
         commandInbox,
         driverWritable: input.driverWritable,
+        serializedContext: action.serializedContext,
+        seenTaskDeliveries,
         sessionState: action.sessionState,
       });
+      action = {
+        ...action,
+        serializedContext: next.serializedContext,
+        sessionState: next.sessionState,
+      };
+      input.crashCleanupState.lastSessionState = action.sessionState;
 
       if (next.kind === "expired") {
         return {
@@ -503,7 +527,7 @@ async function runDriverLoop(input: {
           requestId: next.deliver.requestId,
         },
         serializedContext: action.serializedContext,
-        sessionState: action.sessionState,
+        sessionState: next.sessionState,
       });
       input.crashCleanupState.lastSessionState = action.sessionState;
     }

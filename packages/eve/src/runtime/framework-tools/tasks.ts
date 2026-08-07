@@ -48,21 +48,8 @@ export const TASK_AWAIT_INPUT_SCHEMA = z.strictObject({ taskIds: TASK_IDS_SCHEMA
 export const TASK_CANCEL_INPUT_SCHEMA = z.strictObject({ taskIds: TASK_IDS_SCHEMA });
 
 export const TASK_SEND_INPUT_SCHEMA = z.strictObject({
-  inputResponses: z
-    .array(
-      z.strictObject({
-        optionId: z.string().optional(),
-        requestId: z.string(),
-        text: z.string().optional(),
-      }),
-    )
-    .optional()
-    .describe(
-      "Your answers to an input_required task's outstanding requests; each requestId comes from the task's inputRequests. Provide exactly one of inputResponses or message.",
-    ),
   message: z
     .string()
-    .optional()
     .describe(
       "Follow-up message for a finished task's agent; starts a new task in the same conversation.",
     ),
@@ -116,9 +103,9 @@ const TASK_CANCEL_DESCRIPTION =
   "Cancellation is final: a task that finishes after you cancel it stays cancelled. Cancelling an already-finished task changes nothing.";
 
 const TASK_SEND_DESCRIPTION =
-  "Reply to one of your background tasks. " +
-  "An input_required task means its agent stopped to ask you something: read the questions from the task's inputRequests (via task_peek) and answer them with inputResponses. " +
-  "A finished task accepts a follow-up message instead, which starts a new task in the same conversation and returns its receipt. " +
+  "Send a follow-up message to a finished background task's agent. " +
+  "This starts a new task in the same conversation and returns its receipt. " +
+  "Human input for an input_required task is routed directly through the parent channel. " +
   "A task that is still working cannot receive sends.";
 
 const TASK_SLEEP_DESCRIPTION =

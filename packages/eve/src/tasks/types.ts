@@ -37,6 +37,10 @@ export interface TaskMetadata {
   readonly name: string;
   /** Child session acknowledged at dispatch. */
   readonly childSessionId?: string;
+  /** Exact child turn executing this task; retained privately for guarded cancellation. */
+  readonly childTurnId?: string;
+  /** Child engine verdict used to reconcile the persistent agent handle. */
+  readonly childLifecycle?: "parked" | "terminal";
   /** Remote children only: the child agent's base URL. */
   readonly url?: string;
 }
@@ -59,6 +63,32 @@ export type TaskOutput =
 export type TaskInputRequest = JsonValue;
 
 /**
+ * One human answer to an outstanding request. Structural on purpose: it
+ * mirrors the input contract's `InputResponse` without importing its
+ * zod-backed module into a workflow-bundled file.
+ */
+export interface TaskInputResponse {
+  readonly optionId?: string;
+  readonly requestId: string;
+  readonly text?: string;
+}
+
+/**
+ * Request id of the synthetic entry that blocks a task while its child
+ * waits for authorization. Giving the block an id keeps its release
+ * bound to the same entry, so completing authorization can never clear
+ * an unrelated request batch the child raised in the meantime.
+ */
+export const TASK_AUTHORIZATION_REQUEST_ID = "task:authorization";
+
+/** Reads the `requestId` of one opaque outstanding request. */
+export function readTaskInputRequestId(request: TaskInputRequest): string | undefined {
+  if (request === null || typeof request !== "object" || Array.isArray(request)) return undefined;
+  const requestId = Reflect.get(request, "requestId");
+  return typeof requestId === "string" ? requestId : undefined;
+}
+
+/**
  * Full durable task snapshot. The task run appends one per accepted
  * command; readers always observe a complete view, never a delta.
  * Never contains routing credentials, continuation tokens, or
@@ -78,12 +108,27 @@ export interface TaskView {
 
 /** Commands accepted by the durable task run's transition function. */
 export type TaskCommand =
-  | { readonly kind: "complete"; readonly data: JsonValue }
-  | { readonly kind: "fail"; readonly data: JsonValue }
-  | { readonly kind: "cancel" }
+  | {
+      readonly kind: "complete";
+      readonly data: JsonValue;
+      readonly lifecycle?: "parked" | "terminal";
+    }
+  | { readonly kind: "fail"; readonly data: JsonValue; readonly lifecycle?: "parked" | "terminal" }
+  | { readonly kind: "cancel"; readonly lifecycle?: "parked" | "terminal" }
   | { readonly kind: "require-input"; readonly inputRequests: readonly TaskInputRequest[] }
-  | { readonly kind: "resume-working" }
-  | { readonly kind: "describe"; readonly childSessionId: string };
+  /**
+   * Clears the listed requests from the outstanding batch. Bound to
+   * ids rather than unbound like the former `resume`, so an answer can
+   * only ever release the batch it was written against.
+   */
+  | { readonly kind: "answered"; readonly requestIds: readonly string[] }
+  | { readonly kind: "describe"; readonly childSessionId: string }
+  | {
+      readonly kind: "start-turn";
+      readonly childSessionId: string;
+      readonly childTurnId: string;
+      readonly taskId: string;
+    };
 
 /** Hook payload envelope commanding a durable task run. */
 export interface TaskCommandHookPayload {
@@ -119,8 +164,24 @@ export interface TaskInboundChildResult {
 }
 
 export interface TaskInboundInputRequest {
+  readonly callId: string;
+  readonly childContinuationToken: string;
+  readonly childSessionId: string;
   readonly kind: "subagent-input-request";
-  readonly event: { readonly requests: readonly TaskInputRequest[] };
+  readonly event: {
+    readonly requests: readonly TaskInputRequest[];
+    readonly sequence: number;
+    readonly stepIndex: number;
+    readonly turnId: string;
+  };
+  readonly subagentName: string;
+}
+
+export interface TaskInboundTurnStarted {
+  readonly childSessionId: string;
+  readonly childTurnId: string;
+  readonly kind: "task-child-turn-started";
+  readonly taskId: string;
 }
 
 export interface TaskInboundAuthorizationEvent {
@@ -128,12 +189,28 @@ export interface TaskInboundAuthorizationEvent {
   readonly event: { readonly type: "authorization.required" | "authorization.completed" };
 }
 
+/**
+ * Human answers routed to the task run rather than straight to the
+ * child. The run owns both the delivery and the state change, so the
+ * batch it clears is exactly the batch it forwarded — the parent can no
+ * longer unblock the child while the run still believes it is blocked.
+ */
+export interface TaskInboundAnswerInput {
+  readonly auth?: unknown;
+  readonly childContinuationToken: string;
+  readonly inputResponses: readonly TaskInputResponse[];
+  readonly kind: "task-answer-input";
+  readonly taskId: string;
+}
+
 /** Everything a task run's command hook may receive. */
 export type TaskRunInboundPayload =
   | TaskCommandHookPayload
   | TaskInboundChildResult
   | TaskInboundInputRequest
-  | TaskInboundAuthorizationEvent;
+  | TaskInboundTurnStarted
+  | TaskInboundAuthorizationEvent
+  | TaskInboundAnswerInput;
 
 /** Namespaced run stream carrying `TaskView` snapshots. */
 export const TASK_SNAPSHOT_STREAM_NAMESPACE = "eve.task";

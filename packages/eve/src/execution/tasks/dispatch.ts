@@ -35,7 +35,8 @@ import {
   TASK_SEND_TOOL_NAME,
 } from "#runtime/framework-tools/tasks.js";
 import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
-import { isReadyTaskStatus, type TaskView } from "#tasks/types.js";
+import { isReadyTaskStatus, isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
+import { settleAgentTurn } from "#harness/handles/transitions.js";
 
 export {
   beginDelegatedTask,
@@ -70,6 +71,7 @@ export async function executeTaskControlAction(input: {
   readonly action: RuntimeToolCallActionRequest;
   readonly bundle: CompiledBundle;
   readonly parentContinuationToken: string | undefined;
+  readonly parentStepIndex?: number;
   readonly parentTurnId: string;
   readonly session: RuntimeSession;
 }): Promise<{
@@ -102,10 +104,18 @@ export async function executeTaskControlAction(input: {
       return { result: createTaskViewsResult(action, views), session };
     }
     case TASK_CANCEL_TOOL_NAME: {
-      const views = await Promise.all(
-        entries.map((entry) => cancelOneTask({ bundle: input.bundle, entry, session })),
-      );
-      return { result: createTaskViewsResult(action, views), session };
+      let nextSession = session;
+      const views: TaskView[] = [];
+      for (const entry of entries) {
+        const cancelled = await cancelOneTask({
+          bundle: input.bundle,
+          entry,
+          session: nextSession,
+        });
+        nextSession = cancelled.session;
+        views.push(cancelled.view);
+      }
+      return { result: createTaskViewsResult(action, views), session: nextSession };
     }
     case TASK_AWAIT_TOOL_NAME: {
       const views = await readTaskViews(entries);
@@ -147,9 +157,12 @@ async function cancelOneTask(input: {
   readonly bundle: CompiledBundle;
   readonly entry: SessionTaskIndexEntry;
   readonly session: RuntimeSession;
-}): Promise<TaskView> {
+}): Promise<{ readonly session: RuntimeSession; readonly view: TaskView }> {
   const { entry } = input;
-  await sendTaskCommand({ command: { kind: "cancel" }, commandToken: entry.commandToken });
+  const delivery = await sendTaskCommand({
+    command: { kind: "cancel" },
+    commandToken: entry.commandToken,
+  });
 
   // The `cancelled` state must commit before the executor abort
   // propagates, so a late child result can never revive the task.
@@ -157,7 +170,7 @@ async function cancelOneTask(input: {
   for (
     let attempt = 0;
     attempt < CANCEL_COMMIT_POLL_ATTEMPTS &&
-    !(view !== undefined && isReadyTaskStatus(view.status));
+    !(view !== undefined && isTerminalTaskStatus(view.status));
     attempt += 1
   ) {
     await new Promise((resolve) => setTimeout(resolve, CANCEL_COMMIT_POLL_DELAY_MS));
@@ -165,10 +178,16 @@ async function cancelOneTask(input: {
   }
   const settledView = view ?? createPendingTaskView(entry.taskId);
 
-  if (settledView.status === "cancelled") {
-    await propagateTaskCancel({ bundle: input.bundle, session: input.session, view: settledView });
+  if (settledView.status === "cancelled" && delivery === "delivered") {
+    const session = await propagateTaskCancel({
+      bundle: input.bundle,
+      entry,
+      session: input.session,
+      view: settledView,
+    });
+    return { session, view: settledView };
   }
-  return settledView;
+  return { session: input.session, view: settledView };
 }
 
 /**
@@ -178,11 +197,15 @@ async function cancelOneTask(input: {
  */
 async function propagateTaskCancel(input: {
   readonly bundle: CompiledBundle;
+  readonly entry: SessionTaskIndexEntry;
   readonly session: RuntimeSession;
   readonly view: TaskView;
-}): Promise<void> {
+}): Promise<RuntimeSession> {
   const childSessionId = input.view.metadata.childSessionId;
-  if (childSessionId === undefined) return;
+  const childTurnId = input.view.metadata.childTurnId;
+  if (childSessionId === undefined || childSessionId !== input.entry.childSessionId) {
+    return input.session;
+  }
   const handle = findAddressableHandle(input.session, childSessionId);
 
   try {
@@ -192,18 +215,52 @@ async function propagateTaskCancel(input: {
         remoteAgentName: handle.identity.name,
         registry: input.bundle.subagentRegistry.subagentsByNodeId,
       });
-      await cancelRemoteAgentTurn({
+      const result = await cancelRemoteAgentTurn({
         remote: { ...resolved, url: handle.address.url },
         sessionId: childSessionId,
+        taskId: input.view.taskId,
+        ...(childTurnId === undefined ? {} : { turnId: childTurnId }),
       });
-      return;
+      if (result.status === "no_active_turn") {
+        await cancelRemoteAgentTurn({
+          remote: { ...resolved, url: handle.address.url },
+          sessionId: childSessionId,
+          taskId: input.view.taskId,
+        });
+      }
+    } else {
+      const result = await requestWorkflowTurnCancellation({
+        sessionId: childSessionId,
+        taskId: input.view.taskId,
+        ...(childTurnId === undefined ? {} : { turnId: childTurnId }),
+      });
+      if (result.status === "no_active_turn") {
+        await requestWorkflowTurnCancellation({
+          sessionId: childSessionId,
+          taskId: input.view.taskId,
+        });
+      }
     }
-    await requestWorkflowTurnCancellation({ sessionId: childSessionId });
+    const settled = settleAgentTurn(input.session, {
+      operationId: input.entry.operationId,
+      outcome: {
+        kind: "parked",
+        result: { kind: "cancelled" },
+        usageDelta: {
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      },
+    });
+    return settled.kind === "settled" ? settled.session : input.session;
   } catch (error) {
     logError(log, "task cancel propagation failed; the child may run to completion", error, {
       childSessionId,
       taskId: input.view.taskId,
     });
+    return input.session;
   }
 }
 

@@ -1,6 +1,12 @@
 import type { RuntimeSession } from "#execution/agent-handle-dispatch.js";
-import { sendTaskCommand, startTaskRun } from "#execution/tasks/run-control.js";
+import {
+  sendTaskCommand,
+  sendTaskCommandToOwner,
+  startTaskRun,
+} from "#execution/tasks/run-control.js";
 import type { RuntimeSubagentChildResult } from "#runtime/actions/types.js";
+import { sessionCommandHookToken } from "#execution/session-command-token.js";
+import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 import type { JsonValue } from "#shared/json.js";
 import { recordSessionTask } from "#tasks/session-index.js";
 import { deriveTaskCommandToken, deriveTaskId } from "#tasks/task-id.js";
@@ -8,6 +14,9 @@ import { deriveTaskCommandToken, deriveTaskId } from "#tasks/task-id.js";
 /** A prepared delegated task: identity plus its started durable run. */
 export interface DelegatedTask {
   readonly commandToken: string;
+  readonly createdByTurnId: string;
+  readonly createdByStepIndex?: number;
+  readonly operationId: string;
   readonly taskId: string;
   readonly taskRunId: string;
 }
@@ -23,10 +32,16 @@ export async function beginDelegatedTask(input: {
   readonly mode: "local" | "remote";
   readonly name: string;
   readonly parentSessionId: string;
+  readonly parentStepIndex?: number;
   readonly parentTurnId: string;
   readonly session: RuntimeSession;
 }): Promise<DelegatedTask> {
   const taskId = deriveTaskId({
+    callId: input.callId,
+    parentSessionId: input.parentSessionId,
+    parentTurnId: input.parentTurnId,
+  });
+  const operationId = deriveAgentOperationId({
     callId: input.callId,
     parentSessionId: input.parentSessionId,
     parentTurnId: input.parentTurnId,
@@ -42,9 +57,16 @@ export async function beginDelegatedTask(input: {
       status: "working",
       taskId,
     },
-    wakeToken: input.session.continuationToken,
+    wakeToken: sessionCommandHookToken(input.session.sessionId),
   });
-  return { commandToken, taskId, taskRunId: run.runId };
+  return {
+    commandToken,
+    createdByStepIndex: input.parentStepIndex ?? 0,
+    createdByTurnId: input.parentTurnId,
+    operationId,
+    taskId,
+    taskRunId: run.runId,
+  };
 }
 
 /**
@@ -65,11 +87,14 @@ export async function settleDelegatedDispatch(input: {
 }): Promise<{ readonly receipt: RuntimeSubagentChildResult; readonly session: RuntimeSession }> {
   // The freshly started task run may not have registered its hook yet;
   // ride out that startup window instead of dropping the acknowledgement.
-  await sendTaskCommand({
+  const owner = await sendTaskCommandToOwner({
     command: { childSessionId: input.childSessionId, kind: "describe" },
     commandToken: input.task.commandToken,
     retryUnreachable: { attempts: 20, delayMs: 250 },
   });
+  if (owner === undefined) {
+    throw new Error(`Task run "${input.task.taskId}" did not accept its child acknowledgement.`);
+  }
   const receiptOutput = { status: "working" as const, taskId: input.task.taskId };
   return {
     receipt: {
@@ -89,9 +114,13 @@ export async function settleDelegatedDispatch(input: {
       subagentName: input.subagentName,
     },
     session: recordSessionTask(input.session, {
+      childSessionId: input.childSessionId,
       commandToken: input.task.commandToken,
+      createdByStepIndex: input.task.createdByStepIndex,
+      createdByTurnId: input.task.createdByTurnId,
+      operationId: input.task.operationId,
       taskId: input.task.taskId,
-      taskRunId: input.task.taskRunId,
+      taskRunId: owner.runId,
     }),
   };
 }

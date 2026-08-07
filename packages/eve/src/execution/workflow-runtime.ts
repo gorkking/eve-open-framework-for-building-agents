@@ -320,6 +320,7 @@ export async function requestWorkflowTurnCancellation(
 ): Promise<CancelTurnResult> {
   return await dispatchWorkflowCommand(sessionCommandHookToken(input.sessionId), {
     kind: "cancel",
+    ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
     turnId: input.turnId,
   });
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { TASK_AUTHORIZATION_REQUEST_ID } from "#tasks/types.js";
 import { translateTaskInboundPayload } from "#tasks/wire.js";
 
 const ZERO_USAGE = { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 };
@@ -27,7 +28,7 @@ describe("translateTaskInboundPayload", () => {
             },
           ],
         }),
-      ).toEqual({ data: "answer", kind: "complete" });
+      ).toEqual({ data: "answer", kind: "complete", lifecycle: kind });
     }
   });
 
@@ -46,7 +47,7 @@ describe("translateTaskInboundPayload", () => {
           },
         ],
       }),
-    ).toEqual({ data: { message: "boom" }, kind: "fail" });
+    ).toEqual({ data: { message: "boom" }, kind: "fail", lifecycle: "terminal" });
 
     expect(
       translateTaskInboundPayload({
@@ -58,7 +59,7 @@ describe("translateTaskInboundPayload", () => {
           },
         ],
       }),
-    ).toEqual({ kind: "cancel" });
+    ).toEqual({ kind: "cancel", lifecycle: "terminal" });
   });
 
   it("falls back to isError when a result carries no outcome", () => {
@@ -82,24 +83,47 @@ describe("translateTaskInboundPayload", () => {
   it("marks the task input_required on a forwarded HITL batch", () => {
     expect(
       translateTaskInboundPayload({
-        event: { requests: [{ prompt: "Which region?" }] },
+        callId: "call-1",
+        childContinuationToken: "child-token",
+        childSessionId: "child-session",
+        event: {
+          requests: [{ prompt: "Which region?" }],
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn_0",
+        },
         kind: "subagent-input-request",
+        subagentName: "research",
       }),
     ).toEqual({ inputRequests: [{ prompt: "Which region?" }], kind: "require-input" });
   });
 
-  it("blocks on authorization.required and resumes on authorization.completed", () => {
+  it("blocks authorization under a reserved id that only its completion clears", () => {
     expect(
       translateTaskInboundPayload({
         event: { type: "authorization.required" },
         kind: "subagent-authorization-event",
       }),
-    ).toEqual({ inputRequests: [{ blockedOn: "authorization" }], kind: "require-input" });
+    ).toEqual({
+      inputRequests: [{ blockedOn: "authorization", requestId: TASK_AUTHORIZATION_REQUEST_ID }],
+      kind: "require-input",
+    });
     expect(
       translateTaskInboundPayload({
         event: { type: "authorization.completed" },
         kind: "subagent-authorization-event",
       }),
-    ).toEqual({ kind: "resume-working" });
+    ).toEqual({ kind: "answered", requestIds: [TASK_AUTHORIZATION_REQUEST_ID] });
+  });
+
+  it("leaves answered input to the run, which must deliver before recording it", () => {
+    expect(
+      translateTaskInboundPayload({
+        childContinuationToken: "child-token",
+        inputResponses: [{ requestId: "req-1", text: "west" }],
+        kind: "task-answer-input",
+        taskId: "task-1",
+      }),
+    ).toBeUndefined();
   });
 });

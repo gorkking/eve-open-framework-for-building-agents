@@ -7,6 +7,7 @@ import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import {
   notifyDelegatedParentStep,
+  notifyTaskTurnStartedStep,
   notifyTurnCallerStep,
   resolveInitialTurnCallerStep,
 } from "#execution/delegated-parent-notification.js";
@@ -175,6 +176,46 @@ describe("turn caller notification", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(resumeHookMock).not.toHaveBeenCalled();
+  });
+
+  it("binds a local task hook to the exact child turn before execution", async () => {
+    await notifyTaskTurnStartedStep({
+      caller: {
+        callId: "call-task",
+        replyTo: { kind: "hook", token: "task-token" },
+        subagentName: "research",
+        taskId: "task-1",
+      },
+      childSessionId: "child-session",
+      childTurnId: "turn_child_7",
+    });
+
+    expect(resumeHookMock).toHaveBeenCalledWith("task-token", {
+      childSessionId: "child-session",
+      childTurnId: "turn_child_7",
+      kind: "task-child-turn-started",
+      taskId: "task-1",
+    });
+  });
+
+  it("posts the same task turn identity through a remote callback", async () => {
+    await notifyTaskTurnStartedStep({
+      caller: {
+        callId: "call-task",
+        replyTo: { kind: "callback", url: "https://parent.example/eve/v1/callback/task-token" },
+        subagentName: "research",
+        taskId: "task-1",
+      },
+      childSessionId: "child-session",
+      childTurnId: "turn_child_7",
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toMatchObject({
+      kind: "turn.started",
+      sessionId: "child-session",
+      taskId: "task-1",
+      turnId: "turn_child_7",
+    });
   });
 
   it("uses the adapter state for the child's first settled turn", async () => {
