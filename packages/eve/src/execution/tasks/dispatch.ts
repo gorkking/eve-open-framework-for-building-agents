@@ -8,7 +8,7 @@ import {
   createTaskControlError,
   createTaskViewsResult,
   createUnknownTasksError,
-  findAddressableHandle,
+  findTaskAgentAddress,
   lookupTaskEntries,
   readTaskViews,
 } from "#execution/tasks/control-shared.js";
@@ -30,7 +30,6 @@ import {
 } from "#runtime/framework-tools/tasks.js";
 import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
 import { isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
-import { settleAgentTurn } from "#harness/handles/transitions.js";
 
 export {
   beginDelegatedTask,
@@ -95,18 +94,11 @@ export async function executeTaskControlAction(input: {
       return { result: createTaskViewsResult(action, views), session };
     }
     case TASK_CANCEL_TOOL_NAME: {
-      let nextSession = session;
       const views: TaskView[] = [];
       for (const entry of entries) {
-        const cancelled = await cancelOneTask({
-          bundle: input.bundle,
-          entry,
-          session: nextSession,
-        });
-        nextSession = cancelled.session;
-        views.push(cancelled.view);
+        views.push(await cancelOneTask({ bundle: input.bundle, entry, session }));
       }
-      return { result: createTaskViewsResult(action, views), session: nextSession };
+      return { result: createTaskViewsResult(action, views), session };
     }
     default:
       return {
@@ -120,7 +112,7 @@ async function cancelOneTask(input: {
   readonly bundle: CompiledBundle;
   readonly entry: SessionTaskIndexEntry;
   readonly session: RuntimeSession;
-}): Promise<{ readonly session: RuntimeSession; readonly view: TaskView }> {
+}): Promise<TaskView> {
   const { entry } = input;
   const delivery = await sendTaskCommand({
     command: { kind: "cancel" },
@@ -139,18 +131,12 @@ async function cancelOneTask(input: {
     await new Promise((resolve) => setTimeout(resolve, CANCEL_COMMIT_POLL_DELAY_MS));
     view = await readLatestTaskSnapshot({ taskRunId: entry.taskRunId });
   }
-  const settledView = view ?? createPendingTaskView(entry.taskId);
+  const settledView = view ?? createPendingTaskView(entry);
 
   if (settledView.status === "cancelled" && delivery === "delivered") {
-    const session = await propagateTaskCancel({
-      bundle: input.bundle,
-      entry,
-      session: input.session,
-      view: settledView,
-    });
-    return { session, view: settledView };
+    await propagateTaskCancel({ bundle: input.bundle, session: input.session, view: settledView });
   }
-  return { session: input.session, view: settledView };
+  return settledView;
 }
 
 /**
@@ -160,16 +146,19 @@ async function cancelOneTask(input: {
  */
 async function propagateTaskCancel(input: {
   readonly bundle: CompiledBundle;
-  readonly entry: SessionTaskIndexEntry;
   readonly session: RuntimeSession;
   readonly view: TaskView;
-}): Promise<RuntimeSession> {
-  const childSessionId = input.view.metadata.childSessionId;
+}): Promise<void> {
+  const handle = findTaskAgentAddress(input.session, input.view.metadata.agentId);
+  if (handle === undefined) return;
+  const childSessionId = handle.address.sessionId;
   const childTurnId = input.view.metadata.childTurnId;
-  if (childSessionId === undefined || childSessionId !== input.entry.childSessionId) {
-    return input.session;
+  if (
+    input.view.metadata.childSessionId !== undefined &&
+    input.view.metadata.childSessionId !== childSessionId
+  ) {
+    return;
   }
-  const handle = findAddressableHandle(input.session, childSessionId);
 
   try {
     if (handle !== undefined && handle.address.kind === "agent/remote") {
@@ -179,9 +168,9 @@ async function propagateTaskCancel(input: {
         registry: input.bundle.subagentRegistry.subagentsByNodeId,
       });
       const cancelInput: {
-        remote: typeof resolved;
-        sessionId: string;
-        taskId: string;
+        readonly remote: typeof resolved & { readonly url: string };
+        readonly sessionId: string;
+        readonly taskId: string;
         turnId?: string;
       } = {
         remote: { ...resolved, url: handle.address.url },
@@ -197,44 +186,29 @@ async function propagateTaskCancel(input: {
           taskId: input.view.taskId,
         });
       }
-    } else {
-      const cancelInput: {
-        sessionId: string;
-        taskId: string;
-        turnId?: string;
-      } = {
+      return;
+    }
+    const cancelInput: {
+      readonly sessionId: string;
+      readonly taskId: string;
+      turnId?: string;
+    } = {
+      sessionId: childSessionId,
+      taskId: input.view.taskId,
+    };
+    if (childTurnId !== undefined) cancelInput.turnId = childTurnId;
+    const result = await requestWorkflowTurnCancellation(cancelInput);
+    if (result.status === "no_active_turn") {
+      await requestWorkflowTurnCancellation({
         sessionId: childSessionId,
         taskId: input.view.taskId,
-      };
-      if (childTurnId !== undefined) cancelInput.turnId = childTurnId;
-      const result = await requestWorkflowTurnCancellation(cancelInput);
-      if (result.status === "no_active_turn") {
-        await requestWorkflowTurnCancellation({
-          sessionId: childSessionId,
-          taskId: input.view.taskId,
-        });
-      }
+      });
     }
-    const settled = settleAgentTurn(input.session, {
-      operationId: input.entry.operationId,
-      outcome: {
-        kind: "parked",
-        result: { kind: "cancelled" },
-        usageDelta: {
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-        },
-      },
-    });
-    return settled.kind === "settled" ? settled.session : input.session;
   } catch (error) {
     logError(log, "task cancel propagation failed; the child may run to completion", error, {
       childSessionId,
       taskId: input.view.taskId,
     });
-    return input.session;
   }
 }
 

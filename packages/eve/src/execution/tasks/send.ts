@@ -1,5 +1,5 @@
 import {
-  dispatchToAgentHandle,
+  dispatchToTaskAgentAddress,
   type RuntimeAgentHandleAction,
   type RuntimeSession,
 } from "#execution/agent-handle-dispatch.js";
@@ -7,8 +7,8 @@ import {
   createPendingTaskView,
   createTaskControlError,
   createUnknownTasksError,
-  findAddressableHandle,
-  findConflictingTaskForChildSession,
+  findActiveTaskForAgent,
+  findTaskAgentAddress,
 } from "#execution/tasks/control-shared.js";
 import {
   beginDelegatedTask,
@@ -54,8 +54,7 @@ export async function executeTaskSend(input: {
   }
 
   const view =
-    (await readLatestTaskSnapshot({ taskRunId: entry.taskRunId })) ??
-    createPendingTaskView(entry.taskId);
+    (await readLatestTaskSnapshot({ taskRunId: entry.taskRunId })) ?? createPendingTaskView(entry);
 
   if (view.status === "working") {
     return {
@@ -98,7 +97,22 @@ async function followUpTerminalTask(input: {
   readonly view: TaskView;
 }): Promise<{ readonly result: RuntimeActionResult; readonly session: RuntimeSession }> {
   const { action, view } = input;
-  const handle = findAddressableHandle(input.session, view.metadata.childSessionId);
+  const active = await findActiveTaskForAgent(
+    input.session,
+    view.metadata.agentId,
+    input.parentTurnId,
+    input.parentStepIndex,
+  );
+  if (active !== undefined) {
+    return {
+      result: createTaskControlError(
+        action,
+        `${AGENT_BUSY}: agent "${view.metadata.agentId}" is busy with task "${active.view.taskId}" (${active.view.status}).`,
+      ),
+      session: input.session,
+    };
+  }
+  const handle = findTaskAgentAddress(input.session, view.metadata.agentId);
   if (handle === undefined) {
     return {
       result: createTaskControlError(
@@ -108,22 +122,6 @@ async function followUpTerminalTask(input: {
       session: input.session,
     };
   }
-  const conflicting = await findConflictingTaskForChildSession({
-    childSessionId: handle.address.sessionId,
-    parentStepIndex: input.parentStepIndex,
-    parentTurnId: input.parentTurnId,
-    session: input.session,
-  });
-  if (conflicting !== undefined) {
-    return {
-      result: createTaskControlError(
-        action,
-        `${AGENT_BUSY}: agent "${handle.identity.id}" is busy with task "${conflicting.view.taskId}" (${conflicting.view.status}).`,
-      ),
-      session: input.session,
-    };
-  }
-
   const continuation: RuntimeAgentHandleAction =
     handle.address.kind === "agent/remote"
       ? {
@@ -146,6 +144,7 @@ async function followUpTerminalTask(input: {
         };
 
   const task = await beginDelegatedTask({
+    agentId: handle.identity.id,
     callId: action.callId,
     mode: handle.address.kind === "agent/remote" ? "remote" : "local",
     name: handle.identity.name,
@@ -154,25 +153,22 @@ async function followUpTerminalTask(input: {
     parentTurnId: input.parentTurnId,
     session: input.session,
   });
-  // Reserve the child before the ambiguous delivery side effect. If the
-  // transport response is lost, this task remains the sole admitted owner.
+  // Reserve the addressed agent before the ambiguous delivery side effect.
   const reserved = await settleDelegatedDispatch({
     callId: action.callId,
-    childSessionId: handle.address.sessionId,
     session: input.session,
     subagentName: handle.identity.name,
     task,
   });
-  const outcome = await dispatchToAgentHandle({
+  const outcome = await dispatchToTaskAgentAddress({
     action: continuation,
     agentId: handle.identity.id,
     bundle: input.bundle,
     currentSession: reserved.session,
     parentToken: task.commandToken,
-    parentTurnId: input.parentTurnId,
   });
   if (outcome.kind === "error") {
-    if (findAddressableHandle(outcome.session, handle.address.sessionId) === undefined) {
+    if (findTaskAgentAddress(outcome.session, handle.identity.id) === undefined) {
       await failDelegatedDispatch({ error: outcome.result.output, task });
     }
     return {
@@ -191,7 +187,7 @@ async function followUpTerminalTask(input: {
     result: {
       callId: action.callId,
       kind: "tool-result",
-      output: { status: "working", taskId: task.taskId },
+      output: { agentId: task.metadata.agentId, status: "working", taskId: task.taskId },
       toolName: action.toolName,
     },
     session: outcome.session,

@@ -155,8 +155,8 @@ export function toProxyInputRequestEntries(
 ): readonly (readonly [requestId: string, route: ProxyInputRequest])[] {
   return payload.event.requests.map((request) => {
     const route: {
-      childContinuationToken: string;
-      kind: InputRequestKind;
+      readonly childContinuationToken: string;
+      readonly kind: InputRequestKind;
       taskId?: string;
     } = {
       childContinuationToken: payload.childContinuationToken,
@@ -216,7 +216,11 @@ function parseProxyInputRequest(value: unknown): ProxyInputRequest | undefined {
   if (taskId !== undefined && (typeof taskId !== "string" || taskId.length === 0)) {
     return undefined;
   }
-  const request: { childContinuationToken: string; kind: InputRequestKind; taskId?: string } = {
+  const request: {
+    readonly childContinuationToken: string;
+    readonly kind: InputRequestKind;
+    taskId?: string;
+  } = {
     childContinuationToken: value.childContinuationToken,
     kind: value.kind,
   };

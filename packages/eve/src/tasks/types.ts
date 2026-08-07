@@ -23,25 +23,23 @@ export type TaskStatus = "working" | "input_required" | "completed" | "failed" |
 /**
  * Immutable identity of the delegated work behind a task.
  *
- * `childSessionId` is optional because the task run is created before
- * the child acknowledges its session — the durable record must exist
- * before the dispatch side effect so a fast child always has a live
- * command hook to answer. The `describe` command attaches the id at
- * acknowledgement.
+ * `agentId` is parent-controlled and exists before the child acknowledges its
+ * private address, so the durable task can bind to persistent identity before
+ * the dispatch side effect runs.
  */
 export interface TaskMetadata {
+  /** Stable model-visible identity of the persistent child session. */
+  readonly agentId: string;
+  /** Child session paired with {@link childTurnId}; private and never projected to the model. */
+  readonly childSessionId?: string;
+  /** Exact child turn executing this task; retained privately for guarded cancellation. */
+  readonly childTurnId?: string;
+  /** Child engine verdict retained for lifecycle reconciliation. */
+  readonly childLifecycle?: "parked" | "terminal";
   readonly kind: "subagent";
   readonly mode: "local" | "remote";
   /** Authored subagent name the parent dispatched. */
   readonly name: string;
-  /** Child session acknowledged at dispatch. */
-  readonly childSessionId?: string;
-  /** Exact child turn executing this task; retained privately for guarded cancellation. */
-  readonly childTurnId?: string;
-  /** Child engine verdict used to reconcile the persistent agent handle. */
-  readonly childLifecycle?: "parked" | "terminal";
-  /** Remote children only: the child agent's base URL. */
-  readonly url?: string;
 }
 
 /**
@@ -115,13 +113,13 @@ export type TaskCommand =
   | { readonly kind: "fail"; readonly data: JsonValue; readonly lifecycle?: "parked" | "terminal" }
   | { readonly kind: "cancel"; readonly lifecycle?: "parked" | "terminal" }
   | { readonly kind: "require-input"; readonly inputRequests: readonly TaskInputRequest[] }
+  | { readonly kind: "ready" }
   /**
    * Clears the listed requests from the outstanding batch. Bound to
    * ids rather than unbound like the former `resume`, so an answer can
    * only ever release the batch it was written against.
    */
   | { readonly kind: "answered"; readonly requestIds: readonly string[] }
-  | { readonly kind: "describe"; readonly childSessionId: string }
   | {
       readonly kind: "start-turn";
       readonly childSessionId: string;

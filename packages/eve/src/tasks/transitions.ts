@@ -98,6 +98,10 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
           taskId: view.taskId,
         },
       };
+    case "ready":
+      // The readiness command is also the barrier that releases a fast,
+      // pre-acknowledgement HITL batch, so the workflow must observe it.
+      return { outcome: "accepted", view };
     case "answered": {
       if (view.status !== "input_required") {
         return { outcome: "noop", view };
@@ -136,30 +140,6 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
           status: "working",
           statusMessage: view.statusMessage,
           taskId: view.taskId,
-        },
-      };
-    }
-    case "describe": {
-      if (
-        view.metadata.childTurnId !== undefined &&
-        view.metadata.childSessionId !== undefined &&
-        view.metadata.childSessionId !== command.childSessionId
-      ) {
-        return {
-          outcome: "rejected",
-          reason: `Task child session "${command.childSessionId}" does not match the active turn owner.`,
-          view,
-        };
-      }
-      if (view.metadata.childSessionId === command.childSessionId) {
-        return { outcome: "noop", view };
-      }
-
-      return {
-        outcome: "accepted",
-        view: {
-          ...view,
-          metadata: { ...view.metadata, childSessionId: command.childSessionId },
         },
       };
     }

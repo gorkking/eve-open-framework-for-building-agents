@@ -8,20 +8,6 @@ import {
   recordSessionTask,
 } from "#tasks/session-index.js";
 import { deriveTaskId } from "#tasks/task-id.js";
-import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
-
-function taskEntry(overrides: Partial<SessionTaskIndexEntry> = {}): SessionTaskIndexEntry {
-  return {
-    childSessionId: "child-1",
-    commandToken: "task:token-1",
-    createdByTurnId: "turn-1",
-    operationId: "operation-1",
-    taskId: "task_a",
-    taskRunId: "run-1",
-    ...overrides,
-  };
-}
-
 function createSession(state?: HarnessSession["state"]): HarnessSession {
   return {
     agent: {
@@ -38,18 +24,31 @@ function createSession(state?: HarnessSession["state"]): HarnessSession {
 }
 
 describe("session task index", () => {
+  const metadata = {
+    agentId: "ag_research:abcdef123456",
+    kind: "subagent" as const,
+    mode: "local" as const,
+    name: "research",
+  };
   it("returns an empty index when the key is absent", () => {
     expect(getSessionTaskIndex({})).toEqual([]);
     expect(getSessionTaskIndex(undefined)).toEqual([]);
   });
 
   it("records a task and finds it by id", () => {
-    const session = recordSessionTask(createSession(), taskEntry());
-
-    expect(findSessionTaskEntry(session.state, "task_a")).toEqual({
-      childSessionId: "child-1",
+    const session = recordSessionTask(createSession(), {
       commandToken: "task:token-1",
       createdByTurnId: "turn-1",
+      metadata,
+      operationId: "operation-1",
+      taskId: "task_a",
+      taskRunId: "run-1",
+    });
+
+    expect(findSessionTaskEntry(session.state, "task_a")).toEqual({
+      commandToken: "task:token-1",
+      createdByTurnId: "turn-1",
+      metadata,
       operationId: "operation-1",
       taskId: "task_a",
       taskRunId: "run-1",
@@ -58,14 +57,22 @@ describe("session task index", () => {
   });
 
   it("replaces the entry on replayed creation instead of duplicating it", () => {
-    let session = recordSessionTask(createSession(), taskEntry());
-    session = recordSessionTask(
-      session,
-      taskEntry({
-        commandToken: "task:token-2",
-        taskRunId: "run-2",
-      }),
-    );
+    let session = recordSessionTask(createSession(), {
+      commandToken: "task:token-1",
+      createdByTurnId: "turn-1",
+      metadata,
+      operationId: "operation-1",
+      taskId: "task_a",
+      taskRunId: "run-1",
+    });
+    session = recordSessionTask(session, {
+      commandToken: "task:token-2",
+      createdByTurnId: "turn-1",
+      metadata,
+      operationId: "operation-1",
+      taskId: "task_a",
+      taskRunId: "run-2",
+    });
 
     const entries = getSessionTaskIndex(session.state);
     expect(entries).toHaveLength(1);

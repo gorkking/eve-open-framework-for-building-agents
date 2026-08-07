@@ -6,7 +6,7 @@ import type { TaskCommand, TaskStatus, TaskView } from "#tasks/types.js";
 function createView(status: TaskStatus, overrides: Partial<TaskView> = {}): TaskView {
   return {
     metadata: {
-      childSessionId: "child-session-1",
+      agentId: "ag_research:abcdef123456",
       kind: "subagent",
       mode: "local",
       name: "research",
@@ -23,8 +23,8 @@ const ALL_COMMANDS: readonly TaskCommand[] = [
   { data: { message: "boom" }, kind: "fail" },
   { kind: "cancel" },
   { inputRequests: [{ question: "which?" }], kind: "require-input" },
+  { kind: "ready" },
   { kind: "answered", requestIds: ["req-1"] },
-  { childSessionId: "child-session-2", kind: "describe" },
 ];
 
 describe("applyTaskTransition", () => {
@@ -190,37 +190,6 @@ describe("applyTaskTransition", () => {
     }
   });
 
-  it("attaches the child session through describe without changing status", () => {
-    const described = applyTaskTransition(
-      createView("working", {
-        metadata: { kind: "subagent", mode: "local", name: "research" },
-      }),
-      { childSessionId: "child-session-9", kind: "describe" },
-    );
-
-    expect(described.outcome).toBe("accepted");
-    expect(described.view.status).toBe("working");
-    expect(described.view.metadata.childSessionId).toBe("child-session-9");
-
-    const again = applyTaskTransition(described.view, {
-      childSessionId: "child-session-9",
-      kind: "describe",
-    });
-    expect(again.outcome).toBe("noop");
-  });
-
-  it("never rebinds a task turn to a different child session", () => {
-    const result = applyTaskTransition(createView("working"), {
-      childSessionId: "other-child",
-      childTurnId: "turn_9",
-      kind: "start-turn",
-      taskId: "task_abc123",
-    });
-
-    expect(result.outcome).toBe("rejected");
-    expect(result.view.metadata.childSessionId).toBe("child-session-1");
-  });
-
   it("is deterministic for replayed commands", () => {
     const view = createView("working");
     const command: TaskCommand = { data: { answer: 1 }, kind: "complete" };
@@ -229,5 +198,28 @@ describe("applyTaskTransition", () => {
     const second = applyTaskTransition(view, command);
 
     expect(first).toEqual(second);
+  });
+
+  it("never rebinds a task turn to a different child session", () => {
+    const result = applyTaskTransition(
+      createView("working", {
+        metadata: {
+          agentId: "ag_research:abcdef123456",
+          childSessionId: "child-session-1",
+          kind: "subagent",
+          mode: "local",
+          name: "research",
+        },
+      }),
+      {
+        childSessionId: "other-child",
+        childTurnId: "turn_9",
+        kind: "start-turn",
+        taskId: "task_abc123",
+      },
+    );
+
+    expect(result.outcome).toBe("rejected");
+    expect(result.view.metadata.childSessionId).toBe("child-session-1");
   });
 });

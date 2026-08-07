@@ -1,22 +1,41 @@
-import type {
-  DispatchOutcome,
-  RuntimeAgentHandleAction,
-  RuntimeSession,
+import {
+  createAgentErrorResult,
+  type DispatchOutcome,
+  type RuntimeAgentHandleAction,
+  type RuntimeSession,
 } from "#execution/agent-handle-dispatch.js";
+import { findActiveTaskForAgent, findTaskAgentAddress } from "#execution/tasks/control-shared.js";
 import {
   failDelegatedDispatch,
   settleDelegatedDispatch,
   type DelegatedTask,
 } from "#execution/tasks/delegate.js";
-import { findConflictingTaskForChildSession } from "#execution/tasks/control-shared.js";
+import { describeTaskAgent } from "#execution/tasks/agent-identity.js";
 import { AGENT_BUSY, AGENT_UNREACHABLE } from "#harness/agent-handle-errors.js";
-import { getAgentHandleStore } from "#harness/handles/store.js";
 import type { RuntimeSubagentDispatchFailure } from "#runtime/actions/types.js";
 import type { JsonValue } from "#shared/json.js";
 
 export type ReservedTaskContinuation = Awaited<ReturnType<typeof settleDelegatedDispatch>>;
 
-/** Returns the task-derived busy result for one persistent-agent continuation. */
+/** Describes task identity from the stored address when continuing an agent. */
+export function describeTaskDispatch(input: {
+  readonly action: RuntimeAgentHandleAction;
+  readonly agentId: string | undefined;
+  readonly parentSessionId: string;
+  readonly parentTurnId: string;
+  readonly session: RuntimeSession;
+}): ReturnType<typeof describeTaskAgent> {
+  const described = describeTaskAgent(input);
+  const handle =
+    input.agentId === undefined ? undefined : findTaskAgentAddress(input.session, input.agentId);
+  return handle === undefined
+    ? described
+    : {
+        ...described,
+        mode: handle.address.kind === "agent/remote" ? "remote" : "local",
+      };
+}
+
 export async function checkTaskContinuationAdmission(input: {
   readonly action: RuntimeAgentHandleAction;
   readonly agentId: string;
@@ -24,34 +43,21 @@ export async function checkTaskContinuationAdmission(input: {
   readonly parentTurnId: string;
   readonly session: RuntimeSession;
 }): Promise<RuntimeSubagentDispatchFailure | undefined> {
-  const handle = getAgentHandleStore(input.session.state)?.handles.find(
-    (candidate) => candidate.identity.id === input.agentId,
+  const active = await findActiveTaskForAgent(
+    input.session,
+    input.agentId,
+    input.parentTurnId,
+    input.parentStepIndex,
   );
-  if (handle?.phase !== "running" && handle?.phase !== "parked") return undefined;
-  const conflicting = await findConflictingTaskForChildSession({
-    childSessionId: handle.address.sessionId,
-    parentStepIndex: input.parentStepIndex,
-    parentTurnId: input.parentTurnId,
-    session: input.session,
-  });
-  if (conflicting === undefined) return undefined;
-  return {
-    callId: input.action.callId,
-    isError: true,
-    kind: "subagent-result",
-    origin: "dispatch",
-    output: {
-      code: AGENT_BUSY,
-      message: `Agent "${input.agentId}" is busy with task "${conflicting.view.taskId}" (${conflicting.view.status}).`,
-    },
-    subagentName:
-      input.action.kind === "remote-agent-call"
-        ? input.action.remoteAgentName
-        : input.action.subagentName,
-  };
+  return active === undefined
+    ? undefined
+    : createAgentErrorResult({
+        action: input.action,
+        code: AGENT_BUSY,
+        message: `Agent "${input.agentId}" is busy with task "${active.view.taskId}" (${active.view.status}).`,
+      });
 }
 
-/** Reserves a persistent child before its ambiguous continuation side effect. */
 export async function reserveTaskContinuation(input: {
   readonly action: RuntimeAgentHandleAction;
   readonly agentId: string;
@@ -59,24 +65,16 @@ export async function reserveTaskContinuation(input: {
   readonly session: RuntimeSession;
 }): Promise<ReservedTaskContinuation | undefined> {
   if (input.delegated === undefined) return undefined;
-  const handle = getAgentHandleStore(input.session.state)?.handles.find(
-    (candidate) =>
-      (candidate.phase === "running" || candidate.phase === "parked") &&
-      candidate.identity.id === input.agentId,
-  );
-  if (handle === undefined || (handle.phase !== "running" && handle.phase !== "parked")) {
-    return undefined;
-  }
+  const handle = findTaskAgentAddress(input.session, input.agentId);
+  if (handle === undefined) return undefined;
   return settleDelegatedDispatch({
     callId: input.action.callId,
-    childSessionId: handle.address.sessionId,
     session: input.session,
     subagentName: handle.identity.name,
     task: input.delegated,
   });
 }
 
-/** Terminates definitive failures while retaining ambiguous reservations. */
 export async function settleTaskDispatchError(input: {
   readonly agentId: string | undefined;
   readonly delegated: DelegatedTask | undefined;
@@ -84,15 +82,12 @@ export async function settleTaskDispatchError(input: {
   readonly reserved: ReservedTaskContinuation | undefined;
   readonly session: RuntimeSession;
 }): Promise<RuntimeSubagentDispatchFailure> {
-  const retainedHandle =
-    input.agentId !== undefined &&
-    getAgentHandleStore(input.session.state)?.handles.some(
-      (handle) => handle.identity.id === input.agentId,
-    ) === true;
+  const retainedAddress =
+    input.agentId !== undefined && findTaskAgentAddress(input.session, input.agentId) !== undefined;
   const ambiguous =
     input.reserved !== undefined &&
     readErrorCode(input.outcome.result.output) === AGENT_UNREACHABLE &&
-    retainedHandle;
+    retainedAddress;
   if (input.delegated !== undefined && !ambiguous) {
     await failDelegatedDispatch({ error: input.outcome.result.output, task: input.delegated });
   }

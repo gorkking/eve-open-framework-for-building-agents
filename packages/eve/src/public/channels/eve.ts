@@ -521,9 +521,11 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           if (agent === undefined) {
             throw new Error("Missing route agent.");
           }
-          const cancelInput: { sessionId: string; taskId?: string; turnId?: string } = {
-            sessionId,
-          };
+          const cancelInput: {
+            readonly sessionId: string;
+            taskId?: string;
+            turnId?: string;
+          } = { sessionId };
           if (body.taskId !== undefined) cancelInput.taskId = body.taskId;
           if (body.turnId !== undefined) cancelInput.turnId = body.turnId;
           result = await agent.cancelTurn(cancelInput);
@@ -776,7 +778,7 @@ function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | R
     );
   }
 
-  const body: ParsedCreateBody = {
+  const result: ParsedCreateBody = {
     callback,
     capabilities,
     message,
@@ -784,8 +786,8 @@ function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | R
     context,
     outputSchema,
   };
-  if (typeof rawOperationId === "string") body.operationId = rawOperationId;
-  return body;
+  if (typeof rawOperationId === "string") result.operationId = rawOperationId;
+  return result;
 }
 
 interface ParsedContinueBody {
@@ -916,10 +918,10 @@ async function parseCancelTurnBody(req: Request): Promise<ParsedCancelTurnBody |
       { status: 400 },
     );
   }
-  const body: ParsedCancelTurnBody = {};
-  if (typeof taskId === "string") body.taskId = taskId;
-  if (typeof turnId === "string") body.turnId = turnId;
-  return body;
+  const result: ParsedCancelTurnBody = {};
+  if (typeof taskId === "string") result.taskId = taskId;
+  if (typeof turnId === "string") result.turnId = turnId;
+  return result;
 }
 
 function createSendPayload(

@@ -67,11 +67,10 @@ const TASK_VIEW_SCHEMA = z.object({
     })
     .optional(),
   metadata: z.object({
-    childSessionId: z.string(),
+    agentId: z.string(),
     kind: z.literal("subagent"),
     mode: z.enum(["local", "remote"]),
     name: z.string(),
-    url: z.string().optional(),
   }),
   status: z.enum(["working", "input_required", "completed", "failed", "cancelled"]),
   statusMessage: z.string().optional(),

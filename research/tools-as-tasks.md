@@ -11,7 +11,7 @@ last_updated: "2026-08-01"
 Under an opt-in `experimental.tasks` mode, eve should represent long-running work as durable,
 addressable tasks. This plan applies that model only to local and remote subagents. A subagent call
 returns a task receipt after dispatch instead of keeping the parent turn blocked until the child
-finishes. The parent can inspect, await, message, or cancel the task with framework-owned tools,
+finishes. The parent can inspect, message, or cancel the task with framework-owned tools,
 and the child can intentionally report progress to its parent with one framework-owned tool.
 
 Without the flag, current tool and subagent behavior must remain unchanged.
@@ -91,6 +91,11 @@ model step in the same turn.
 
 A **background task** is owned by the parent session, not the originating turn. It may complete,
 request input, or emit progress after that turn ends.
+
+An **agent address** is the persistent identity and private routing record for one child session.
+Tasks own execution lifecycle and availability; agent addresses do not duplicate `working` or
+`input_required`. At most one nonterminal task may target one child session. The model-visible
+`<agents>` projection keeps an occupied agent visible as busy and names its active task.
 
 **Delegated execution** is a runtime execution mode, not a tool-authoring surface. A delegated
 dispatch returns once the executor acknowledges the work; the task stays `working`, and every
@@ -173,11 +178,10 @@ interface TaskView {
 }
 
 interface TaskMetadata {
+  readonly agentId: string;
   readonly kind: "subagent";
   readonly mode: "local" | "remote";
   readonly name: string;
-  readonly childSessionId: string;
-  readonly url: string;
 }
 
 type TaskOutput =
@@ -200,6 +204,7 @@ gets one receipt:
 
 ```json
 {
+  "agentId": "ag_research:...",
   "taskId": "task_01K...",
   "status": "working"
 }
@@ -219,6 +224,7 @@ The parent session stores only a live-task index:
 
 ```ts
 interface SessionTaskIndexEntry {
+  readonly metadata: TaskMetadata;
   readonly taskId: string;
   readonly taskRunId: string;
 }
@@ -258,7 +264,7 @@ replaces the park-and-wait mechanism in the same dispatch codepath:
 
 1. The harness creates a durable `working` task for the subagent call.
 2. It dispatches the child with the task binding.
-3. The child acknowledges its `childSessionId`, which is persisted immediately.
+3. The child acknowledges its private address, which is persisted on the agent record immediately.
 4. The originating call receives its receipt and the turn continues.
 
 Everything after acknowledgement — progress, input requests, authorization, terminal outcome —
@@ -417,15 +423,16 @@ than MCP compatibility.
 - Replay returns the same task ID for the same originating call and never dispatches the child
   twice.
 - Completing the parent session cancels its live tasks.
-- Resuming an existing child session creates a new task with a new task ID and the same
-  `childSessionId`.
+- Resuming an existing child session creates a new task with a new task ID and the same `agentId`.
 
 ## Open questions
 
-1. What retention and TTL apply to terminal records and unanswered `input_required` tasks?
-2. What is the cross-deployment version negotiation for task callbacks during rolling deploys?
-3. Which task events enter model context, and how are repeated progress messages coalesced?
-4. How are child token usage and remaining parent budgets accounted after a background child
+1. Should `TaskView` include a monotonic revision for notification deduplication, or can the task
+   run's stream index remain internal?
+2. What retention and TTL apply to terminal records and unanswered `input_required` tasks?
+3. What is the cross-deployment version negotiation for task callbacks during rolling deploys?
+4. Which task events enter model context, and how are repeated progress messages coalesced?
+5. How are child token usage and remaining parent budgets accounted after a background child
    completes on a later turn?
 
 Two former open questions are settled and recorded in the [delivery plan]: failure taxonomy

@@ -40,7 +40,7 @@ afterEach(() => {
 function createWorkingView(): TaskView {
   return {
     metadata: {
-      childSessionId: "child-session-1",
+      agentId: "ag_research:abcdef123456",
       kind: "subagent",
       mode: "local",
       name: "research",
@@ -127,7 +127,6 @@ describe("taskRunWorkflow", () => {
   it("translates a settled child turn from the wire and wakes the parent once ready", async () => {
     const ZERO = { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 };
     mockCommandHook([
-      { command: { childSessionId: "child-session-1", kind: "describe" }, kind: "task-command" },
       {
         kind: "runtime-action-result",
         results: [
@@ -147,12 +146,17 @@ describe("taskRunWorkflow", () => {
       commandToken: "task-token",
       initialView: {
         ...createWorkingView(),
-        metadata: { kind: "subagent", mode: "local", name: "research" },
+        metadata: {
+          agentId: "ag_research:abcdef123456",
+          kind: "subagent",
+          mode: "local",
+          name: "research",
+        },
       },
       wakeToken: "parent-session-token",
     });
 
-    expect(appendedStatuses()).toEqual(["working", "working", "completed"]);
+    expect(appendedStatuses()).toEqual(["working", "completed"]);
     expect(wakeTaskParentStep).toHaveBeenCalledTimes(1);
     expect(vi.mocked(wakeTaskParentStep).mock.calls[0]?.[0]).toMatchObject({
       token: "parent-session-token",
@@ -174,7 +178,7 @@ describe("taskRunWorkflow", () => {
           },
         ],
       },
-      { command: { childSessionId: "child-session-1", kind: "describe" }, kind: "task-command" },
+      { command: { kind: "ready" }, kind: "task-command" },
     ]);
 
     await taskRunWorkflow({
@@ -185,6 +189,41 @@ describe("taskRunWorkflow", () => {
 
     expect(appendedStatuses()).toEqual(["working", "completed"]);
     expect(disposeHook).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a fast input request when the readiness barrier arrives", async () => {
+    mockCommandHook([
+      {
+        callId: "call-task",
+        childContinuationToken: "child-token",
+        childSessionId: "child-session",
+        event: {
+          requests: [
+            {
+              action: { callId: "call-q", input: {}, kind: "tool-call", toolName: "ask" },
+              kind: "question",
+              prompt: "Which?",
+              requestId: "q1",
+            },
+          ],
+          sequence: 1,
+          stepIndex: 2,
+          turnId: "turn-child",
+        },
+        kind: "subagent-input-request",
+        subagentName: "research",
+      },
+      { command: { kind: "ready" }, kind: "task-command" },
+    ]);
+
+    await taskRunWorkflow({
+      commandToken: "task-token",
+      initialView: createWorkingView(),
+      wakeToken: "parent-session-token",
+    });
+
+    expect(wakeTaskInputRequestParentStep).toHaveBeenCalledTimes(1);
+    expect(wakeTaskParentStep).not.toHaveBeenCalled();
   });
 
   it("does not wake without a wake token and never wakes twice for one blocked child", async () => {
@@ -232,6 +271,7 @@ describe("taskRunWorkflow", () => {
       subagentName: "research",
     });
     mockCommandHook([
+      { command: { kind: "ready" }, kind: "task-command" },
       inbound("q1"),
       inbound("q2"),
       { command: { data: "done", kind: "complete" }, kind: "task-command" },
@@ -258,47 +298,8 @@ describe("taskRunWorkflow", () => {
     const firstInputWakeOrder =
       vi.mocked(wakeTaskInputRequestParentStep).mock.invocationCallOrder[0] ?? 0;
     const firstInputAppendOrder =
-      vi.mocked(appendTaskSnapshotStep).mock.invocationCallOrder[1] ?? 0;
+      vi.mocked(appendTaskSnapshotStep).mock.invocationCallOrder[2] ?? 0;
     expect(firstInputAppendOrder).toBeLessThan(firstInputWakeOrder);
-  });
-
-  it("defers a fast HITL batch until describe binds the child session", async () => {
-    mockCommandHook([
-      {
-        callId: "call-task",
-        childContinuationToken: "child-token",
-        childSessionId: "child-session-1",
-        event: {
-          requests: [
-            {
-              action: { callId: "call-q", input: {}, kind: "tool-call", toolName: "ask" },
-              kind: "question",
-              prompt: "q",
-              requestId: "q1",
-            },
-          ],
-          sequence: 1,
-          stepIndex: 2,
-          turnId: "turn_child",
-        },
-        kind: "subagent-input-request",
-        subagentName: "research",
-      },
-      { command: { childSessionId: "child-session-1", kind: "describe" }, kind: "task-command" },
-    ]);
-
-    await taskRunWorkflow({
-      commandToken: "task-token",
-      initialView: {
-        ...createWorkingView(),
-        metadata: { kind: "subagent", mode: "local", name: "research" },
-      },
-      wakeToken: "parent-session-token",
-    });
-
-    expect(wakeTaskInputRequestParentStep).toHaveBeenCalledTimes(1);
-    expect(wakeTaskParentStep).not.toHaveBeenCalled();
-    expect(appendedStatuses()).toEqual(["working", "input_required", "input_required"]);
   });
 });
 

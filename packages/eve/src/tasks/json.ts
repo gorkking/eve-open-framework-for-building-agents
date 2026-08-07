@@ -9,16 +9,11 @@ import type { TaskView } from "#tasks/types.js";
  */
 export function taskViewToJson(view: TaskView): JsonObject {
   const metadata: Record<string, JsonValue> = {
+    agentId: view.metadata.agentId,
     kind: view.metadata.kind,
     mode: view.metadata.mode,
     name: view.metadata.name,
   };
-  if (view.metadata.childSessionId !== undefined) {
-    metadata.childSessionId = view.metadata.childSessionId;
-  }
-  if (view.metadata.url !== undefined) {
-    metadata.url = view.metadata.url;
-  }
 
   const json: Record<string, JsonValue> = {
     metadata,

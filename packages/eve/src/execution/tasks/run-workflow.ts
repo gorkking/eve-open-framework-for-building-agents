@@ -101,11 +101,7 @@ export async function taskRunWorkflow(input: TaskRunWorkflowInput): Promise<void
       await appendTaskSnapshotStep({ view });
       const routableInputRequest =
         pendingInputRequest !== undefined &&
-        view.status === "input_required" &&
-        view.metadata.mode === "local" &&
-        view.metadata.childSessionId === pendingInputRequest.childSessionId;
-      const deferredLocalInputRequest =
-        pendingInputRequest !== undefined &&
+        dispatchAcknowledged &&
         view.status === "input_required" &&
         view.metadata.mode === "local";
       if (routableInputRequest && input.wakeToken !== undefined) {
@@ -116,7 +112,9 @@ export async function taskRunWorkflow(input: TaskRunWorkflowInput): Promise<void
         });
         pendingInputRequest = undefined;
       } else if (
-        (becameTerminal || (becameReady && !deferredLocalInputRequest)) &&
+        (becameTerminal ||
+          (becameReady &&
+            !(pendingInputRequest !== undefined && view.metadata.mode === "local"))) &&
         input.wakeToken !== undefined
       ) {
         await wakeTaskParentStep({ token: input.wakeToken, view });

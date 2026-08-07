@@ -6,6 +6,7 @@ import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { SUBAGENT_START_FAILED } from "#harness/agent-handle-errors.js";
 import {
   confirmAgentStarted,
+  confirmTaskAgentAddress,
   prepareAgentStart,
   rejectAgentEffect,
 } from "#harness/handles/transitions.js";
@@ -37,6 +38,7 @@ export async function startLocalSubagent(input: {
   readonly persistentSessions: boolean;
   readonly session: RuntimeSession;
   readonly source: SubagentInputSource;
+  readonly taskOwned: boolean;
 }): Promise<DispatchOutcome> {
   const { action, source } = input;
   const childRuntime = createWorkflowRuntime({
@@ -125,10 +127,9 @@ export async function startLocalSubagent(input: {
     callId: action.callId,
     kind: "called",
     name: action.name,
-    session: confirmAgentStarted(preparedSession, {
-      address,
-      operationId: operation.id,
-    }),
+    session: input.taskOwned
+      ? confirmTaskAgentAddress(preparedSession, { address, operationId: operation.id })
+      : confirmAgentStarted(preparedSession, { address, operationId: operation.id }),
     toolName: action.subagentName,
   };
 }

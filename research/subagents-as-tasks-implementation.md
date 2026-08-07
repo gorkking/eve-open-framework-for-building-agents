@@ -93,7 +93,7 @@ New `packages/eve/src/tasks/` module cluster:
   appends a full `TaskView` snapshot per accepted command. Competing completion, cancellation,
   and input-response commands serialize here.
 - The **session task index**: one new namespaced session-state key holding
-  `{ taskId, taskRunId }` entries. Adding a key to `SessionStateMap` needs no session-version
+  `{ taskId, taskRunId, metadata }` entries. Adding a key to `SessionStateMap` needs no session-version
   migration.
 
 Verification: exhaustive unit tests on transitions (late completion after `cancelled`,
@@ -172,14 +172,16 @@ deliberately; they get their own plans if anything nontrivial surfaces.
 
 ## Settled decisions
 
-1. **Wake policy.** Terminal and `input_required` transitions wake a parked parent through the
+1. **Lifecycle ownership.** In tasks mode, the task run is the sole execution-lifecycle writer.
+   Agent records retain stable identity and private address only. Availability is derived from
+   nonterminal tasks, with at most one such task per child session; busy agents remain visible in
+   `<agents>` with their active task id and status.
+2. **Wake policy.** Terminal and `input_required` transitions wake a parked parent through the
    session delivery path; they are the only wake triggers. Progress never wakes on its own.
-2. **`task_send` to a busy child.** A send to a `working` task surfaces `AGENT_BUSY` as a tool
+3. **`task_send` to a busy child.** A send to a `working` task surfaces `AGENT_BUSY` as a tool
    error, matching handle-continuation semantics. Queuing on the task run is deferred; it is
    the reversible follow-up if busy errors prove noisy in practice.
-3. **One task per child session.** A child session owns at most one nonterminal task. Admission
-   rejects a second task in the same batch or a later turn; cancellation carries the recorded
-   child turn id, and queued task sends are unsupported.
+   The same agent is reserved for the whole dispatch batch even if its first task settles quickly.
 4. **Failure taxonomy.** Child failure maps to the `failed` status, and as a consequence of
    that transition the task's output carries the error (`TaskOutput.error`). Failure is the
    state; the error output is its consequence. This intentionally diverges from MCP, which

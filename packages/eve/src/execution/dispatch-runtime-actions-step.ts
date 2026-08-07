@@ -26,6 +26,7 @@ import {
 import { deserializeContext } from "#context/serialize.js";
 import {
   dispatchToAgentHandle,
+  dispatchToTaskAgentAddress,
   isAgentHandleAction,
   type DispatchOutcome,
   type RuntimeAgentHandleAction,
@@ -73,9 +74,9 @@ import { readSessionTraceContext } from "#tracing/agent-trace-context-store.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { getDynamicSubagentSelection } from "#context/dynamic-subagent-lifecycle.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
-import { reconcileSettledTaskHandles } from "#execution/tasks/control-shared.js";
 import {
   checkTaskContinuationAdmission,
+  describeTaskDispatch,
   reserveTaskContinuation,
   settleTaskDispatchError,
   type ReservedTaskContinuation,
@@ -144,7 +145,7 @@ export async function dispatchRuntimeActionsStep(input: {
   const ctx = await deserializeContext(input.serializedContext);
   const bundle = ctx.require(BundleKey);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
-  let session = hydrateDurableSession({
+  const session = hydrateDurableSession({
     compactionOverrides: {
       thresholdPercent: effectiveAgent.thresholdPercent,
     },
@@ -160,7 +161,6 @@ export async function dispatchRuntimeActionsStep(input: {
   const adapterCtx = buildAdapterContext(adapter, ctx);
   const parentTraceContext = readSessionTraceContext(input.serializedContext, session.sessionId);
   const tasksEnabled = bundle.resolvedAgent.config.experimental?.tasks === true;
-  if (tasksEnabled) session = await reconcileSettledTaskHandles(session);
   // Background tasks require resumable children: the flag implies
   // conversation-mode dispatch so `experimental.tasks` and
   // `experimental.subagentPersistentSessions` never produce a third mode.
@@ -222,9 +222,17 @@ export async function dispatchRuntimeActionsStep(input: {
         }
       }
 
+      const delegatedAction = entry.kind === "resume" ? entry.action : entry.target.action;
+      const delegatedDescription = describeTaskDispatch({
+        action: delegatedAction,
+        agentId: entry.kind === "resume" ? entry.agentId : undefined,
+        parentSessionId: session.sessionId,
+        parentTurnId: batch.event.turnId,
+        session: nextSession,
+      });
       const delegated = tasksEnabled
         ? await beginDelegatedTask({
-            ...describeDelegatedEntry(entry),
+            ...delegatedDescription,
             parentSessionId: session.sessionId,
             parentStepIndex: batch.event.stepIndex,
             parentTurnId: batch.event.turnId,
@@ -246,7 +254,7 @@ export async function dispatchRuntimeActionsStep(input: {
       let outcome: DispatchOutcome;
       switch (entry.kind) {
         case "resume":
-          outcome = await dispatchToAgentHandle({
+          outcome = await (tasksEnabled ? dispatchToTaskAgentAddress : dispatchToAgentHandle)({
             action: entry.action,
             agentId: entry.agentId,
             bundle: createAgentContinuationBundle({
@@ -275,6 +283,7 @@ export async function dispatchRuntimeActionsStep(input: {
             parentTraceContext,
             persistentSessions,
             session,
+            taskOwned: tasksEnabled,
             target: entry.target,
           });
           break;
@@ -300,7 +309,6 @@ export async function dispatchRuntimeActionsStep(input: {
         } else {
           const settled = await settleDelegatedDispatch({
             callId: outcome.callId,
-            childSessionId: outcome.address.sessionId,
             session: nextSession,
             subagentName: outcome.toolName,
             task: delegated,
@@ -521,6 +529,7 @@ async function startSubagent(input: {
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
   readonly session: RuntimeSession;
+  readonly taskOwned: boolean;
   readonly target: DispatchStartTarget;
 }): Promise<DispatchOutcome> {
   switch (input.target.kind) {
@@ -541,6 +550,7 @@ async function startSubagent(input: {
         persistentSessions: input.persistentSessions,
         session: input.session,
         source: input.target.source,
+        taskOwned: input.taskOwned,
       });
     case "remote":
       return startRemoteSubagent({
@@ -555,6 +565,7 @@ async function startSubagent(input: {
         parentContinuationToken: input.parentContinuationToken,
         persistentSessions: input.persistentSessions,
         session: input.session,
+        taskOwned: input.taskOwned,
       });
     default: {
       const _exhaustive: never = input.target;
@@ -563,17 +574,6 @@ async function startSubagent(input: {
   }
 }
 
-/** Names one delegated dispatch for its task record, before any child exists. */
-function describeDelegatedEntry(entry: Extract<DispatchPlanEntry, { kind: "resume" | "start" }>): {
-  readonly callId: string;
-  readonly mode: "local" | "remote";
-  readonly name: string;
-} {
-  const action = entry.kind === "resume" ? entry.action : entry.target.action;
-  return action.kind === "remote-agent-call"
-    ? { callId: action.callId, mode: "remote", name: action.remoteAgentName }
-    : { callId: action.callId, mode: "local", name: action.subagentName };
-}
 function isRecursiveAgentAction(
   action: RuntimeActionRequest,
   subagentsByNodeId: ReadonlyMap<string, unknown>,

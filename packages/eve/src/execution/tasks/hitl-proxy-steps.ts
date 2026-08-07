@@ -5,8 +5,9 @@ import {
   toProxyInputRequestEntries,
   upsertProxyInputRequestState,
 } from "#harness/proxy-input-requests.js";
-import { findSessionTaskEntry } from "#tasks/session-index.js";
+import { getAgentHandleStore } from "#harness/handles/store.js";
 import { isInputRequest } from "#runtime/input/types.js";
+import { findSessionTaskEntry } from "#tasks/session-index.js";
 
 /** Validates and durably records one task-owned child HITL route batch. */
 export async function recordTaskInputRequestStep(input: {
@@ -19,7 +20,16 @@ export async function recordTaskInputRequestStep(input: {
 
   const durableSession = await readDurableSession(input.sessionState);
   const entry = findSessionTaskEntry(durableSession.state, input.taskId);
-  if (entry === undefined || entry.childSessionId !== input.hookPayload.childSessionId) {
+  const handle = (getAgentHandleStore(durableSession.state)?.handles ?? []).find(
+    (candidate) =>
+      candidate.phase === "addressed" && candidate.identity.id === entry?.metadata.agentId,
+  );
+  if (
+    entry === undefined ||
+    handle?.phase !== "addressed" ||
+    handle.address.kind === "agent/remote" ||
+    handle.address.sessionId !== input.hookPayload.childSessionId
+  ) {
     return { accepted: false, sessionState: input.sessionState };
   }
   const view = await readLatestTaskSnapshot({ taskRunId: entry.taskRunId });
@@ -34,6 +44,7 @@ export async function recordTaskInputRequestStep(input: {
     view?.status !== "input_required" ||
     !input.hookPayload.event.requests.every(isInputRequest) ||
     view.metadata.mode !== "local" ||
+    view.metadata.agentId !== entry.metadata.agentId ||
     view.metadata.childSessionId !== input.hookPayload.childSessionId ||
     new Set(eventRequestIds).size !== eventRequestIds.length ||
     eventRequestIds.length !== viewRequestIds.length ||

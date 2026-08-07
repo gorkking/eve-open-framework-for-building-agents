@@ -1,6 +1,7 @@
 import { z } from "#compiled/zod/index.js";
 
 import type { HarnessSession, SessionStateMap } from "#harness/types.js";
+import type { TaskMetadata } from "#tasks/types.js";
 
 /**
  * Session-state key for the parent's live-task index.
@@ -14,7 +15,8 @@ import type { HarnessSession, SessionStateMap } from "#harness/types.js";
 export const SESSION_TASKS_STATE_KEY = "eve.tasks";
 
 /**
- * One task owned by this session.
+ * One task owned by this session. Immutable model-safe metadata keeps the
+ * task-to-agent join available before the task run publishes its first view.
  *
  * `commandToken` is the private routing credential for the task run's
  * command hook. It must never render into model context, history, task
@@ -22,20 +24,30 @@ export const SESSION_TASKS_STATE_KEY = "eve.tasks";
  * `taskId` only, and lookup verifies ownership through this index.
  */
 export interface SessionTaskIndexEntry {
-  readonly childSessionId: string;
   readonly taskId: string;
   readonly taskRunId: string;
   readonly commandToken: string;
-  readonly createdByTurnId: string;
   readonly createdByStepIndex?: number;
+  readonly createdByTurnId: string;
+  readonly metadata: TaskMetadata;
   readonly operationId: string;
 }
 
+const taskMetadataSchema: z.ZodType<TaskMetadata> = z.strictObject({
+  agentId: z.string().min(1),
+  childSessionId: z.string().min(1).optional(),
+  childTurnId: z.string().min(1).optional(),
+  childLifecycle: z.enum(["parked", "terminal"]).optional(),
+  kind: z.literal("subagent"),
+  mode: z.enum(["local", "remote"]),
+  name: z.string().min(1),
+});
+
 const sessionTaskIndexEntrySchema: z.ZodType<SessionTaskIndexEntry> = z.strictObject({
-  childSessionId: z.string().min(1),
   commandToken: z.string().min(1),
-  createdByTurnId: z.string().min(1),
   createdByStepIndex: z.number().int().nonnegative().optional(),
+  createdByTurnId: z.string().min(1),
+  metadata: taskMetadataSchema,
   operationId: z.string().min(1),
   taskId: z.string().min(1),
   taskRunId: z.string().min(1),

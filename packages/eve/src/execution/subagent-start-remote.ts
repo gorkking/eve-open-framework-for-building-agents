@@ -7,6 +7,7 @@ import {
 } from "#execution/remote-agent-dispatch.js";
 import {
   confirmAgentStarted,
+  confirmTaskAgentAddress,
   prepareAgentStart,
   rejectAgentEffect,
 } from "#harness/handles/transitions.js";
@@ -31,6 +32,7 @@ export async function startRemoteSubagent(input: {
   readonly parentContinuationToken: string | undefined;
   readonly persistentSessions: boolean;
   readonly session: RuntimeSession;
+  readonly taskOwned: boolean;
 }): Promise<DispatchOutcome> {
   const { action } = input;
 
@@ -101,10 +103,9 @@ export async function startRemoteSubagent(input: {
       callId: action.callId,
       kind: "called",
       name: action.name,
-      session: confirmAgentStarted(preparedSession, {
-        address,
-        operationId: operation.id,
-      }),
+      session: input.taskOwned
+        ? confirmTaskAgentAddress(preparedSession, { address, operationId: operation.id })
+        : confirmAgentStarted(preparedSession, { address, operationId: operation.id }),
       toolName: action.remoteAgentName,
     };
   } catch (error) {

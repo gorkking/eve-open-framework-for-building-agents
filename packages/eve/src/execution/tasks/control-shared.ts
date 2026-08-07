@@ -1,7 +1,6 @@
 import type { RuntimeSession } from "#execution/agent-handle-dispatch.js";
 import { readLatestTaskSnapshot } from "#execution/tasks/run-control.js";
 import { getAgentHandleStore, type AgentHandle } from "#harness/handles/store.js";
-import { settleAgentTurn } from "#harness/handles/transitions.js";
 import type { RuntimeActionResult, RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
 import { taskViewsToJson } from "#tasks/json.js";
 import {
@@ -9,7 +8,7 @@ import {
   getSessionTaskIndex,
   type SessionTaskIndexEntry,
 } from "#tasks/session-index.js";
-import { isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
+import type { TaskView } from "#tasks/types.js";
 
 /**
  * Result and lookup helpers shared by the task-control executors
@@ -45,94 +44,53 @@ export async function readTaskViews(
     entries.map(
       async (entry) =>
         (await readLatestTaskSnapshot({ taskRunId: entry.taskRunId })) ??
-        createPendingTaskView(entry.taskId),
+        createPendingTaskView(entry),
     ),
   );
 }
 
 /** The view of a run that has not published its first snapshot yet. */
-export function createPendingTaskView(taskId: string): TaskView {
+export function createPendingTaskView(entry: SessionTaskIndexEntry): TaskView {
   return {
-    metadata: { kind: "subagent", mode: "local", name: "unknown" },
+    metadata: entry.metadata,
     status: "working",
-    taskId,
+    taskId: entry.taskId,
   };
 }
 
-/** Finds the handle owning one child session's address, any live phase. */
-export function findAddressableHandle(
+/** Finds the persistent address record for one task-owned agent. */
+export function findTaskAgentAddress(
   session: RuntimeSession,
-  childSessionId: string | undefined,
-): Extract<AgentHandle, { phase: "running" | "parked" }> | undefined {
-  if (childSessionId === undefined) return undefined;
+  agentId: string,
+): Extract<AgentHandle, { phase: "addressed" }> | undefined {
   const handles = getAgentHandleStore(session.state)?.handles ?? [];
-  return handles
-    .filter(
-      (candidate): candidate is Extract<AgentHandle, { phase: "running" | "parked" }> =>
-        candidate.phase === "running" || candidate.phase === "parked",
-    )
-    .find((candidate) => candidate.address.sessionId === childSessionId);
+  return handles.find(
+    (candidate): candidate is Extract<AgentHandle, { phase: "addressed" }> =>
+      candidate.phase === "addressed" && candidate.identity.id === agentId,
+  );
 }
 
-/** Finds the task that reserves a child for this batch or is still nonterminal. */
-export async function findConflictingTaskForChildSession(input: {
-  readonly childSessionId: string;
-  readonly parentStepIndex?: number;
-  readonly parentTurnId: string;
-  readonly session: RuntimeSession;
-}): Promise<{ readonly entry: SessionTaskIndexEntry; readonly view: TaskView } | undefined> {
-  for (const entry of getSessionTaskIndex(input.session.state)) {
-    if (entry.childSessionId !== input.childSessionId) continue;
-    const view =
-      (await readLatestTaskSnapshot({ taskRunId: entry.taskRunId })) ??
-      createPendingTaskView(entry.taskId);
-    if (
-      (entry.createdByTurnId === input.parentTurnId &&
-        entry.createdByStepIndex === input.parentStepIndex) ||
-      !isTerminalTaskStatus(view.status)
-    ) {
-      return { entry, view };
-    }
-  }
-  return undefined;
-}
-
-/** Applies actual terminal task outcomes to handles left running by task receipts. */
-export async function reconcileSettledTaskHandles(
+/** Returns the one nonterminal task owning an agent, if any. */
+export async function findActiveTaskForAgent(
   session: RuntimeSession,
-): Promise<RuntimeSession> {
-  let nextSession = session;
-  for (const entry of getSessionTaskIndex(session.state)) {
-    const view = await readLatestTaskSnapshot({ taskRunId: entry.taskRunId });
-    if (
-      view === undefined ||
-      !isTerminalTaskStatus(view.status) ||
-      view.metadata.childLifecycle === undefined
-    ) {
-      continue;
-    }
-    const result =
-      view.status === "completed"
-        ? { kind: "succeeded" as const, output: view.lastOutput?.data ?? "" }
-        : view.status === "failed"
-          ? { error: view.lastOutput?.data ?? "Task failed.", kind: "failed" as const }
-          : { kind: "cancelled" as const };
-    const settled = settleAgentTurn(nextSession, {
-      operationId: entry.operationId,
-      outcome: {
-        kind: view.metadata.childLifecycle,
-        result,
-        usageDelta: {
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-        },
-      },
-    });
-    if (settled.kind === "settled") nextSession = settled.session;
-  }
-  return nextSession;
+  agentId: string,
+  parentTurnId?: string,
+  parentStepIndex?: number,
+): Promise<{ readonly entry: SessionTaskIndexEntry; readonly view: TaskView } | undefined> {
+  const entries = getSessionTaskIndex(session.state).filter(
+    (entry) => entry.metadata.agentId === agentId,
+  );
+  const views = await readTaskViews(entries);
+  const active = entries.flatMap((entry, index) => {
+    const view = views[index];
+    return view !== undefined &&
+      ((entry.createdByTurnId === parentTurnId && entry.createdByStepIndex === parentStepIndex) ||
+        view.status === "working" ||
+        view.status === "input_required")
+      ? [{ entry, view }]
+      : [];
+  });
+  return active[0];
 }
 
 /** One successful task-control result carrying full task views. */

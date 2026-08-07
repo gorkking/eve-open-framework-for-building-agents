@@ -72,6 +72,7 @@ import {
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
+import { appendTaskAgentAnnouncement } from "#execution/tasks/agent-views.js";
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
@@ -286,8 +287,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const dynamicInstructionsResolvers = bundle.resolvedAgent.dynamicInstructionsResolvers ?? [];
   const dynamicSkillResolvers = bundle.resolvedAgent.dynamicSkillResolvers ?? [];
   const dynamicSubagentResolvers = bundle.subagentRegistry.dynamicResolvers ?? [];
+  const tasksEnabled = bundle.resolvedAgent.config.experimental?.tasks === true;
   const persistentSubagentSessions =
-    bundle.resolvedAgent.config.experimental?.subagentPersistentSessions === true;
+    tasksEnabled || bundle.resolvedAgent.config.experimental?.subagentPersistentSessions === true;
   const dynamicToolResolvers = bundle.resolvedAgent.dynamicToolResolvers ?? [];
   const effectiveNode = {
     ...bundle.graph.root,
@@ -425,6 +427,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           session: lifecycleSession,
           turnAgent: effectiveAgent.turnAgent,
         });
+        const modelSession = tasksEnabled
+          ? await appendTaskAgentAnnouncement(refreshedSession)
+          : refreshedSession;
 
         const step = createExecutionNodeStep({
           abortSignal: input.abortSignal,
@@ -441,7 +446,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           node: effectiveNode,
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });
-        return step(refreshedSession, stepInput);
+        return step(modelSession, stepInput);
       };
 
       return runHarnessStep(schemaSession, resolved);

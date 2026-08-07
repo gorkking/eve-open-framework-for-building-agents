@@ -14,6 +14,7 @@ import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 import { deriveAgentId, getAgentHandleStore } from "#harness/handles/store.js";
 import {
   confirmAgentStarted,
+  confirmTaskAgentAddress,
   prepareAgentContinuation,
   prepareAgentStart,
 } from "#harness/handles/transitions.js";
@@ -103,16 +104,41 @@ function createSessionWithRunningChild(): HarnessSession {
   });
 }
 
+function createSessionWithTaskAddress(): HarnessSession {
+  const prepared = prepareAgentStart(createParkedSession(), {
+    identity: {
+      id: deriveAgentId("researcher", OPERATION_ID),
+      name: "researcher",
+      nodeId: "subagents/researcher",
+    },
+    operation: {
+      callId: "call-1",
+      id: OPERATION_ID,
+      kind: "start",
+      parentTurnId: "turn_0",
+    },
+    target: { continuationToken: CHILD_CONTINUATION_TOKEN, kind: "agent/local" },
+  });
+  return confirmTaskAgentAddress(prepared, {
+    address: {
+      continuationToken: CHILD_CONTINUATION_TOKEN,
+      kind: "agent/local",
+      sessionId: CHILD_SESSION_ID,
+    },
+    operationId: OPERATION_ID,
+  });
+}
+
 describe("resolvePendingRuntimeActions", () => {
   it("marks a working task receipt as backgrounded on subagent.completed", async () => {
     const events: UnstampedMessageStreamEvent[] = [];
     const taskId = "task_0123456789abcdef";
 
-    await resolvePendingRuntimeActions({
+    const resolved = await resolvePendingRuntimeActions({
       emit: async (event) => {
         events.push(event);
       },
-      session: createSessionWithRunningChild(),
+      session: createSessionWithTaskAddress(),
       stepInput: {
         runtimeActionResults: [
           {
@@ -125,7 +151,11 @@ describe("resolvePendingRuntimeActions", () => {
               result: { kind: "succeeded", output: "delegated" },
               usageDelta: ZERO_USAGE,
             },
-            output: { status: "working", taskId },
+            output: {
+              agentId: deriveAgentId("researcher", OPERATION_ID),
+              status: "working",
+              taskId,
+            },
             subagentName: "researcher",
           },
         ],
@@ -135,6 +165,9 @@ describe("resolvePendingRuntimeActions", () => {
     expect(events.find((event) => event.type === "subagent.completed")).toMatchObject({
       data: { backgroundTask: { status: "working", taskId } },
     });
+    expect(getAgentHandleStore(resolved.session.state)?.handles).toEqual([
+      expect.objectContaining({ phase: "addressed" }),
+    ]);
   });
 
   it("settles the running handle terminally and deletes it with the batch", async () => {

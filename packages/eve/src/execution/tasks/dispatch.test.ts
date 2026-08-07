@@ -57,23 +57,21 @@ function createSession(mode: "local" | "remote"): RuntimeSession {
           {
             address,
             identity: { id: "agent-1", name: "research", nodeId: "node-1" },
-            operation: {
-              callId: "call-task",
-              id: "operation-1",
-              kind: "continue",
-              parentTurnId: "turn-parent",
-              previousStatus: "idle",
-            },
-            phase: "running",
+            phase: "addressed",
           },
         ],
       },
       [SESSION_TASKS_STATE_KEY]: {
         tasks: [
           {
-            childSessionId: "child-1",
             commandToken: "task-token",
             createdByTurnId: "turn-1",
+            metadata: {
+              agentId: "agent-1",
+              kind: "subagent",
+              mode,
+              name: "research",
+            },
             operationId: "operation-1",
             taskId: "task-1",
             taskRunId: "run-1",
@@ -90,6 +88,7 @@ describe("task cancellation identity", () => {
     vi.mocked(sendTaskCommand).mockResolvedValue("delivered");
     vi.mocked(readLatestTaskSnapshot).mockResolvedValue({
       metadata: {
+        agentId: "agent-1",
         childSessionId: "child-1",
         childTurnId: "turn_child_7",
         kind: "subagent",
@@ -133,14 +132,14 @@ describe("task cancellation identity", () => {
       }
       expect(result.result).toMatchObject({ output: { tasks: [{ status: "cancelled" }] } });
       expect(result.session.state?.[AGENT_HANDLES_STATE_KEY]).toMatchObject({
-        handles: [{ phase: "parked" }],
+        handles: [{ phase: "addressed" }],
       });
     },
   );
 
   it("uses task-scoped cancellation before child-turn identity arrives", async () => {
     vi.mocked(readLatestTaskSnapshot).mockResolvedValue({
-      metadata: { childSessionId: "child-1", kind: "subagent", mode: "local", name: "research" },
+      metadata: { agentId: "agent-1", kind: "subagent", mode: "local", name: "research" },
       status: "cancelled",
       taskId: "task-1",
     });

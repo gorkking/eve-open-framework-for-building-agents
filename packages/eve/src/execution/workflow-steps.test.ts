@@ -17,7 +17,7 @@ import {
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { serializeContext } from "#context/serialize.js";
 import { setPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
-import { getAgentHandleStore } from "#harness/handles/store.js";
+import { AGENT_HANDLES_STATE_KEY, getAgentHandleStore } from "#harness/handles/store.js";
 import { requestTurnSleep } from "#harness/turn-sleep.js";
 import { getPendingAuthorization, setPendingAuthorization } from "#harness/authorization.js";
 import { getProxyInputRequests, upsertProxyInputRequests } from "#harness/proxy-input-requests.js";
@@ -276,9 +276,14 @@ describe("routeProxiedDeliverStep", () => {
                 "eve.tasks": {
                   tasks: [
                     {
-                      childSessionId: "child-session",
                       commandToken: "task-token",
                       createdByTurnId: "turn-parent",
+                      metadata: {
+                        agentId: "agent-1",
+                        kind: "subagent",
+                        mode: "local",
+                        name: "research",
+                      },
                       operationId: "operation-1",
                       taskId: "task-1",
                       taskRunId: "run-1",
@@ -291,7 +296,6 @@ describe("routeProxiedDeliverStep", () => {
   }
 
   const taskRouteInput = {
-    parentWritable: createTestWritable(),
     payload: { inputResponses: [{ optionId: "approve", requestId: "request-1" }] },
     sessionState: createStubSessionState({ hasProxyInputRequests: true }),
   };
@@ -382,12 +386,30 @@ describe("recordTaskInputRequestStep", () => {
   it("records an exact route only for a current task owned by this parent", async () => {
     const session = createStubSession({
       state: {
+        [AGENT_HANDLES_STATE_KEY]: {
+          handles: [
+            {
+              address: {
+                continuationToken: "child-token",
+                kind: "agent/local",
+                sessionId: "child-session",
+              },
+              identity: { id: "agent-1", name: "research", nodeId: "node-1" },
+              phase: "addressed",
+            },
+          ],
+        },
         "eve.tasks": {
           tasks: [
             {
-              childSessionId: "child-session",
               commandToken: "task-token",
               createdByTurnId: "turn-parent",
+              metadata: {
+                agentId: "agent-1",
+                kind: "subagent",
+                mode: "local",
+                name: "research",
+              },
               operationId: "operation-1",
               taskId: "task-1",
               taskRunId: "run-1",
@@ -399,6 +421,7 @@ describe("recordTaskInputRequestStep", () => {
     installSessionStoreMocks([session]);
     vi.mocked(readLatestTaskSnapshot).mockResolvedValue({
       metadata: {
+        agentId: "agent-1",
         childSessionId: "child-session",
         kind: "subagent",
         mode: "local",
