@@ -56,6 +56,24 @@ export function expectFollowUpSessionActive(turn: EveEvalTurn, sessionId: string
   });
 }
 
+export async function verifyFollowUpTurn(
+  session: { send(message: string): Promise<EveEvalTurn> },
+  sessionId: string,
+  marker: string,
+): Promise<EveEvalTurn> {
+  const followUp = await session.send(
+    `Do not call any tools. Reply with exactly ${marker} and nothing else.`,
+  );
+  followUp.expectOk();
+  expectFollowUpSessionActive(followUp, sessionId);
+  followUp.event("message.received", { count: 1 });
+  followUp.event("message.completed", { count: 1 });
+  followUp.messageIncludes(marker);
+  followUp.usedNoTools();
+  followUp.succeeded();
+  return followUp;
+}
+
 export function requireRequest(
   requests: readonly InputRequest[],
   expected: { readonly optionIds?: readonly string[]; readonly toolName: string },

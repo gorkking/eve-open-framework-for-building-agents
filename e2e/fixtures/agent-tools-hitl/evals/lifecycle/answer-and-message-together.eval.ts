@@ -7,6 +7,7 @@ import {
   exactRequestTerminal,
   expectFollowUpSessionActive,
   traceRequest,
+  verifyFollowUpTurn,
 } from "./lifecycle";
 import { gateLifecycle } from "./shared";
 
@@ -30,10 +31,11 @@ export default defineEval({
     });
     const trace = traceRequest(parked.events, request);
 
-    const compound = await sendCompoundDelivery(t, {
+    const delivery = await sendCompoundDelivery(t, {
       inputResponses: [{ requestId: request.requestId, optionId: "red" }],
       message: "After recording my answer, reply with exactly Q4-COMPOUND-OK.",
     });
+    const compound = delivery.turn;
     compound.expectOk();
     expectFollowUpSessionActive(compound, parked.sessionId);
     compound.eventsSatisfy(
@@ -54,5 +56,6 @@ export default defineEval({
     compound.messageIncludes(/Q4-COMPOUND-OK/i);
 
     compound.succeeded();
+    await verifyFollowUpTurn(delivery.session, parked.sessionId, "Q4-FOLLOW-UP-OK");
   },
 });

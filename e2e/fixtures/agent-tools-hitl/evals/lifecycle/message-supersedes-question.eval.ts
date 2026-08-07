@@ -5,6 +5,7 @@ import {
   exactRequestTerminal,
   expectFollowUpSessionActive,
   traceRequest,
+  verifyFollowUpTurn,
 } from "./lifecycle";
 import { gateLifecycle } from "./shared";
 
@@ -47,6 +48,7 @@ export default defineEval({
     superseded.messageIncludes(/Q2-SUPERSEDE-OK/i);
 
     superseded.succeeded();
+    await verifyFollowUpTurn(t, parked.sessionId, "Q2-FOLLOW-UP-OK");
     t.succeeded();
   },
 });

@@ -8,6 +8,7 @@ import {
   expectFollowUpSessionActive,
   noRequestLifecycleEvents,
   traceRequest,
+  verifyFollowUpTurn,
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
@@ -82,6 +83,7 @@ export default defineEval({
     );
 
     approved.succeeded();
+    await verifyFollowUpTurn(t, parked.sessionId, "AP4-FOLLOW-UP-OK");
     t.succeeded();
     t.calledTool("guarded-echo", { status: "completed", count: 1 });
   },
