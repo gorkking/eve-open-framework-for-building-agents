@@ -74,26 +74,35 @@ export function buildAuthCompletedText(input: {
  */
 export function buildAuthEphemeralBlocks(input: {
   readonly displayName: string;
-  readonly url: string;
+  readonly instructions?: string;
+  readonly url?: string;
   readonly userCode?: string;
 }): unknown[] {
   const blocks: unknown[] = [];
+  if (input.instructions !== undefined && input.instructions.length > 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: input.instructions },
+    });
+  }
   if (input.userCode !== undefined && input.userCode.length > 0) {
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: `Use code \`${input.userCode}\` when prompted.` },
     });
   }
-  blocks.push({
-    type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: { type: "plain_text", text: `Sign in with ${input.displayName}` },
-        url: input.url,
-        style: "primary",
-      },
-    ],
-  });
+  if (input.url !== undefined) {
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: `Sign in with ${input.displayName}` },
+          url: input.url,
+          style: "primary",
+        },
+      ],
+    });
+  }
   return blocks;
 }

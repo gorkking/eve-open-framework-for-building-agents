@@ -1,6 +1,7 @@
 import type { SessionAuthContext } from "#channel/types.js";
 
 import { createLogger, extractErrorId, formatErrorHint } from "#internal/logging.js";
+import { renderAuthorizationRequired } from "#public/channels/authorization-rendering.js";
 import { describeActionRequests } from "#public/channels/slack/action-status.js";
 import { buildSlackAuthContext, slackUserIdFromAuthContext } from "#public/channels/slack/auth.js";
 import {
@@ -263,20 +264,27 @@ export const defaultEvents: SlackChannelInternalEvents = {
     // The challenge is user-specific: the sign-in link (and device code)
     // must only ever be visible to the triggering user, never posted into
     // the shared thread.
-    if (triggeringUserId && challengeUrl) {
+    const hasPrivateChallenge =
+      challengeUrl !== undefined ||
+      event.authorization?.userCode !== undefined ||
+      event.authorization?.instructions !== undefined;
+    if (triggeringUserId && hasPrivateChallenge) {
       const userCode = event.authorization?.userCode;
       try {
         await channel.thread.postEphemeral(triggeringUserId, {
           blocks: buildAuthEphemeralBlocks({
             displayName,
+            instructions: event.authorization?.instructions,
             url: challengeUrl,
             userCode,
           }),
           // Fallback text mirrors the blocks: clients that render only the
           // notification text still get everything needed to complete the flow.
-          text: userCode
-            ? `Sign in with ${displayName}: ${challengeUrl} (code: ${userCode})`
-            : `Sign in with ${displayName}: ${challengeUrl}`,
+          text: renderAuthorizationRequired({
+            authorization: event.authorization,
+            description: event.description,
+            name: event.name,
+          }),
         });
       } catch (error) {
         log.error("Slack auth ephemeral delivery failed", {

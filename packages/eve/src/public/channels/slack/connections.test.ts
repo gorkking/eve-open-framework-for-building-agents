@@ -81,6 +81,18 @@ describe("buildAuthEphemeralBlocks", () => {
     expect(button.style).toBe("primary");
   });
 
+  it("renders URL-less device-flow instructions without an action button", () => {
+    const blocks = buildAuthEphemeralBlocks({
+      displayName: "Notion",
+      instructions: "Open the provider app.",
+      userCode: "OTB-DGO",
+    });
+
+    expect(JSON.stringify(blocks)).toContain("Open the provider app.");
+    expect(JSON.stringify(blocks)).toContain("OTB-DGO");
+    expect(JSON.stringify(blocks)).not.toContain("button");
+  });
+
   it("prepends a section with the device user code when one is provided", () => {
     const blocks = buildAuthEphemeralBlocks({
       displayName: "Notion",
