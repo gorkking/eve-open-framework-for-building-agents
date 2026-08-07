@@ -1,4 +1,19 @@
-/** Prompts, instructions, and tool arguments. */
+/**
+ * Which span attributes carry conversation content, and in which direction.
+ *
+ * Two vocabularies land on the same spans: the ones eve sets on its own
+ * `agent.*` spans, and the ones the AI SDK's OpenTelemetry integration sets on
+ * the model-call spans beneath them. A destination that declined content has to
+ * be rid of both, so both are listed here rather than in the module that writes
+ * each.
+ *
+ * Listed by name rather than by prefix because the prefixes are shared with
+ * metadata that must survive: `ai.response.finish_reason` and
+ * `gen_ai.tool.name` say what happened, not what was said. The cost is that a
+ * new content attribute in a dependency is not covered until it is added here.
+ */
+
+/** Prompts, instructions, tool arguments — what went in. */
 const INPUT_CONTENT_ATTRIBUTES: ReadonlySet<string> = new Set([
   "ai.documents",
   "ai.prompt",
@@ -14,7 +29,12 @@ const INPUT_CONTENT_ATTRIBUTES: ReadonlySet<string> = new Set([
   "gen_ai.tool.definitions",
 ]);
 
-/** Responses, reasoning, and tool results. */
+/**
+ * Responses, reasoning, tool results — what came out.
+ *
+ * `ai.toolCall.args` is here rather than above because the AI SDK gates it on
+ * `recordOutputs`; matching that is what keeps one destination's view coherent.
+ */
 const OUTPUT_CONTENT_ATTRIBUTES: ReadonlySet<string> = new Set([
   "ai.embedding",
   "ai.embeddings",
@@ -43,7 +63,14 @@ function isDeclined(key: string, content: ResolvedContentOptions): boolean {
   return !content.recordOutputs && OUTPUT_CONTENT_ATTRIBUTES.has(key);
 }
 
-/** Returns a copy without declined content, or undefined when no copy is needed. */
+/**
+ * The attributes with the declined content removed, or `undefined` when there
+ * was none to remove.
+ *
+ * The `undefined` return is what lets the caller forward the original span
+ * untouched in the common case, so a destination that declined a direction the
+ * span never carried costs one pass over its keys and no allocation.
+ */
 export function withoutDeclinedContent(
   attributes: Readonly<Record<string, unknown>>,
   content: ResolvedContentOptions,

@@ -51,20 +51,28 @@ export interface OtelOptions {
   readonly propagators?: readonly PropagatorOrName[];
 }
 
-/** Where one `otelIntegration()` sends spans. */
-export interface OtelIntegrationOptions {
-  /** Merged into the pipeline in declaration order. */
-  readonly spanProcessors?: readonly SpanProcessor[];
-  /** Wrapped in eve's batching processor and appended after `spanProcessors`. */
-  readonly traceExporter?: SpanExporter;
-}
-
-/** What one built-in destination records of the conversation itself. */
+/**
+ * What one destination records of the conversation itself.
+ *
+ * Declining is per destination, not per process: content is written onto the
+ * span if any destination wants it, and one that declined never exports it. So
+ * an agent whose every destination declines still never materializes a prompt —
+ * the union of nothing is nothing — but a local spool and a hosted backend no
+ * longer have to agree.
+ */
 export interface ContentOptions {
   /** Record model prompts and tool call inputs. Defaults to `true`. */
   readonly recordInputs?: boolean;
   /** Record model responses and tool call outputs. Defaults to `true`. */
   readonly recordOutputs?: boolean;
+}
+
+/** Where one `otelIntegration()` sends spans, and what it records. */
+export interface OtelIntegrationOptions extends ContentOptions {
+  /** Merged into the pipeline in declaration order. */
+  readonly spanProcessors?: readonly SpanProcessor[];
+  /** Wrapped in eve's batching processor and appended after `spanProcessors`. */
+  readonly traceExporter?: SpanExporter;
 }
 
 const OTEL_DECLARATION = Symbol.for("eve.instrumentation.otel");
@@ -82,6 +90,7 @@ export interface OtelDeclaration extends InstrumentationProvider {
 /** One declared destination. A process may have as many as it has files. */
 export interface OtelIntegration extends InstrumentationProvider {
   readonly [OTEL_INTEGRATION]: true;
+  /** Resolved from `ContentOptions`, so the union does not re-apply defaults. */
   readonly content: ResolvedContentOptions;
   readonly spanProcessors: readonly SpanProcessorOrName[];
 }
@@ -103,17 +112,30 @@ export function otel(options: OtelOptions = {}): OtelDeclaration {
  * A `traceExporter` is wrapped in eve's batching processor, which is what makes
  * the one-line form of a hosted backend enough. Pass `spanProcessors` instead
  * when the destination needs its own batching, sampling, or filtering.
+ *
+ * Declining content wraps every processor here, an author's included: they are
+ * this destination, and the point of declining is that nothing under it sees
+ * what was said.
  */
 export function otelIntegration(options: OtelIntegrationOptions = {}): OtelIntegration {
+  const content: ResolvedContentOptions = {
+    recordInputs: options.recordInputs !== false,
+    recordOutputs: options.recordOutputs !== false,
+  };
   const declared = options.spanProcessors ?? [];
+  const spanProcessors =
+    options.traceExporter === undefined
+      ? declared
+      : [...declared, batchSpanProcessor(options.traceExporter)];
+
   return {
     [OTEL_INTEGRATION]: true,
     [PROVIDER]: true,
-    content: { recordInputs: true, recordOutputs: true },
+    content,
     spanProcessors:
-      options.traceExporter === undefined
-        ? declared
-        : [...declared, batchSpanProcessor(options.traceExporter)],
+      content.recordInputs && content.recordOutputs
+        ? spanProcessors
+        : spanProcessors.map((processor) => contentFilteringProcessor(processor, content)),
   };
 }
 
@@ -167,8 +189,9 @@ export interface OtelHarnessSettings {
   readonly functionId?: string;
   readonly traceChannelRequests: boolean;
   /**
-   * What to materialize on spans at all. Each destination independently strips
-   * anything it declined before export.
+   * What to write onto a span at all, as opposed to what any one destination
+   * exports. `agent/instrumentation.ts` sets this directly; a provider
+   * directory arrives at it as the union of its destinations.
    */
   readonly recordInputs?: boolean;
   readonly recordOutputs?: boolean;
@@ -192,6 +215,10 @@ export interface CollectedOtel {
  * `otel()` values is a boot error rather than a silent win for whichever eve
  * happened to visit first. With one declaration per file that collision needs
  * two files both exporting `otel()`, which is the only way to reach it.
+ *
+ * Content capture is the union of what the destinations asked for, because it
+ * governs what is written rather than what is exported. Each destination's own
+ * processors already drop what it declined.
  *
  * @internal
  */

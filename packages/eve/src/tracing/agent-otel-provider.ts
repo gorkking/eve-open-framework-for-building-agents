@@ -58,10 +58,12 @@ interface ToolSpanState extends SpanState {
 
 export interface AgentOtelInstrumentationInput {
   /**
-   * The union of what this process's destinations requested. Each destination
-   * independently removes declined content before export.
+   * Whether to write model prompts and tool call inputs onto spans at all.
+   * This is the union across destinations, not one destination's policy: a
+   * destination that declined drops these on its way out instead.
    */
   readonly recordInputs?: boolean;
+  /** The same, for model responses and tool call outputs. */
   readonly recordOutputs?: boolean;
   readonly frameworkVersion: string;
   readonly idGenerator: AgentSpanIdGenerator;

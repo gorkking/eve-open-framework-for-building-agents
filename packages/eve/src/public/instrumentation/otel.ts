@@ -10,7 +10,6 @@
  */
 
 import { createLocalTracesProcessor, resolveLocalTracesContent } from "#tracing/local-traces.js";
-import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
 import {
   agentRunsIntegration,
   otelIntegration,
@@ -43,17 +42,13 @@ export function agentRuns(options: ContentOptions = {}): OtelIntegration {
  * Export it from `agent/instrumentation/local.ts` to keep it alongside a hosted
  * backend, or export `disableInstrumentation()` from that file to turn it off.
  * Omitting the file leaves eve's default in place.
- * `EVE_TRACES_CONTENT=off` narrows this destination only.
+ *
+ * `EVE_TRACES_CONTENT=off` narrows this destination and no other, so declining
+ * content locally leaves what a hosted backend receives alone.
  */
 export function localTraces(options: ContentOptions = {}): OtelIntegration {
-  const content = resolveLocalTracesContent(options);
-  const spool = createLocalTracesProcessor();
-  return {
-    ...otelIntegration(),
-    content,
-    spanProcessors:
-      content.recordInputs && content.recordOutputs
-        ? [spool]
-        : [contentFilteringProcessor(spool, content)],
-  };
+  return otelIntegration({
+    ...resolveLocalTracesContent(options),
+    spanProcessors: [createLocalTracesProcessor()],
+  });
 }

@@ -56,6 +56,20 @@ describe("otelIntegration", () => {
     expect(integration.spanProcessors).toHaveLength(2);
     expect(integration.spanProcessors[0]).toBe(first);
   });
+
+  it("records everything unless told otherwise", () => {
+    expect(otelIntegration().content).toStrictEqual({ recordInputs: true, recordOutputs: true });
+  });
+
+  // An author's own processor is part of this destination, and the point of
+  // declining is that nothing under it sees what was said.
+  it("puts a declined policy in front of every processor, an author's included", () => {
+    const first = processor();
+    const integration = otelIntegration({ recordOutputs: false, spanProcessors: [first] });
+
+    expect(integration.content).toStrictEqual({ recordInputs: true, recordOutputs: false });
+    expect(integration.spanProcessors[0]).not.toBe(first);
+  });
 });
 
 describe("agentRunsIntegration", () => {
@@ -123,10 +137,32 @@ describe("collectOtelPipeline", () => {
     });
     expect(collected.settings).toStrictEqual({
       functionId: "weather",
+      // Nothing declared a destination, so nothing asked for content.
       recordInputs: false,
       recordOutputs: false,
       traceChannelRequests: true,
     });
+  });
+
+  // Content governs what is written onto the span, which is upstream of every
+  // destination — so one that wants it is enough, and the ones that declined
+  // drop it on their own way out.
+  it("takes content capture as the union across destinations", () => {
+    const collected = collectOtelPipeline([
+      otelIntegration({ recordInputs: false, recordOutputs: false }),
+      otelIntegration({ recordInputs: false, recordOutputs: true }),
+    ]);
+
+    expect(collected.settings).toMatchObject({ recordInputs: false, recordOutputs: true });
+  });
+
+  it("writes nothing when every destination declined", () => {
+    const collected = collectOtelPipeline([
+      otelIntegration({ recordInputs: false, recordOutputs: false }),
+      otelIntegration({ recordInputs: false, recordOutputs: false }),
+    ]);
+
+    expect(collected.settings).toMatchObject({ recordInputs: false, recordOutputs: false });
   });
 
   // A process has one tracer provider, so letting the first declaration win

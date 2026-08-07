@@ -81,7 +81,16 @@ export function createLocalTracesProcessor(
   };
 }
 
-/** Intersects the local destination policy with its environment override. */
+/**
+ * The local spool's content policy: its options, intersected with
+ * `EVE_TRACES_CONTENT`.
+ *
+ * The variable used to be the process-wide switch. It now applies to this one
+ * destination, and only ever narrows — `off` still wins where it applies, but
+ * it no longer decides what a hosted backend beside it receives.
+ *
+ * @internal
+ */
 export function resolveLocalTracesContent(
   options: {
     readonly recordInputs?: boolean;
