@@ -7,7 +7,11 @@ import type { TwilioEventContext } from "#public/channels/twilio/twilioChannel.j
 describe("Twilio connection authorization defaults", () => {
   it("sends challenges and outcomes to the bound phone number", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ ok: true });
-    const channel = { twilio: { sendMessage } } as unknown as TwilioEventContext;
+    const partialTwilio: Partial<TwilioEventContext["twilio"]> = { sendMessage };
+    const partialChannel: Pick<TwilioEventContext, "twilio"> = {
+      twilio: partialTwilio as TwilioEventContext["twilio"],
+    };
+    const channel = partialChannel as TwilioEventContext;
     const ctx = {} as SessionContext;
 
     await defaultEvents["authorization.required"]!(

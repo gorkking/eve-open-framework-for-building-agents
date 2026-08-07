@@ -10,16 +10,18 @@ function channelStub(input: { readonly guild: boolean }) {
   const followup = vi.fn().mockResolvedValue({ id: "private" });
   const post = vi.fn().mockResolvedValue({ id: "public" });
   const startTyping = vi.fn().mockResolvedValue(undefined);
-  const channel = {
-    discord: {
-      applicationId: "APP1",
-      followup,
-      guildId: input.guild ? "G01" : undefined,
-      interactionToken: "token",
-      post,
-      startTyping,
-    },
-  } as unknown as DiscordEventContext;
+  const partialDiscord: Partial<DiscordEventContext["discord"]> = {
+    applicationId: "APP1",
+    followup,
+    guildId: input.guild ? "G01" : undefined,
+    interactionToken: "token",
+    post,
+    startTyping,
+  };
+  const partialChannel: Pick<DiscordEventContext, "discord"> = {
+    discord: partialDiscord as DiscordEventContext["discord"],
+  };
+  const channel = partialChannel as DiscordEventContext;
   return { channel, followup, post, startTyping };
 }
 

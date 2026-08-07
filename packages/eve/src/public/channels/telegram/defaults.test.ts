@@ -27,9 +27,16 @@ function channelStub(chatType: "private" | "group") {
   const post = vi.fn().mockResolvedValue({ id: "message-1" });
   const request = vi.fn().mockResolvedValue({ body: {}, ok: true, status: 200 });
   const startTyping = vi.fn().mockResolvedValue(undefined);
-  const channel = {
-    telegram: { chatType, post, request, startTyping },
-  } as unknown as TelegramEventContext;
+  const partialTelegram: Partial<TelegramEventContext["telegram"]> = {
+    chatType,
+    post,
+    request,
+    startTyping,
+  };
+  const partialChannel: Pick<TelegramEventContext, "telegram"> = {
+    telegram: partialTelegram as TelegramEventContext["telegram"],
+  };
+  const channel = partialChannel as TelegramEventContext;
   return { channel, post, request, startTyping };
 }
 

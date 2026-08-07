@@ -7,7 +7,11 @@ import type { GitHubEventContext } from "#public/channels/github/githubChannel.j
 describe("GitHub connection authorization defaults", () => {
   it("posts a link-free status and the eventual outcome", async () => {
     const post = vi.fn().mockResolvedValue({ id: 1 });
-    const channel = { thread: { post } } as unknown as GitHubEventContext;
+    const partialThread: Partial<GitHubEventContext["thread"]> = { post };
+    const partialChannel: Pick<GitHubEventContext, "thread"> = {
+      thread: partialThread as GitHubEventContext["thread"],
+    };
+    const channel = partialChannel as GitHubEventContext;
     const events = createDefaultEvents();
     const ctx = {} as SessionContext;
 
