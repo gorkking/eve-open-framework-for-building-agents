@@ -14,6 +14,10 @@ export const nav = [
     href: "/docs",
   },
   {
+    label: "Blog",
+    href: "/blog",
+  },
+  {
     label: "Integrations",
     href: "/integrations",
   },
