@@ -5,8 +5,8 @@ export const llmCouncilPost = {
   href: "/blog/build-an-llm-council",
   image: "/blog/eve-llm-council-hero.png",
   diagramImage: "/blog/eve-llm-council.png",
-  publishedAt: "2026-08-03",
-  publishedLabel: "August 3, 2026",
+  publishedAt: "2026-08-07",
+  publishedLabel: "August 7, 2026",
   readingTime: "4 min read",
   author: {
     name: "Colton Padden",
