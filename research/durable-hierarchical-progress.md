@@ -112,15 +112,49 @@ It demonstrates that a useful aggregate needs stable call identity, child
 session identity, parallel labels, elapsed time, stale/unknown semantics, and
 an explicit distinction between refreshing presentation and changing progress.
 
-`e0` demonstrates structured, model-authored progress. Its `todo` results are
-validated as full snapshots, keyed by root or child session and turn, and
-reconciled into one Slack message that is updated in place. Root plans remain
-visible as completed; child plans are removed at child completion. e0 also
-attaches to each local child session stream to observe nested todo results,
-reasoning summaries, and action requests, then writes all of them directly to
-the parent Slack thread. This is effectively a hand-built hierarchical progress
-projection, but it depends on channel-side child stream attachment and embeds
-Slack message metadata in the persistence strategy.
+`e0` demonstrates structured, model-authored progress. Its current `todo`
+override extends eve's durable todo state with a sticky plan `title` and required
+per-step `description`. Each successful todo result is a complete snapshot. The
+Slack channel projects it to Slack's native `plan` block with one `task_card`
+per item:
+
+```ts
+{
+  type: "plan",
+  title: plan.title ?? "Plan",
+  tasks: plan.todos.map((todo, index) => ({
+    type: "task_card",
+    task_id: `todo-${index}`,
+    title: todo.content,
+    details: richText(todo.description),
+    status: mapTodoStatus(todo.status),
+  })),
+}
+```
+
+The renderer keeps `{ messageTs, title, todos, turnId }` in durable Slack channel
+state. Later snapshots in the same turn update that message; a new turn posts a
+new card; a missing message posts a replacement. Terminal completion marks
+unfinished tasks complete, while failure or cancellation marks them errored.
+The plan block is treated as a capability: after `invalid_blocks` or
+`invalid_block_type`, the renderer persists that rejection and uses a Markdown
+list plus `N of M steps` fallback for the rest of the session.
+
+This is stronger prior art than a generic block renderer. The producer schema
+was shaped by a concrete presentation need (`title` and `description`), yet its
+output remains semantic and independently useful. The renderer owns Slack's
+status mapping, rich-text conversion, message identity, update/recovery,
+terminal settlement, clipping, and capability fallback. It argues for a
+first-class canonical `plan` contribution in eve rather than representing every
+plan as generic action nodes or arbitrary annotations.
+
+An earlier e0 implementation attached to local child session streams and
+rendered each child's todo plan separately. The current implementation removed
+child-plan fan-in and follows child streams only to refresh the flat typing
+status from child reasoning/action events. That retreat is informative: raw
+child event mirroring made ownership and Slack-message reconciliation complex.
+Framework-owned child progress snapshots should make nested plan rendering
+possible without channel-side stream attachment.
 
 Together these implementations favor a layered authoring model:
 
@@ -341,6 +375,27 @@ interface ProgressContribution {
 `label` and `detail` are semantic authored copy, not channel markup. They are
 optional because an action's tool or agent name is already a deterministic
 fallback.
+
+Plans deserve a core canonical variant rather than a namespaced annotation:
+
+```ts
+interface ProgressPlan extends ProgressActivityBase {
+  readonly kind: "plan";
+  readonly title?: string;
+  readonly items: readonly ProgressPlanItem[];
+}
+
+interface ProgressPlanItem {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly phase: "pending" | "running" | "completed" | "cancelled" | "failed";
+}
+```
+
+This directly covers e0's Slack plan card while remaining useful to web, TUI,
+and other channels. Stable item ids should come from the producer rather than
+e0's current array index, so reordering or insertion does not change identity.
 
 ### Producer APIs
 
@@ -601,6 +656,16 @@ slackChannel({
   progress: slackProgress.message({
     blocks(progress) {
       return renderParallelAgentBlocks(progress);
+    },
+  }),
+});
+
+slackChannel({
+  progress: slackProgress.plan({
+    select(progress) {
+      return progress.root.activities.find(
+        (activity): activity is ProgressPlan => activity.kind === "plan",
+      );
     },
   }),
 });
