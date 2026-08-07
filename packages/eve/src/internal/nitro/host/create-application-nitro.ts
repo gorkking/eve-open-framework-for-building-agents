@@ -732,13 +732,7 @@ export async function createDevelopmentApplicationNitro(
   const nitroBuildDir = preparedHost.workspace.nitroBuildDir;
   const bundler = createApplicationNitroBundlerConfiguration(preparedHost, undefined);
   const plugins = createApplicationNitroPlugins(preparedHost);
-  const instrumentationLayout = preparedHost.compiledArtifacts.instrumentationLayout;
-  const providersKeepDefaultLocalTracing =
-    instrumentationLayout?.kind === "providers" && !instrumentationLayout.slots.includes("local");
-  if (
-    preparedHost.compiledArtifacts.instrumentationPluginPath === undefined ||
-    providersKeepDefaultLocalTracing
-  ) {
+  if (preparedHost.compiledArtifacts.instrumentationPluginPath === undefined) {
     plugins.unshift(
       resolvePackageSourceFilePath("src/internal/nitro/host/local-tracing-runtime-plugin.ts"),
     );

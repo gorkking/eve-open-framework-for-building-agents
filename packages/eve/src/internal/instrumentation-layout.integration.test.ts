@@ -58,8 +58,11 @@ describe("resolveInstrumentationLayout with providers off", () => {
 });
 
 describe("resolveInstrumentationLayout with providers on", () => {
-  it("returns nothing when the agent authored no instrumentation", () => {
-    expect(resolveInstrumentationLayout({ agentRoot, providersEnabled: true })).toBeUndefined();
+  it("returns an empty provider layout for eve's built-in destinations", () => {
+    expect(resolveInstrumentationLayout({ agentRoot, providersEnabled: true })).toEqual({
+      kind: "providers",
+      modulePathsBySlot: {},
+    });
   });
 
   it("keys each file by the slot its name derives", () => {

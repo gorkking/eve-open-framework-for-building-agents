@@ -10,6 +10,7 @@ export interface InstrumentationRuntime {
   readonly forceFlush: () => Promise<void>;
   readonly hooks: InstrumentationHooks;
   readonly runInContext: InstrumentationContextRunner;
+  readonly shutdown: () => Promise<void>;
 }
 
 /** Instrumentation capabilities consumed inside one harness execution. */

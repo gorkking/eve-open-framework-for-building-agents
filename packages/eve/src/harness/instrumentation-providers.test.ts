@@ -1,16 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  finalizeInstrumentationProviders,
   getInstrumentationProviders,
   registerInstrumentationProvider,
+  seedInstrumentationProviders,
+  shutdownInstrumentationProviders,
 } from "#harness/instrumentation-providers.js";
+import { DEVELOPMENT_WORKER_APP_ROOT_ENV } from "#internal/workflow/development-world-protocol.js";
 import { defineInstrumentation } from "#public/instrumentation/index.js";
+import { agentRuns, localTraces, otelIntegration } from "#public/instrumentation/otel.js";
 import {
   disableInstrumentation,
   type ProviderSetupContext,
 } from "#public/instrumentation/provider.js";
 
 const REGISTRY_GLOBAL_KEY = Symbol.for("eve.harness-instrumentation-providers");
+const RUNTIME_GLOBAL_KEY = Symbol.for("eve.instrumentation-runtime");
 
 function register(slot: string, value: unknown): Promise<void> {
   return registerInstrumentationProvider({ agentName: "weather-agent", slot, value });
@@ -20,6 +26,7 @@ describe("registerInstrumentationProvider", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
     delete (globalThis as Record<symbol, unknown>)[REGISTRY_GLOBAL_KEY];
+    delete (globalThis as Record<symbol, unknown>)[RUNTIME_GLOBAL_KEY];
   });
 
   it("registers a provider under its slot", async () => {
@@ -91,5 +98,91 @@ describe("registerInstrumentationProvider", () => {
     await expect(register("otel", value)).rejects.toThrow(
       /The default export of "instrumentation\/otel" is not an instrumentation provider/,
     );
+  });
+});
+
+describe("seedInstrumentationProviders", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    delete (globalThis as Record<symbol, unknown>)[REGISTRY_GLOBAL_KEY];
+    delete (globalThis as Record<symbol, unknown>)[RUNTIME_GLOBAL_KEY];
+    vi.stubEnv("EVE_TRACES", "off");
+    vi.stubEnv("VERCEL_ENV", undefined);
+    vi.stubEnv(DEVELOPMENT_WORKER_APP_ROOT_ENV, "/tmp/eve-seed-test");
+  });
+
+  it("keeps default local traces beside an authored destination", async () => {
+    seedInstrumentationProviders();
+    await register("backend", otelIntegration());
+
+    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["local", "backend"]);
+  });
+
+  it("seeds Agent Runs only in Vercel production", () => {
+    vi.stubEnv(DEVELOPMENT_WORKER_APP_ROOT_ENV, undefined);
+    vi.stubEnv("VERCEL_ENV", "production");
+
+    seedInstrumentationProviders();
+
+    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["agent-runs"]);
+  });
+
+  it("lets an authored reserved slot reconfigure or disable its default", async () => {
+    seedInstrumentationProviders();
+    const authored = localTraces({ recordInputs: false });
+    await register("local", authored);
+    expect(getInstrumentationProviders()).toEqual([{ provider: authored, slot: "local" }]);
+
+    await register("local", disableInstrumentation());
+    expect(getInstrumentationProviders()).toEqual([]);
+  });
+
+  it("lets an authored Agent Runs slot narrow the production default", async () => {
+    vi.stubEnv(DEVELOPMENT_WORKER_APP_ROOT_ENV, undefined);
+    vi.stubEnv("VERCEL_ENV", "production");
+    seedInstrumentationProviders();
+    const authored = agentRuns({ recordOutputs: false });
+
+    await register("agent-runs", authored);
+
+    expect(getInstrumentationProviders()).toEqual([{ provider: authored, slot: "agent-runs" }]);
+  });
+});
+
+describe("finalizeInstrumentationProviders", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    delete (globalThis as Record<symbol, unknown>)[REGISTRY_GLOBAL_KEY];
+    delete (globalThis as Record<symbol, unknown>)[RUNTIME_GLOBAL_KEY];
+  });
+
+  it("installs a bus for authored providers without an OpenTelemetry destination", async () => {
+    const started = vi.fn();
+    await register("rows", defineInstrumentation({ events: { "turn.started": started } }));
+
+    const runtime = finalizeInstrumentationProviders({ serviceName: "weather-agent" });
+    await runtime.hooks.publish({
+      rootSessionId: "session-1",
+      sequence: 0,
+      sessionId: "session-1",
+      turnId: "turn-1",
+      type: "turn.started",
+    });
+
+    expect(started).toHaveBeenCalledOnce();
+  });
+
+  it("drives authored flush and shutdown hooks", async () => {
+    const flush = vi.fn();
+    const shutdown = vi.fn();
+    await register("rows", defineInstrumentation({ flush, shutdown }));
+
+    const runtime = finalizeInstrumentationProviders({ serviceName: "weather-agent" });
+    await runtime.forceFlush();
+    await shutdownInstrumentationProviders();
+    await shutdownInstrumentationProviders();
+
+    expect(flush).toHaveBeenCalledOnce();
+    expect(shutdown).toHaveBeenCalledOnce();
   });
 });

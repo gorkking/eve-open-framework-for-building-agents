@@ -177,9 +177,22 @@ describe("writeCompiledArtifactsFiles", () => {
 
     expect(instrumentationPluginSource).toContain('slot: "local"');
     expect(instrumentationPluginSource).toContain('slot: "otel"');
+    expect(instrumentationPluginSource).toContain("seedInstrumentationProviders();");
+    expect(instrumentationPluginSource).toContain("shutdownInstrumentationProviders");
+    expect(instrumentationPluginSource).toContain("hooks?.hook('close'");
     expect(instrumentationPluginSource).not.toContain("registerInstrumentationConfig");
 
-    await import(pathToFileURL(instrumentationPluginPath).href);
+    const instrumentationPlugin = (await import(pathToFileURL(instrumentationPluginPath).href)) as {
+      default: (nitroApp: {
+        hooks: { hook(name: "close", handler: () => Promise<void>): void };
+      }) => void;
+    };
+    const closeHandlers: Array<() => Promise<void>> = [];
+    instrumentationPlugin.default({
+      hooks: {
+        hook: (_name, handler) => closeHandlers.push(handler),
+      },
+    });
 
     // The plugin resolves the registry by absolute path while the assertion
     // resolves it by package alias, so this also proves the globalThis rooting
@@ -192,6 +205,45 @@ describe("writeCompiledArtifactsFiles", () => {
       "otel:compiled-artifacts-providers-test-agent",
     ]);
     expect(getInstrumentationProviders().map((entry) => entry.slot)).toEqual(["local", "otel"]);
+    expect(closeHandlers).toHaveLength(1);
+    await closeHandlers[0]?.();
+  });
+
+  it("generates the provider plugin for built-in destinations without authored files", async () => {
+    const { agentRoot, appRoot } = await createAppRoot(
+      "eve-compiled-artifacts-default-providers-",
+      {
+        packageName: "compiled-artifacts-default-providers-test-agent",
+      },
+    );
+    const outDir = join(appRoot, ".workflow-build");
+    await writeFile(
+      join(agentRoot, "agent.ts"),
+      [
+        "export default {",
+        '  model: "openai/gpt-5.4",',
+        "  experimental: { instrumentationProviders: true },",
+        "};",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(agentRoot, "instructions.md"), "You are a precise assistant.\n");
+
+    const compileResult = await compileAgent({ startPath: appRoot });
+    const generatedArtifacts = await writeCompiledArtifactsFiles({
+      compileResult,
+      defaultWorkflowWorld: "local",
+      outDir,
+    });
+    const instrumentationPluginPath = generatedArtifacts.instrumentationPluginPath;
+    if (instrumentationPluginPath === undefined) {
+      throw new Error("Expected instrumentation plugin path to be generated.");
+    }
+
+    expect(generatedArtifacts.instrumentationSourcePaths).toEqual([]);
+    expect(await readFile(instrumentationPluginPath, "utf8")).toContain(
+      "seedInstrumentationProviders();",
+    );
   });
 
   it("surfaces instrumentation import failures when the Nitro plugin module loads", async () => {

@@ -5,9 +5,27 @@ export interface SpanProcessor {
   shutdown(): Promise<void>;
 }
 
+export type SpanProcessorOrName = SpanProcessor | "auto";
+
 export interface IdGenerator {
   generateSpanId(): string;
   generateTraceId(): string;
+}
+
+/**
+ * A `SpanExporter`. Structural for the same reason the propagator is: the
+ * instance comes from whichever `@opentelemetry/*` build the app installed, and
+ * eve only ever hands it spans and waits for the callback.
+ *
+ * `code` is `ExportResultCode`: `0` succeeded, `1` failed.
+ */
+export interface SpanExporter {
+  export(
+    spans: readonly unknown[],
+    resultCallback: (result: { code: number; error?: Error }) => void,
+  ): void;
+  forceFlush?(): Promise<void>;
+  shutdown(): Promise<void>;
 }
 
 /**
@@ -40,7 +58,7 @@ export interface Configuration {
   readonly instrumentations?: readonly unknown[];
   readonly propagators?: readonly PropagatorOrName[];
   readonly serviceName?: string;
-  readonly spanProcessors?: readonly SpanProcessor[];
+  readonly spanProcessors?: readonly SpanProcessorOrName[];
   readonly traceSampler?: SamplerOrName;
 }
 

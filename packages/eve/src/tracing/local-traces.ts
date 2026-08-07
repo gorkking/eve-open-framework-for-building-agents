@@ -23,14 +23,27 @@ export interface LocalTracesProcessor extends SpanProcessor {
   releaseSession(sessionId: string): Promise<boolean>;
 }
 
+/** Whether a processor still exposes the local spool's session lifecycle. */
+export function hasSessionRelease(processor: SpanProcessor): processor is LocalTracesProcessor {
+  return typeof (processor as Partial<LocalTracesProcessor>).releaseSession === "function";
+}
+
 /**
  * Writes the OTLP/JSON spool under `.eve/traces/v1`.
  *
  * `EVE_TRACES=off` removes the writer but keeps the processor: eve still has
  * to observe spans to track which session owns which trace.
+ *
+ * Internal because of `releaseSession`, which eve's runtime drives off session
+ * lifecycle. The authored surface is `localTraces()`, which wraps this in an
+ * `OtelIntegration`.
  */
-export function localTraces(input: { readonly appRoot?: string } = {}): LocalTracesProcessor {
-  const appRoot = input.appRoot ?? resolveAppRoot();
+export function createLocalTracesProcessor(
+  input: { readonly appRoot?: string } = {},
+): LocalTracesProcessor {
+  const appRoot = input.appRoot ?? process.env["EVE_DEV_WORKER_APP_ROOT"];
+  if (appRoot === undefined) return inertLocalTracesProcessor();
+
   const retention = resolveLocalTraceRetentionSettings();
   const processor = new AgentTraceSpanProcessor(
     retention.enabled ? [new LocalTraceSpanProcessor(appRoot)] : [],
@@ -68,10 +81,27 @@ export function localTraces(input: { readonly appRoot?: string } = {}): LocalTra
   };
 }
 
-function resolveAppRoot(): string {
-  const appRoot = process.env["EVE_DEV_WORKER_APP_ROOT"];
-  if (appRoot === undefined) {
-    throw new Error("EVE_DEV_WORKER_APP_ROOT is required for local tracing.");
-  }
-  return appRoot;
+/** Intersects the local destination policy with its environment override. */
+export function resolveLocalTracesContent(
+  options: {
+    readonly recordInputs?: boolean;
+    readonly recordOutputs?: boolean;
+  } = {},
+): { readonly recordInputs: boolean; readonly recordOutputs: boolean } {
+  const enabled = process.env.EVE_TRACES_CONTENT !== "off";
+  return {
+    recordInputs: enabled && options.recordInputs !== false,
+    recordOutputs: enabled && options.recordOutputs !== false,
+  };
+}
+
+/** A production-authored `localTraces()` has no local development store. */
+function inertLocalTracesProcessor(): LocalTracesProcessor {
+  return {
+    forceFlush: async () => undefined,
+    onEnd: () => undefined,
+    onStart: () => undefined,
+    releaseSession: async () => false,
+    shutdown: async () => undefined,
+  };
 }

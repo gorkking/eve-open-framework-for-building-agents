@@ -14,7 +14,7 @@ describe("registerOtelPipeline", () => {
   it("verifies tracer ownership when the sampler records nothing", () => {
     expect(() =>
       registerOtelPipeline({
-        options: { sampler: "always_off" },
+        pipeline: { sampler: "always_off", spanProcessors: [] },
         serviceName: "weather",
       }),
     ).not.toThrow();
@@ -31,7 +31,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        options: {},
+        pipeline: { spanProcessors: [] },
         serviceName: "weather",
       }),
     ).toThrow(/another runtime already owns the global propagator/u);
@@ -41,7 +41,7 @@ describe("registerOtelPipeline", () => {
     const exporter = new InMemorySpanExporter();
     const processor = new SimpleSpanProcessor(exporter);
     registerOtelPipeline({
-      options: { spanProcessors: [processor] },
+      pipeline: { spanProcessors: [processor] },
       serviceName: "weather",
     });
 

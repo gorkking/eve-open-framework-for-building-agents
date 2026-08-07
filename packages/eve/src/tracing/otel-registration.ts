@@ -3,10 +3,11 @@ import {
   registerOTel,
   type Configuration,
   type SpanProcessor,
+  type SpanProcessorOrName,
 } from "#compiled/@vercel/otel/index.js";
 
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
-import type { OtelOptions } from "#tracing/otel-declaration.js";
+import type { OtelPipeline } from "#tracing/otel-declaration.js";
 
 const REGISTRATION_SPAN_NAME = "eve.otel.registration";
 
@@ -69,34 +70,36 @@ class PrivateSpanFilteringProcessor implements SpanProcessor {
  * propagator, then verifies both through the global APIs.
  */
 export function registerOtelPipeline(input: {
-  readonly options: OtelOptions;
+  readonly pipeline: OtelPipeline;
   readonly serviceName: string;
-}): AgentSpanIdGenerator {
-  const { options } = input;
+}): RegisteredOtelPipeline {
+  const { pipeline } = input;
   const idGenerator = new AgentSpanIdGenerator();
   const markerPropagator = new RegistrationMarkerPropagator();
   const configuration: Configuration = {
-    attributes: options.resource,
+    attributes: pipeline.resource,
     autoDetectResources: false,
     idGenerator,
     // eve imports the model SDK before any of this runs, so an auto
     // instrumentation registered here could not patch it anyway.
     instrumentations: [],
-    propagators: [...(options.propagators ?? ["none"]), markerPropagator],
+    propagators: [...(pipeline.propagators ?? ["none"]), markerPropagator],
     serviceName: input.serviceName,
-    spanProcessors: [new PrivateSpanFilteringProcessor(options.spanProcessors ?? [])],
+    spanProcessors: pipeline.spanProcessors.map((processor) =>
+      isSpanProcessor(processor) ? new PrivateSpanFilteringProcessor([processor]) : processor,
+    ),
   };
   registerOTel(
     // Absent means "let `@vercel/otel` decide", which is not the same as
     // passing an explicit `undefined` sampler.
-    options.sampler === undefined
+    pipeline.sampler === undefined
       ? configuration
-      : { ...configuration, traceSampler: options.sampler },
+      : { ...configuration, traceSampler: pipeline.sampler },
   );
 
   if (!globalTracerUses(idGenerator)) {
     throw new Error(
-      "eve could not register OpenTelemetry because another runtime already owns the global tracer provider. Remove the other `registerOTel` call, or move its exporters into eve's `otel({ spanProcessors: [...] })`.",
+      "eve could not register OpenTelemetry because another runtime already owns the global tracer provider. Remove the other `registerOTel` call, or move its exporters into eve's `otelIntegration({ spanProcessors: [...] })`.",
     );
   }
   if (!markerPropagator.isInstalled()) {
@@ -104,7 +107,33 @@ export function registerOtelPipeline(input: {
       "eve could not register OpenTelemetry because another runtime already owns the global propagator. Remove the other global propagator registration and declare propagators through eve's `otel()` instead.",
     );
   }
-  return idGenerator;
+  const globalProvider = trace.getTracerProvider() as Partial<ProxyTracerProvider>;
+  const provider = (globalProvider.getDelegate?.() ??
+    globalProvider) as Partial<RuntimeTracerProvider>;
+  if (typeof provider.forceFlush !== "function" || typeof provider.shutdown !== "function") {
+    throw new Error("The registered OpenTelemetry tracer provider has no lifecycle methods.");
+  }
+  return {
+    forceFlush: () => provider.forceFlush!(),
+    idGenerator,
+    shutdown: () => provider.shutdown!(),
+  };
+}
+
+/** Lifecycle retained from the tracer provider that owns every destination. */
+export interface RegisteredOtelPipeline {
+  readonly forceFlush: () => Promise<void>;
+  readonly idGenerator: AgentSpanIdGenerator;
+  readonly shutdown: () => Promise<void>;
+}
+
+interface RuntimeTracerProvider {
+  forceFlush(): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
+interface ProxyTracerProvider {
+  getDelegate(): unknown;
 }
 
 function globalTracerUses(idGenerator: AgentSpanIdGenerator): boolean {
@@ -124,4 +153,8 @@ function isRegistrationSpan(span: unknown): boolean {
     "name" in span &&
     span.name === REGISTRATION_SPAN_NAME
   );
+}
+
+function isSpanProcessor(processor: SpanProcessorOrName): processor is SpanProcessor {
+  return processor !== "auto";
 }

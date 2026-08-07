@@ -1,9 +1,16 @@
-import type { SpanProcessor } from "#compiled/@vercel/otel/index.js";
+import type { SpanExporter, SpanProcessor } from "#compiled/@vercel/otel/index.js";
 import { describe, expect, it } from "vitest";
 
-import { isOtelDeclaration, mergeOtelDeclarations, otel } from "#tracing/otel-declaration.js";
+import {
+  agentRunsIntegration,
+  collectOtelPipeline,
+  isOtelDeclaration,
+  isOtelIntegration,
+  otel,
+  otelIntegration,
+} from "#tracing/otel-declaration.js";
 
-/** The merge only ever moves processors, so a fresh no-op is identity enough. */
+/** Collection only ever moves processors, so a fresh no-op is identity enough. */
 function processor(): SpanProcessor {
   return {
     forceFlush: async () => undefined,
@@ -13,67 +20,120 @@ function processor(): SpanProcessor {
   };
 }
 
+function exporter(): SpanExporter {
+  return {
+    export: (_spans, resultCallback) => {
+      resultCallback({ code: 0 });
+    },
+    shutdown: async () => undefined,
+  };
+}
+
 describe("otel", () => {
-  it("declares a pipeline without registering anything", () => {
-    const declaration = otel({ spanProcessors: [processor()] });
+  it("declares settings without registering anything", () => {
+    const declaration = otel({ sampler: "always_on" });
     expect(isOtelDeclaration(declaration)).toBe(true);
     expect(isOtelDeclaration({ options: {} })).toBe(false);
   });
 });
 
-describe("mergeOtelDeclarations", () => {
-  it("is absent when nothing declared a pipeline", () => {
-    expect(mergeOtelDeclarations([])).toBeUndefined();
+describe("otelIntegration", () => {
+  it("passes declared processors through untouched", () => {
+    const first = processor();
+    const integration = otelIntegration({ spanProcessors: [first] });
+
+    expect(isOtelIntegration(integration)).toBe(true);
+    expect(integration.spanProcessors).toStrictEqual([first]);
   });
 
-  it("concatenates span processors in declaration order", () => {
+  it("wraps an exporter in a batching processor, after any declared ones", () => {
+    const first = processor();
+    const integration = otelIntegration({
+      spanProcessors: [first],
+      traceExporter: exporter(),
+    });
+
+    expect(integration.spanProcessors).toHaveLength(2);
+    expect(integration.spanProcessors[0]).toBe(first);
+  });
+});
+
+describe("agentRunsIntegration", () => {
+  it("uses Vercel's automatic processor by default", () => {
+    const integration = agentRunsIntegration();
+
+    expect(integration.content).toStrictEqual({ recordInputs: true, recordOutputs: true });
+    expect(integration.spanProcessors).toStrictEqual(["auto"]);
+  });
+
+  it("wraps the request-context transport when its content policy is narrowed", () => {
+    const integration = agentRunsIntegration({ recordInputs: false });
+
+    expect(integration.content).toStrictEqual({ recordInputs: false, recordOutputs: true });
+    expect(integration.spanProcessors).toHaveLength(1);
+    expect(integration.spanProcessors[0]).not.toBe("auto");
+  });
+});
+
+describe("collectOtelPipeline", () => {
+  it("reports nothing declared when nothing did", () => {
+    expect(collectOtelPipeline([]).declared).toBe(false);
+    expect(collectOtelPipeline([{ not: "a declaration" }]).declared).toBe(false);
+  });
+
+  it("concatenates destinations in declaration order", () => {
     const [first, second, third] = [processor(), processor(), processor()];
-    const merged = mergeOtelDeclarations([
-      otel({ spanProcessors: [first, second] }),
-      otel({ spanProcessors: [third] }),
+    const collected = collectOtelPipeline([
+      otelIntegration({ spanProcessors: [first, second] }),
+      otelIntegration({ spanProcessors: [third] }),
       otel(),
     ]);
 
-    expect(merged?.spanProcessors).toStrictEqual([first, second, third]);
+    expect(collected.declared).toBe(true);
+    expect(collected.pipeline.spanProcessors).toStrictEqual([first, second, third]);
   });
 
-  it("carries a singleton declared exactly once", () => {
-    const merged = mergeOtelDeclarations([
-      otel({ sampler: "always_on" }),
-      otel({ propagators: ["tracecontext"] }),
-      otel({ resource: { "service.version": "abc" } }),
+  it("is declared by a destination alone, with no otel() beside it", () => {
+    const collected = collectOtelPipeline([otelIntegration({ spanProcessors: [processor()] })]);
+
+    expect(collected.declared).toBe(true);
+    expect(collected.settings).toStrictEqual({
+      functionId: undefined,
+      recordInputs: true,
+      recordOutputs: true,
+      traceChannelRequests: false,
+    });
+  });
+
+  it("carries the singletons onto the pipeline and the rest onto the settings", () => {
+    const collected = collectOtelPipeline([
+      otel({
+        functionId: "weather",
+        propagators: ["tracecontext"],
+        resource: { "service.version": "abc" },
+        sampler: "always_on",
+        traceChannelRequests: true,
+      }),
     ]);
 
-    expect(merged).toMatchObject({
+    expect(collected.pipeline).toMatchObject({
       propagators: ["tracecontext"],
       resource: { "service.version": "abc" },
       sampler: "always_on",
+    });
+    expect(collected.settings).toStrictEqual({
+      functionId: "weather",
+      recordInputs: false,
+      recordOutputs: false,
+      traceChannelRequests: true,
     });
   });
 
   // A process has one tracer provider, so letting the first declaration win
   // would silently discard the second — the failure this throw exists to stop.
-  it.each([
-    { key: "resource", one: otel({ resource: { a: "1" } }), two: otel({ resource: { b: "2" } }) },
-    { key: "sampler", one: otel({ sampler: "always_on" }), two: otel({ sampler: "always_off" }) },
-    {
-      key: "propagators",
-      one: otel({ propagators: ["tracecontext"] }),
-      two: otel({ propagators: ["baggage"] }),
-    },
-  ])("refuses a second $key rather than picking one", ({ key, one, two }) => {
-    expect(() => mergeOtelDeclarations([one, two])).toThrow(
-      new RegExp(`declares \`${key}\` in more than one`, "u"),
-    );
-  });
-
-  it("names both declarations in the collision, so the author can find them", () => {
+  it("refuses a second otel() rather than picking one", () => {
     expect(() =>
-      mergeOtelDeclarations([
-        otel(),
-        otel({ sampler: "always_on" }),
-        otel({ sampler: "always_off" }),
-      ]),
-    ).toThrow(/\(1 and 2\)/u);
+      collectOtelPipeline([otel({ sampler: "always_on" }), otel({ sampler: "always_off" })]),
+    ).toThrow(/declares `otel\(\)` more than once/u);
   });
 });

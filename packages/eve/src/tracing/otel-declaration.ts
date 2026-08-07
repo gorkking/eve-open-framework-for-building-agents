@@ -1,17 +1,40 @@
 import type {
   PropagatorOrName,
   SamplerOrName,
+  SpanExporter,
   SpanProcessor,
+  SpanProcessorOrName,
 } from "#compiled/@vercel/otel/index.js";
 
+import { PROVIDER, type InstrumentationProvider } from "#public/instrumentation/provider.js";
+import { batchSpanProcessor } from "#tracing/batch-span-processor.js";
+import type { ResolvedContentOptions } from "#tracing/content-attributes.js";
+import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
+import { vercelRuntimeSpanProcessor } from "#tracing/vercel-runtime-span-exporter.js";
+
 /**
- * OpenTelemetry pipeline settings for one `otel()` declaration.
+ * The process-wide OpenTelemetry settings, declared by `otel()`.
+ *
+ * Everything here is a singleton, which is why it is one file: a process has
+ * one tracer provider, so it has one resource, one sampler, and one propagator
+ * set. Destinations are the plural half and live in `otelIntegration()`.
  *
  * `contextManager` and `instrumentations` are deliberately absent: eve's span
  * nesting depends on the former, and the latter cannot reach anything eve
  * imported before setup ran.
  */
 export interface OtelOptions {
+  /**
+   * The function identifier attached to telemetry spans
+   * (`ai.telemetry.functionId`). Defaults to the agent name.
+   */
+  readonly functionId?: string;
+  /**
+   * Whether to emit the inbound HTTP `SERVER` span that wraps each channel
+   * request — the parent of the turn trace and of any `hook.resume` or
+   * outgoing HTTP spans. Defaults to `false`.
+   */
+  readonly traceChannelRequests?: boolean;
   /**
    * Resource attributes merged into eve's own, which already carry the
    * service name.
@@ -26,27 +49,93 @@ export interface OtelOptions {
   readonly sampler?: SamplerOrName;
   /** Composed into one propagator. All inject; the first to extract wins. */
   readonly propagators?: readonly PropagatorOrName[];
-  /**
-   * Where eve exports this agent's traces, and the only field most agents set.
-   * Absent means nowhere, eve's own sinks included.
-   */
+}
+
+/** Where one `otelIntegration()` sends spans. */
+export interface OtelIntegrationOptions {
+  /** Merged into the pipeline in declaration order. */
   readonly spanProcessors?: readonly SpanProcessor[];
+  /** Wrapped in eve's batching processor and appended after `spanProcessors`. */
+  readonly traceExporter?: SpanExporter;
+}
+
+/** What one built-in destination records of the conversation itself. */
+export interface ContentOptions {
+  /** Record model prompts and tool call inputs. Defaults to `true`. */
+  readonly recordInputs?: boolean;
+  /** Record model responses and tool call outputs. Defaults to `true`. */
+  readonly recordOutputs?: boolean;
 }
 
 const OTEL_DECLARATION = Symbol.for("eve.instrumentation.otel");
+const OTEL_INTEGRATION = Symbol.for("eve.instrumentation.otel-integration");
 
 /**
- * One declared OpenTelemetry pipeline. eve collects every declaration before
- * building the tracer provider, so this is a value rather than a side effect.
+ * The declared OpenTelemetry pipeline settings. eve collects this before
+ * building the tracer provider, so it is a value rather than a side effect.
  */
-export interface OtelDeclaration {
+export interface OtelDeclaration extends InstrumentationProvider {
   readonly [OTEL_DECLARATION]: true;
   readonly options: OtelOptions;
 }
 
-/** Declares the OpenTelemetry pipeline eve should build. */
+/** One declared destination. A process may have as many as it has files. */
+export interface OtelIntegration extends InstrumentationProvider {
+  readonly [OTEL_INTEGRATION]: true;
+  readonly content: ResolvedContentOptions;
+  readonly spanProcessors: readonly SpanProcessorOrName[];
+}
+
+/**
+ * Declares the process-wide OpenTelemetry settings.
+ *
+ * Export it from `agent/instrumentation/otel.ts`. Omitting the file is the
+ * common case: eve registers the pipeline for whatever destinations are
+ * declared beside it, and this only names what those destinations share.
+ */
 export function otel(options: OtelOptions = {}): OtelDeclaration {
-  return { [OTEL_DECLARATION]: true, options };
+  return { [OTEL_DECLARATION]: true, [PROVIDER]: true, options };
+}
+
+/**
+ * Declares one destination for this agent's traces.
+ *
+ * A `traceExporter` is wrapped in eve's batching processor, which is what makes
+ * the one-line form of a hosted backend enough. Pass `spanProcessors` instead
+ * when the destination needs its own batching, sampling, or filtering.
+ */
+export function otelIntegration(options: OtelIntegrationOptions = {}): OtelIntegration {
+  const declared = options.spanProcessors ?? [];
+  return {
+    [OTEL_INTEGRATION]: true,
+    [PROVIDER]: true,
+    content: { recordInputs: true, recordOutputs: true },
+    spanProcessors:
+      options.traceExporter === undefined
+        ? declared
+        : [...declared, batchSpanProcessor(options.traceExporter)],
+  };
+}
+
+/** Vercel Agent Runs through the production request-context transport. @internal */
+export function agentRunsIntegration(options: ContentOptions = {}): OtelIntegration {
+  const content = resolveContentOptions(options);
+  return {
+    [OTEL_INTEGRATION]: true,
+    [PROVIDER]: true,
+    content,
+    spanProcessors:
+      content.recordInputs && content.recordOutputs
+        ? ["auto"]
+        : [contentFilteringProcessor(vercelRuntimeSpanProcessor(), content)],
+  };
+}
+
+export function resolveContentOptions(options: ContentOptions): ResolvedContentOptions {
+  return {
+    recordInputs: options.recordInputs !== false,
+    recordOutputs: options.recordOutputs !== false,
+  };
 }
 
 export function isOtelDeclaration(value: unknown): value is OtelDeclaration {
@@ -57,39 +146,94 @@ export function isOtelDeclaration(value: unknown): value is OtelDeclaration {
   );
 }
 
-/** The settings a process can only hold one of, so two declarations collide. */
-const SINGLETONS = ["resource", "sampler", "propagators"] as const;
+export function isOtelIntegration(value: unknown): value is OtelIntegration {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Partial<OtelIntegration>)[OTEL_INTEGRATION] === true
+  );
+}
+
+/** The one pipeline a process can register. @internal */
+export interface OtelPipeline {
+  readonly propagators?: readonly PropagatorOrName[];
+  readonly resource?: Readonly<Record<string, unknown>>;
+  readonly sampler?: SamplerOrName;
+  readonly spanProcessors: readonly SpanProcessorOrName[];
+}
+
+/** What the harness reads at turn time, as opposed to at registration. @internal */
+export interface OtelHarnessSettings {
+  readonly functionId?: string;
+  readonly traceChannelRequests: boolean;
+  /**
+   * What to materialize on spans at all. Each destination independently strips
+   * anything it declined before export.
+   */
+  readonly recordInputs?: boolean;
+  readonly recordOutputs?: boolean;
+}
+
+/** @internal */
+export interface CollectedOtel {
+  /**
+   * Whether anything declared OpenTelemetry. False means eve should leave the
+   * global tracer provider slot alone rather than register an empty pipeline.
+   */
+  readonly declared: boolean;
+  readonly pipeline: OtelPipeline;
+  readonly settings: OtelHarnessSettings;
+}
 
 /**
- * Merges every declaration into the one pipeline a process can register.
+ * Folds the declared values into the one pipeline a process can register.
  *
- * `spanProcessors` concatenate in declaration order. The rest cannot: one
- * process has one tracer provider, so it has one resource, one sampler, and
- * one propagator set. Two declarations of the same one is a boot error rather
- * than a silent win for whichever eve happened to visit first.
+ * Destinations concatenate in declaration order. The singletons cannot: two
+ * `otel()` values is a boot error rather than a silent win for whichever eve
+ * happened to visit first. With one declaration per file that collision needs
+ * two files both exporting `otel()`, which is the only way to reach it.
+ *
+ * @internal
  */
-export function mergeOtelDeclarations(
-  declarations: readonly OtelDeclaration[],
-): OtelOptions | undefined {
-  if (declarations.length === 0) return undefined;
+export function collectOtelPipeline(values: readonly unknown[]): CollectedOtel {
+  const spanProcessors: SpanProcessorOrName[] = [];
+  let declaration: OtelDeclaration | undefined;
+  let declared = false;
+  let recordInputs = false;
+  let recordOutputs = false;
 
-  const spanProcessors: SpanProcessor[] = [];
-  const owners = new Map<(typeof SINGLETONS)[number], number>();
-  let merged: OtelOptions = {};
-  declarations.forEach(({ options }, index) => {
-    spanProcessors.push(...(options.spanProcessors ?? []));
-    for (const key of SINGLETONS) {
-      if (options[key] === undefined) continue;
-      const owner = owners.get(key);
-      if (owner !== undefined) {
-        throw new Error(
-          `Instrumentation declares \`${key}\` in more than one \`otel()\` call (${String(owner)} and ${String(index)}). One process has one OpenTelemetry tracer provider, so it has one \`${key}\` — declare it once.`,
-        );
-      }
-      owners.set(key, index);
-      merged = { ...merged, [key]: options[key] };
+  for (const value of values) {
+    if (isOtelIntegration(value)) {
+      declared = true;
+      recordInputs ||= value.content.recordInputs;
+      recordOutputs ||= value.content.recordOutputs;
+      spanProcessors.push(...value.spanProcessors);
+      continue;
     }
-  });
+    if (!isOtelDeclaration(value)) continue;
+    if (declaration !== undefined) {
+      throw new Error(
+        "Instrumentation declares `otel()` more than once. One process has one OpenTelemetry tracer provider, so it has one resource, one sampler, and one propagator set — declare them in a single `otel()`.",
+      );
+    }
+    declared = true;
+    declaration = value;
+  }
 
-  return { ...merged, spanProcessors };
+  const options = declaration?.options ?? {};
+  return {
+    declared,
+    pipeline: {
+      propagators: options.propagators,
+      resource: options.resource,
+      sampler: options.sampler,
+      spanProcessors,
+    },
+    settings: {
+      functionId: options.functionId,
+      recordInputs,
+      recordOutputs,
+      traceChannelRequests: options.traceChannelRequests === true,
+    },
+  };
 }

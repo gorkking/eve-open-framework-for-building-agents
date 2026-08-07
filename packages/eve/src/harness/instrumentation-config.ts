@@ -1,4 +1,5 @@
 import { createInstrumentationSetupContext } from "#harness/instrumentation-setup-context.js";
+import { activateOtelSettings } from "#harness/otel-settings.js";
 import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 
 /**
@@ -42,6 +43,15 @@ export async function registerInstrumentationConfig(
   input: { readonly agentName: string },
 ): Promise<void> {
   globalContainer[INSTRUMENTATION_CONFIG_GLOBAL_KEY] = config;
+  // The presence of a config is what turns telemetry on in this layout, so the
+  // settings the harness reads are activated with it rather than by a
+  // registered pipeline — this layout leaves `registerOTel` to `setup`.
+  activateOtelSettings({
+    functionId: config.functionId,
+    recordInputs: config.recordInputs,
+    recordOutputs: config.recordOutputs,
+    traceChannelRequests: config.traceChannelRequests === true,
+  });
   await config.setup?.(createInstrumentationSetupContext(input.agentName));
 }
 

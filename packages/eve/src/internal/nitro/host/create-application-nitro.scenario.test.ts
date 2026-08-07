@@ -228,14 +228,11 @@ describe("application Nitro creation", () => {
     );
   });
 
-  it("keeps local tracing beside provider slots unless local is authored", async () => {
+  it("lets the provider pipeline own default local tracing", async () => {
     const { createDevelopmentApplicationNitro } =
       await import("#internal/nitro/host/create-application-nitro.js");
 
-    for (const [slots, expectsLocal] of [
-      ["rows", true],
-      ["local", false],
-    ] as const) {
+    for (const slots of ["rows", "local"] as const) {
       const nitroStub = createNitroStub();
       createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
       const preparedHost = createPreparedHost();
@@ -248,8 +245,8 @@ describe("application Nitro creation", () => {
       await createDevelopmentApplicationNitro(preparedHost);
 
       const plugins = createNitroMock.mock.calls.at(-1)?.[0].plugins as string[];
-      expect(plugins.some((plugin) => plugin.includes("local-tracing-runtime-plugin.ts"))).toBe(
-        expectsLocal,
+      expect(plugins).not.toEqual(
+        expect.arrayContaining([expect.stringContaining("local-tracing-runtime-plugin.ts")]),
       );
     }
   });

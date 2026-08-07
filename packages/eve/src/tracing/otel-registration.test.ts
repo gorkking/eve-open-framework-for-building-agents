@@ -12,10 +12,11 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        options: {
+        pipeline: {
           propagators: ["tracecontext"],
           resource: { "service.version": "abc" },
           sampler: "always_on",
+          spanProcessors: [],
         },
         serviceName: "weather",
       }),
@@ -36,9 +37,9 @@ describe("registerOtelPipeline", () => {
   it("omits the sampler entirely rather than passing undefined", () => {
     registerOTel.mockImplementation(() => undefined);
 
-    expect(() => registerOtelPipeline({ options: {}, serviceName: "weather" })).toThrow(
-      /already owns the global tracer provider/u,
-    );
+    expect(() =>
+      registerOtelPipeline({ pipeline: { spanProcessors: [] }, serviceName: "weather" }),
+    ).toThrow(/already owns the global tracer provider/u);
 
     const configuration = registerOTel.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect("traceSampler" in configuration).toBe(false);
@@ -57,7 +58,7 @@ describe("registerOtelPipeline", () => {
 
     expect(() =>
       registerOtelPipeline({
-        options: { spanProcessors: [downstream] },
+        pipeline: { spanProcessors: [downstream] },
         serviceName: "weather",
       }),
     ).toThrow();
@@ -78,11 +79,24 @@ describe("registerOtelPipeline", () => {
     expect(downstream.onEnd).toHaveBeenCalledExactlyOnceWith({ name: "agent.turn" });
   });
 
+  it("passes Vercel's automatic processor through", () => {
+    registerOTel.mockImplementation(() => undefined);
+
+    expect(() =>
+      registerOtelPipeline({ pipeline: { spanProcessors: ["auto"] }, serviceName: "weather" }),
+    ).toThrow();
+
+    const configuration = registerOTel.mock.calls.at(-1)?.[0] as {
+      spanProcessors: unknown[];
+    };
+    expect(configuration.spanProcessors[0]).toBe("auto");
+  });
+
   it("throws when the registration never reached a processor", () => {
     registerOTel.mockImplementation(() => undefined);
 
-    expect(() => registerOtelPipeline({ options: {}, serviceName: "weather" })).toThrow(
-      /another runtime already owns/u,
-    );
+    expect(() =>
+      registerOtelPipeline({ pipeline: { spanProcessors: [] }, serviceName: "weather" }),
+    ).toThrow(/another runtime already owns/u);
   });
 });

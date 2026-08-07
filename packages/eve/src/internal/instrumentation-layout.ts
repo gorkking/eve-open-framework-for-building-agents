@@ -23,10 +23,10 @@ export type InstrumentationLayout =
 /**
  * Resolves the instrumentation layout for one agent root.
  *
- * Returns `undefined` when the agent authored no instrumentation. Throws when
- * the layout on disk is not the one the flag selects: the wrong layout would
- * otherwise be skipped silently, and telemetry that quietly does nothing is the
- * failure this whole surface exists to prevent.
+ * With providers on, an empty provider layout still installs eve's built-in
+ * destinations. Throws when the layout on disk is not the one the flag selects:
+ * the wrong layout would otherwise be skipped silently, and telemetry that
+ * quietly does nothing is the failure this whole surface exists to prevent.
  */
 export function resolveInstrumentationLayout(input: {
   readonly agentRoot: string;
@@ -53,7 +53,7 @@ export function resolveInstrumentationLayout(input: {
   }
 
   if (!hasDirectory) {
-    return undefined;
+    return { kind: "providers", modulePathsBySlot: {} };
   }
 
   return {

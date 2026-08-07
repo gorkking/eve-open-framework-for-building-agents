@@ -256,6 +256,9 @@ export interface InstrumentationProviderDefinition {
     readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
     readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
+  readonly flush?: () => void | PromiseLike<void>;
+  readonly name?: string;
+  readonly shutdown?: () => void | PromiseLike<void>;
 }
 
 /** Events that carry an operation `id`, pairing a start with its terminal. */

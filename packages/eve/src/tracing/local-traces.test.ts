@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { localTraces } from "#tracing/local-traces.js";
+import { createLocalTracesProcessor } from "#tracing/local-traces.js";
+import { localTraces } from "#public/instrumentation/otel.js";
 
 vi.mock("#tracing/local-trace-span-processor.js", () => ({
   LocalTraceSpanProcessor: class {
@@ -28,9 +29,13 @@ function agentSpan(sessionId: string, traceId: string): unknown {
   };
 }
 
-describe("localTraces", () => {
+describe("createLocalTracesProcessor", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("reports whether the released session owned any traces", async () => {
-    const spool = localTraces({ appRoot: "/tmp/eve-local-traces-test" });
+    const spool = createLocalTracesProcessor({ appRoot: "/tmp/eve-local-traces-test" });
     spool.onStart(agentSpan("session-one", "a".repeat(32)), undefined);
 
     // A subagent child owns none, so releasing it leaves the trace pinned.
@@ -41,10 +46,20 @@ describe("localTraces", () => {
   });
 
   it("is a span processor, so it composes wherever one goes", () => {
-    const spool = localTraces({ appRoot: "/tmp/eve-local-traces-test" });
+    const spool = createLocalTracesProcessor({ appRoot: "/tmp/eve-local-traces-test" });
     expect(typeof spool.onStart).toBe("function");
     expect(typeof spool.onEnd).toBe("function");
     expect(typeof spool.forceFlush).toBe("function");
     expect(typeof spool.shutdown).toBe("function");
+  });
+
+  it("is inert outside a development worker", async () => {
+    vi.stubEnv("EVE_DEV_WORKER_APP_ROOT", undefined);
+    const [processor] = localTraces().spanProcessors;
+    if (processor === undefined || processor === "auto") throw new Error("Expected a processor.");
+
+    expect(() => processor.onEnd(agentSpan("session-one", "a".repeat(32)))).not.toThrow();
+    await expect(processor.forceFlush()).resolves.toBeUndefined();
+    await expect(processor.shutdown()).resolves.toBeUndefined();
   });
 });

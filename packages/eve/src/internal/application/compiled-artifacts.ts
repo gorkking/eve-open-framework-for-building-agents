@@ -423,7 +423,8 @@ export function createDevelopmentWorkflowWorldPluginSource(input: {
  *
  * The single-config layout registers one default export; the provider layout
  * registers one per file, in slot order, awaiting each `setup` so a provider
- * cannot miss an event published while it is still starting up.
+ * cannot miss an event published while it is still starting up, then builds the
+ * one OpenTelemetry pipeline their declarations add up to.
  */
 function createInstrumentationPluginSource(input: {
   agentName: string;
@@ -462,7 +463,9 @@ function createInstrumentationPluginSource(input: {
       ([slot, modulePath], index) =>
         `import * as provider${index} from ${stringifyEsmImportSpecifier(modulePath)}; // ${slot}`,
     ),
-    `import { registerInstrumentationProvider } from ${stringifyEsmImportSpecifier(registerProviderPath)};`,
+    `import { finalizeInstrumentationProviders, registerInstrumentationProvider, seedInstrumentationProviders, shutdownInstrumentationProviders } from ${stringifyEsmImportSpecifier(registerProviderPath)};`,
+    "",
+    "seedInstrumentationProviders();",
     "",
     ...slots.flatMap(([slot], index) => [
       "await registerInstrumentationProvider({",
@@ -472,9 +475,15 @@ function createInstrumentationPluginSource(input: {
       "});",
     ]),
     "",
+    `finalizeInstrumentationProviders({ serviceName: ${agentName} });`,
+    "",
     "// Default export satisfies the Nitro plugin contract so this file",
     "// can be used directly as a Nitro plugin without a separate wrapper.",
-    "export default function installInstrumentationPlugin() {}",
+    "export default function installInstrumentationPlugin(nitroApp) {",
+    "  nitroApp?.hooks?.hook('close', async () => {",
+    "    await shutdownInstrumentationProviders();",
+    "  });",
+    "}",
     "",
   ].join("\n");
 }

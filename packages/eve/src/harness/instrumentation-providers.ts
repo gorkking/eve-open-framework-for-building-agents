@@ -1,8 +1,23 @@
+import type {
+  InstrumentationEvent,
+  InstrumentationProviderDefinition,
+} from "#harness/instrumentation-lifecycle.js";
+import {
+  getInstrumentationRuntime,
+  type InstrumentationRuntime,
+} from "#harness/instrumentation-runtime.js";
 import { createInstrumentationSetupContext } from "#harness/instrumentation-setup-context.js";
+import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { DEVELOPMENT_WORKER_APP_ROOT_ENV } from "#internal/workflow/development-world-protocol.js";
+import { agentRuns, localTraces } from "#public/instrumentation/otel.js";
+import { installInstrumentationRuntime } from "#tracing/install-instrumentation-runtime.js";
+import { collectOtelPipeline } from "#tracing/otel-declaration.js";
 import {
   isInstrumentationDisabled,
   isInstrumentationProvider,
+  type Handler,
   type InstrumentationProvider,
+  type ProviderContext,
 } from "#public/instrumentation/provider.js";
 
 /**
@@ -39,6 +54,15 @@ function providerRegistry(): Map<string, InstrumentationProvider> {
   return created;
 }
 
+/** Fills reserved slots before authored files may reconfigure or disable them. */
+export function seedInstrumentationProviders(): void {
+  const registry = providerRegistry();
+  if (process.env.VERCEL_ENV === "production") registry.set("agent-runs", agentRuns());
+  if (process.env[DEVELOPMENT_WORKER_APP_ROOT_ENV] !== undefined) {
+    registry.set("local", localTraces());
+  }
+}
+
 /**
  * Registers one authored provider and awaits its `setup`.
  *
@@ -73,4 +97,54 @@ export async function registerInstrumentationProvider(input: {
 /** Registered providers in slot order. @internal */
 export function getInstrumentationProviders(): readonly RegisteredInstrumentationProvider[] {
   return [...providerRegistry()].map(([slot, provider]) => ({ provider, slot }));
+}
+
+/**
+ * Builds the process's OpenTelemetry pipeline from the registered providers.
+ *
+ * Called once by the generated Nitro plugin after every slot has registered,
+ * which is also why it cannot happen inside `setup`: the pipeline is the union
+ * of every destination declared in the directory, so no single file knows
+ * enough to build it. A `setup` that reaches for a tracer therefore gets the
+ * no-op one; declare destinations as values and let this assemble them.
+ *
+ * A directory that declared no OpenTelemetry at all leaves the global tracer
+ * provider slot alone.
+ *
+ * @internal — not part of the public API.
+ */
+export function finalizeInstrumentationProviders(input: {
+  readonly serviceName: string;
+}): InstrumentationRuntime {
+  const registered = getInstrumentationProviders();
+  return installInstrumentationRuntime({
+    collected: collectOtelPipeline(registered.map((entry) => entry.provider)),
+    frameworkVersion: resolveInstalledPackageInfo().version,
+    providers: registered.map(toProviderDefinition),
+    serviceName: input.serviceName,
+  });
+}
+
+/** Drains and releases the process runtime from Nitro's close hook. */
+export async function shutdownInstrumentationProviders(): Promise<void> {
+  await getInstrumentationRuntime()?.shutdown();
+}
+
+const PROVIDER_CONTEXT: ProviderContext = Object.freeze({});
+
+function toProviderDefinition(
+  entry: RegisteredInstrumentationProvider,
+): InstrumentationProviderDefinition {
+  const events: Record<string, (event: never) => void | PromiseLike<void>> = {};
+  for (const [type, handler] of Object.entries(entry.provider.events ?? {})) {
+    if (handler === undefined) continue;
+    const invoke = handler as Handler<InstrumentationEvent>;
+    events[type] = (event: InstrumentationEvent) => invoke(event, PROVIDER_CONTEXT);
+  }
+  return {
+    events: events as InstrumentationProviderDefinition["events"],
+    flush: entry.provider.flush,
+    name: entry.slot,
+    shutdown: entry.provider.shutdown,
+  };
 }
