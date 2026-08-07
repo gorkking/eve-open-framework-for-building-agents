@@ -85,7 +85,7 @@ export default function BlogPost() {
 
       <main className="mx-auto grid w-full max-w-[1200px] items-start gap-16 px-6 py-16 lg:grid-cols-[minmax(0,720px)_260px] lg:gap-20 lg:py-20">
         <div className="min-w-0">
-          <article className="prose min-w-0 max-w-none [&_p]:leading-7">
+          <article className="prose min-w-0 max-w-none [&_a]:!font-medium [&_a]:!text-gray-1000 [&_a]:underline [&_a]:decoration-gray-alpha-600 [&_a]:underline-offset-4 [&_a:hover]:decoration-gray-1000 [&_p]:leading-7">
             <Content components={getMDXComponents()} />
           </article>
 
