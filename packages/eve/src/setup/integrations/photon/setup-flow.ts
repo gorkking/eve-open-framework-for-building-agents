@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { text } from "../../ask.js";
+import { select, text } from "../../ask.js";
 import { appendEnv } from "../../append-env.js";
 import { provisionPhotonConnector } from "./connect.js";
 import {
@@ -15,7 +15,12 @@ import { writeTextFile } from "../../scaffold/files.js";
 import { WizardCancelledError } from "../../step.js";
 import type { IntegrationSetupEnvironment } from "../shared/environment.js";
 import type { IntegrationSetupUi } from "../shared/ui.js";
+import {
+  resolveIntegrationVercelProject,
+  type IntegrationVercelProjectDeps,
+} from "../shared/vercel-project.js";
 import { ensureVercelProject } from "../../flows/ensure-vercel-project.js";
+import { readProjectLink } from "../../project-resolution.js";
 
 /** Inputs for Photon project provisioning and channel scaffolding. */
 export interface PhotonSetupOptions {
@@ -33,16 +38,18 @@ export type PhotonSetupResult =
   | { kind: "done"; assignedPhoneNumber?: string; dashboardUrl: string }
   | { kind: "cancelled" };
 
-interface PhotonSetupPlan {
+export interface PhotonSetupPlan {
   credentials: "vercel-connect" | "environment";
   photonProject: "create" | { projectId: string; projectSecret: string };
   photonProjectName?: string;
+  phoneNumber: string;
 }
 
 export interface PhotonSetupDeps {
   appendEnv: typeof appendEnv;
   deriveConnectorSlug: typeof deriveSlackConnectorSlug;
   ensureVercelProject: typeof ensureVercelProject;
+  readProjectLink: typeof readProjectLink;
   openUrl: typeof openUrl;
   provisionConnector: typeof provisionPhotonConnector;
   provisionProject: typeof provisionPhotonProject;
@@ -54,6 +61,7 @@ const defaultDeps: PhotonSetupDeps = {
   appendEnv,
   deriveConnectorSlug: deriveSlackConnectorSlug,
   ensureVercelProject,
+  readProjectLink,
   openUrl,
   provisionConnector: provisionPhotonConnector,
   provisionProject: provisionPhotonProject,
@@ -90,40 +98,34 @@ async function choosePhotonProject(
   options: PhotonSetupOptions,
 ): Promise<Pick<PhotonSetupPlan, "photonProject" | "photonProjectName">> {
   const defaultName = `eve · ${options.agentName || "agent"}`;
-  const projectOptions = [
-    {
+  const project = await options.ui.asker.askEditable({
+    key: "photon-project-source",
+    message: "Photon project",
+    options: [
+      {
+        id: "create",
+        value: "create" as const,
+        label: "Create a new Photon project",
+        hint: `Name: ${defaultName}`,
+      },
+      {
+        id: "existing",
+        value: "existing" as const,
+        label: "Use an existing Photon project",
+        hint: "Enter its project credentials",
+      },
+    ],
+    recommended: "create" as const,
+    required: true,
+    editable: {
+      key: "photon-project-name",
       value: "create" as const,
-      label: "Create a new Photon project",
-      hint: `Name: ${defaultName}`,
+      label: "Name",
+      recommended: defaultName,
+      validate: (value) => (value.trim().length === 0 ? "Project name cannot be empty." : null),
     },
-    {
-      value: "existing" as const,
-      label: "Use an existing Photon project",
-      hint: "Enter its project credentials",
-    },
-  ];
-  const editable = options.ui.prompter.selectEditable
-    ? await options.ui.prompter.selectEditable<"create" | "existing">({
-        message: "Photon project",
-        options: projectOptions,
-        initialValue: "create",
-        editable: {
-          value: "create",
-          defaultValue: defaultName,
-          formatHint: (value) => `Name: ${value}`,
-          validate: (value) =>
-            value.trim().length === 0 ? "Project name cannot be empty." : undefined,
-        },
-      })
-    : undefined;
-  const source =
-    editable?.value ??
-    (await options.ui.prompter.select<"create" | "existing">({
-      message: "Photon project",
-      options: projectOptions,
-      initialValue: "create",
-    }));
-  if (source === "existing") {
+  });
+  if (project.value === "existing") {
     const projectId = await options.ui.asker.ask(
       text({ key: "photon-project-id", message: "Photon project ID", required: true }),
     );
@@ -138,21 +140,19 @@ async function choosePhotonProject(
     return { photonProject: { projectId: projectId.trim(), projectSecret: projectSecret.trim() } };
   }
 
-  return {
-    photonProject: "create",
-    photonProjectName: editable?.kind === "edited" ? editable.text.trim() : defaultName,
-  };
+  return { photonProject: "create", photonProjectName: project.text ?? defaultName };
 }
 
-async function chooseSetupPlan(
-  options: PhotonSetupOptions,
-): Promise<PhotonSetupPlan | "cancelled"> {
-  try {
-    const destination = await options.ui.prompter.select<"vercel" | "portable">({
+/** Resolves every Photon-owned decision without mutating local or remote state. */
+export async function preparePhotonSetup(options: PhotonSetupOptions): Promise<PhotonSetupPlan> {
+  const destination = await options.ui.asker.ask(
+    select({
+      key: "photon-credentials",
       message: "How would you like to configure Photon?",
       options: [
         {
-          value: "vercel",
+          id: "vercel",
+          value: "vercel-connect" as const,
           label: "Set up Vercel Connect",
           hint:
             options.environment.vercel.kind === "available"
@@ -160,24 +160,35 @@ async function chooseSetupPlan(
               : "Log in to Vercel and link this project",
         },
         {
-          value: "portable",
+          id: "portable",
+          value: "environment" as const,
           label: "Use portable credentials",
           hint: "Configure the Photon webhook manually after deployment",
         },
       ],
-      initialValue: options.environment.vercel.kind === "available" ? "vercel" : "portable",
-    });
-    if (destination === "vercel" && options.environment.vercel.kind === "unavailable") {
-      throw new Error(
-        "Vercel Connect requires an authenticated Vercel CLI. Run `vercel login`, then retry Photon setup.",
-      );
-    }
-    const photon = await choosePhotonProject(options);
-    return { credentials: destination === "vercel" ? "vercel-connect" : "environment", ...photon };
-  } catch (error) {
-    if (error instanceof WizardCancelledError) return "cancelled";
-    throw error;
+      recommended:
+        options.environment.vercel.kind === "available"
+          ? ("vercel-connect" as const)
+          : ("environment" as const),
+      required: true,
+    }),
+  );
+  if (destination === "vercel-connect" && options.environment.vercel.kind === "unavailable") {
+    throw new Error(
+      "Vercel Connect requires an authenticated Vercel CLI. Run `vercel login`, then retry Photon setup.",
+    );
   }
+  const photon = await choosePhotonProject(options);
+  const phoneNumber = await options.ui.asker.ask(
+    text({
+      key: "photon-phone-number",
+      message: "Your iMessage phone number",
+      placeholder: "+15551234567",
+      required: true,
+      validate: validatePhotonPhoneNumber,
+    }),
+  );
+  return { credentials: destination, ...photon, phoneNumber };
 }
 
 async function resolvePhotonProject(
@@ -209,35 +220,34 @@ async function resolvePhotonProject(
   }
 }
 
-async function scaffoldPhoton(
+/** Applies a fully resolved Photon plan. No Photon-owned questions are asked here. */
+export async function applyPhotonSetup(
   options: PhotonSetupOptions,
   plan: PhotonSetupPlan,
-  deps: PhotonSetupDeps,
 ): Promise<{ assignedPhoneNumber?: string; dashboardUrl: string }> {
-  const phoneNumber = await options.ui.asker.ask(
-    text({
-      key: "photon-phone-number",
-      message: "Your iMessage phone number",
-      placeholder: "+15551234567",
-      required: true,
-      validate: validatePhotonPhoneNumber,
-    }),
-  );
+  const deps = options.deps ?? defaultDeps;
   const projectRoot = options.projectPath;
-  const managedProject = await resolvePhotonProject(options, plan, phoneNumber, deps);
+  // Vercel's existing ensure flow may still ask while linking an unresolved project.
+  // Resolve it before Photon provisioning so cancellation cannot abandon a Photon project.
+  const vercelProject =
+    plan.credentials === "vercel-connect"
+      ? await resolveIntegrationVercelProject({
+          appRoot: projectRoot,
+          integration: "Photon",
+          ui: options.ui,
+          signal: options.signal,
+          deps: deps satisfies IntegrationVercelProjectDeps,
+        })
+      : undefined;
+  const managedProject = await resolvePhotonProject(options, plan, plan.phoneNumber, deps);
   try {
     const channelPath = join(projectRoot, "agent/channels/photon.ts");
     if (plan.credentials === "vercel-connect") {
       const slug = await deps.deriveConnectorSlug(projectRoot, options.agentName);
-      const project = await deps.ensureVercelProject({
-        appRoot: projectRoot,
-        prompter: options.ui.prompter,
-        signal: options.signal,
-      });
       const connector = await deps.provisionConnector({
         credentials: managedProject,
         log: options.ui.prompter.log,
-        project,
+        project: vercelProject!,
         projectRoot,
         slug,
         signal: options.signal,
@@ -276,9 +286,8 @@ async function scaffoldPhoton(
 /** Provisions a Photon project and scaffolds its iMessage channel. */
 export async function setupPhoton(options: PhotonSetupOptions): Promise<PhotonSetupResult> {
   try {
-    const plan = await chooseSetupPlan(options);
-    if (plan === "cancelled") return { kind: "cancelled" };
-    return { kind: "done", ...(await scaffoldPhoton(options, plan, options.deps ?? defaultDeps)) };
+    const plan = await preparePhotonSetup(options);
+    return { kind: "done", ...(await applyPhotonSetup(options, plan)) };
   } catch (error) {
     if (error instanceof WizardCancelledError) return { kind: "cancelled" };
     throw error;
