@@ -29,6 +29,8 @@ export function taskViewToJson(view: TaskView): JsonObject {
   if (view.inputRequests !== undefined) {
     json.inputRequests = [...view.inputRequests];
   }
+  // `view.usage` is deliberately not disclosed: it is internal retention
+  // for future budget accounting, not part of the model-visible contract.
   return json;
 }
 

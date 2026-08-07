@@ -39,6 +39,31 @@ describe("applyTaskTransition", () => {
     expect(result.view.lastOutput).toEqual({ data: { answer: 42 }, type: "result" });
   });
 
+  it("retains reported child usage on the terminal snapshot only", () => {
+    const usage = { cacheReadTokens: 1, cacheWriteTokens: 2, inputTokens: 300, outputTokens: 40 };
+    for (const command of [
+      { data: "done", kind: "complete", usage },
+      { data: "boom", kind: "fail", usage },
+      { kind: "cancel", usage },
+    ] as const) {
+      const result = applyTaskTransition(createView("working"), command);
+      expect(result.outcome).toBe("accepted");
+      expect(result.view.usage).toEqual(usage);
+    }
+
+    const withoutUsage = applyTaskTransition(createView("working"), {
+      data: "done",
+      kind: "complete",
+    });
+    expect(withoutUsage.view.usage).toBeUndefined();
+
+    const blocked = applyTaskTransition(createView("working"), {
+      inputRequests: [{ question: "which?", requestId: "req-1" }],
+      kind: "require-input",
+    });
+    expect(blocked.view.usage).toBeUndefined();
+  });
+
   it("fails a working task and carries the error as its output", () => {
     const result = applyTaskTransition(createView("working"), {
       data: { message: "boom" },

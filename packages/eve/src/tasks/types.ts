@@ -60,6 +60,45 @@ export type TaskOutput =
 export type TaskInputRequest = JsonValue;
 
 /**
+ * Provider token usage a child turn reported. Structural on purpose: it
+ * mirrors `TokenUsage` (#shared/token-usage.js) without importing its
+ * zod-backed module into a workflow-bundled file.
+ */
+export interface TaskUsage {
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+/**
+ * Validates one wire-carried usage value into {@link TaskUsage}.
+ * Anything malformed is dropped rather than rejected: retention is
+ * best-effort and must never fail a lifecycle transition.
+ */
+export function readTaskUsage(value: unknown): TaskUsage | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const cacheReadTokens = readUsageAxis(value, "cacheReadTokens");
+  const cacheWriteTokens = readUsageAxis(value, "cacheWriteTokens");
+  const inputTokens = readUsageAxis(value, "inputTokens");
+  const outputTokens = readUsageAxis(value, "outputTokens");
+  if (
+    cacheReadTokens === undefined ||
+    cacheWriteTokens === undefined ||
+    inputTokens === undefined ||
+    outputTokens === undefined
+  ) {
+    return undefined;
+  }
+  return { cacheReadTokens, cacheWriteTokens, inputTokens, outputTokens };
+}
+
+function readUsageAxis(value: object, key: string): number | undefined {
+  const field = Reflect.get(value, key);
+  return typeof field === "number" && Number.isFinite(field) && field >= 0 ? field : undefined;
+}
+
+/**
  * One human answer to an outstanding request. Structural on purpose: it
  * mirrors the input contract's `InputResponse` without importing its
  * zod-backed module into a workflow-bundled file.
@@ -101,6 +140,13 @@ export interface TaskView {
   readonly lastOutput?: TaskOutput;
   /** Outstanding requests; present exactly when `status` is `input_required`. */
   readonly inputRequests?: readonly TaskInputRequest[];
+  /**
+   * Provider usage the child reported at settlement; present when the
+   * terminal command carried it. Retained for later accounting only —
+   * budgets stay best-effort until a reservation model lands — and
+   * deliberately excluded from model-visible task views (tasks/json.ts).
+   */
+  readonly usage?: TaskUsage;
 }
 
 /** Commands accepted by the durable task run's transition function. */
@@ -109,9 +155,19 @@ export type TaskCommand =
       readonly kind: "complete";
       readonly data: JsonValue;
       readonly lifecycle?: "parked" | "terminal";
+      readonly usage?: TaskUsage;
     }
-  | { readonly kind: "fail"; readonly data: JsonValue; readonly lifecycle?: "parked" | "terminal" }
-  | { readonly kind: "cancel"; readonly lifecycle?: "parked" | "terminal" }
+  | {
+      readonly kind: "fail";
+      readonly data: JsonValue;
+      readonly lifecycle?: "parked" | "terminal";
+      readonly usage?: TaskUsage;
+    }
+  | {
+      readonly kind: "cancel";
+      readonly lifecycle?: "parked" | "terminal";
+      readonly usage?: TaskUsage;
+    }
   | { readonly kind: "require-input"; readonly inputRequests: readonly TaskInputRequest[] }
   | { readonly kind: "ready" }
   /**
@@ -153,7 +209,11 @@ export interface TaskInboundChildResult {
         | { readonly kind: "succeeded"; readonly output: JsonValue }
         | { readonly error: JsonValue; readonly kind: "failed" }
         | { readonly kind: "cancelled" };
-      /** Provider usage this turn added; accounting is deferred to a later stage. */
+      /**
+       * Provider usage this turn added. Retained on the terminal task
+       * snapshot ({@link TaskView.usage}); folding it into parent
+       * budgets is deferred until a reservation model lands.
+       */
       readonly usageDelta?: unknown;
     };
     readonly output: JsonValue;

@@ -4,6 +4,7 @@ import { TASK_AUTHORIZATION_REQUEST_ID } from "#tasks/types.js";
 import { translateTaskInboundPayload } from "#tasks/wire.js";
 
 const ZERO_USAGE = { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 };
+const USAGE = { cacheReadTokens: 1, cacheWriteTokens: 2, inputTokens: 300, outputTokens: 40 };
 
 describe("translateTaskInboundPayload", () => {
   it("passes explicit task commands through", () => {
@@ -28,7 +29,46 @@ describe("translateTaskInboundPayload", () => {
             },
           ],
         }),
-      ).toEqual({ data: "answer", kind: "complete", lifecycle: kind });
+      ).toEqual({ data: "answer", kind: "complete", lifecycle: kind, usage: ZERO_USAGE });
+    }
+  });
+
+  it("retains nonzero child usage on complete, fail, and cancel commands", () => {
+    const outcomes = [
+      {
+        expected: { data: "done", kind: "complete" },
+        result: { kind: "succeeded", output: "done" },
+      },
+      { expected: { data: "done", kind: "fail" }, result: { error: "boom", kind: "failed" } },
+      { expected: { kind: "cancel" }, result: { kind: "cancelled" } },
+    ] as const;
+    for (const { expected, result } of outcomes) {
+      expect(
+        translateTaskInboundPayload({
+          kind: "runtime-action-result",
+          results: [{ outcome: { kind: "terminal", result, usageDelta: USAGE }, output: "done" }],
+        }),
+      ).toEqual({ ...expected, lifecycle: "terminal", usage: USAGE });
+    }
+  });
+
+  it("drops malformed usage rather than failing the transition command", () => {
+    for (const usageDelta of [null, "n/a", { inputTokens: -1 }, { inputTokens: 1 }]) {
+      expect(
+        translateTaskInboundPayload({
+          kind: "runtime-action-result",
+          results: [
+            {
+              outcome: {
+                kind: "terminal",
+                result: { kind: "succeeded", output: "ok" },
+                usageDelta,
+              },
+              output: "ok",
+            },
+          ],
+        }),
+      ).toEqual({ data: "ok", kind: "complete", lifecycle: "terminal" });
     }
   });
 
@@ -47,7 +87,12 @@ describe("translateTaskInboundPayload", () => {
           },
         ],
       }),
-    ).toEqual({ data: { message: "boom" }, kind: "fail", lifecycle: "terminal" });
+    ).toEqual({
+      data: { message: "boom" },
+      kind: "fail",
+      lifecycle: "terminal",
+      usage: ZERO_USAGE,
+    });
 
     expect(
       translateTaskInboundPayload({
@@ -59,7 +104,7 @@ describe("translateTaskInboundPayload", () => {
           },
         ],
       }),
-    ).toEqual({ kind: "cancel", lifecycle: "terminal" });
+    ).toEqual({ kind: "cancel", lifecycle: "terminal", usage: ZERO_USAGE });
   });
 
   it("falls back to isError when a result carries no outcome", () => {

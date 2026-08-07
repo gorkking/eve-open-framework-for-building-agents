@@ -1,4 +1,4 @@
-import type { TaskCommand, TaskView } from "#tasks/types.js";
+import type { TaskCommand, TaskOutput, TaskStatus, TaskUsage, TaskView } from "#tasks/types.js";
 import { isTerminalTaskStatus, readTaskInputRequestId } from "#tasks/types.js";
 
 /**
@@ -32,6 +32,37 @@ export type TaskTransitionResult =
  * what serializes competing completion, cancellation, and input
  * transitions.
  */
+/**
+ * Builds the settled snapshot for one terminal command, carrying the
+ * child's lifecycle verdict and reported usage when present. Usage is
+ * retention-only: nothing folds it into parent budgets yet.
+ */
+function terminalView(
+  view: TaskView,
+  command: Extract<TaskCommand, { kind: "complete" | "fail" | "cancel" }>,
+  settled: { readonly lastOutput?: TaskOutput; readonly status: TaskStatus },
+): TaskView {
+  const next: {
+    lastOutput?: TaskOutput;
+    metadata: TaskView["metadata"];
+    status: TaskStatus;
+    statusMessage?: string;
+    taskId: string;
+    usage?: TaskUsage;
+  } = {
+    metadata:
+      command.lifecycle === undefined
+        ? view.metadata
+        : { ...view.metadata, childLifecycle: command.lifecycle },
+    status: settled.status,
+    statusMessage: view.statusMessage,
+    taskId: view.taskId,
+  };
+  if (settled.lastOutput !== undefined) next.lastOutput = settled.lastOutput;
+  if (command.usage !== undefined) next.usage = command.usage;
+  return next;
+}
+
 export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskTransitionResult {
   if (isTerminalTaskStatus(view.status)) {
     if (command.kind === "cancel" && view.status === "cancelled") {
@@ -49,43 +80,23 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
     case "complete":
       return {
         outcome: "accepted",
-        view: {
-          metadata:
-            command.lifecycle === undefined
-              ? view.metadata
-              : { ...view.metadata, childLifecycle: command.lifecycle },
+        view: terminalView(view, command, {
           lastOutput: { data: command.data, type: "result" },
           status: "completed",
-          statusMessage: view.statusMessage,
-          taskId: view.taskId,
-        },
+        }),
       };
     case "fail":
       return {
         outcome: "accepted",
-        view: {
-          metadata:
-            command.lifecycle === undefined
-              ? view.metadata
-              : { ...view.metadata, childLifecycle: command.lifecycle },
+        view: terminalView(view, command, {
           lastOutput: { data: command.data, type: "error" },
           status: "failed",
-          statusMessage: view.statusMessage,
-          taskId: view.taskId,
-        },
+        }),
       };
     case "cancel":
       return {
         outcome: "accepted",
-        view: {
-          metadata:
-            command.lifecycle === undefined
-              ? view.metadata
-              : { ...view.metadata, childLifecycle: command.lifecycle },
-          status: "cancelled",
-          statusMessage: view.statusMessage,
-          taskId: view.taskId,
-        },
+        view: terminalView(view, command, { status: "cancelled" }),
       };
     case "require-input":
       return {
