@@ -21,10 +21,6 @@ export const nav = [
     label: "Templates",
     href: "/templates",
   },
-  {
-    label: "Blog",
-    href: "/blog",
-  },
 ];
 
 export const suggestions = [
