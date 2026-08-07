@@ -29,13 +29,16 @@ function context(prompter = createFakePrompter().prompter) {
 
 describe("setup integrations", () => {
   it("keeps Slack credential-picker cancellation as a structured result", async () => {
-    const fake = createFakePrompter({
-      single: () => {
+    const fake = createFakePrompter();
+    const cancelled = context(fake.prompter);
+    cancelled.ui.asker = {
+      ...unusedAsker,
+      ask: async () => {
         throw new WizardCancelledError();
       },
-    });
+    };
 
-    await expect(setupIntegration("slack").setup(context(fake.prompter))).resolves.toEqual({
+    await expect(setupIntegration("slack").setup(cancelled)).resolves.toEqual({
       kind: "cancelled",
     });
   });

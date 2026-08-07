@@ -1,3 +1,5 @@
+import { select } from "#setup/ask.js";
+import { readProjectLink } from "#setup/project-resolution.js";
 import {
   deriveSlackConnectorSlug,
   ensureChannel,
@@ -14,6 +16,10 @@ import { WizardCancelledError } from "#setup/step.js";
 import { slackMessageDeepLink } from "#setup/slack-connect.js";
 
 import { installScaffoldDependencies, reportOverwrittenFiles } from "../shared/scaffold.js";
+import {
+  resolveIntegrationVercelProject,
+  type IntegrationVercelProjectDeps,
+} from "../shared/vercel-project.js";
 import type {
   IntegrationSetupContext,
   IntegrationSetupResult,
@@ -79,6 +85,7 @@ export interface SlackSetupDeps {
   deriveSlackConnectorSlug: typeof deriveSlackConnectorSlug;
   ensureChannel: typeof ensureChannel;
   ensureVercelProject: typeof ensureVercelProject;
+  readProjectLink: typeof readProjectLink;
   provisionSlackbot: typeof provisionSlackbot;
   reconcileSlackUid: typeof reconcileSlackUid;
 }
@@ -87,32 +94,37 @@ const defaultDeps: SlackSetupDeps = {
   deriveSlackConnectorSlug,
   ensureChannel,
   ensureVercelProject,
+  readProjectLink,
   provisionSlackbot,
   reconcileSlackUid,
 };
 
 async function chooseCredentials(
   context: IntegrationSetupContext,
-): Promise<"vercel-connect" | "environment" | "cancelled"> {
+): Promise<"vercel-connect" | "environment"> {
   if (context.yes) return "vercel-connect";
-  try {
-    return (await context.ui.prompter.select<"vercel" | "portable">({
+  return context.ui.asker.ask(
+    select({
+      key: "slack-credentials",
       message: "How would you like to configure Slack?",
       options: [
-        { value: "vercel", label: "Set up Vercel Connect", hint: "Sign in and link this project" },
         {
-          value: "portable",
+          id: "vercel",
+          value: "vercel-connect" as const,
+          label: "Set up Vercel Connect",
+          hint: "Sign in and link this project",
+        },
+        {
+          id: "portable",
+          value: "environment" as const,
           label: "Use portable credentials",
           hint: "Read Slack tokens from environment variables",
         },
       ],
-    })) === "portable"
-      ? "environment"
-      : "vercel-connect";
-  } catch (error) {
-    if (error instanceof WizardCancelledError) return "cancelled";
-    throw error;
-  }
+      recommended: "vercel-connect" as const,
+      required: true,
+    }),
+  );
 }
 
 async function provisionSlack(
@@ -123,24 +135,23 @@ async function provisionSlack(
   const provisionOptions: ProvisionSlackbotOptions = {
     selectConnector: async (connectors, preferred) => {
       if (context.yes) return preferred ?? connectors[0]!;
-      const selected = await context.ui.prompter.select<string>({
-        message: "Which Slack app would you like to use?",
-        options: [
-          ...connectors.map((connector) => {
-            const option: { value: string; label: string; hint?: string } = {
-              value: connector.uid,
+      return context.ui.asker.ask(
+        select({
+          key: "slack-connector",
+          message: "Which Slack app would you like to use?",
+          options: [
+            ...connectors.map((connector) => ({
+              id: connector.uid,
+              value: connector,
               label: `Use ${connector.uid}`,
-            };
-            if (connector.uid === preferred?.uid) option.hint = "Matches this agent";
-            return option;
-          }),
-          { value: "create", label: "Create a new Slack app" },
-        ],
-        initialValue: preferred?.uid,
-      });
-      return selected === "create"
-        ? "create"
-        : connectors.find((connector) => connector.uid === selected)!;
+              hint: connector.uid === preferred?.uid ? "Matches this agent" : undefined,
+            })),
+            { id: "create", value: "create" as const, label: "Create a new Slack app" },
+          ],
+          recommended: preferred ?? connectors[0] ?? ("create" as const),
+          required: true,
+        }),
+      );
     },
   };
   if (context.signal !== undefined) provisionOptions.signal = context.signal;
@@ -168,8 +179,13 @@ export async function setupSlack(
   context: IntegrationSetupContext,
   deps: SlackSetupDeps = defaultDeps,
 ): Promise<IntegrationSetupResult> {
-  const credentials = await chooseCredentials(context);
-  if (credentials === "cancelled") return { kind: "cancelled" };
+  let credentials: "vercel-connect" | "environment";
+  try {
+    credentials = await chooseCredentials(context);
+  } catch (error) {
+    if (error instanceof WizardCancelledError) return { kind: "cancelled" };
+    throw error;
+  }
   if (credentials === "vercel-connect" && context.environment.vercel.kind === "unavailable") {
     throw new Error(
       "Vercel Connect requires an authenticated Vercel CLI. Run `vercel login`, then retry Slack setup.",
@@ -198,10 +214,12 @@ export async function setupSlack(
     };
   }
 
-  const project = await deps.ensureVercelProject({
+  const project = await resolveIntegrationVercelProject({
     appRoot: context.appRoot,
-    prompter: context.ui.prompter,
+    integration: "Slack",
+    ui: context.ui,
     signal: context.signal,
+    deps: deps satisfies IntegrationVercelProjectDeps,
   });
   if (project.projectId.length === 0) throw new Error(SLACK_REQUIRES_VERCEL);
   const slackbot = await provisionSlack(context, deps, slug);
