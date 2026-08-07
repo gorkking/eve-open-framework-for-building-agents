@@ -20,36 +20,3 @@ export function gateLifecycle(t: EveEvalContext): void {
     );
   }
 }
-
-/**
- * Index of the first event with `type`, optionally constrained by a data
- * predicate. Typed loosely on purpose: the lifecycle events do not exist in
- * the protocol union yet, and these evals are the executable spec for them.
- */
-export function eventIndex(
-  events: readonly unknown[],
-  type: string,
-  match?: (data: Record<string, unknown>) => boolean,
-): number {
-  return events.findIndex((event) => {
-    const candidate = event as { type?: string; data?: Record<string, unknown> };
-    if (candidate.type !== type) return false;
-    return match === undefined || match(candidate.data ?? {});
-  });
-}
-
-/** True when `first` occurs and precedes `second` in the event list. */
-export function eventBefore(
-  events: readonly unknown[],
-  first: { type: string; match?: (data: Record<string, unknown>) => boolean },
-  second: { type: string; match?: (data: Record<string, unknown>) => boolean },
-): boolean {
-  const firstIndex = eventIndex(events, first.type, first.match);
-  const secondIndex = eventIndex(events, second.type, second.match);
-  return firstIndex >= 0 && secondIndex >= 0 && firstIndex < secondIndex;
-}
-
-/** True when no event with `type` exists. */
-export function noEvent(events: readonly unknown[], type: string): boolean {
-  return eventIndex(events, type) === -1;
-}
