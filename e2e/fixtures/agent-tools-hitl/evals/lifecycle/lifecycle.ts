@@ -1,4 +1,5 @@
 import type { InputRequest } from "eve/client";
+import type { EveEvalTurn } from "eve/evals";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -38,6 +39,22 @@ const LIFECYCLE_TYPES = new Set([
   "input.response.pending",
   "input.response.rejected",
 ]);
+
+/** Requires the follow-up to leave this same session waiting for another user delivery. */
+export function expectFollowUpSessionActive(turn: EveEvalTurn, sessionId: string): void {
+  if (turn.sessionId !== sessionId) {
+    throw new Error(`Follow-up moved from session ${sessionId} to ${turn.sessionId}.`);
+  }
+  turn.eventsSatisfy("follow-up leaves the session active", (events) => {
+    const waiting = events.filter((event) => event.type === "session.waiting");
+    return (
+      waiting.length === 1 &&
+      waiting[0]?.data.wait === "next-user-message" &&
+      waiting[0].data.continuationToken.length > 0 &&
+      events.every((event) => event.type !== "session.completed" && event.type !== "session.failed")
+    );
+  });
+}
 
 export function requireRequest(
   requests: readonly InputRequest[],

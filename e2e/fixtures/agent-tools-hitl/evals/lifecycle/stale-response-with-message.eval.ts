@@ -6,6 +6,7 @@ import {
   exactRequestActionResult,
   exactRequestRejection,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   traceRequest,
 } from "./lifecycle";
 import { gateLifecycle } from "./shared";
@@ -34,6 +35,7 @@ export default defineEval({
       optionId: "deny",
     });
     denied.expectOk();
+    expectFollowUpSessionActive(denied, parked.sessionId);
     denied.eventsSatisfy(
       "denial closes the request without executing",
       (events) =>
@@ -49,6 +51,7 @@ export default defineEval({
       message: "Reply with exactly AP10-MSG-OK.",
     });
     compound.expectOk();
+    expectFollowUpSessionActive(compound, parked.sessionId);
     compound.eventsSatisfy(
       "one stale rejection precedes the message and no stale action runs",
       (events) =>

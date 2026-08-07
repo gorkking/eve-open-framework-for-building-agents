@@ -6,6 +6,7 @@ import {
   exactRequestActionResult,
   exactRequestExposure,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   noRequestLifecycleEvents,
   requireRequest,
   traceRequest,
@@ -48,6 +49,7 @@ export default defineEval({
       optionId: "approve",
     });
     partial.expectOk();
+    expectFollowUpSessionActive(partial, parked.sessionId);
     partial.eventsSatisfy(
       "approval settles without closing the batch",
       (events) =>
@@ -59,14 +61,13 @@ export default defineEval({
         noRequestLifecycleEvents(events, questionTrace) &&
         exactRequestActionResult(events, approvalTrace, null),
     );
-    partial.event("session.waiting", { count: 1 });
-
     // approval-19: the last request closes the batch; the approved tool runs once.
     const closed = await respondToRequests(t, {
       requestId: question.requestId,
       optionId: "yes",
     });
     closed.expectOk();
+    expectFollowUpSessionActive(closed, parked.sessionId);
     closed.eventsSatisfy(
       "the last response settles once before the approved call executes once",
       (events) =>

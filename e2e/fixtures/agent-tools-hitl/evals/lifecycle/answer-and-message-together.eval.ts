@@ -5,6 +5,7 @@ import {
   exactEventOrder,
   exactRequestActionResult,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   traceRequest,
 } from "./lifecycle";
 import { gateLifecycle } from "./shared";
@@ -34,6 +35,7 @@ export default defineEval({
       message: "After recording my answer, reply with exactly Q4-COMPOUND-OK.",
     });
     compound.expectOk();
+    expectFollowUpSessionActive(compound, parked.sessionId);
     compound.eventsSatisfy(
       "one answer and its closing batch work precede the message",
       (events) =>

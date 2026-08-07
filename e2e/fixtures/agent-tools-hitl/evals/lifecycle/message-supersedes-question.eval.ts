@@ -1,6 +1,11 @@
 import { defineEval } from "eve/evals";
 
-import { exactEventOrder, exactRequestTerminal, traceRequest } from "./lifecycle";
+import {
+  exactEventOrder,
+  exactRequestTerminal,
+  expectFollowUpSessionActive,
+  traceRequest,
+} from "./lifecycle";
 import { gateLifecycle } from "./shared";
 
 /**
@@ -26,6 +31,7 @@ export default defineEval({
 
     const superseded = await t.send("Skip the question. Reply with exactly Q2-SUPERSEDE-OK.");
     superseded.expectOk();
+    expectFollowUpSessionActive(superseded, parked.sessionId);
     superseded.eventsSatisfy(
       "one supersession terminal precedes the message",
       (events) =>
