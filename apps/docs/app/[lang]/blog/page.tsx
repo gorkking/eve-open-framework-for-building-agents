@@ -4,7 +4,7 @@ import Link from "next/link";
 import { translations } from "@/geistdocs";
 import { llmCouncilPost } from "@/lib/blog/posts";
 
-const title = "Blog";
+const title = "The latest eve news";
 const description = "Guides and ideas for building durable AI agents with eve.";
 const posts = [llmCouncilPost];
 
@@ -19,21 +19,20 @@ const BlogPage = () => (
   <main className="mx-auto max-w-[1080px] px-4 pb-32 sm:px-6">
     <header className="pt-12 pb-8 sm:pt-16 sm:pb-10">
       <h1 className="text-heading-32 text-gray-1000 sm:text-heading-40">{title}</h1>
-      <p className="mt-3 max-w-[460px] text-copy-16 text-gray-900">{description}</p>
     </header>
 
     <section aria-label="Blog posts">
-      <ul className="grid list-none gap-4 p-0 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="flex list-none flex-col gap-4 p-0">
         {posts.map((post) => (
           <li key={post.href}>
             <Link
               className="flex h-full flex-col rounded-lg border border-gray-alpha-400 bg-background-100 no-underline outline-none transition-colors hover:border-gray-alpha-500 hover:bg-gray-alpha-100 focus-visible:border-gray-alpha-600 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 focus-visible:ring-offset-background-100 motion-reduce:transition-none"
               href={post.href}
             >
-              <div className="flex flex-1 flex-col p-4">
-                <h2 className="text-heading-16 text-gray-1000">{post.title}</h2>
-                <p className="mt-2 text-[14px] leading-[1.3] text-gray-800">{post.description}</p>
-                <div className="mt-auto flex items-center gap-2 pt-5 text-[12px] text-gray-800">
+              <div className="flex flex-1 flex-col p-6">
+                <h2 className="text-heading-20 text-gray-1000">{post.title}</h2>
+                <p className="mt-3 max-w-[720px] text-copy-16 text-gray-800">{post.description}</p>
+                <div className="mt-6 flex items-center gap-2 text-copy-14 text-gray-800">
                   <Image
                     alt=""
                     className="rounded-full"
