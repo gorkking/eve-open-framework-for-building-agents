@@ -1,0 +1,248 @@
+A product manager asks an agent about feature adoption in Slack. A finance partner joins the thread to request a forecast. Then a support engineer checks whether a customer issue explains the numbers.
+
+All three people share the same conversation. Each needs context, tools, skills, and data access that match their role and task.
+
+That separation is the point of [`defineDynamic`](https://eve.dev/docs/guides/dynamic-capabilities). One eve agent keeps the session intact while resolving the right capabilities for the person speaking.
+
+This is a multiplayer agent: one deployed agent serves several people, teams, or channels. The context stays shared while the capabilities change.
+
+## A single agent for everyone
+
+One agent serves product, finance, and support from one deployment. Each participant brings a different role, account plan, and set of data permissions.
+
+The complete agent still fits in one directory:
+
+```text
+agent/
+├── agent.ts
+├── instructions.md
+├── instructions/
+│   └── participant.ts
+├── tools/
+│   └── warehouse.ts
+├── skills/
+│   └── playbooks.ts
+├── lib/
+│   └── participant.ts
+└── subagents/
+    └── finance/
+        ├── agent.ts
+        └── instructions.md
+```
+
+The file path tells eve where each capability belongs and a runtime resolver decides what the current participant can use.
+
+The examples use `participantFor(...)` to read application data for the authenticated principal. In your agent, this helper can read the participant's plan, team, datasets, playbooks, timezone, and fiscal calendar from your own identity store.
+
+The product manager can receive product analytics tools and a metrics playbook. On the next turn, finance can receive forecasting tools, fiscal-calendar instructions, and a finance specialist. Both continue from the same conversation.
+
+## Recognize who's participating
+
+A multiplayer session has two useful identities:
+
+- `ctx.session.auth.initiator` identifies the person who started the session
+- `ctx.session.auth.current` identifies the person speaking on this turn
+
+Use the initiator for decisions that should stay fixed for the session. Use the current principal for capabilities that should follow each participant.
+
+Dynamic resolvers run at lifecycle events:
+
+- `session.started` runs once when the shared session begins
+- `turn.started` runs when a participant sends the next message
+- `step.started` runs before a model call and supports dynamic models and tools
+
+For a shared channel, monitor `turn.started` to determine which capabilities to use from the current participant and channel context. Tools, skills, instructions, and subagents can change before the model responds.
+
+## Use dynamic capabilities across the agent
+
+You can use `defineDynamic` in each authored slot. Subscribe to an event, read `ctx`, and return the same eve definition you would use for a static capability.
+
+| File                   | Return from the resolver                       |
+| ---------------------- | ---------------------------------------------- |
+| `agent.ts`             | A model ID or `null`                           |
+| `tools/*.ts`           | `defineTool(...)`, a map of tools, or `null`   |
+| `skills/*.ts`          | `defineSkill(...)`, a map of skills, or `null` |
+| `instructions/*.ts`    | `defineInstructions(...)` or `null`            |
+| `subagents/*/agent.ts` | `defineAgent(...)` or `null`                   |
+
+`defineDynamic` lets you compose existing definitions with runtime context: `defineTool`, `defineSkill`, `defineInstructions`, and `defineAgent`.
+
+## Participant-specific model routing
+
+Dynamic routing can consider both the current participant's plan and the task in front of the agent:
+
+```ts title="agent/agent.ts"
+import { defineAgent, defineDynamic } from "eve";
+import { participantFor } from "./lib/participant";
+import { needsDeepAnalysis } from "./lib/tasks";
+
+export default defineAgent({
+  model: defineDynamic({
+    fallback: "anthropic/claude-sonnet-5",
+    events: {
+      "turn.started": async (_event, ctx) => {
+        const participant = await participantFor(ctx.session.auth.current);
+        return participant.plan === "enterprise" && needsDeepAnalysis(ctx.messages)
+          ? "anthropic/claude-opus-4.8"
+          : null;
+      },
+    },
+  }),
+});
+```
+
+Returning `null` keeps the fallback model. A support lookup stays on the default model, while an enterprise forecast can use a model selected for deeper analysis.
+
+Prompt caches are model-specific, so a switch can make the new model ingest the conversation again. Prefer session-level routing unless the participant or task justifies changing models.
+
+Vercel's internal eve agents use dynamic routing to downshift narrow classifier sessions while keeping a more capable model for normal requests. The goal is not to choose the strongest model. It is to choose the model the current work needs.
+
+## Generate tools from each participant's access
+
+A static `query_warehouse` tool makes the model guess which tables and columns exist. It can also advertise datasets that the current participant cannot use.
+
+Instead, resolve the participant's datasets and create one typed tool for each result:
+
+```ts title="agent/tools/warehouse.ts"
+import { defineDynamic, defineTool } from "eve/tools";
+import { z } from "zod";
+import { datasetsFor, runApprovedQuery } from "../lib/warehouse";
+
+export default defineDynamic({
+  events: {
+    "turn.started": async (_event, ctx) =>
+      Object.fromEntries(
+        (await datasetsFor(ctx.session.auth.current)).map((dataset) => [
+          `query_${dataset.slug}`,
+          defineTool({
+            description: `Query ${dataset.label}: ${dataset.fields.join(", ")}.`,
+            inputSchema: z.object({ question: z.string() }),
+            async execute({ question }, toolCtx) {
+              return runApprovedQuery(dataset.id, question, toolCtx.session.auth.current);
+            },
+          }),
+        ]),
+      ),
+  },
+});
+```
+
+Product might see `query_feature_adoption` and `query_experiments`. Finance might see `query_revenue` and `query_forecast`. When the speaker changes, eve replaces this file's tool set before the next model call.
+
+The live schema gives the model a smaller, clearer set of choices. Keep authorization inside `execute`; hiding a capability improves tool selection, but it does not replace a security check.
+
+The same pattern works for channels. Expose a reaction tool only when `ctx.channel.metadata` identifies a Slack thread. In every other channel, the tool does not exist.
+
+## Personal, team, and channel skills
+
+Tools control what the agent can execute. [Skills](https://eve.dev/docs/skills) supply procedures only when the task needs them.
+
+A multiplayer agent can combine skills from three scopes:
+
+- Personal skills saved by the current participant
+- Team skills shared by finance, product, or support
+- Channel skills shared by everyone in the current conversation
+
+Resolve those sources on every turn and return the skills the current participant can load:
+
+```ts title="agent/skills/playbooks.ts"
+import { defineDynamic, defineSkill, type DynamicResolveContext } from "eve/skills";
+import { playbooksFor } from "../lib/playbooks";
+
+async function resolvePlaybooks(ctx: DynamicResolveContext) {
+  const playbooks = await playbooksFor(ctx.session.auth.current, ctx.channel.metadata);
+  return Object.fromEntries(
+    playbooks.map((playbook) => [
+      playbook.name,
+      defineSkill({
+        description: playbook.description,
+        markdown: playbook.markdown,
+      }),
+    ]),
+  );
+}
+
+export default defineDynamic({
+  events: {
+    "turn.started": (_event, ctx) => resolvePlaybooks(ctx),
+  },
+});
+```
+
+eve advertises each resolved skill to the model. The model loads a skill only when a request matches its description. A personal procedure created in one turn can become a loadable skill when that person speaks again.
+
+Vercel's internal eve agents use this pattern to combine saved personal skills with skills shared by a Slack channel. The agent keeps the shared conversation without flattening everyone's context into one prompt.
+
+## Add instructions for the person speaking
+
+Keep the agent's identity and safety rules in static instructions. Add participant and tenant facts from a dynamic resolver:
+
+```ts title="agent/instructions/participant.ts"
+import { defineDynamic, defineInstructions } from "eve/instructions";
+import { accountContext } from "../lib/accounts";
+
+export default defineDynamic({
+  events: {
+    "turn.started": async (_event, ctx) => {
+      const account = await accountContext(ctx.session.auth.current);
+
+      return defineInstructions({
+        markdown: [
+          `The current participant is on the ${account.team} team.`,
+          `Use the ${account.fiscalCalendar} fiscal calendar.`,
+          `Report dates in ${account.timezone}.`,
+        ].join("\n"),
+      });
+    },
+  },
+});
+```
+
+The static `instructions.md` defines the agent for everyone. The resolver adds the current participant's team, calendar, and timezone without applying those facts to the next speaker.
+
+You can use the same pattern for recalled memory, a mode inferred from channel state, or a per-turn budget. Dynamic instructions contribute model context; hooks remain observe-only.
+
+## Expose specialists only when they apply
+
+Not every participant needs every [subagent](https://eve.dev/docs/subagents). Expose a finance specialist only when the current person's plan and role allow it:
+
+```ts title="agent/subagents/finance/agent.ts"
+import { defineAgent, defineDynamic } from "eve";
+
+export default defineDynamic({
+  events: {
+    "turn.started": (_event, ctx) => {
+      const principal = ctx.session.auth.current;
+      const eligible =
+        principal?.attributes.plan === "enterprise" && principal.attributes.team === "finance";
+
+      return eligible
+        ? defineAgent({
+            description: "Analyze forecasts, accounting data, and financial reports.",
+            model: "anthropic/claude-opus-4.8",
+          })
+        : null;
+    },
+  },
+});
+```
+
+eve compiles the specialist with the application, then controls whether the parent can see it. eve checks availability again before dispatch. Keep authorization and approval checks inside the specialist's sensitive tools.
+
+The finance partner can delegate a forecast. The product manager in the same conversation never sees the finance specialist as an option.
+
+## Share history without sharing every capability
+
+For each turn in the shared conversation, eve now resolves five parts of the agent:
+
+1. The participant's plan and task select an appropriate model.
+2. Their data access becomes a set of precise tools.
+3. Their personal, team, and channel procedures become loadable skills.
+4. Their account context joins the stable system instructions.
+5. Their role determines which specialists are available.
+
+The session keeps its durable history as people join the conversation. The capability set follows the current participant.
+
+That is the multiplayer pattern: share the agent and its conversation, not every permission, prompt, or tool.
+
+For the complete resolver contract, including event scopes, precedence, naming, conflicts, and replay requirements, read [Dynamic Capabilities](https://eve.dev/docs/guides/dynamic-capabilities). Then see [Session Context](https://eve.dev/docs/guides/session-context) for the difference between the initiator and current caller.

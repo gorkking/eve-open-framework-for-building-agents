@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { BlogPostLayout } from "@/app/[lang]/blog/blog-post-layout";
 import { getMDXComponents } from "@/components/geistdocs/mdx-components";
 import { translations } from "@/geistdocs";
-import { llmCouncilPost as post } from "@/lib/blog/posts";
+import { dynamicCapabilitiesPost as post } from "@/lib/blog/posts";
 import Content from "./content.mdx";
 
 export const metadata: Metadata = {
@@ -13,7 +13,14 @@ export const metadata: Metadata = {
     type: "article",
     title: post.title,
     description: post.description,
-    images: [post.image],
+    images: [
+      {
+        url: post.image,
+        width: 2400,
+        height: 1256,
+        alt: post.imageAlt,
+      },
+    ],
     publishedTime: post.publishedAt,
     authors: [post.author.accounts.github.href],
   },

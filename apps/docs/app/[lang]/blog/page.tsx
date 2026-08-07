@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { translations } from "@/geistdocs";
-import { llmCouncilPost } from "@/lib/blog/posts";
+import { dynamicCapabilitiesPost, llmCouncilPost } from "@/lib/blog/posts";
 
 const title = "The latest eve news";
 const description = "Guides and ideas for building durable AI agents with eve.";
-const posts = [llmCouncilPost];
+const posts = [dynamicCapabilitiesPost, llmCouncilPost];
 
 export const metadata: Metadata = {
   title,
