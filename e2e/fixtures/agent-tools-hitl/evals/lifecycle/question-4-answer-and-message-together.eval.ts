@@ -3,12 +3,12 @@ import { defineEval } from "eve/evals";
 import { eventBefore, gateLifecycle } from "./shared";
 
 /**
- * Q-4: an accepted answer plus a message in one delivery — the answer settles
+ * question-4: an accepted answer plus a message in one delivery — the answer settles
  * the question (supersession does not run), then the message runs.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "Q-4: compound answer+message settles the question, then runs the message.",
+  description: "question-4: compound answer+message settles the question, then runs the message.",
   async test(t) {
     gateLifecycle(t);
 

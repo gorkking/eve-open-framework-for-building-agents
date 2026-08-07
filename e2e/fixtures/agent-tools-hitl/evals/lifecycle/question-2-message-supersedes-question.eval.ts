@@ -3,13 +3,13 @@ import { defineEval } from "eve/evals";
 import { eventBefore, gateLifecycle } from "./shared";
 
 /**
- * Q-2: a message from the question's originating actor supersedes the
+ * question-2: a message from the question's originating actor supersedes the
  * question — dismissed, then the message runs as a normal turn. The typed
  * text is handled semantically by the agent, never matched by the runtime.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "Q-2: the originating actor's message supersedes their open question.",
+  description: "question-2: the originating actor's message supersedes their open question.",
   async test(t) {
     gateLifecycle(t);
 

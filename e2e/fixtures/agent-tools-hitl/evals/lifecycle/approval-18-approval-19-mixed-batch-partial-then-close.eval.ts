@@ -3,14 +3,15 @@ import { defineEval } from "eve/evals";
 import { eventIndex, gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * B-1 + B-2: one assistant turn creates an approval and a question in the
+ * approval-18 + approval-19: one assistant turn creates an approval and a question in the
  * same assistant-turn input batch. Settling one request leaves the batch
  * pending and runs nothing; settling the last request restores the stored
  * model output once and runs the approved tool exactly once.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "B-1/B-2: batch stays pending on partial settlement; last outcome closes it.",
+  description:
+    "approval-18/approval-19: batch stays pending on partial settlement; last outcome closes it.",
   async test(t) {
     gateLifecycle(t);
 
@@ -22,7 +23,7 @@ export default defineEval({
     const approval = t.requireInputRequest({ toolName: "guarded-echo" });
     const question = t.requireInputRequest({ toolName: "ask_question" });
 
-    // B-1: settle only the approval; the batch stays open behind the question.
+    // approval-18: settle only the approval; the batch stays open behind the question.
     const partial = await t.respond({ requestId: approval.requestId, optionId: "approve" });
     partial.expectOk();
     partial.eventsSatisfy(
@@ -32,7 +33,7 @@ export default defineEval({
           0 && eventIndex(events, "action.result") === -1,
     );
 
-    // B-2: the last request closes the batch; the approved tool runs once.
+    // approval-19: the last request closes the batch; the approved tool runs once.
     const closed = await t.respond({ requestId: question.requestId, optionId: "yes" });
     closed.expectOk();
     closed.event("action.result", {

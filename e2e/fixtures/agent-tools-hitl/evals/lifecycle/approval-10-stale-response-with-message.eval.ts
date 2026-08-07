@@ -3,12 +3,12 @@ import { defineEval } from "eve/evals";
 import { eventBefore, gateLifecycle } from "./shared";
 
 /**
- * AP-10: a stale response and a message in one delivery — the rejection is
+ * approval-10: a stale response and a message in one delivery — the rejection is
  * explicit and precedes the message, which still runs as a normal turn.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "AP-10: stale response is rejected; the co-delivered message still runs.",
+  description: "approval-10: stale response is rejected; the co-delivered message still runs.",
   async test(t) {
     gateLifecycle(t);
 

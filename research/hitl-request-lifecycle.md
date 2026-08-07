@@ -168,7 +168,7 @@ after closure.
 
 ### Approval requests
 
-#### AP-1: Originating actor approves
+#### approval-1: Originating actor approves
 
 - **Given:** A's approval request is open.
 - **When:** A sends an explicitly correlated Allow response that the tool's
@@ -177,17 +177,17 @@ after closure.
   tool runs only when this response closes its assistant-turn input batch.
 - **Observed:** `input.responded` precedes `action.result`.
 
-#### AP-2: Another actor approves
+#### approval-2: Another actor approves
 
 - **Given:** A's approval request is open.
 - **When:** B sends an explicitly correlated Allow response that the tool's
   response policy accepts.
 - **Then:** The request settles as allowed and the tool becomes eligible. The
   tool runs only when this response closes its assistant-turn input batch.
-- **Observed:** The result is identical to AP-1 except the verified responder
+- **Observed:** The result is identical to approval-1 except the verified responder
   is B.
 
-#### AP-3: Response policy rejects the responder
+#### approval-3: Response policy rejects the responder
 
 - **Given:** A's approval request is open.
 - **When:** B sends a correlated response and the response policy rejects B.
@@ -199,7 +199,7 @@ after closure.
   B, then a normal turn's model output, then `session.waiting`. No settlement
   or dismissal event appears for the request.
 
-#### AP-4: Originating actor sends a message
+#### approval-4: Originating actor sends a message
 
 - **Given:** A's approval request is open.
 - **When:** A sends a message.
@@ -207,7 +207,7 @@ after closure.
 - **Observed:** Eve emits `message.received`; it emits no settlement or
   `input.dismissed` event for the approval.
 
-#### AP-5: Another actor sends a message
+#### approval-5: Another actor sends a message
 
 - **Given:** A's approval request is open.
 - **When:** B sends a message.
@@ -216,12 +216,12 @@ after closure.
 - **Observed:** Eve emits `message.received` for B; it emits no settlement or
   `input.dismissed` event for A's approval.
 
-#### AP-6: Plain text is never a response
+#### approval-6: Plain text is never a response
 
 - **Given:** A's approval request is open.
 - **When:** an actor sends the plain message `approve`.
 - **Then:** That is a message, not a response. The runtime does not match
-  message text against open requests. AP-4 or AP-5 applies: the request stays
+  message text against open requests. approval-4 or approval-5 applies: the request stays
   open, and the agent's turn can tell the actor how to actually respond.
 - **Observed:** `message.received`, model output, `session.waiting`; no request
   event of any kind.
@@ -238,7 +238,7 @@ rendered request — never the agent's ambient context, so injected tool output
 cannot forge consent — and its output is a response attributed to that sender.
 Until then, natural language is handled semantically by the agent in the turn.
 
-#### AP-7: Response and message arrive together
+#### approval-7: Response and message arrive together
 
 - **Given:** A's approval request is the last open request in its assistant-turn
   input batch.
@@ -248,7 +248,7 @@ Until then, natural language is handled semantically by the agent in the turn.
   output, batch `action.result` events, resumed assistant output, then
   `message.received`.
 
-#### AP-7B: Response closes one request but siblings remain open
+#### approval-7b: Response closes one request but siblings remain open
 
 - **Given:** A's approval belongs to a batch with other open requests.
 - **When:** one delivery contains an accepted approval response plus a
@@ -258,7 +258,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** `input.responded` precedes `message.received`; `action.result`
   for the batch is absent.
 
-#### AP-8: Approval arrives after intervening turns
+#### approval-8: Approval arrives after intervening turns
 
 - **Given:** A's approval request is the last open request in its assistant-turn
   input batch and one or more unrelated turns completed since it was created.
@@ -268,7 +268,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** The restored assistant output follows the intervening turns in
   history; the request is no longer open.
 
-#### AP-9: Response arrives after closure
+#### approval-9: Response arrives after closure
 
 - **Given:** an approval request is no longer open but its owner session is
   still active.
@@ -278,7 +278,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** `input.response.rejected(reason: stale)`, then model output,
   then `session.waiting`.
 
-#### AP-10: Stale response and message arrive together
+#### approval-10: Stale response and message arrive together
 
 - **Given:** an approval request is no longer open.
 - **When:** one delivery contains a response for that request plus a message.
@@ -287,7 +287,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** `input.response.rejected(reason: stale)` precedes
   `message.received`.
 
-#### AP-11: Authenticated actor cancels an approval
+#### approval-11: Authenticated actor cancels an approval
 
 - **Given:** A's approval request is open.
 - **When:** an authenticated actor sends an explicit correlated Cancel.
@@ -296,7 +296,7 @@ Until then, natural language is handled semantically by the agent in the turn.
   `action.result` contains `{ code: "TOOL_EXECUTION_CANCELLED", approval:
 { requestId, status: "cancelled" }, tool: { result: "not_run" } }`.
 
-#### AP-12: Allow and Cancel race
+#### approval-12: Allow and Cancel race
 
 - **Given:** A's approval request is open.
 - **When:** an accepted Allow and an authenticated Cancel race for the same
@@ -306,7 +306,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** Exactly one `input.responded`; the loser emits
   `input.response.rejected(reason: stale)`.
 
-#### AP-13: Two allowed responders race
+#### approval-13: Two allowed responders race
 
 - **Given:** A's approval request is open and both A and B are allowed to
   respond.
@@ -316,7 +316,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** One `input.responded`, one stale rejection, and at most one tool
   result.
 
-#### AP-14: Duplicate response delivery
+#### approval-14: Duplicate response delivery
 
 - **Given:** one accepted response already settled the approval.
 - **When:** Eve receives the same response content as a new delivery.
@@ -325,7 +325,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** `input.response.rejected(reason: stale)`, then model output,
   then `session.waiting`; no second tool execution.
 
-#### AP-15: Response policy throws or times out
+#### approval-15: Response policy throws or times out
 
 - **Given:** A's approval request is open.
 - **When:** a correlated Allow response reaches a response policy that throws
@@ -336,7 +336,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** `input.response.rejected(reason: policy-failed)`, then model
   output, then `session.waiting`. No terminal request event appears.
 
-#### AP-15B: Response value is invalid
+#### approval-15b: Response value is invalid
 
 - **Given:** A's approval request is open.
 - **When:** a correlated response carries an unknown option ID or malformed
@@ -346,7 +346,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 - **Observed:** `input.response.rejected(reason: invalid)`, then model output,
   then `session.waiting`; no terminal request event.
 
-#### AP-16: Allow candidate requires authorization
+#### approval-16: Allow candidate requires authorization
 
 - **Given:** A's approval request is open.
 - **When:** an Allow candidate requires a separate authorization flow.
@@ -360,7 +360,7 @@ Until then, natural language is handled semantically by the agent in the turn.
 Duplicate delivery of the same `candidateId` returns the existing pending
 candidate and never opens a second authorization challenge.
 
-#### AP-17: Authorization callback arrives after Cancel
+#### approval-17: Authorization callback arrives after Cancel
 
 - **Given:** an authorization-required Allow candidate is pending.
 - **When:** an authenticated Cancel settles the request before the callback,
@@ -373,45 +373,7 @@ candidate and never opens a second authorization challenge.
   `authorization.callback.rejected(reason: stale)` for the same
   `authorizationId` and `candidateId`.
 
-### Questions
-
-#### Q-1: Actor answers a question
-
-- **Given:** A's question is open.
-- **When:** an actor sends a correlated answer accepted by the question's
-  response policy.
-- **Then:** The question settles with that answer.
-- **Observed:** `input.responded` closes only that question.
-
-#### Q-2: Originating actor moves on
-
-- **Given:** A's question is open and its tool declares that A may supersede it
-  with a follow-up.
-- **When:** A sends a message.
-- **Then:** The question is dismissed as `superseded`. The message runs as a
-  normal turn. If the message was in fact A's answer typed as text, the agent
-  handles it semantically in that turn — the runtime does not guess.
-- **Observed:** `input.dismissed` precedes `message.received`.
-
-#### Q-3: Another actor sends a message
-
-- **Given:** A's question is open.
-- **When:** B sends a message.
-- **Then:** A's question remains open. B's message runs as a normal turn.
-- **Observed:** Eve emits `message.received` for B and no closure event for the
-  question.
-
-#### Q-4: Accepted answer and message arrive together
-
-- **Given:** A's question is open.
-- **When:** one delivery contains an accepted answer plus a message.
-- **Then:** The answer settles the question; supersession does not run. The
-  message runs after any closing assistant-turn batch work.
-- **Observed:** `input.responded` precedes `message.received`.
-
-### Assistant-turn input batches
-
-#### B-1: One response leaves sibling requests open
+#### approval-18: One response leaves sibling requests open
 
 - **Given:** one assistant turn created an input batch containing multiple open
   requests.
@@ -421,7 +383,7 @@ candidate and never opens a second authorization challenge.
 - **Observed:** The batch remains pending and the stored model output appears
   zero times in committed history.
 
-#### B-2: Last ordinary outcome closes the batch
+#### approval-19: Last ordinary outcome closes the batch
 
 - **Given:** one request remains open in an assistant-turn input batch.
 - **When:** that request settles, or is superseded while its owner remains
@@ -432,16 +394,7 @@ candidate and never opens a second authorization challenge.
   request's later eligibility.
 - **Observed:** Each tool call, response, and tool result appears exactly once.
 
-#### B-3: Forced closure does not restore the batch
-
-- **Given:** an assistant-turn input batch has open requests.
-- **When:** cancellation or session termination dismisses those requests.
-- **Then:** Eve does not restore the stored model output and runs no batch tool
-  or model call.
-- **Observed:** `input.dismissed` events precede the cancellation or terminal
-  session event.
-
-#### B-4: Later assistant turns create more batches
+#### approval-20: Later assistant turns create more batches
 
 - **Given:** an earlier assistant-turn input batch still has open requests.
 - **When:** a later turn creates another input batch.
@@ -449,7 +402,89 @@ candidate and never opens a second authorization challenge.
   change or replay the other.
 - **Observed:** `input.requested` exposes every new request ID once.
 
-#### B-5: Mixed approval and question batch
+#### approval-21: Message predates a request
+
+- **Given:** a user message arrived before a request was created.
+- **When:** the buffered message is processed after that request exists.
+- **Then:** Eve does not interpret the older message as a response to the newer
+  request.
+- **Observed:** The message runs as a normal turn; the request remains open.
+
+#### approval-22: No verified principal
+
+- **Given:** the channel supplies no verified principal.
+- **When:** deliveries create and respond to a request in the same session.
+- **Then:** Eve treats the session as one actor for origin comparison. The
+  request's response policy still controls settlement.
+
+The fallback does not fabricate a verified principal for response policy.
+
+#### approval-23: Buffered messages preserve actor boundaries
+
+- **Given:** buffered deliveries arrive from A, then B, then A.
+- **When:** Eve drains them.
+- **Then:** Eve creates three ordered actor-homogeneous turn inputs. It does not
+  merge B's message under A's identity or A's messages under B's identity.
+- **Observed:** Each `message.received` is evaluated with its own verified actor
+  and durable arrival order.
+
+#### approval-24: HITL request and runtime action share one assistant turn
+
+- **Given:** one assistant turn creates a question or approval request and
+  starts a subagent or remote action.
+- **When:** Eve parks or dispatches that turn.
+- **Then:** Eve persists both the assistant-turn input batch and the runtime
+  action. It exposes every HITL request before dispatching or waiting.
+- **Observed:** `input.requested` appears exactly once for every request. No
+  approval disappears behind the runtime action.
+
+#### approval-25: Approval metadata cannot be recovered
+
+- **Given:** a nonautomatic approval exists but Eve cannot recover the matching
+  tool-call metadata needed for `InputRequest`.
+- **When:** Eve classifies the assistant turn.
+- **Then:** Eve fails the turn explicitly. It does not execute the tool, dispatch
+  sibling runtime actions, or wait on a hidden approval.
+- **Observed:** `step.failed(code: HITL_REQUEST_METADATA_MISSING)` precedes
+  `turn.failed` and `session.failed`; `session.waiting` is absent.
+
+### Questions
+
+#### question-1: Actor answers a question
+
+- **Given:** A's question is open.
+- **When:** an actor sends a correlated answer accepted by the question's
+  response policy.
+- **Then:** The question settles with that answer.
+- **Observed:** `input.responded` closes only that question.
+
+#### question-2: Originating actor moves on
+
+- **Given:** A's question is open and its tool declares that A may supersede it
+  with a follow-up.
+- **When:** A sends a message.
+- **Then:** The question is dismissed as `superseded`. The message runs as a
+  normal turn. If the message was in fact A's answer typed as text, the agent
+  handles it semantically in that turn — the runtime does not guess.
+- **Observed:** `input.dismissed` precedes `message.received`.
+
+#### question-3: Another actor sends a message
+
+- **Given:** A's question is open.
+- **When:** B sends a message.
+- **Then:** A's question remains open. B's message runs as a normal turn.
+- **Observed:** Eve emits `message.received` for B and no closure event for the
+  question.
+
+#### question-4: Accepted answer and message arrive together
+
+- **Given:** A's question is open.
+- **When:** one delivery contains an accepted answer plus a message.
+- **Then:** The answer settles the question; supersession does not run. The
+  message runs after any closing assistant-turn batch work.
+- **Observed:** `input.responded` precedes `message.received`.
+
+#### question-5: Mixed approval and question batch
 
 - **Given:** one assistant turn created an approval and a question.
 - **When:** the originating actor supersedes the question while the approval
@@ -459,37 +494,9 @@ candidate and never opens a second authorization challenge.
 - **Observed:** `input.dismissed` names the question only; the approval remains
   open in the same assistant-turn input batch.
 
-### Timing and identity
+### Session limits
 
-#### T-1: Message predates a request
-
-- **Given:** a user message arrived before a request was created.
-- **When:** the buffered message is processed after that request exists.
-- **Then:** Eve does not interpret the older message as a response to the newer
-  request.
-- **Observed:** The message runs as a normal turn; the request remains open.
-
-#### T-2: No verified principal
-
-- **Given:** the channel supplies no verified principal.
-- **When:** deliveries create and respond to a request in the same session.
-- **Then:** Eve treats the session as one actor for origin comparison. The
-  request's response policy still controls settlement.
-
-The fallback does not fabricate a verified principal for response policy.
-
-#### T-3: Buffered messages preserve actor boundaries
-
-- **Given:** buffered deliveries arrive from A, then B, then A.
-- **When:** Eve drains them.
-- **Then:** Eve creates three ordered actor-homogeneous turn inputs. It does not
-  merge B's message under A's identity or A's messages under B's identity.
-- **Observed:** Each `message.received` is evaluated with its own verified actor
-  and durable arrival order.
-
-### Session-limit prompts
-
-#### SL-1: Message arrives while the limit still applies
+#### limit-1: Message arrives while the limit still applies
 
 - **Given:** a session-limit prompt is visible and the limit still applies.
 - **When:** any actor sends a message without granting continuation.
@@ -500,7 +507,7 @@ The fallback does not fabricate a verified principal for response policy.
 - **Observed:** `input.dismissed(old)` precedes `input.requested(new)` and the
   message is not hidden in deferred input.
 
-#### SL-2: Continue response grants another window
+#### limit-2: Continue response grants another window
 
 - **Given:** a session-limit prompt is open.
 - **When:** the actor sends the correlated Continue response.
@@ -509,7 +516,7 @@ The fallback does not fabricate a verified principal for response policy.
 - **Observed:** `input.responded` precedes `message.received` when a message is
   present.
 
-#### SL-3: Stop response cancels the turn
+#### limit-3: Stop response cancels the turn
 
 - **Given:** a session-limit prompt is open.
 - **When:** the actor sends the correlated Stop response.
@@ -517,7 +524,7 @@ The fallback does not fabricate a verified principal for response policy.
   the model.
 - **Observed:** `input.responded` precedes `turn.cancelled`.
 
-#### SL-4: Response targets a superseded prompt
+#### limit-4: Response targets a superseded prompt
 
 - **Given:** session-limit prompt R1 was superseded by R2.
 - **When:** a Continue or Stop response references R1.
@@ -527,7 +534,7 @@ The fallback does not fabricate a verified principal for response policy.
 
 ### Connection authorization
 
-#### AU-1: Message arrives while authorization is open
+#### auth-1: Message arrives while authorization is open
 
 - **Given:** A's connection authorization challenge is open with an
   `authorizationId` bound to A and the blocked operation.
@@ -540,7 +547,7 @@ This is proposed behavior. Today the session driver waits exclusively for the
 authorization callback; implementation must let ordinary deliveries start
 independent turns while the challenge remains open.
 
-#### AU-2: Authorization callback resolves
+#### auth-2: Authorization callback resolves
 
 - **Given:** an authorization challenge is open.
 - **When:** a callback carrying its `authorizationId` resolves.
@@ -570,7 +577,7 @@ For ordinary connection authorization with no approval candidate:
 - `cancelled`: do not execute it and follow the cancellation boundary; no model
   continuation is required.
 
-#### AU-3: Authorization ends before callback
+#### auth-3: Authorization ends before callback
 
 - **Given:** an authorization challenge is open.
 - **When:** its turn is cancelled or its session ends before the callback.
@@ -582,9 +589,9 @@ For ordinary connection authorization with no approval candidate:
   `authorization.callback.rejected(reason: stale)` with the same
   `authorizationId`.
 
-### Parent and child sessions
+### Subagent proxying
 
-#### P-1: Child request is projected to the channel
+#### proxy-1: Child request is projected to the channel
 
 - **Given:** a child session creates a HITL request.
 - **When:** the parent receives that request.
@@ -593,7 +600,7 @@ For ordinary connection authorization with no approval candidate:
 - **Observed:** The parent stream re-emits `input.requested` with the same
   request ID.
 
-#### P-2: Parent loses the child route
+#### proxy-2: Parent loses the child route
 
 - **Given:** the parent exposes a child request and its route becomes unusable.
 - **When:** the parent removes that route.
@@ -602,7 +609,7 @@ For ordinary connection authorization with no approval candidate:
 - **Observed:** The parent emits `input.dismissed(scope: projection)` before
   removing the route.
 
-#### P-3: Child request closes normally
+#### proxy-3: Child request closes normally
 
 - **Given:** a child request is projected through a parent.
 - **When:** the child settles or dismisses the request.
@@ -610,7 +617,7 @@ For ordinary connection authorization with no approval candidate:
   only that request's route.
 - **Observed:** Sibling child-request routes remain active.
 
-#### P-4: Response races with child-hook disposal
+#### proxy-4: Response races with child-hook disposal
 
 - **Given:** a parent still has a route for a child request, but the child's
   continuation hook has already been disposed.
@@ -621,7 +628,7 @@ For ordinary connection authorization with no approval candidate:
 reason: route-lost)`, then `input.response.rejected(scope: projection,
 reason: stale)`; `session.failed` is absent.
 
-#### P-5: Parent forwards responder identity to the child owner
+#### proxy-5: Parent forwards responder identity to the child owner
 
 - **Given:** a child-owned request is projected through a parent.
 - **When:** an actor responds through the parent channel.
@@ -635,7 +642,7 @@ the matching `authorization.required`/`authorization.completed` events with
 unchanged `candidateId` and `authorizationId`. The callback route remains owned
 by the child.
 
-#### P-6: Remote child rejects forwarded identity
+#### proxy-6: Remote child rejects forwarded identity
 
 - **Given:** a parent projects a request owned by a remote child.
 - **When:** the parent forwards a response and the remote child rejects the
@@ -645,29 +652,9 @@ by the child.
   `input.response.rejected(scope: projection, reason: unauthorized)`; it emits
   no terminal request event.
 
-### Request creation and forced closure
+### Cancellation and termination
 
-#### L-1: HITL request and runtime action share one assistant turn
-
-- **Given:** one assistant turn creates a question or approval request and
-  starts a subagent or remote action.
-- **When:** Eve parks or dispatches that turn.
-- **Then:** Eve persists both the assistant-turn input batch and the runtime
-  action. It exposes every HITL request before dispatching or waiting.
-- **Observed:** `input.requested` appears exactly once for every request. No
-  approval disappears behind the runtime action.
-
-#### L-2: Approval metadata cannot be recovered
-
-- **Given:** a nonautomatic approval exists but Eve cannot recover the matching
-  tool-call metadata needed for `InputRequest`.
-- **When:** Eve classifies the assistant turn.
-- **Then:** Eve fails the turn explicitly. It does not execute the tool, dispatch
-  sibling runtime actions, or wait on a hidden approval.
-- **Observed:** `step.failed(code: HITL_REQUEST_METADATA_MISSING)` precedes
-  `turn.failed` and `session.failed`; `session.waiting` is absent.
-
-#### L-3: Turn cancellation closes open requests
+#### cancellation-1: Turn cancellation closes open requests
 
 - **Given:** the owner session has open requests created by multiple turns.
 - **When:** the owning turn is cancelled.
@@ -676,7 +663,7 @@ by the child.
 - **Observed:** Every `input.dismissed(reason: cancelled)` precedes
   `turn.cancelled`.
 
-#### L-4: Session ends with open requests
+#### cancellation-2: Session ends with open requests
 
 - **Given:** the owner session has open requests.
 - **When:** the session completes, fails, times out, or is terminated.
@@ -684,7 +671,7 @@ by the child.
 - **Observed:** Every `input.dismissed(reason: session-ended)` precedes the
   terminal session event.
 
-#### L-5: Parent session ends with child projections
+#### cancellation-3: Parent session ends with child projections
 
 - **Given:** a parent session exposes open requests owned by children.
 - **When:** the parent session ends.
@@ -692,6 +679,15 @@ by the child.
   `route-lost`. It does not settle the child-owned requests.
 - **Observed:** Every `input.dismissed(scope: projection, reason: route-lost)`
   precedes the parent terminal event.
+
+#### cancellation-4: Forced closure does not restore the batch
+
+- **Given:** an assistant-turn input batch has open requests.
+- **When:** cancellation or session termination dismisses those requests.
+- **Then:** Eve does not restore the stored model output and runs no batch tool
+  or model call.
+- **Observed:** `input.dismissed` events precede the cancellation or terminal
+  session event.
 
 ## Compatibility
 
@@ -908,5 +904,5 @@ tags, not a Cartesian product:
 
 Authorization scenarios assert only applicable rows. Unlike input requests,
 authorization challenges are not members of assistant-turn input batches.
-AU-1 requires new nonblocking driver scheduling; current callback-only waiting
+auth-1 requires new nonblocking driver scheduling; current callback-only waiting
 does not satisfy it.

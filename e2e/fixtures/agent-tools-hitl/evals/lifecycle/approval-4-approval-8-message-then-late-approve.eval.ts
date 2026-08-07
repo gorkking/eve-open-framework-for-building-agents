@@ -3,13 +3,14 @@ import { defineEval } from "eve/evals";
 import { eventIndex, gateLifecycle, GUARDED_ECHO_TOKEN, noEvent } from "./shared";
 
 /**
- * AP-4 + AP-8: a message while an approval is open runs as a normal turn and
+ * approval-4 + approval-8: a message while an approval is open runs as a normal turn and
  * changes nothing about the request; a later accepted response still restores
  * the assistant-turn approval batch and runs the tool once.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "AP-4/AP-8: messages never wedge; the approval stays answerable across turns.",
+  description:
+    "approval-4/approval-8: messages never wedge; the approval stays answerable across turns.",
   async test(t) {
     gateLifecycle(t);
 
@@ -17,7 +18,7 @@ export default defineEval({
     parked.calledTool("guarded-echo", { status: "pending", count: 1 });
     const request = t.requireInputRequest({ display: "confirmation", toolName: "guarded-echo" });
 
-    // AP-4: the message runs as a normal turn; the request is untouched.
+    // approval-4: the message runs as a normal turn; the request is untouched.
     const intervening = await t.send(
       "Ignore the pending approval. Reply with exactly AP4-TURN-OK.",
     );
@@ -31,7 +32,7 @@ export default defineEval({
         eventIndex(events, "action.result") === -1,
     );
 
-    // AP-8: the approval settles after the intervening turn; the tool runs once.
+    // approval-8: the approval settles after the intervening turn; the tool runs once.
     const approved = await t.respond({ requestId: request.requestId, optionId: "approve" });
     approved.expectOk();
     approved.event("action.result", {
