@@ -267,6 +267,10 @@ function buildRouteArgs(
         ...input,
         adapter,
         channelName,
+        continuationToken:
+          input.continuationToken === undefined
+            ? undefined
+            : `${channelName}:${input.continuationToken}`,
         delivery: createChannelDeliveryMetadata(deliverySource),
         requestId,
       }),
