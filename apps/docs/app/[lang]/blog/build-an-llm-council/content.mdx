@@ -2,7 +2,7 @@ PewDiePie recently turned a 10-GPU home lab into a [large language model (LLM) c
 
 In the next few minutes, you’ll build a hosted version with [eve](https://eve.dev/docs/) and [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), without tripping the circuit breakers in your home. One root agent sends a prompt to four providers, streams their answers, and judges the result.
 
-For the full reference implementation, or to follow along in code, see the [eve LLM Council repository](https://github.com/cmpadden/eve-llm-council).
+For the full reference implementation, or to follow along in code, see the [eve LLM Council repository](https://github.com/vercel-labs/eve-llm-council).
 
 <img
   alt="Four model responses connected to a council answer and agreement scores"
@@ -124,7 +124,7 @@ const councilResultSchema = z.object({
 
 The UI renders the streamed markdown with [Comark](https://comark.dev/), then displays each council member's status, agreement scores, and token consumption.
 
-Use the [complete eve LLM Council project](https://github.com/cmpadden/eve-llm-council) to run the demo or adapt the pattern to your own models.
+Use the [complete eve LLM Council project](https://github.com/vercel-labs/eve-llm-council) to run the demo or adapt the pattern to your own models.
 
 ## Additional reading
 
