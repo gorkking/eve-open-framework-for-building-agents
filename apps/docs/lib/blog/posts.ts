@@ -28,7 +28,6 @@ export const llmCouncilPost = {
     },
   },
   tableOfContents: [
-    { title: "Build it with your coding agent", href: "#build-it-with-your-coding-agent" },
     { title: "What an LLM council adds", href: "#what-an-llm-council-adds" },
     { title: "Building the council", href: "#building-the-council" },
     { title: "Route models with AI Gateway", href: "#route-models-with-ai-gateway" },
