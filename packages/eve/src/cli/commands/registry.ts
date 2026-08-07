@@ -31,6 +31,9 @@ export interface AddCommandOptions {
   overwrite?: boolean;
   skipSetup?: boolean;
   yes?: boolean;
+  headless?: boolean;
+  json?: boolean;
+  answers?: Record<string, unknown>;
   /** Suppresses the registry SDK's terminal-native progress output. */
   silent?: boolean;
 }
@@ -527,7 +530,14 @@ export async function runAddCommand(
               appRoot,
               item: packageItem,
               setups,
-              options: { yes: options.yes, prompter, signal: options.signal },
+              options: {
+                yes: options.yes,
+                headless: options.headless,
+                json: options.json,
+                answers: options.answers,
+                prompter,
+                signal: options.signal,
+              },
               dependencies,
               cancelledReminder: setupReminder(packageItem, "cancelled"),
               resumeCommand: setupResumeCommand(packageItem),
@@ -566,12 +576,12 @@ export async function runAddCommand(
     const interactive =
       dependencies.hasInteractiveTerminal?.() ??
       defaultAddCommandDependencies.hasInteractiveTerminal!();
-    if (options.skipSetup === true || (!options.yes && !interactive)) {
+    if (options.skipSetup === true || (!options.headless && !options.yes && !interactive)) {
       logger.log(setupReminder(item, "skipped"));
       return;
     }
 
-    if (!options.yes) {
+    if (!options.headless && !options.yes) {
       try {
         const prompter =
           options.prompter ??

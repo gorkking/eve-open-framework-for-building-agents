@@ -1,3 +1,6 @@
+import { headlessAsker, InteractionRequired, withAnswers, withPolicy } from "#setup/ask.js";
+import { createHeadlessPrompter } from "#setup/headless.js";
+import { SetupPrerequisiteRequired } from "#setup/integrations/shared/prerequisite.js";
 import { createPrompter, type Prompter } from "#setup/prompter.js";
 import { createRegistrySetupClient } from "#setup/registry-setup-client.js";
 import {
@@ -11,6 +14,9 @@ import type { RegistryCommandLogger } from "./registry.js";
 
 export interface IntegrationSetupOptions {
   yes?: boolean;
+  headless?: boolean;
+  json?: boolean;
+  answers?: Record<string, unknown>;
   signal?: AbortSignal;
 }
 
@@ -37,12 +43,22 @@ export async function runIntegrationSetupCommand(
 
   const client = createRegistrySetupClient({ signal: options.signal });
   try {
-    const prompter = client?.prompter ?? dependencies.createPrompter?.() ?? createPrompter();
+    const headless = options.headless === true;
+    const prompter =
+      client?.prompter ??
+      dependencies.createPrompter?.() ??
+      (headless ? createHeadlessPrompter(() => {}) : createPrompter());
+    const base = headlessAsker();
+    const asker = headless
+      ? withAnswers(options.answers ?? {})(options.yes ? withPolicy("assume")(base) : base)
+      : undefined;
     const result = await runIntegrationSetup(
       kind,
       {
         appRoot,
         prompter,
+        asker,
+        interaction: headless ? "headless" : "interactive",
         signal: client?.signal ?? options.signal,
         yes: options.yes,
       },
@@ -57,7 +73,25 @@ export async function runIntegrationSetupCommand(
     client?.complete(result.completion);
   } catch (error) {
     client?.fail(error);
-    logger.error(error instanceof Error ? error.message : String(error));
+    if (options.headless && options.json && error instanceof InteractionRequired) {
+      logger.error(
+        JSON.stringify({
+          status: "input_required",
+          setup_mutated: false,
+          question: error.question,
+        }),
+      );
+    } else if (options.headless && options.json && error instanceof SetupPrerequisiteRequired) {
+      logger.error(
+        JSON.stringify({
+          status: "prerequisite_required",
+          setup_mutated: false,
+          prerequisite: { code: error.code, message: error.message, command: error.command },
+        }),
+      );
+    } else {
+      logger.error(error instanceof Error ? error.message : String(error));
+    }
     process.exitCode = 1;
   }
 }

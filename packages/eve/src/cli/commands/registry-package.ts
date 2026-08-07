@@ -14,6 +14,7 @@ import type { RegistrySetupCompletion } from "#setup/registry-setup-protocol.js"
 import { hasInteractiveTerminal } from "./preconditions.js";
 import type { AddCommandOptions, RegistryCommandLogger } from "./registry.js";
 import type { RegistrySetupCommand } from "./registry-setup-command.js";
+import { formatHeadlessSetupRefusal, headlessSetupContinuation } from "./setup-headless.js";
 
 export const RegistryPackageComponentSchema = z.object({
   item: z.string().min(1),
@@ -47,12 +48,26 @@ export interface RegistryPackageOperations {
 }
 
 async function selectComponents(
+  logger: RegistryCommandLogger,
   item: string,
   components: readonly RegistryPackageComponent[],
   options: AddCommandOptions & { prompter?: Prompter },
   interactive: boolean,
   getPrompter: () => Prompter,
-): Promise<readonly RegistryPackageComponent[]> {
+): Promise<readonly RegistryPackageComponent[] | undefined> {
+  if (options.headless) {
+    const raw = options.answers?.components;
+    if (raw === undefined && !options.yes) {
+      loggerHeadlessComponentRefusal(logger, item, components, options);
+      return undefined;
+    }
+    const selected = raw === undefined ? components.filter((component) => component.default) : raw;
+    if (!Array.isArray(selected)) throw new Error('Setup answer "components" must be an array.');
+    const ids = new Set(selected.map(String));
+    const unknown = [...ids].find((id) => !components.some((component) => component.item === id));
+    if (unknown !== undefined) throw new Error(`Unknown component: ${unknown}.`);
+    return components.filter((component) => ids.has(component.item));
+  }
   if (options.prompter === undefined && (options.yes === true || !interactive)) {
     return components.filter((component) => component.default);
   }
@@ -75,6 +90,45 @@ async function selectComponents(
   return components.filter((component) => selectedItems.has(component.item));
 }
 
+function loggerHeadlessComponentRefusal(
+  logger: RegistryCommandLogger,
+  item: string,
+  components: readonly RegistryPackageComponent[],
+  options: AddCommandOptions,
+): void {
+  const command = headlessSetupContinuation({
+    item,
+    installed: false,
+    answers: options.answers ?? {},
+  });
+  const question = {
+    key: "components",
+    kind: "multi-select" as const,
+    message: `Which ${item} components should be installed?`,
+    required: true,
+    recommended: components
+      .filter((component) => component.default)
+      .map((component) => component.item),
+    options: components.map((component) => ({
+      id: component.item,
+      label: component.label,
+      value: component.item,
+      hint: component.description,
+    })),
+  };
+  logger.error(
+    formatHeadlessSetupRefusal({
+      status: "input_required",
+      item,
+      installed: false,
+      setup_mutated: false,
+      question,
+      next: { command },
+    }),
+  );
+  process.exitCode = 2;
+}
+
 /** Resolves, installs, and configures the selected components of a registry package. */
 export async function runRegistryPackage(input: {
   logger: RegistryCommandLogger;
@@ -92,7 +146,15 @@ export async function runRegistryPackage(input: {
   const getPrompter = (): Prompter =>
     (prompter ??= dependencies.createPrompter?.() ?? createPrompter());
 
-  const selected = await selectComponents(item, components, options, interactive, getPrompter);
+  const selected = await selectComponents(
+    logger,
+    item,
+    components,
+    options,
+    interactive,
+    getPrompter,
+  );
+  if (selected === undefined) return false;
   const addresses = selected.map((component) => operations.itemAddress(component.item));
   const manifests = await getRegistryItems(addresses, { config });
   if (manifests.length !== selected.length) {
@@ -115,7 +177,7 @@ export async function runRegistryPackage(input: {
   let completion = emptyRegistrySetupCompletion();
   if (options.skipSetup === true) return completion;
 
-  if (options.yes !== true && options.prompter === undefined && !interactive) {
+  if (!options.headless && options.yes !== true && options.prompter === undefined && !interactive) {
     logger.log(operations.setupReminder(item));
     return completion;
   }

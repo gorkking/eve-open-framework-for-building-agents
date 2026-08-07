@@ -1,4 +1,4 @@
-import { interactiveAsker } from "#setup/ask.js";
+import { interactiveAsker, type Asker } from "#setup/ask.js";
 import { detectDeployment, projectResolutionFromDeployment } from "#setup/project-resolution.js";
 import type { Prompter } from "#setup/prompter.js";
 import { getVercelAuthStatus } from "#setup/vercel-project.js";
@@ -15,6 +15,9 @@ import type { IntegrationSetupResult } from "./types.js";
 export interface RunIntegrationSetupOptions {
   appRoot: string;
   prompter: Prompter;
+  /** Defaults to the interactive adapter; agent drivers inject an answer-backed asker. */
+  asker?: Asker;
+  interaction?: "interactive" | "headless";
   signal?: AbortSignal;
   yes?: boolean;
 }
@@ -50,8 +53,9 @@ export async function runIntegrationSetup(
     environment,
     appRoot: options.appRoot,
     ui: createIntegrationSetupUi({
-      asker: interactiveAsker(options.prompter),
+      asker: options.asker ?? interactiveAsker(options.prompter),
       prompter: options.prompter,
+      interaction: options.interaction,
     }),
     yes: options.yes,
     signal: options.signal,

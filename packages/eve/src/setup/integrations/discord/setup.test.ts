@@ -9,6 +9,7 @@ import { setupDiscord, type DiscordSetupDeps } from "./setup.js";
 function asker(answers: Record<string, string>): Asker {
   return {
     ask: async <T>(question: Question<T>) => answers[question.key] as T,
+    askEditable: vi.fn(),
     askMany: async () => [],
   };
 }
@@ -82,6 +83,7 @@ describe("Discord setup", () => {
               if (question.key === "discord-bot-token") return "bot-token" as T;
               return question.detected as T;
             },
+            askEditable: vi.fn(),
             askMany: async () => [],
           },
           prompter: createFakePrompter().prompter,

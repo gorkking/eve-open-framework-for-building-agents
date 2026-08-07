@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFakePrompter } from "#internal/testing/fake-prompter.js";
+import { InteractionRequired, select } from "#setup/ask.js";
 import { runIntegrationSetup } from "#setup/integrations/runner.js";
 
 import { runIntegrationSetupCommand } from "./integration-setup.js";
@@ -49,5 +50,45 @@ describe("runIntegrationSetupCommand", () => {
       undefined,
     );
     expect(output.errors).toEqual([]);
+  });
+
+  it("passes answer-backed headless setup to the runner", async () => {
+    vi.mocked(runIntegrationSetup).mockImplementation(async (_kind, options) => {
+      await expect(
+        options.asker?.ask(
+          select({
+            key: "mode",
+            message: "Mode?",
+            options: [{ id: "portable", label: "Portable", value: "environment" }],
+            required: true,
+          }),
+        ),
+      ).resolves.toBe("environment");
+      expect(options.interaction).toBe("headless");
+      return { kind: "done", completion: { facts: [] } };
+    });
+
+    await runIntegrationSetupCommand(logger(), "/project", "web", {
+      headless: true,
+      json: true,
+      answers: { mode: "portable" },
+    });
+  });
+
+  it("serializes structured missing input in headless JSON mode", async () => {
+    vi.mocked(runIntegrationSetup).mockRejectedValue(
+      new InteractionRequired(
+        select({ key: "mode", message: "Mode?", options: [], required: true }),
+      ),
+    );
+    const output = logger();
+
+    await runIntegrationSetupCommand(output, "/project", "web", { headless: true, json: true });
+
+    expect(JSON.parse(output.errors[0]!)).toMatchObject({
+      status: "input_required",
+      setup_mutated: false,
+      question: { key: "mode" },
+    });
   });
 });

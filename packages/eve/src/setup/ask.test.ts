@@ -30,6 +30,9 @@ function untouchableAsker(): Asker {
     ask(question): Promise<never> {
       throw new Error(`untouchableAsker was asked "${question.key}"`);
     },
+    askEditable(question): Promise<never> {
+      throw new Error(`untouchableAsker was asked "${question.key}"`);
+    },
     askMany(question): Promise<never> {
       throw new Error(`untouchableAsker was asked "${question.key}"`);
     },
@@ -122,6 +125,44 @@ describe("interactiveAsker", () => {
     expect(single).toHaveBeenCalledWith(
       expect.objectContaining({ initialValue: "blue", search: true, placeholder: "filter" }),
     );
+  });
+
+  it("preserves an editable select as one interactive prompter control", async () => {
+    const { prompter } = createFakePrompter();
+    prompter.selectEditable = async <T>() => ({
+      kind: "edited" as const,
+      value: "red" as T,
+      text: "crimson",
+    });
+    const editable = vi.spyOn(prompter, "selectEditable");
+    const events = recordingEvents();
+
+    const value = await interactiveAsker(prompter, events).askEditable({
+      key: "color",
+      message: "Pick a color",
+      options: COLOR_OPTIONS,
+      recommended: RED,
+      required: true,
+      editable: {
+        key: "color-name",
+        value: RED,
+        label: "Name",
+        recommended: "scarlet",
+      },
+    });
+
+    expect(value).toEqual({ value: RED, text: "crimson" });
+    expect(editable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Pick a color",
+        initialValue: "red",
+        editable: expect.objectContaining({ value: "red", defaultValue: "scarlet" }),
+      }),
+    );
+    expect(events.resolutions).toEqual([
+      { key: "color", value: RED, source: "asked" },
+      { key: "color-name", value: "crimson", source: "asked" },
+    ]);
   });
 
   it("renders a confirm as the repo's yes/no select and returns a boolean", async () => {
@@ -341,6 +382,45 @@ describe("withAnswers", () => {
     expect(events.resolutions).toEqual([
       { key: "colors", value: [BLUE, RED, WHITE], source: "answer" },
     ]);
+  });
+
+  it("resolves an editable selection and its text from separate stable keys", async () => {
+    const events = recordingEvents();
+    const asker = withAnswers(
+      { color: "red", "color-name": "crimson" },
+      events,
+    )(untouchableAsker());
+
+    const value = await asker.askEditable({
+      key: "color",
+      message: "Pick a color",
+      options: COLOR_OPTIONS,
+      required: true,
+      editable: { key: "color-name", value: RED, label: "Name", recommended: "scarlet" },
+    });
+
+    expect(value).toEqual({ value: RED, text: "crimson" });
+    expect(events.resolutions).toEqual([
+      { key: "color", value: RED, source: "answer" },
+      { key: "color-name", value: "crimson", source: "answer" },
+    ]);
+  });
+
+  it("refuses the editable text before mutation when only its option is answered", async () => {
+    const asker = withAnswers({ color: "red" })(headlessAsker());
+
+    await expect(
+      asker.askEditable({
+        key: "color",
+        message: "Pick a color",
+        options: COLOR_OPTIONS,
+        required: true,
+        editable: { key: "color-name", value: RED, label: "Name", recommended: "scarlet" },
+      }),
+    ).rejects.toMatchObject({
+      name: "InteractionRequired",
+      question: expect.objectContaining({ key: "color-name" }),
+    });
   });
 
   it("rejects an unknown multi-select id naming the alternatives, and a non-array answer", async () => {

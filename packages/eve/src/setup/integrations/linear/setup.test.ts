@@ -21,7 +21,7 @@ function deps(): LinearSetupDeps {
 function recommendedAsker(): Asker {
   const ask = async <T>(question: Question<T>): Promise<T> => question.recommended as T;
   const askMany: Asker["askMany"] = async () => [];
-  return { ask, askMany };
+  return { ask, askEditable: vi.fn(), askMany };
 }
 
 describe("Linear setup", () => {

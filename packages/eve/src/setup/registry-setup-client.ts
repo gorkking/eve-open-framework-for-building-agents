@@ -1,3 +1,5 @@
+import { InteractionRequired } from "./ask.js";
+import { SetupPrerequisiteRequired } from "./integrations/shared/prerequisite.js";
 import type {
   EditableSelectOptions,
   MultiSelectOptions,
@@ -31,7 +33,26 @@ function send(process: SetupProcess, message: RegistrySetupChildMessage): void {
   process.send(message);
 }
 
-function registrySetupError(error: unknown): { message: string; details?: readonly string[] } {
+function registrySetupError(error: unknown): {
+  message: string;
+  details?: readonly string[];
+  refusal?: import("./registry-setup-protocol.js").RegistrySetupRefusal;
+} {
+  if (error instanceof InteractionRequired) {
+    return {
+      message: error.message,
+      refusal: { status: "input_required", question: error.question },
+    };
+  }
+  if (error instanceof SetupPrerequisiteRequired) {
+    return {
+      message: error.message,
+      refusal: {
+        status: "prerequisite_required",
+        prerequisite: { code: error.code, message: error.message, command: error.command },
+      },
+    };
+  }
   if (!(error instanceof Error)) return { message: String(error) };
   const details = error.stack
     ?.split("\n")

@@ -9,6 +9,7 @@ import { WizardCancelledError } from "../step.js";
 
 const unusedAsker: Asker = {
   ask: async <T>() => undefined as T,
+  askEditable: async <T>() => ({ value: undefined as T }),
   askMany: async () => [],
 };
 
@@ -19,6 +20,7 @@ function context(prompter = createFakePrompter().prompter) {
     ui: {
       asker: unusedAsker,
       prompter,
+      interaction: "interactive" as const,
       confirm: async () => false,
       nextSteps: () => {},
     },

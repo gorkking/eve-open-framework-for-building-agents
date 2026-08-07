@@ -29,9 +29,17 @@ export type RegistrySetupCompletion = {
   };
 };
 
+export type RegistrySetupRefusal =
+  | { status: "input_required"; question: import("./ask.js").AnyQuestion }
+  | {
+      status: "prerequisite_required";
+      prerequisite: { code: string; message: string; command: string };
+    };
+
 export type RegistrySetupError = {
   message: string;
   details?: readonly string[];
+  refusal?: RegistrySetupRefusal;
 };
 
 export type RegistrySetupOutcome =

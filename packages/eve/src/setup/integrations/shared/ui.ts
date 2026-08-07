@@ -5,6 +5,7 @@ import type { Prompter } from "../../prompter.js";
 export interface IntegrationSetupUi {
   readonly asker: Asker;
   readonly prompter: Prompter;
+  readonly interaction: "interactive" | "headless";
   confirm(input: { key: string; message: string; recommended?: boolean }): Promise<boolean>;
   nextSteps(lines: readonly string[]): void;
 }
@@ -13,9 +14,11 @@ export interface IntegrationSetupUi {
 export function createIntegrationSetupUi(input: {
   asker: Asker;
   prompter: Prompter;
+  interaction?: "interactive" | "headless";
 }): IntegrationSetupUi {
   return {
     ...input,
+    interaction: input.interaction ?? "interactive",
     async confirm(question) {
       try {
         return await input.asker.ask(confirm(question));
