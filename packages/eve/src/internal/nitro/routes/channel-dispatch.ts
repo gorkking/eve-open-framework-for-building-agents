@@ -12,6 +12,7 @@ import { readTrustedDevelopmentClientAddress } from "#internal/nitro/dev-client-
 import { DEVELOPMENT_WORKFLOW_SECRET_ENV } from "#internal/workflow/development-world-protocol.js";
 import {
   attachAgentInfoRouteResponse,
+  attachRemoteAgentStreamHeadersResolver,
   attachRouteSessionCreator,
 } from "#internal/nitro/routes/channel-route-context.js";
 import type { NitroArtifactsConfig } from "#internal/nitro/routes/runtime-artifacts.js";
@@ -275,6 +276,9 @@ function buildRouteArgs(
         requestId,
       }),
   );
+  if (bundle.resolveRemoteAgentStreamHeaders !== undefined) {
+    attachRemoteAgentStreamHeadersResolver(args, bundle.resolveRemoteAgentStreamHeaders);
+  }
 
   return {
     args,
