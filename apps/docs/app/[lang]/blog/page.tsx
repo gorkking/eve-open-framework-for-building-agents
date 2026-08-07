@@ -27,19 +27,9 @@ const BlogPage = () => (
         {posts.map((post) => (
           <li key={post.href}>
             <Link
-              className="group flex h-full flex-col overflow-hidden rounded-lg border border-gray-alpha-400 bg-background-100 no-underline outline-none transition-colors hover:border-gray-alpha-500 hover:bg-gray-alpha-100 focus-visible:border-gray-alpha-600 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 focus-visible:ring-offset-background-100 motion-reduce:transition-none"
+              className="flex h-full flex-col rounded-lg border border-gray-alpha-400 bg-background-100 no-underline outline-none transition-colors hover:border-gray-alpha-500 hover:bg-gray-alpha-100 focus-visible:border-gray-alpha-600 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 focus-visible:ring-offset-background-100 motion-reduce:transition-none"
               href={post.href}
             >
-              <div className="relative aspect-[2400/1256] overflow-hidden border-b border-gray-alpha-400 bg-black">
-                <Image
-                  alt=""
-                  className="object-cover transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none"
-                  fill
-                  priority
-                  sizes="(min-width: 1024px) 344px, (min-width: 640px) 50vw, 100vw"
-                  src={post.image}
-                />
-              </div>
               <div className="flex flex-1 flex-col p-4">
                 <h2 className="text-heading-16 text-gray-1000">{post.title}</h2>
                 <p className="mt-2 text-[14px] leading-[1.3] text-gray-800">{post.description}</p>
