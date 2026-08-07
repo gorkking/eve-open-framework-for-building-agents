@@ -1,7 +1,10 @@
 import type { SessionAuthContext } from "#channel/types.js";
 
 import { extractErrorId, formatErrorHint } from "#internal/logging.js";
-import { renderAuthorizationRequired } from "#public/channels/authorization-rendering.js";
+import {
+  authorizationDisplayName,
+  renderAuthorizationRequired,
+} from "#public/channels/authorization-rendering.js";
 import type { ConnectionAuthorizationOutcome } from "#protocol/message.js";
 import { splitTeamsMessageText, type TeamsMention } from "#public/channels/teams/api.js";
 import {
@@ -113,7 +116,7 @@ export const defaultEvents: TeamsChannelEvents = {
   },
 
   async "authorization.required"(event, channel, _ctx) {
-    const displayName = event.authorization?.displayName ?? formatConnectionDisplayName(event.name);
+    const displayName = authorizationDisplayName(event.name, event.authorization?.displayName);
     const url = event.authorization?.url;
     const isPersonal = channel.state.conversationType === "personal";
     const text = isPersonal
@@ -173,7 +176,7 @@ export const defaultEvents: TeamsChannelEvents = {
 
     const activityId = channel.state.pendingAuthActivityId;
     if (!activityId) return;
-    const displayName = event.authorization?.displayName ?? formatConnectionDisplayName(event.name);
+    const displayName = authorizationDisplayName(event.name, event.authorization?.displayName);
     const text = buildAuthCompletedText({
       displayName,
       outcome: event.outcome as ConnectionAuthorizationOutcome,

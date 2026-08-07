@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  authorizationDisplayName,
   renderAuthorizationCompleted,
   renderAuthorizationRequired,
 } from "#public/channels/authorization-rendering.js";
 
 describe("connection authorization rendering", () => {
+  it("falls back to the connection name for a blank authored display name", () => {
+    expect(authorizationDisplayName("notion", "  ")).toBe("Notion");
+  });
+
   it("renders every challenge field", () => {
     expect(
       renderAuthorizationRequired({

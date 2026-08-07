@@ -120,6 +120,26 @@ describe("defaultEvents authorization.required", () => {
     expect(JSON.stringify(message.blocks)).toContain("OTB-DGO");
   });
 
+  it("delivers description-only challenges ephemerally", async () => {
+    const { channel, postEphemeral } = buildChannelStub({ triggeringUserId: "U777" });
+
+    await defaultEvents["authorization.required"]!(
+      {
+        description: "Approve the request in your provider app.",
+        name: "notion",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn_0",
+      },
+      channel,
+      sessionCtx,
+    );
+
+    expect(postEphemeral).toHaveBeenCalledWith("U777", {
+      text: expect.stringContaining("Approve the request in your provider app."),
+    });
+  });
+
   it("renders the challenge displayName instead of the title-cased connection name", async () => {
     const { channel, post, postEphemeral } = buildChannelStub({ triggeringUserId: "U777" });
 

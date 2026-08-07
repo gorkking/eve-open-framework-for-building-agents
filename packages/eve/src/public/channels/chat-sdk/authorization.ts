@@ -49,7 +49,10 @@ export const defaultAuthorizationEvents = {
     } catch (error) {
       // The public status still explains why the session is blocked when an
       // adapter cannot deliver a private challenge.
-      log.warn("failed to deliver connection authorization challenge privately", { error });
+      log.warn("failed to deliver connection authorization challenge privately", {
+        error,
+        name: event.name,
+      });
     }
   },
 

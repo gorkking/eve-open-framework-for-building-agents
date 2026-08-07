@@ -81,7 +81,12 @@ export const defaultEvents: TelegramChannelEvents = {
 
     await channel.telegram.post(`Authorization required for ${displayName}.`);
     const userId = ctx.session.auth.current?.attributes.user_id;
-    if (!userId) return;
+    if (!userId) {
+      log.warn("Telegram private auth challenge delivery skipped without a user id", {
+        name: event.name,
+      });
+      return;
+    }
     try {
       const response = await channel.telegram.request("sendMessage", {
         chat_id: userId,

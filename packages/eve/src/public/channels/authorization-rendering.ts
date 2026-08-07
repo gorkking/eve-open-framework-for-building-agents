@@ -1,14 +1,14 @@
 import type { AuthorizationOutcome } from "#protocol/message.js";
+import type { ConnectionAuthorizationChallenge } from "#public/connections/errors.js";
 
-interface AuthorizationPresentation {
-  readonly displayName?: string;
-  readonly instructions?: string;
-  readonly url?: string;
-  readonly userCode?: string;
-}
+type AuthorizationPresentation = Pick<
+  ConnectionAuthorizationChallenge,
+  "displayName" | "instructions" | "url" | "userCode"
+>;
 
 export function authorizationDisplayName(name: string, displayName: string | undefined): string {
-  if (displayName !== undefined) return displayName;
+  const authoredDisplayName = displayName?.trim();
+  if (authoredDisplayName) return authoredDisplayName;
   if (name.length === 0) return name;
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
