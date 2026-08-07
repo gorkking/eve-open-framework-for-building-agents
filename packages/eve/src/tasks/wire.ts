@@ -1,5 +1,5 @@
-import type { TaskCommand, TaskRunInboundPayload } from "#tasks/types.js";
-import { TASK_AUTHORIZATION_REQUEST_ID } from "#tasks/types.js";
+import type { TaskCommand, TaskRunInboundPayload, TaskUsage } from "#tasks/types.js";
+import { TASK_AUTHORIZATION_REQUEST_ID, readTaskUsage } from "#tasks/types.js";
 
 /**
  * Translates one inbound hook payload into a lifecycle command.
@@ -35,13 +35,22 @@ export function translateTaskInboundPayload(
       const result = payload.results[0];
       if (result === undefined) return undefined;
       if (result.outcome !== undefined) {
+        // Usage retention: the settled outcome's `usageDelta` survives into
+        // the terminal command so the snapshot keeps the child's spend.
+        const usage = readTaskUsage(result.outcome.usageDelta);
         switch (result.outcome.result.kind) {
           case "succeeded":
-            return { data: result.output, kind: "complete", lifecycle: result.outcome.kind };
+            return withUsage(
+              { data: result.output, kind: "complete", lifecycle: result.outcome.kind },
+              usage,
+            );
           case "failed":
-            return { data: result.output, kind: "fail", lifecycle: result.outcome.kind };
+            return withUsage(
+              { data: result.output, kind: "fail", lifecycle: result.outcome.kind },
+              usage,
+            );
           case "cancelled":
-            return { kind: "cancel", lifecycle: result.outcome.kind };
+            return withUsage({ kind: "cancel", lifecycle: result.outcome.kind }, usage);
         }
       }
       return result.isError === true
@@ -69,4 +78,12 @@ export function translateTaskInboundPayload(
     default:
       return undefined;
   }
+}
+
+function withUsage(
+  command: Extract<TaskCommand, { kind: "complete" | "fail" | "cancel" }>,
+  usage: TaskUsage | undefined,
+): TaskCommand {
+  if (usage === undefined) return command;
+  return { ...command, usage };
 }

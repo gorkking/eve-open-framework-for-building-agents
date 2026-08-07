@@ -419,6 +419,11 @@ than MCP compatibility.
 - Completing the parent session cancels its live tasks.
 - Resuming an existing child session creates a new task with a new task ID and the same
   `childSessionId`.
+- Background budgets are best-effort: each local child is capped from the parent's remainder at
+  its dispatch time, but no reservation couples sequential dispatches, so aggregate grants can
+  exceed the parent's remaining session limits. The child's reported usage is retained on the
+  terminal task snapshot (internal, not model-visible) so strict accounting can land later
+  without data loss.
 
 ## Open questions
 
