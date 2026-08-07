@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Import skills with structured or non-string metadata without failing, and warn when unsupported frontmatter requests model-invocation or tool-permission behavior that eve does not enforce.
+Import skills with structured or non-string metadata without failing, treating metadata outside eve's modeled shape like other unmodeled frontmatter.

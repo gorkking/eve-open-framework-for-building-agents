@@ -8,7 +8,6 @@ import {
   DISCOVER_SKILL_COLLISION,
   DISCOVER_SKILL_ENTRY_NOT_DIRECTORY,
   DISCOVER_SKILL_FRONTMATTER_INVALID,
-  DISCOVER_SKILL_FRONTMATTER_UNSUPPORTED,
   DISCOVER_SKILL_MARKDOWN_MISSING,
   discoverSkills,
 } from "#discover/skills.js";
@@ -182,25 +181,8 @@ describe("discoverSkills (memory)", () => {
     });
     const namedPackageRoot = join(resolve(project.agentRoot), "skills", "named-package");
 
-    expect(result.diagnostics).toEqual([
-      {
-        code: DISCOVER_SKILL_FRONTMATTER_INVALID,
-        message: expect.stringContaining('Expected "description" frontmatter to be a string.'),
-        severity: "error",
-        sourcePath: join(resolve(project.agentRoot), "skills", "bad-skill", "SKILL.md"),
-      },
-      {
-        code: DISCOVER_SKILL_FRONTMATTER_UNSUPPORTED,
-        message: expect.stringContaining('"disable-model-invocation"'),
-        severity: "warning",
-        sourcePath: join(resolve(project.agentRoot), "skills", "named-package", "SKILL.md"),
-      },
-      {
-        code: DISCOVER_SKILL_FRONTMATTER_UNSUPPORTED,
-        message: expect.stringContaining('"allowed-tools"'),
-        severity: "warning",
-        sourcePath: join(resolve(project.agentRoot), "skills", "named-package", "SKILL.md"),
-      },
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      DISCOVER_SKILL_FRONTMATTER_INVALID,
     ]);
     expect(result.skills).toEqual([
       {

@@ -141,20 +141,6 @@ export function lowerSkillMarkdown(
   source: string,
   input: LowerSkillMarkdownInput = {},
 ): SkillDefinition {
-  return lowerSkillMarkdownWithFrontmatter(source, input).definition;
-}
-
-/**
- * Lowers skill markdown while retaining its parsed frontmatter for discovery
- * diagnostics. Unmodeled frontmatter remains a no-op in the definition.
- */
-export function lowerSkillMarkdownWithFrontmatter(
-  source: string,
-  input: LowerSkillMarkdownInput = {},
-): {
-  readonly definition: SkillDefinition;
-  readonly frontmatter: Readonly<Record<string, unknown>>;
-} {
   const document = parseMarkdownDocument(source);
   const slug = input.slug;
 
@@ -179,15 +165,12 @@ export function lowerSkillMarkdownWithFrontmatter(
 
   applyOptionalSkillFrontmatter(rawDefinition, frontmatter);
 
-  return {
-    definition: defineSkill(
-      normalizeSkillDefinition(
-        rawDefinition,
-        "Expected authored skill markdown to match the public eve shape.",
-      ),
+  return defineSkill(
+    normalizeSkillDefinition(
+      rawDefinition,
+      "Expected authored skill markdown to match the public eve shape.",
     ),
-    frontmatter,
-  };
+  );
 }
 
 function startsWithFrontmatterFence(source: string): boolean {

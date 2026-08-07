@@ -1,12 +1,8 @@
 import { join, relative, resolve } from "node:path";
 
-import { lowerSkillMarkdownWithFrontmatter } from "#internal/helpers/markdown.js";
+import { lowerSkillMarkdown } from "#internal/helpers/markdown.js";
 import { toErrorMessage } from "#shared/errors.js";
-import {
-  createDiscoverErrorDiagnostic,
-  createDiscoverWarningDiagnostic,
-  type DiscoverDiagnostic,
-} from "#discover/diagnostics.js";
+import { createDiscoverErrorDiagnostic, type DiscoverDiagnostic } from "#discover/diagnostics.js";
 import {
   classifySkillPackageEntry,
   classifySkillsDirectoryEntry,
@@ -30,7 +26,6 @@ export const DISCOVER_SKILLS_DIRECTORY_INVALID = "discover/skills-directory-inva
 export const DISCOVER_SKILL_COLLISION = "discover/skill-collision";
 export const DISCOVER_SKILL_ENTRY_NOT_DIRECTORY = "discover/skill-entry-not-directory";
 export const DISCOVER_SKILL_FRONTMATTER_INVALID = "discover/skill-frontmatter-invalid";
-export const DISCOVER_SKILL_FRONTMATTER_UNSUPPORTED = "discover/skill-frontmatter-unsupported";
 export const DISCOVER_SKILL_MARKDOWN_MISSING = "discover/skill-markdown-missing";
 
 /**
@@ -238,10 +233,10 @@ async function discoverPackagedSkill(input: {
     };
   }
 
-  let lowered: ReturnType<typeof lowerSkillMarkdownWithFrontmatter>;
+  let definition: ReturnType<typeof lowerSkillMarkdown>;
 
   try {
-    lowered = lowerSkillMarkdownWithFrontmatter(await input.source.readTextFile(skillFilePath));
+    definition = lowerSkillMarkdown(await input.source.readTextFile(skillFilePath));
   } catch (error) {
     return {
       diagnostics: [
@@ -257,7 +252,6 @@ async function discoverPackagedSkill(input: {
     };
   }
 
-  const { definition, frontmatter } = lowered;
   const packagePaths = await discoverSkillPackagePaths(input.source, input.skillRootPath);
   const skillSourceRefInput: {
     assetsPath?: string;
@@ -305,7 +299,7 @@ async function discoverPackagedSkill(input: {
   }
 
   return {
-    diagnostics: createUnsupportedSkillFrontmatterDiagnostics(frontmatter, skillFilePath),
+    diagnostics: [],
     logicalPath,
     skill: createSkillPackageSourceRef(skillSourceRefInput),
     skillId: input.skillId,
@@ -325,15 +319,12 @@ async function discoverFlatMarkdownSkill(input: {
 }> {
   const skillId = stripMarkdownExtension(input.skillFileName);
   const logicalPath = normalizeLogicalPath(join(input.logicalSkillsPath, input.skillFileName));
-  let lowered: ReturnType<typeof lowerSkillMarkdownWithFrontmatter>;
+  let definition: ReturnType<typeof lowerSkillMarkdown>;
 
   try {
-    lowered = lowerSkillMarkdownWithFrontmatter(
-      await input.source.readTextFile(input.skillFilePath),
-      {
-        slug: skillId,
-      },
-    );
+    definition = lowerSkillMarkdown(await input.source.readTextFile(input.skillFilePath), {
+      slug: skillId,
+    });
   } catch (error) {
     return {
       diagnostics: [
@@ -350,13 +341,10 @@ async function discoverFlatMarkdownSkill(input: {
   }
 
   return {
-    diagnostics: createUnsupportedSkillFrontmatterDiagnostics(
-      lowered.frontmatter,
-      input.skillFilePath,
-    ),
+    diagnostics: [],
     logicalPath,
     skill: {
-      definition: lowered.definition,
+      definition,
       sourceKind: "markdown",
       logicalPath,
       sourceId: createPathDerivedSourceId(logicalPath),
@@ -432,35 +420,6 @@ async function discoverSkillPackagePaths(
   }
 
   return packagePaths;
-}
-
-function createUnsupportedSkillFrontmatterDiagnostics(
-  frontmatter: Readonly<Record<string, unknown>>,
-  skillFilePath: string,
-): DiscoverDiagnostic[] {
-  const diagnostics: DiscoverDiagnostic[] = [];
-
-  if (frontmatter["disable-model-invocation"] === true) {
-    diagnostics.push(
-      createDiscoverWarningDiagnostic({
-        code: DISCOVER_SKILL_FRONTMATTER_UNSUPPORTED,
-        message: `The "disable-model-invocation" frontmatter in "${skillFilePath}" has no effect in eve; this skill remains available for model-directed loading.`,
-        sourcePath: skillFilePath,
-      }),
-    );
-  }
-
-  if (frontmatter["allowed-tools"] !== undefined) {
-    diagnostics.push(
-      createDiscoverWarningDiagnostic({
-        code: DISCOVER_SKILL_FRONTMATTER_UNSUPPORTED,
-        message: `The "allowed-tools" frontmatter in "${skillFilePath}" has no effect in eve; skill frontmatter cannot grant tool permissions.`,
-        sourcePath: skillFilePath,
-      }),
-    );
-  }
-
-  return diagnostics;
 }
 
 function formatSkillDiscoveryError(skillFilePath: string, error: unknown): string {
