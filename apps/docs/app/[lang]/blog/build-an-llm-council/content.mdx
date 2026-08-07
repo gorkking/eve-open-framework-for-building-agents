@@ -4,23 +4,6 @@ In the next few minutes, you’ll build a hosted version with [eve](https://eve.
 
 For the full reference implementation, or to follow along in code, see the [eve LLM Council repository](https://github.com/cmpadden/eve-llm-council).
 
-## Build it with your coding agent
-
-Give your coding agent this prompt:
-
-```markdown
-Build a Next.js LLM council with eve and Vercel AI Gateway.
-
-Define a root eve agent and four filesystem-defined subagents using these model IDs:
-
-- `xai/grok-4.5`
-- `anthropic/claude-opus-5`
-- `openai/gpt-5.6-sol`
-- `moonshotai/kimi-k3`
-
-Send each subagent the same prompt in parallel. Stream every child session to the UI. Have the root agent return a direct answer of at most 75 words and an agreement score for each member. Display each response, token usage, and cost.
-```
-
 <img
   alt="Four model responses connected to a council answer and agreement scores"
   height={1496}
