@@ -1,10 +1,15 @@
 import type { RuntimeSession } from "#execution/agent-handle-dispatch.js";
 import { readLatestTaskSnapshot } from "#execution/tasks/run-control.js";
 import { getAgentHandleStore, type AgentHandle } from "#harness/handles/store.js";
+import { settleAgentTurn } from "#harness/handles/transitions.js";
 import type { RuntimeActionResult, RuntimeToolCallActionRequest } from "#runtime/actions/types.js";
 import { taskViewsToJson } from "#tasks/json.js";
-import { findSessionTaskEntry, type SessionTaskIndexEntry } from "#tasks/session-index.js";
-import type { TaskView } from "#tasks/types.js";
+import {
+  findSessionTaskEntry,
+  getSessionTaskIndex,
+  type SessionTaskIndexEntry,
+} from "#tasks/session-index.js";
+import { isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
 
 /**
  * Result and lookup helpers shared by the task-control executors
@@ -67,6 +72,67 @@ export function findAddressableHandle(
         candidate.phase === "running" || candidate.phase === "parked",
     )
     .find((candidate) => candidate.address.sessionId === childSessionId);
+}
+
+/** Finds the task that reserves a child for this batch or is still nonterminal. */
+export async function findConflictingTaskForChildSession(input: {
+  readonly childSessionId: string;
+  readonly parentStepIndex?: number;
+  readonly parentTurnId: string;
+  readonly session: RuntimeSession;
+}): Promise<{ readonly entry: SessionTaskIndexEntry; readonly view: TaskView } | undefined> {
+  for (const entry of getSessionTaskIndex(input.session.state)) {
+    if (entry.childSessionId !== input.childSessionId) continue;
+    const view =
+      (await readLatestTaskSnapshot({ taskRunId: entry.taskRunId })) ??
+      createPendingTaskView(entry.taskId);
+    if (
+      (entry.createdByTurnId === input.parentTurnId &&
+        entry.createdByStepIndex === input.parentStepIndex) ||
+      !isTerminalTaskStatus(view.status)
+    ) {
+      return { entry, view };
+    }
+  }
+  return undefined;
+}
+
+/** Applies actual terminal task outcomes to handles left running by task receipts. */
+export async function reconcileSettledTaskHandles(
+  session: RuntimeSession,
+): Promise<RuntimeSession> {
+  let nextSession = session;
+  for (const entry of getSessionTaskIndex(session.state)) {
+    const view = await readLatestTaskSnapshot({ taskRunId: entry.taskRunId });
+    if (
+      view === undefined ||
+      !isTerminalTaskStatus(view.status) ||
+      view.metadata.childLifecycle === undefined
+    ) {
+      continue;
+    }
+    const result =
+      view.status === "completed"
+        ? { kind: "succeeded" as const, output: view.lastOutput?.data ?? "" }
+        : view.status === "failed"
+          ? { error: view.lastOutput?.data ?? "Task failed.", kind: "failed" as const }
+          : { kind: "cancelled" as const };
+    const settled = settleAgentTurn(nextSession, {
+      operationId: entry.operationId,
+      outcome: {
+        kind: view.metadata.childLifecycle,
+        result,
+        usageDelta: {
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      },
+    });
+    if (settled.kind === "settled") nextSession = settled.session;
+  }
+  return nextSession;
 }
 
 /** One successful task-control result carrying full task views. */

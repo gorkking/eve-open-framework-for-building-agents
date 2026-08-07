@@ -1,12 +1,12 @@
 import type { TaskCommand, TaskView } from "#tasks/types.js";
-import { isTerminalTaskStatus } from "#tasks/types.js";
+import { isTerminalTaskStatus, readTaskInputRequestId } from "#tasks/types.js";
 
 /**
  * Outcome of applying one command to a task snapshot.
  *
  * - `accepted`: the state changed; the new view must be appended.
  * - `noop`: the command is recognized and benign (idempotent cancel,
- *   redundant resume); nothing changed and nothing is appended.
+ *   stale answer); nothing changed and nothing is appended.
  * - `rejected`: the command is invalid for the current status; the
  *   reason is diagnostic only.
  */
@@ -50,7 +50,10 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
       return {
         outcome: "accepted",
         view: {
-          metadata: view.metadata,
+          metadata:
+            command.lifecycle === undefined
+              ? view.metadata
+              : { ...view.metadata, childLifecycle: command.lifecycle },
           lastOutput: { data: command.data, type: "result" },
           status: "completed",
           statusMessage: view.statusMessage,
@@ -61,7 +64,10 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
       return {
         outcome: "accepted",
         view: {
-          metadata: view.metadata,
+          metadata:
+            command.lifecycle === undefined
+              ? view.metadata
+              : { ...view.metadata, childLifecycle: command.lifecycle },
           lastOutput: { data: command.data, type: "error" },
           status: "failed",
           statusMessage: view.statusMessage,
@@ -72,7 +78,10 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
       return {
         outcome: "accepted",
         view: {
-          metadata: view.metadata,
+          metadata:
+            command.lifecycle === undefined
+              ? view.metadata
+              : { ...view.metadata, childLifecycle: command.lifecycle },
           status: "cancelled",
           statusMessage: view.statusMessage,
           taskId: view.taskId,
@@ -89,9 +98,35 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
           taskId: view.taskId,
         },
       };
-    case "resume-working": {
-      if (view.status === "working") {
+    case "answered": {
+      if (view.status !== "input_required") {
         return { outcome: "noop", view };
+      }
+
+      const answered = new Set(command.requestIds);
+      const outstanding = view.inputRequests ?? [];
+      const remaining = outstanding.filter((request) => {
+        const requestId = readTaskInputRequestId(request);
+        return requestId === undefined || !answered.has(requestId);
+      });
+      // An answer that matches nothing outstanding is stale: the batch
+      // it was written against was already cleared or replaced. Leaving
+      // the current batch intact is what stops it from unblocking a
+      // question the human never saw.
+      if (remaining.length === outstanding.length) {
+        return { outcome: "noop", view };
+      }
+      if (remaining.length > 0) {
+        return {
+          outcome: "accepted",
+          view: {
+            inputRequests: remaining,
+            metadata: view.metadata,
+            status: "input_required",
+            statusMessage: view.statusMessage,
+            taskId: view.taskId,
+          },
+        };
       }
 
       return {
@@ -105,6 +140,17 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
       };
     }
     case "describe": {
+      if (
+        view.metadata.childTurnId !== undefined &&
+        view.metadata.childSessionId !== undefined &&
+        view.metadata.childSessionId !== command.childSessionId
+      ) {
+        return {
+          outcome: "rejected",
+          reason: `Task child session "${command.childSessionId}" does not match the active turn owner.`,
+          view,
+        };
+      }
       if (view.metadata.childSessionId === command.childSessionId) {
         return { outcome: "noop", view };
       }
@@ -114,6 +160,42 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
         view: {
           ...view,
           metadata: { ...view.metadata, childSessionId: command.childSessionId },
+        },
+      };
+    }
+    case "start-turn": {
+      if (command.taskId !== view.taskId) {
+        return {
+          outcome: "rejected",
+          reason: `Task turn identity "${command.taskId}" does not match "${view.taskId}".`,
+          view,
+        };
+      }
+      if (
+        view.metadata.childSessionId !== undefined &&
+        view.metadata.childSessionId !== command.childSessionId
+      ) {
+        return {
+          outcome: "rejected",
+          reason: `Task child session "${command.childSessionId}" does not match "${view.metadata.childSessionId}".`,
+          view,
+        };
+      }
+      if (
+        view.metadata.childSessionId === command.childSessionId &&
+        view.metadata.childTurnId === command.childTurnId
+      ) {
+        return { outcome: "noop", view };
+      }
+      return {
+        outcome: "accepted",
+        view: {
+          ...view,
+          metadata: {
+            ...view.metadata,
+            childSessionId: command.childSessionId,
+            childTurnId: command.childTurnId,
+          },
         },
       };
     }

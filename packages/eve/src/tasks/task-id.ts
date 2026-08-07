@@ -42,3 +42,9 @@ export function deriveTaskCommandToken(input: {
     .digest("hex")
     .slice(0, 32)}`;
 }
+
+/** Reads the non-secret task id embedded in a private task command token. */
+export function readTaskIdFromCommandToken(token: string): string | undefined {
+  const match = /^task:(task_[^:]+):[a-f0-9]{32}$/.exec(token);
+  return match?.[1];
+}

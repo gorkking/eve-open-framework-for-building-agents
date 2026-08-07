@@ -22,6 +22,8 @@ export type RunSessionLimits = Pick<
 /** Identifies the session turn to cancel. */
 export interface CancelTurnInput {
   readonly sessionId: string;
+  /** Framework task whose queued child deliveries should be discarded. */
+  readonly taskId?: string;
   /** Limits the request to the turn the caller observed. */
   readonly turnId?: string;
 }
@@ -151,6 +153,8 @@ export type EventEmitFn = (event: UnstampedMessageStreamEvent) => Promise<void>;
 export interface TurnCaller {
   readonly callId: string;
   readonly subagentName: string;
+  /** Present when this turn is the executor for a durable background task. */
+  readonly taskId?: string;
   readonly replyTo:
     | { readonly kind: "hook"; readonly token: string }
     | { readonly kind: "callback"; readonly url: string };
@@ -173,6 +177,11 @@ export interface DeliverPayload {
   readonly message?: string | UserContent;
   readonly context?: readonly string[];
   readonly outputSchema?: JsonObject;
+  /** Framework-only task HITL envelopes consumed before adapter/model delivery. */
+  readonly taskInputRequests?: readonly {
+    readonly hookPayload: SubagentInputRequestHookPayload;
+    readonly taskId: string;
+  }[];
   readonly [key: string]: unknown;
 }
 
@@ -184,8 +193,10 @@ export type SessionCommand =
       readonly kind: "send";
       readonly payload: DeliverPayload;
       readonly requestId?: string;
+      /** Replay-stable identity for one task-owned child delivery. */
+      readonly taskDeliveryId?: string;
     }
-  | { readonly kind: "cancel"; readonly turnId?: string }
+  | { readonly kind: "cancel"; readonly taskId?: string; readonly turnId?: string }
   | { readonly kind: "compact" }
   | { readonly kind: "clear" }
   | { readonly kind: "reset"; readonly reason?: string };
@@ -235,6 +246,7 @@ export interface DeliverHookPayload {
   readonly caller?: TurnCaller;
   /** Inbound channel request id used only for workflow attributes. */
   readonly requestId?: string;
+  readonly taskDeliveryId?: string;
   readonly kind: "deliver";
   readonly payloads: readonly DeliverPayload[];
 }
@@ -339,6 +351,7 @@ export type HookPayload =
 export interface SessionCallback {
   readonly callId: string;
   readonly subagentName: string;
+  readonly taskId?: string;
   readonly token: string;
   readonly url: string;
 }

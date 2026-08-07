@@ -179,7 +179,6 @@ export function createWorkflowRuntime(config: {
         throw error;
       }
 
-      await waitForOwnedCommandHook(sessionCommandHookToken(run.runId), run.runId);
       if (input.continuationToken) {
         const owner = await waitForCommandHookOwner(input.continuationToken);
         if (owner.runId !== run.runId) {
@@ -190,6 +189,7 @@ export function createWorkflowRuntime(config: {
           });
         }
       }
+      await waitForOwnedCommandHook(sessionCommandHookToken(run.runId), run.runId);
 
       let events: ReadableStream<MessageStreamEvent> | undefined;
       const getEvents = () => {
@@ -311,10 +311,12 @@ function inactiveCommandResult<TCommand extends SessionCommand>(
 export async function requestWorkflowTurnCancellation(
   input: CancelTurnInput,
 ): Promise<CancelTurnResult> {
-  return await dispatchWorkflowCommand(sessionCommandHookToken(input.sessionId), {
+  const command: { kind: "cancel"; taskId?: string; turnId?: string } = {
     kind: "cancel",
-    turnId: input.turnId,
-  });
+  };
+  if (input.taskId !== undefined) command.taskId = input.taskId;
+  if (input.turnId !== undefined) command.turnId = input.turnId;
+  return await dispatchWorkflowCommand(sessionCommandHookToken(input.sessionId), command);
 }
 
 function classifyInactiveCancelTarget(error: unknown): string | undefined {

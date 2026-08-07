@@ -1,4 +1,5 @@
 import type { TaskCommand, TaskRunInboundPayload } from "#tasks/types.js";
+import { TASK_AUTHORIZATION_REQUEST_ID } from "#tasks/types.js";
 
 /**
  * Translates one inbound hook payload into a lifecycle command.
@@ -13,9 +14,14 @@ import type { TaskCommand, TaskRunInboundPayload } from "#tasks/types.js";
  * - a forwarded HITL batch marks the task `input_required` with the
  *   outstanding requests;
  * - `authorization.required` also blocks the task (the child cannot
- *   proceed without the parent's user), and `authorization.completed`
- *   returns it to `working`. Authorization payloads never enter the
- *   snapshot — only the fact that the child is blocked does.
+ *   proceed without the parent's user) under a reserved request id, and
+ *   `authorization.completed` clears exactly that id. Authorization
+ *   payloads never enter the snapshot — only the fact that the child is
+ *   blocked does.
+ *
+ * `task-answer-input` is deliberately absent: the run must forward the
+ * answers to the child before it may record them, so it builds that
+ * command itself rather than translating one here.
  *
  * Returns `undefined` for unrecognized payloads, which the run ignores.
  */
@@ -31,11 +37,11 @@ export function translateTaskInboundPayload(
       if (result.outcome !== undefined) {
         switch (result.outcome.result.kind) {
           case "succeeded":
-            return { data: result.output, kind: "complete" };
+            return { data: result.output, kind: "complete", lifecycle: result.outcome.kind };
           case "failed":
-            return { data: result.output, kind: "fail" };
+            return { data: result.output, kind: "fail", lifecycle: result.outcome.kind };
           case "cancelled":
-            return { kind: "cancel" };
+            return { kind: "cancel", lifecycle: result.outcome.kind };
         }
       }
       return result.isError === true
@@ -44,10 +50,22 @@ export function translateTaskInboundPayload(
     }
     case "subagent-input-request":
       return { inputRequests: payload.event.requests, kind: "require-input" };
+    case "task-child-turn-started":
+      return {
+        childSessionId: payload.childSessionId,
+        childTurnId: payload.childTurnId,
+        kind: "start-turn",
+        taskId: payload.taskId,
+      };
     case "subagent-authorization-event":
       return payload.event.type === "authorization.required"
-        ? { inputRequests: [{ blockedOn: "authorization" }], kind: "require-input" }
-        : { kind: "resume-working" };
+        ? {
+            inputRequests: [
+              { blockedOn: "authorization", requestId: TASK_AUTHORIZATION_REQUEST_ID },
+            ],
+            kind: "require-input",
+          }
+        : { kind: "answered", requestIds: [TASK_AUTHORIZATION_REQUEST_ID] };
     default:
       return undefined;
   }

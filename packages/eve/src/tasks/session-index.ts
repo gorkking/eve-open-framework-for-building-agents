@@ -22,13 +22,21 @@ export const SESSION_TASKS_STATE_KEY = "eve.tasks";
  * `taskId` only, and lookup verifies ownership through this index.
  */
 export interface SessionTaskIndexEntry {
+  readonly childSessionId: string;
   readonly taskId: string;
   readonly taskRunId: string;
   readonly commandToken: string;
+  readonly createdByTurnId: string;
+  readonly createdByStepIndex?: number;
+  readonly operationId: string;
 }
 
 const sessionTaskIndexEntrySchema: z.ZodType<SessionTaskIndexEntry> = z.strictObject({
+  childSessionId: z.string().min(1),
   commandToken: z.string().min(1),
+  createdByTurnId: z.string().min(1),
+  createdByStepIndex: z.number().int().nonnegative().optional(),
+  operationId: z.string().min(1),
   taskId: z.string().min(1),
   taskRunId: z.string().min(1),
 });

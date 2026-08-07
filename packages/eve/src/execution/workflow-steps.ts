@@ -1,6 +1,6 @@
 import { buildAdapterContext } from "#channel/adapter-context.js";
 import { callAdapterEventHandler, defaultDeliverResult } from "#channel/adapter.js";
-import type { DeliverPayload, SessionAuthContext, SessionCommand } from "#channel/types.js";
+import type { DeliverPayload } from "#channel/types.js";
 import { dispatchStreamEventHooks } from "#context/hook-lifecycle.js";
 import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-lifecycle.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
@@ -71,7 +71,6 @@ import {
   type TurnWorkflowDispatchInput,
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
-import { routeDeliverPayload } from "#execution/subagent-hitl-proxy.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
@@ -84,7 +83,6 @@ import {
   startWorkflowPreferLatest,
   turnWorkflowReference,
 } from "#execution/workflow-runtime.js";
-import { resumeHook } from "#internal/workflow/runtime.js";
 
 /**
  * Result of one durable harness step, consumed by the turn workflow.
@@ -614,47 +612,6 @@ export function resolveEffectiveOutputSchema(input: {
   }
 
   return session;
-}
-
-export type RoutedDeliverResult =
-  | {
-      readonly kind: "cancel-turn";
-    }
-  | {
-      readonly kind: "continue";
-      /** `undefined` when the entire payload was routed to descendants. */
-      readonly remainder: DeliverPayload | undefined;
-    };
-
-/**
- * Splits an inbound deliver payload into parent-local and
- * proxied-child buckets and forwards the child buckets via
- * `resumeHook`. Read-only: never appends a snapshot.
- */
-export async function routeProxiedDeliverStep(input: {
-  readonly auth?: SessionAuthContext | null;
-  readonly parentWritable: WritableStream<Uint8Array>;
-  readonly payload: DeliverPayload;
-  readonly sessionState: DurableSessionState;
-}): Promise<RoutedDeliverResult> {
-  "use step";
-
-  const durableSession = await readDurableSession(input.sessionState);
-  const routed = routeDeliverPayload({
-    payload: input.payload,
-    state: durableSession.state,
-  });
-
-  for (const forChild of routed.forChildren) {
-    const command = {
-      auth: input.auth,
-      kind: "send",
-      payload: forChild.payload,
-    } satisfies SessionCommand;
-    await resumeHook(forChild.childContinuationToken, command);
-  }
-
-  return routed.parentAction ?? { kind: "continue", remainder: routed.forSelf };
 }
 
 /** Starts a per-turn child workflow for the current driver session. */
