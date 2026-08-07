@@ -1,5 +1,10 @@
 import type { InputResponse } from "eve/client";
-import type { EveEvalContext, EveEvalTurn } from "eve/evals";
+import type { EveEvalContext, EveEvalSession, EveEvalTurn } from "eve/evals";
+
+export interface CompoundDeliveryResult {
+  readonly session: EveEvalSession;
+  readonly turn: EveEvalTurn;
+}
 
 /** Respond through either side of the eval driver's pending session-API migration. */
 export async function respondToRequests(
@@ -17,7 +22,7 @@ export async function sendCompoundDelivery(
     readonly inputResponses: readonly InputResponse[];
     readonly message: string;
   },
-): Promise<EveEvalTurn> {
+): Promise<CompoundDeliveryResult> {
   const sessionId = t.sessionId;
   const state = t.state as
     | { readonly continuationToken?: unknown; readonly streamIndex?: unknown }
@@ -44,5 +49,6 @@ export async function sendCompoundDelivery(
     );
   }
 
-  return await t.target.watchTurn(sessionId, { startIndex: state.streamIndex }).result();
+  const live = t.target.watchTurn(sessionId, { startIndex: state.streamIndex });
+  return { session: live.session, turn: await live.result() };
 }

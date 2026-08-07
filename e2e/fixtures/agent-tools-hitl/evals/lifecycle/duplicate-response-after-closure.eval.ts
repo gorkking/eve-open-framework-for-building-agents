@@ -8,6 +8,7 @@ import {
   exactRequestTerminal,
   expectFollowUpSessionActive,
   traceRequest,
+  verifyFollowUpTurn,
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
@@ -78,6 +79,7 @@ export default defineEval({
       }),
     );
     t.calledTool("guarded-echo", { status: "completed", count: 1 });
+    await verifyFollowUpTurn(t, parked.sessionId, "AP9-FOLLOW-UP-OK");
     t.succeeded();
   },
 });

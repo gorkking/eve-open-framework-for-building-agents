@@ -7,6 +7,7 @@ import {
   exactRequestTerminal,
   expectFollowUpSessionActive,
   traceRequest,
+  verifyFollowUpTurn,
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
@@ -30,10 +31,11 @@ export default defineEval({
     });
     const trace = traceRequest(parked.events, request);
 
-    const compound = await sendCompoundDelivery(t, {
+    const delivery = await sendCompoundDelivery(t, {
       inputResponses: [{ requestId: request.requestId, optionId: "approve" }],
       message: "After the tool result, reply with exactly AP7-COMPOUND-OK.",
     });
+    const compound = delivery.turn;
     compound.expectOk();
     expectFollowUpSessionActive(compound, parked.sessionId);
     compound.eventsSatisfy(
@@ -63,5 +65,6 @@ export default defineEval({
     });
 
     compound.succeeded();
+    await verifyFollowUpTurn(delivery.session, parked.sessionId, "AP7-FOLLOW-UP-OK");
   },
 });
