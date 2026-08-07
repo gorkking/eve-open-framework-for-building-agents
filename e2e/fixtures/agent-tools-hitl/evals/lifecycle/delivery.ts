@@ -15,6 +15,30 @@ export async function respondToRequests(
   return (await Reflect.apply(t.respond, t, args)) as EveEvalTurn;
 }
 
+export async function sendAs(
+  t: EveEvalContext,
+  message: string,
+  authorization: string,
+): Promise<EveEvalTurn> {
+  const options = { headers: { authorization } };
+  const args: unknown[] = t.send.length === 1 ? [{ message, ...options }] : [message, options];
+  return (await Reflect.apply(t.send, t, args)) as EveEvalTurn;
+}
+
+export async function respondAs(
+  t: EveEvalContext,
+  response: InputResponse,
+  authorization: string,
+): Promise<EveEvalTurn> {
+  const options = { headers: { authorization } };
+  if (t.respond.length === 0) {
+    return (await Reflect.apply(t.send, t, [
+      { inputResponses: [response], ...options },
+    ])) as EveEvalTurn;
+  }
+  return (await Reflect.apply(t.respond, t, [[response], options])) as EveEvalTurn;
+}
+
 /** Sends the compound delivery shape intentionally absent from the high-level client API. */
 export async function sendCompoundDelivery(
   t: EveEvalContext,

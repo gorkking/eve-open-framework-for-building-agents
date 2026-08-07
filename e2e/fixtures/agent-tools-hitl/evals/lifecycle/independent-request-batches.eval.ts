@@ -84,6 +84,7 @@ export default defineEval({
           output: GUARDED_ECHO_TOKEN,
           status: "completed",
         }) &&
+        exactRequestActionResult(events, questionTrace, null) &&
         exactEventOrder(events, [
           { type: "input.responded", requestId: approvalTrace.requestId },
           { type: "action.result", actionCallId: approvalTrace.callId },
@@ -107,7 +108,8 @@ export default defineEval({
         exactRequestActionResult(events, approvalTrace, {
           output: GUARDED_ECHO_TOKEN,
           status: "completed",
-        }),
+        }) &&
+        exactRequestActionResult(events, questionTrace, { status: "completed" }),
     );
 
     approved.succeeded();
