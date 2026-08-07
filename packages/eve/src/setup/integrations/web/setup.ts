@@ -16,48 +16,63 @@ function reportCompetingNextConfigFiles(
   }
 }
 
+export interface WebSetupDeps {
+  detectPackageManager: typeof detectPackageManager;
+  ensureChannel: typeof ensureChannel;
+  installScaffoldDependencies: typeof installScaffoldDependencies;
+}
+
+const defaultDeps: WebSetupDeps = {
+  detectPackageManager,
+  ensureChannel,
+  installScaffoldDependencies,
+};
+
+/** Runs Web Chat setup without requiring any semantic decisions. */
+export async function setupWeb(
+  context: Parameters<SetupIntegration["setup"]>[0],
+  deps: WebSetupDeps = defaultDeps,
+): Promise<Awaited<ReturnType<SetupIntegration["setup"]>>> {
+  context.ui.prompter.log.message("Scaffolding Web Chat channel files...");
+  const options: EnsureChannelOptions = {
+    projectRoot: context.appRoot,
+    kind: "web",
+    packageManager: (await deps.detectPackageManager(context.appRoot)).kind,
+    configureVercelServices: context.environment.vercel.kind === "available",
+    force: context.force,
+    skipDependencyMutation: true,
+  };
+  const result = await deps.ensureChannel(options);
+  reportOverwrittenFiles(context.ui.prompter.log, result.filesOverwritten);
+  if (
+    result.kind === "web" &&
+    result.action !== "skipped" &&
+    result.nodeEngineOverride !== undefined
+  ) {
+    context.ui.prompter.log.warning(formatNodeEngineOverrideWarning(result.nodeEngineOverride));
+  }
+  reportCompetingNextConfigFiles(
+    context.ui.prompter.log,
+    "competingNextConfigFiles" in result ? result.competingNextConfigFiles : undefined,
+  );
+  if (result.action === "skipped") {
+    context.ui.prompter.log.info("Next.js project detected. Skipping Web Chat scaffolding.");
+    return { kind: "done", completion: { facts: [] } };
+  }
+  context.ui.prompter.log.success("Scaffolded channel: web");
+  await deps.installScaffoldDependencies({
+    changed: result.packageJsonUpdated.length > 0,
+    log: context.ui.prompter.log,
+    projectPath: context.appRoot,
+    signal: context.signal,
+  });
+  return { kind: "done", completion: { facts: [], deployment: { required: true } } };
+}
+
 /** Web Chat scaffolding. */
 export const WEB_SETUP: SetupIntegration = {
   kind: "web",
   label: "Web Chat",
   hint: "Browser-based chat interface",
-  async setup(context) {
-    context.ui.prompter.log.message("Scaffolding Web Chat channel files...");
-    const options: EnsureChannelOptions = {
-      projectRoot: context.appRoot,
-      kind: "web",
-      packageManager: (await detectPackageManager(context.appRoot)).kind,
-      configureVercelServices: context.environment.vercel.kind === "available",
-      force: context.force,
-      skipDependencyMutation: true,
-    };
-    const result = await ensureChannel(options);
-    reportOverwrittenFiles(context.ui.prompter.log, result.filesOverwritten);
-    if (
-      result.kind === "web" &&
-      result.action !== "skipped" &&
-      result.nodeEngineOverride !== undefined
-    ) {
-      context.ui.prompter.log.warning(formatNodeEngineOverrideWarning(result.nodeEngineOverride));
-    }
-    reportCompetingNextConfigFiles(
-      context.ui.prompter.log,
-      "competingNextConfigFiles" in result ? result.competingNextConfigFiles : undefined,
-    );
-    if (result.action === "skipped") {
-      context.ui.prompter.log.info("Next.js project detected. Skipping Web Chat scaffolding.");
-      return { kind: "done", completion: { facts: [] } };
-    }
-    context.ui.prompter.log.success("Scaffolded channel: web");
-    await installScaffoldDependencies({
-      changed: result.packageJsonUpdated.length > 0,
-      log: context.ui.prompter.log,
-      projectPath: context.appRoot,
-      signal: context.signal,
-    });
-    return {
-      kind: "done",
-      completion: { facts: [], deployment: { required: true } },
-    };
-  },
+  setup: setupWeb,
 };
