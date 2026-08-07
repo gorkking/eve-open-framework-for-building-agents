@@ -1,0 +1,65 @@
+import { defineEval } from "eve/evals";
+
+import { sendCompoundDelivery } from "./delivery";
+import {
+  exactEventOrder,
+  exactRequestActionResult,
+  exactRequestTerminal,
+  traceRequest,
+} from "./lifecycle";
+import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
+
+/**
+ * approval-7: one delivery carrying an accepted response plus a message is
+ * serialized — settlement, restored batch output, tool result, then the
+ * message as ordinary turn input. Each part happens exactly once.
+ */
+export default defineEval({
+  tags: ["real-model", "hitl-lifecycle"],
+  description: "approval-7: compound response+message settles first, then runs the message.",
+  async test(t) {
+    gateLifecycle(t);
+
+    const parked = await t.send('Call the guarded-echo tool with note "ap-7".');
+    parked.calledTool("guarded-echo", { status: "pending", count: 1 });
+    const request = t.requireInputRequest({
+      display: "confirmation",
+      optionIds: ["approve", "deny"],
+      toolName: "guarded-echo",
+    });
+    const trace = traceRequest(parked.events, request);
+
+    const compound = await sendCompoundDelivery(t, {
+      inputResponses: [{ requestId: request.requestId, optionId: "approve" }],
+      message: "After the tool result, reply with exactly AP7-COMPOUND-OK.",
+    });
+    compound.expectOk();
+    compound.eventsSatisfy(
+      "one settlement and matching action result precede the message",
+      (events) =>
+        exactRequestTerminal(events, trace, {
+          type: "responded",
+          optionId: "approve",
+          outcome: "allowed",
+        }) &&
+        exactRequestActionResult(events, trace, {
+          output: GUARDED_ECHO_TOKEN,
+          status: "completed",
+        }) &&
+        exactEventOrder(events, [
+          { type: "input.responded", requestId: trace.requestId },
+          { type: "action.result", actionCallId: trace.callId },
+          { type: "message.received" },
+        ]),
+    );
+    compound.messageIncludes(/AP7-COMPOUND-OK/i);
+    compound.calledTool("guarded-echo", {
+      input: { note: "ap-7" },
+      output: new RegExp(GUARDED_ECHO_TOKEN),
+      status: "completed",
+      count: 1,
+    });
+
+    compound.succeeded();
+  },
+});
