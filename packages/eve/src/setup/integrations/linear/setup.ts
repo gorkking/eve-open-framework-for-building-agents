@@ -2,10 +2,15 @@ import { join } from "node:path";
 
 import { select, text } from "#setup/ask.js";
 import { ensureVercelProject } from "#setup/flows/ensure-vercel-project.js";
+import { readProjectLink } from "#setup/project-resolution.js";
 import { deriveSlackConnectorSlug, normalizeSlackConnectorSlug } from "#setup/scaffold/index.js";
 import { writeTextFile } from "#setup/scaffold/files.js";
 import { WizardCancelledError } from "#setup/step.js";
 
+import {
+  resolveIntegrationVercelProject,
+  type IntegrationVercelProjectDeps,
+} from "../shared/vercel-project.js";
 import type {
   IntegrationSetupContext,
   IntegrationSetupResult,
@@ -22,6 +27,7 @@ export interface LinearSetupDeps {
   attachConnector: typeof attachLinearConnector;
   deriveConnectorSlug: typeof deriveSlackConnectorSlug;
   ensureVercelProject: typeof ensureVercelProject;
+  readProjectLink: typeof readProjectLink;
   findConnector: typeof findLinearConnector;
   provisionConnector: typeof provisionLinearConnector;
   writeTextFile: typeof writeTextFile;
@@ -31,6 +37,7 @@ const defaultDeps: LinearSetupDeps = {
   attachConnector: attachLinearConnector,
   deriveConnectorSlug: deriveSlackConnectorSlug,
   ensureVercelProject,
+  readProjectLink,
   findConnector: findLinearConnector,
   provisionConnector: provisionLinearConnector,
   writeTextFile,
@@ -135,10 +142,12 @@ export async function setupLinear(
     );
   }
   try {
-    const project = await deps.ensureVercelProject({
+    const project = await resolveIntegrationVercelProject({
       appRoot: context.appRoot,
-      prompter: context.ui.prompter,
+      integration: "Linear",
+      ui: context.ui,
       signal: context.signal,
+      deps: deps satisfies IntegrationVercelProjectDeps,
     });
     const connector = await chooseConnector(context, deps, project);
     if (connector === undefined) return { kind: "cancelled" };

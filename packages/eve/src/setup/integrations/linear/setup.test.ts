@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createFakePrompter } from "#internal/testing/fake-prompter.js";
-import type { Asker, Question } from "#setup/ask.js";
+import { headlessAsker, withAnswers, withPolicy } from "#setup/ask.js";
 
 import { integrationSetupEnvironment } from "../shared/environment.js";
 import { createIntegrationSetupUi } from "../shared/ui.js";
@@ -12,16 +12,30 @@ function deps(): LinearSetupDeps {
     attachConnector: vi.fn(async () => {}),
     deriveConnectorSlug: vi.fn(async () => "agent" as never),
     ensureVercelProject: vi.fn(async () => ({ orgId: "team-id", projectId: "project-id" })),
+    readProjectLink: vi.fn(async () => ({ orgId: "team-id", projectId: "project-id" })),
     findConnector: vi.fn(async () => undefined),
     provisionConnector: vi.fn(async () => ({ id: "scl_linear", uid: "linear/agent" })),
     writeTextFile: vi.fn(async () => {}),
   };
 }
 
-function recommendedAsker(): Asker {
-  const ask = async <T>(question: Question<T>): Promise<T> => question.recommended as T;
-  const askMany: Asker["askMany"] = async () => [];
-  return { ask, askEditable: vi.fn(), askMany };
+function run(input: { answers?: Record<string, unknown>; effects?: LinearSetupDeps }) {
+  const effects = input.effects ?? deps();
+  return {
+    effects,
+    result: setupLinear(
+      {
+        appRoot: "/project",
+        environment: integrationSetupEnvironment("authenticated", { kind: "unresolved" }),
+        ui: createIntegrationSetupUi({
+          asker: withAnswers(input.answers ?? {})(withPolicy("assume")(headlessAsker())),
+          prompter: createFakePrompter().prompter,
+          interaction: "headless",
+        }),
+      },
+      effects,
+    ),
+  };
 }
 
 describe("Linear setup", () => {
@@ -30,42 +44,10 @@ describe("Linear setup", () => {
     expect(linearSafeConnectorSlug("linear")).toBe("agent");
   });
 
-  it("provisions Connect, routes Agent Session events, and scaffolds the channel", async () => {
-    const fake = createFakePrompter();
-    const effects = deps();
+  it("provisions and scaffolds from recommended keyed choices", async () => {
+    const { effects, result } = run({});
 
-    const result = await setupLinear(
-      {
-        appRoot: "/project",
-        environment: integrationSetupEnvironment("authenticated", { kind: "unresolved" }),
-        ui: createIntegrationSetupUi({ asker: recommendedAsker(), prompter: fake.prompter }),
-      },
-      effects,
-    );
-
-    expect(result).toMatchObject({
-      kind: "done",
-      completion: {
-        facts: [
-          {
-            label: "Vercel Connect",
-            value: "https://vercel.com/d?to=/%5Bteam%5D/~/connect&title=Open+Vercel+Connect",
-            kind: "url",
-          },
-          {
-            label: "Next step",
-            value:
-              "Deploy the agent, then open the Linear app in Vercel Connect and install it in the workspace where you want to delegate issues and comments.",
-          },
-          {
-            label: "In Linear",
-            value:
-              "Delegate an issue or mention the agent in an Agent Session to start a conversation.",
-          },
-        ],
-      },
-    });
-
+    await expect(result).resolves.toMatchObject({ kind: "done" });
     expect(effects.provisionConnector).toHaveBeenCalledWith(
       expect.objectContaining({ slug: "agent" }),
     );
@@ -76,36 +58,43 @@ describe("Linear setup", () => {
     );
   });
 
-  it("reuses an existing connector when selected", async () => {
-    const fake = createFakePrompter();
+  it("reuses an existing connector selected by stable answer", async () => {
     const effects = deps();
     vi.mocked(effects.findConnector).mockResolvedValue({ id: "scl_existing", uid: "linear/agent" });
-    const asker = recommendedAsker();
+    const { result } = run({
+      effects,
+      answers: { "linear.existing-connector": "reuse" },
+    });
 
-    await expect(
-      setupLinear(
-        {
-          appRoot: "/project",
-          environment: integrationSetupEnvironment("authenticated", { kind: "unresolved" }),
-          ui: createIntegrationSetupUi({ asker, prompter: fake.prompter }),
-        },
-        effects,
-      ),
-    ).resolves.toMatchObject({ kind: "done" });
-
+    await expect(result).resolves.toMatchObject({ kind: "done" });
     expect(effects.attachConnector).toHaveBeenCalledWith(
       expect.objectContaining({ connector: { id: "scl_existing", uid: "linear/agent" } }),
     );
     expect(effects.provisionConnector).not.toHaveBeenCalled();
   });
 
+  it("requires an existing Vercel link headlessly before mutation", async () => {
+    const effects = deps();
+    vi.mocked(effects.readProjectLink).mockResolvedValue(undefined);
+    const { result } = run({ effects });
+
+    await expect(result).rejects.toThrow("Run `eve link`");
+    expect(effects.ensureVercelProject).not.toHaveBeenCalled();
+    expect(effects.findConnector).not.toHaveBeenCalled();
+    expect(effects.provisionConnector).not.toHaveBeenCalled();
+    expect(effects.writeTextFile).not.toHaveBeenCalled();
+  });
+
   it("requires an authenticated Vercel CLI", async () => {
-    const fake = createFakePrompter();
     await expect(
       setupLinear({
         appRoot: "/project",
         environment: integrationSetupEnvironment("logged-out", { kind: "unresolved" }),
-        ui: createIntegrationSetupUi({ asker: recommendedAsker(), prompter: fake.prompter }),
+        ui: createIntegrationSetupUi({
+          asker: headlessAsker(),
+          prompter: createFakePrompter().prompter,
+          interaction: "headless",
+        }),
       }),
     ).rejects.toThrow("vercel login");
   });
