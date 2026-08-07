@@ -28,10 +28,24 @@ export const defaultAuthorizationEvents = {
 
     await thread.post({ markdown: `Authorization required for ${displayName}.` });
     const author = channel.state.thread?.currentMessage?.author;
-    if (!author) return;
+    if (!author) {
+      log.warn("cannot deliver connection authorization challenge privately without an author", {
+        name: event.name,
+      });
+      return;
+    }
 
     try {
-      await thread.postEphemeral(author, { markdown: challenge }, { fallbackToDM: true });
+      const delivered = await thread.postEphemeral(
+        author,
+        { markdown: challenge },
+        { fallbackToDM: true },
+      );
+      if (!delivered) {
+        log.warn("adapter cannot deliver connection authorization challenge privately", {
+          name: event.name,
+        });
+      }
     } catch (error) {
       // The public status still explains why the session is blocked when an
       // adapter cannot deliver a private challenge.

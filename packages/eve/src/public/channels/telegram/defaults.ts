@@ -82,16 +82,25 @@ export const defaultEvents: TelegramChannelEvents = {
     await channel.telegram.post(`Authorization required for ${displayName}.`);
     const userId = ctx.session.auth.current?.attributes.user_id;
     if (!userId) return;
-    const response = await channel.telegram.request("sendMessage", {
-      chat_id: userId,
-      link_preview_options: { is_disabled: true },
-      protect_content: true,
-      text: challenge,
-    });
-    if (!response.ok) {
+    try {
+      const response = await channel.telegram.request("sendMessage", {
+        chat_id: userId,
+        link_preview_options: { is_disabled: true },
+        protect_content: true,
+        text: challenge,
+      });
+      if (!response.ok) {
+        log.error("Telegram private auth challenge delivery failed", {
+          name: event.name,
+          status: response.status,
+        });
+      }
+    } catch (error) {
+      // The public status still explains why the session is blocked when the
+      // private user chat cannot be reached.
       log.error("Telegram private auth challenge delivery failed", {
+        error,
         name: event.name,
-        status: response.status,
       });
     }
   },

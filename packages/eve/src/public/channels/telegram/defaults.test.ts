@@ -76,4 +76,15 @@ describe("Telegram connection authorization defaults", () => {
       }),
     );
   });
+
+  it("keeps the safe group status when private challenge delivery throws", async () => {
+    const { channel, post, request } = channelStub("group");
+    request.mockRejectedValueOnce(new Error("network unavailable"));
+
+    await expect(
+      defaultEvents["authorization.required"]!(requiredEvent(), channel, sessionContext("42")),
+    ).resolves.toBeUndefined();
+
+    expect(post).toHaveBeenCalledWith("Authorization required for Notion.");
+  });
 });
