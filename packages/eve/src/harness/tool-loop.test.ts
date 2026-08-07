@@ -182,6 +182,65 @@ function createDelegationToolMap(): ToolLoopHarnessConfig["tools"] {
   ]);
 }
 
+function setupMixedInputRuntimeActionStep() {
+  const gatedCall = {
+    input: { action: "run" },
+    toolCallId: "gated-call",
+    toolName: "add",
+    type: "tool-call" as const,
+  };
+  const delegatedCall = {
+    input: { message: "probe" },
+    toolCallId: "delegated-call",
+    toolName: "delegate",
+    type: "tool-call" as const,
+  };
+  const approvalRequest = {
+    approvalId: "approval-1",
+    toolCallId: gatedCall.toolCallId,
+    type: "tool-approval-request" as const,
+  };
+  setupMockAgent({
+    content: [gatedCall, approvalRequest, delegatedCall],
+    finishReason: "tool-calls",
+    response: {
+      messages: [
+        {
+          content: [gatedCall, approvalRequest, delegatedCall],
+          role: "assistant",
+        },
+      ],
+    },
+    text: "",
+    toolCalls: [gatedCall, delegatedCall],
+    toolResults: [],
+  });
+
+  return {
+    delegatedCall,
+    runtimeActionResults: [
+      {
+        callId: delegatedCall.toolCallId,
+        isError: true as const,
+        kind: "subagent-result" as const,
+        origin: "dispatch" as const,
+        output: "delegated-failed",
+        subagentName: "worker",
+      },
+    ],
+  };
+}
+
+function setupTerminalMockAgent(): void {
+  setupMockAgent({
+    finishReason: "stop",
+    response: { messages: [{ content: "Done.", role: "assistant" }] },
+    text: "Done.",
+    toolCalls: [],
+    toolResults: [],
+  });
+}
+
 function createScheduleContext(): ContextContainer {
   const ctx = new ContextContainer();
   ctx.set(AuthKey, SCHEDULE_APP_AUTH);
@@ -1138,6 +1197,88 @@ describe("createToolLoopHarness", () => {
         subagentName: "worker",
       },
     ]);
+  });
+
+  it("keeps input requests pending after a same-step runtime action resolves", async () => {
+    const { delegatedCall, runtimeActionResults } = setupMixedInputRuntimeActionStep();
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, { tools: createDelegationToolMap() }),
+    );
+    const parked = await runStep(createTestSession(), { message: "Gate and delegate." });
+
+    expect(getPendingRuntimeActionBatch(parked.session.state)?.actions).toEqual([
+      expect.objectContaining({ callId: delegatedCall.toolCallId, kind: "subagent-call" }),
+    ]);
+    expect(hasPendingInputBatch(parked.session.state)).toBe(true);
+    expect(events.filter((event) => event.type === "input.requested")).toHaveLength(1);
+
+    const reparked = await runStep(parked.session, { runtimeActionResults });
+
+    expect(reparked.next).toBeNull();
+    expect(getPendingRuntimeActionBatch(reparked.session.state)).toBeUndefined();
+    expect(hasPendingInputBatch(reparked.session.state)).toBe(true);
+    expect(JSON.stringify(reparked.session.history)).toContain("delegated-failed");
+    expect(events.at(-1)?.type).toBe("session.waiting");
+
+    setupTerminalMockAgent();
+    const completed = await runStep(reparked.session, {
+      inputResponses: [{ optionId: "deny", requestId: "approval-1" }],
+    });
+
+    expect(hasPendingInputBatch(completed.session.state)).toBe(false);
+    expect(
+      completed.session.history.filter(
+        (message) =>
+          message.role === "assistant" &&
+          JSON.stringify(message).includes(delegatedCall.toolCallId),
+      ),
+    ).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turn.started")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "turn.completed")).toHaveLength(2);
+  });
+
+  it("defers an input response until its same-step runtime action resolves", async () => {
+    const { delegatedCall, runtimeActionResults } = setupMixedInputRuntimeActionStep();
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, { tools: createDelegationToolMap() }),
+    );
+    const parked = await runStep(createTestSession(), { message: "Gate and delegate." });
+    const answeredEarly = await runStep(parked.session, {
+      inputResponses: [{ optionId: "deny", requestId: "approval-1" }],
+    });
+
+    expect(answeredEarly.next).toBeNull();
+    expect(hasDeferredStepInput(answeredEarly.session)).toBe(true);
+    expect(hasPendingInputBatch(answeredEarly.session.state)).toBe(true);
+
+    setupTerminalMockAgent();
+    const completed = await runStep(answeredEarly.session, { runtimeActionResults });
+
+    expect(completed.next).toBeNull();
+    expect(getPendingRuntimeActionBatch(completed.session.state)).toBeUndefined();
+    expect(hasPendingInputBatch(completed.session.state)).toBe(false);
+    expect(hasDeferredStepInput(completed.session)).toBe(false);
+    expect(
+      completed.session.history.filter(
+        (message) =>
+          message.role === "assistant" &&
+          JSON.stringify(message).includes(delegatedCall.toolCallId),
+      ),
+    ).toHaveLength(1);
+    const turnEvents = events.filter(
+      (event) => event.type === "turn.started" || event.type === "turn.completed",
+    );
+    expect(
+      turnEvents
+        .filter((event) => event.type === "turn.completed")
+        .map((event) => event.data.turnId),
+    ).toEqual(
+      turnEvents
+        .filter((event) => event.type === "turn.started")
+        .map((event) => event.data.turnId),
+    );
   });
 
   it("parks dynamic subagent calls as pending runtime actions", async () => {

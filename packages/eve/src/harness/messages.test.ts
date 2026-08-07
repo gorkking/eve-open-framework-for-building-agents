@@ -82,6 +82,35 @@ describe("coalesceTurnInputs", () => {
     });
   });
 
+  it("preserves runtime action results while merging deferred input", () => {
+    const first = {
+      callId: "call-1",
+      isError: true as const,
+      kind: "subagent-result" as const,
+      origin: "dispatch" as const,
+      output: "first failed",
+      subagentName: "researcher",
+    };
+    const second = {
+      callId: "call-2",
+      isError: true as const,
+      kind: "subagent-result" as const,
+      origin: "dispatch" as const,
+      output: "second failed",
+      subagentName: "writer",
+    };
+
+    expect(
+      coalesceTurnInputs(
+        { inputResponses: [{ optionId: "deny", requestId: "approval-1" }], runtimeActionResults: [first] },
+        { runtimeActionResults: [second] },
+      ),
+    ).toEqual({
+      inputResponses: [{ optionId: "deny", requestId: "approval-1" }],
+      runtimeActionResults: [first, second],
+    });
+  });
+
   it("combines messages and inputResponses", () => {
     const result = coalesceTurnInputs(
       { message: "hello", inputResponses: [{ requestId: "r1", optionId: "approve" }] },

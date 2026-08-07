@@ -324,6 +324,7 @@ export async function resolvePendingRuntimeActions(input: {
       role: "tool",
     });
   }
+  nextSession = { ...nextSession, history: messages };
   return {
     messages,
     outcome: "resolved",

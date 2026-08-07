@@ -127,6 +127,7 @@ describe("resolvePendingRuntimeActions", () => {
     });
 
     expect(resolved.outcome).toBe("resolved");
+    expect(resolved.session.history).toEqual(resolved.messages);
     expect(getPendingRuntimeActionBatch(resolved.session.state)).toBeUndefined();
     expect(getAgentHandleStore(resolved.session.state)).toEqual({ handles: [] });
   });

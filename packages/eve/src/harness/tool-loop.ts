@@ -121,6 +121,7 @@ import { resolveParentLineage } from "#harness/parent-lineage.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import {
   consumeDeferredStepInput,
+  deferStepInput,
   getApprovedTools,
   getPendingInputRequestIds,
   hasDeferredStepInput,
@@ -657,7 +658,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       stepInput: stepInput.input,
     });
     if (resolvedRuntimeActions.outcome === "unresolved") {
-      return { next: null, session: resolvedRuntimeActions.session };
+      return {
+        next: null,
+        session: deferStepInput({
+          input: stepInput.input,
+          session: resolvedRuntimeActions.session,
+        }),
+      };
     }
     session = resolvedRuntimeActions.session;
 
@@ -693,6 +700,14 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           emissionState,
           config.runtimeIdentity,
         );
+        emissionState = await emitTurnEpilogue(emit, emissionState, config.mode);
+        return {
+          next: null,
+          session: setHarnessEmissionState(pending.session, emissionState),
+        };
+      }
+
+      if (emit && config.mode === "conversation" && resolvedRuntimeActions.outcome === "resolved") {
         emissionState = await emitTurnEpilogue(emit, emissionState, config.mode);
         return {
           next: null,
@@ -2115,21 +2130,39 @@ async function handleStepResult(input: {
     // parked session carries the default emission state (turnId ""),
     // because the post-preamble `setHarnessEmissionState` is dropped by
     // the later `session = pending.session` / `maybeCompact` rebinds.
+    const requestEvent = {
+      sequence: emissionState.sequence,
+      stepIndex: emissionState.stepIndex,
+      turnId: emissionState.turnId,
+    };
+    let parkedSession = setPendingRuntimeActionBatch({
+      actions: pendingRuntimeActions,
+      event: requestEvent,
+      responseMessages,
+      session: { ...baseSession, history: [...promptMessages] },
+    });
+
+    if (inputRequests.length > 0) {
+      parkedSession = setPendingInputBatch({
+        event: requestEvent,
+        requests: inputRequests,
+        responseMessages: [],
+        session: parkedSession,
+      });
+
+      await emit?.(
+        createInputRequestedEvent({
+          requests: inputRequests,
+          sequence: emissionState.sequence,
+          stepIndex: emissionState.stepIndex,
+          turnId: emissionState.turnId,
+        }),
+      );
+    }
+
     return {
       next: null,
-      session: setHarnessEmissionState(
-        setPendingRuntimeActionBatch({
-          actions: pendingRuntimeActions,
-          event: {
-            sequence: emissionState.sequence,
-            stepIndex: emissionState.stepIndex,
-            turnId: emissionState.turnId,
-          },
-          responseMessages,
-          session: { ...baseSession, history: [...promptMessages] },
-        }),
-        emissionState,
-      ),
+      session: setHarnessEmissionState(parkedSession, emissionState),
     };
   }
 

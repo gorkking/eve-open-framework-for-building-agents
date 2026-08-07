@@ -108,6 +108,21 @@ export function consumeDeferredStepInput(input: {
 }
 
 /**
+ * Queues model-facing step input until a parked prerequisite resolves.
+ * Runtime-action results are intentionally omitted because callers resolve
+ * those against their own pending batch before deferring the remaining input.
+ */
+export function deferStepInput(input: {
+  readonly input?: StepInput;
+  readonly session: HarnessSession;
+}): HarnessSession {
+  const deferredInput = compactStepInput(input.input);
+  return Object.keys(deferredInput).length === 0
+    ? input.session
+    : queueDeferredStepInput(input.session, deferredInput);
+}
+
+/**
  * Returns true when the session carries queued follow-up input for the next
  * internal harness step.
  */
