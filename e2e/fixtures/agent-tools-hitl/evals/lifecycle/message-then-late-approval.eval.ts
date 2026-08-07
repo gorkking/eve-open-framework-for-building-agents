@@ -5,6 +5,7 @@ import {
   exactEventOrder,
   exactRequestActionResult,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   noRequestLifecycleEvents,
   traceRequest,
 } from "./lifecycle";
@@ -36,6 +37,7 @@ export default defineEval({
       "Ignore the pending approval. Reply with exactly AP4-TURN-OK.",
     );
     intervening.expectOk();
+    expectFollowUpSessionActive(intervening, parked.sessionId);
     intervening.messageIncludes(/AP4-TURN-OK/i);
     intervening.event("message.received", { count: 1 });
     intervening.eventsSatisfy(
@@ -50,6 +52,7 @@ export default defineEval({
       optionId: "approve",
     });
     approved.expectOk();
+    expectFollowUpSessionActive(approved, parked.sessionId);
     approved.eventsSatisfy(
       "late approval settles and runs its original call once",
       (events) =>

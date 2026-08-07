@@ -6,6 +6,7 @@ import {
   exactRequestActionResult,
   exactRequestRejection,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   traceRequest,
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
@@ -36,6 +37,7 @@ export default defineEval({
       optionId: "approve",
     });
     approved.expectOk();
+    expectFollowUpSessionActive(approved, parked.sessionId);
     approved.eventsSatisfy(
       "the first approve settles and executes exactly once",
       (events) =>
@@ -60,8 +62,8 @@ export default defineEval({
       optionId: "approve",
     });
     stale.expectOk();
+    expectFollowUpSessionActive(stale, parked.sessionId);
     stale.event("message.completed", { count: 1 });
-    stale.event("session.waiting", { count: 1 });
     stale.eventsSatisfy(
       "the duplicate is one stale rejection with no second execution",
       (events) =>

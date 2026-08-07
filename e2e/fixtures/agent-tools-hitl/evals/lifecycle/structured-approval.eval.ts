@@ -5,6 +5,7 @@ import {
   exactEventOrder,
   exactRequestActionResult,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   traceRequest,
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
@@ -34,6 +35,7 @@ export default defineEval({
       optionId: "approve",
     });
     approved.expectOk();
+    expectFollowUpSessionActive(approved, parked.sessionId);
     approved.eventsSatisfy(
       "one allowed terminal precedes its one action result",
       (events) =>

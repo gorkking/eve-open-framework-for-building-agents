@@ -6,6 +6,8 @@ Executable form of the normative scenarios in
 lifecycle-event stages land. “Gated” means an acceptance test exists but does
 not execute yet; “partial” names existing evidence that does not prove the full
 scenario; “planned” names the intended tier without claiming coverage.
+Every gated follow-up also requires the original session ID and exactly one
+`session.waiting` boundary, with no completion or failure boundary.
 
 Families: `approval` (human consent for a tool call, including batch, timing,
 and creation mechanics), `question` (`ask_question`), `limit` (session-limit

@@ -5,6 +5,7 @@ import {
   exactEventOrder,
   exactRequestActionResult,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   noRequestLifecycleEvents,
   traceRequest,
 } from "./lifecycle";
@@ -32,9 +33,9 @@ export default defineEval({
 
     const typed = await t.send("approve");
     typed.expectOk();
+    expectFollowUpSessionActive(typed, parked.sessionId);
     typed.event("message.received", { count: 1 });
     typed.event("message.completed", { count: 1 });
-    typed.event("session.waiting", { count: 1 });
     typed.eventsSatisfy(
       "typed approve runs a model turn and settles nothing",
       (events) =>
@@ -45,6 +46,7 @@ export default defineEval({
       optionId: "approve",
     });
     approved.expectOk();
+    expectFollowUpSessionActive(approved, parked.sessionId);
     approved.eventsSatisfy(
       "only the later structured response settles and executes",
       (events) =>

@@ -6,6 +6,7 @@ import {
   exactRequestActionResult,
   exactRequestExposure,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   noRequestLifecycleEvents,
   requireRequest,
   traceRequest,
@@ -38,6 +39,7 @@ export default defineEval({
         'these options: id "yes", label "Yes"; id "no", label "No".',
     );
     questionTurn.expectOk();
+    expectFollowUpSessionActive(questionTurn, parked.sessionId);
     const question = requireRequest(questionTurn.inputRequests, {
       optionIds: ["yes", "no"],
       toolName: "ask_question",
@@ -50,6 +52,7 @@ export default defineEval({
       optionId: "yes",
     });
     answered.expectOk();
+    expectFollowUpSessionActive(answered, parked.sessionId);
     answered.eventsSatisfy(
       "the question closes once without touching or replaying the approval",
       (events) =>
@@ -61,14 +64,13 @@ export default defineEval({
         noRequestLifecycleEvents(events, approvalTrace) &&
         exactRequestActionResult(events, approvalTrace, null),
     );
-    answered.event("session.waiting", { count: 1 });
-
     // The older approval batch still closes and runs.
     const approved = await respondToRequests(t, {
       requestId: approval.requestId,
       optionId: "approve",
     });
     approved.expectOk();
+    expectFollowUpSessionActive(approved, parked.sessionId);
     approved.eventsSatisfy(
       "the older approval closes and executes independently",
       (events) =>

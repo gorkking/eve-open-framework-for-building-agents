@@ -5,6 +5,7 @@ import {
   exactEventOrder,
   exactRequestActionResult,
   exactRequestTerminal,
+  expectFollowUpSessionActive,
   traceRequest,
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
@@ -34,6 +35,7 @@ export default defineEval({
       message: "After the tool result, reply with exactly AP7-COMPOUND-OK.",
     });
     compound.expectOk();
+    expectFollowUpSessionActive(compound, parked.sessionId);
     compound.eventsSatisfy(
       "one settlement and matching action result precede the message",
       (events) =>
