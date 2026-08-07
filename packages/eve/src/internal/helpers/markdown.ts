@@ -141,6 +141,20 @@ export function lowerSkillMarkdown(
   source: string,
   input: LowerSkillMarkdownInput = {},
 ): SkillDefinition {
+  return lowerSkillMarkdownWithFrontmatter(source, input).definition;
+}
+
+/**
+ * Lowers skill markdown while retaining its parsed frontmatter for discovery
+ * diagnostics. Unmodeled frontmatter remains a no-op in the definition.
+ */
+export function lowerSkillMarkdownWithFrontmatter(
+  source: string,
+  input: LowerSkillMarkdownInput = {},
+): {
+  readonly definition: SkillDefinition;
+  readonly frontmatter: Readonly<Record<string, unknown>>;
+} {
   const document = parseMarkdownDocument(source);
   const slug = input.slug;
 
@@ -165,12 +179,15 @@ export function lowerSkillMarkdown(
 
   applyOptionalSkillFrontmatter(rawDefinition, frontmatter);
 
-  return defineSkill(
-    normalizeSkillDefinition(
-      rawDefinition,
-      "Expected authored skill markdown to match the public eve shape.",
+  return {
+    definition: defineSkill(
+      normalizeSkillDefinition(
+        rawDefinition,
+        "Expected authored skill markdown to match the public eve shape.",
+      ),
     ),
-  );
+    frontmatter,
+  };
 }
 
 function startsWithFrontmatterFence(source: string): boolean {
@@ -194,7 +211,7 @@ function applyOptionalSkillFrontmatter(
     rawDefinition.license = license;
   }
 
-  const metadata = toOptionalStringRecord(frontmatter.metadata, "metadata");
+  const metadata = toOptionalStringRecord(frontmatter.metadata);
   if (metadata !== undefined) {
     rawDefinition.metadata = metadata;
   }
@@ -222,27 +239,17 @@ function requireStringFrontmatter(value: unknown, fieldName: string): string {
   return normalizedValue;
 }
 
-function toOptionalStringRecord(
-  value: unknown,
-  fieldName: string,
-): Record<string, string> | undefined {
-  if (value === undefined || value === null) {
+function toOptionalStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isObject(value)) {
     return undefined;
   }
 
-  if (!isObject(value)) {
-    throw new Error(`Expected "${fieldName}" frontmatter to be an object.`);
+  const entries = Object.entries(value);
+  if (entries.some(([, entryValue]) => typeof entryValue !== "string")) {
+    return undefined;
   }
 
-  const stringEntries = Object.entries(value).map(([key, entryValue]) => {
-    if (typeof entryValue !== "string") {
-      throw new Error(`Expected "${fieldName}.${key}" frontmatter to be a string.`);
-    }
-
-    return [key, entryValue] as const;
-  });
-
-  return Object.fromEntries(stringEntries);
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
 function deriveFlatSkillDescription(markdown: string, name: string): string {
