@@ -2,10 +2,15 @@ import { join } from "node:path";
 
 import { text } from "#setup/ask.js";
 import { ensureVercelProject } from "#setup/flows/ensure-vercel-project.js";
+import { readProjectLink } from "#setup/project-resolution.js";
 import { deriveSlackConnectorSlug } from "#setup/scaffold/index.js";
 import { writeTextFile } from "#setup/scaffold/files.js";
 import { WizardCancelledError } from "#setup/step.js";
 
+import {
+  resolveIntegrationVercelProject,
+  type IntegrationVercelProjectDeps,
+} from "../shared/vercel-project.js";
 import type {
   IntegrationSetupContext,
   IntegrationSetupResult,
@@ -22,6 +27,7 @@ export interface DiscordSetupDeps {
   configureEndpoint: typeof configureDiscordInteractionsEndpoint;
   deriveConnectorSlug: typeof deriveSlackConnectorSlug;
   ensureVercelProject: typeof ensureVercelProject;
+  readProjectLink: typeof readProjectLink;
   provisionConnector: typeof provisionDiscordConnector;
   registerCommand: typeof registerDiscordCommand;
   resolveApplication: typeof resolveDiscordApplication;
@@ -32,6 +38,7 @@ const defaultDeps: DiscordSetupDeps = {
   configureEndpoint: configureDiscordInteractionsEndpoint,
   deriveConnectorSlug: deriveSlackConnectorSlug,
   ensureVercelProject,
+  readProjectLink,
   provisionConnector: provisionDiscordConnector,
   registerCommand: registerDiscordCommand,
   resolveApplication: resolveDiscordApplication,
@@ -115,10 +122,12 @@ export async function setupDiscord(
       }),
     );
     const application = await deps.resolveApplication(botToken);
-    const project = await deps.ensureVercelProject({
+    const project = await resolveIntegrationVercelProject({
       appRoot: context.appRoot,
-      prompter: context.ui.prompter,
+      integration: "Discord",
+      ui: context.ui,
       signal: context.signal,
+      deps: deps satisfies IntegrationVercelProjectDeps,
     });
     const connector = await deps.provisionConnector({
       botToken,
