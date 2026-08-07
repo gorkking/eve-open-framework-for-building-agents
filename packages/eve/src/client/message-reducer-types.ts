@@ -31,6 +31,8 @@ export interface EveMessage {
 export interface EveMessageMetadata {
   readonly optimistic?: true;
   readonly result?: unknown;
+  readonly resultAttemptId?: string;
+  readonly resultStepId?: string;
   readonly status?: "complete" | "failed" | "streaming" | "submitted";
   readonly turnId?: string;
 }
@@ -46,15 +48,19 @@ export interface EveMessageMetadata {
  */
 export type EveMessagePart =
   | {
+      readonly attemptId?: string;
       readonly providerMetadata?: Record<string, unknown>;
       readonly state?: "done" | "streaming";
+      readonly stepId?: string;
       readonly stepIndex?: number;
       readonly text: string;
       readonly type: "text";
     }
   | {
+      readonly attemptId?: string;
       readonly providerMetadata?: Record<string, unknown>;
       readonly state?: "done" | "streaming";
+      readonly stepId?: string;
       readonly stepIndex?: number;
       readonly text: string;
       readonly type: "reasoning";
@@ -68,6 +74,9 @@ export type EveMessagePart =
       readonly url?: string;
     }
   | {
+      readonly activeAttemptId?: string;
+      readonly stepId?: string;
+      readonly stepIndex?: number;
       readonly type: "step-start";
     }
   | EveAuthorizationPart
@@ -97,10 +106,12 @@ export type EveAuthorizationOutcome = AuthorizationOutcome;
  * sign-in affordance, then updates it when `authorization.completed` arrives.
  */
 export type EveAuthorizationPart = {
+  readonly attemptId?: string;
   readonly authorization?: EveAuthorizationChallenge;
   readonly description: string;
   readonly displayName: string;
   readonly name: string;
+  readonly stepId?: string;
   readonly stepIndex: number;
   readonly turnId: string;
   readonly type: "authorization";
@@ -130,6 +141,8 @@ export type EveAuthorizationPart = {
  * `toolName` and `toolMetadata.eve` ({@link EveMessageToolMetadata}) record call identity.
  */
 export type EveDynamicToolPart = {
+  readonly attemptId?: string;
+  readonly stepId?: string;
   readonly stepIndex?: number;
   readonly toolCallId: string;
   readonly toolMetadata?: EveMessageToolMetadata;

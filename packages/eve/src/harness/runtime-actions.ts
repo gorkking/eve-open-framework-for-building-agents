@@ -7,6 +7,7 @@ import type { RuntimeActionRequest, RuntimeActionResult } from "#runtime/actions
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type { AgentTurnOutcome } from "#shared/agent-turn-outcome.js";
 import { findRunningAgentHandle, isResultBoundToRunningHandle } from "#harness/handles/query.js";
+import type { DurableEventOrigin } from "#harness/attempt-identity.js";
 import { settleAgentTurn } from "#harness/handles/transitions.js";
 import { clearProxyInputRequestsForChild } from "#harness/proxy-input-requests.js";
 import {
@@ -43,11 +44,7 @@ function readSubagentResultOutcome(
  * Runtime action results are projected back onto the parent stream using the
  * same turn and step identity as the originating `actions.requested` batch.
  */
-interface PendingRuntimeActionEventMetadata {
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}
+type PendingRuntimeActionEventMetadata = DurableEventOrigin;
 
 /**
  * Serializable pending runtime-action batch stored on `session.state`.
@@ -215,10 +212,8 @@ export async function resolvePendingRuntimeActions(input: {
 
       await input.emit(
         createActionResultEvent({
+          ...batch.event,
           result,
-          sequence: batch.event.sequence,
-          stepIndex: batch.event.stepIndex,
-          turnId: batch.event.turnId,
         }),
       );
     }

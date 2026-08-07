@@ -44,6 +44,7 @@ import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js
 import { toErrorMessage } from "#shared/errors.js";
 import {
   createActionResultEvent,
+  createAttemptStartedEvent,
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
   createContextClearedEvent,
@@ -117,6 +118,11 @@ import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-c
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import { createInstrumentationHandleEvent } from "#harness/instrumentation-native-events.js";
 import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
+import {
+  createAttemptId,
+  createStepId,
+  type AttemptExecutionContext,
+} from "#harness/attempt-identity.js";
 import { resolveParentLineage } from "#harness/parent-lineage.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import {
@@ -569,6 +575,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     }
 
     let emissionState = getHarnessEmissionState(session.state);
+    const stepId = config.stepId ?? createStepId();
     const store = contextStorage.getStore();
     const parent = store?.get(ParentSessionKey);
     const emit = createInstrumentationHandleEvent({
@@ -711,11 +718,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       for (const result of pending.rejectedActions.results) {
         await emit(
           createActionResultEvent({
+            ...pending.rejectedActions.event,
             rejected: true,
             result,
-            sequence: pending.rejectedActions.event.sequence,
-            stepIndex: pending.rejectedActions.event.stepIndex,
-            turnId: pending.rejectedActions.event.turnId,
           }),
         );
       }
@@ -798,6 +803,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         ctx,
         event: createStepStartedEvent({
           sequence: emissionState.sequence,
+          stepId,
           stepIndex: emissionState.stepIndex,
           turnId: emissionState.turnId,
         }),
@@ -934,10 +940,36 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       trailingUserNote?: string;
     };
     let modelCallRuntimeActionTools = config.tools;
+    let latestAttemptContext: AttemptExecutionContext | undefined;
 
     const runSingleModelCall = async (
       opts: ModelCallOptions & { readonly attemptIndex: number },
     ): Promise<HarnessStepResult> => {
+      const attemptContext: AttemptExecutionContext = {
+        attemptId: createAttemptId(),
+        sequence: emissionState.sequence,
+        stepId,
+        stepIndex: emissionState.stepIndex,
+        turnId: emissionState.turnId,
+      };
+      latestAttemptContext = attemptContext;
+      const { attemptId } = attemptContext;
+      const attemptEmit =
+        emit === undefined
+          ? undefined
+          : (
+              event: Parameters<NonNullable<typeof emit>>[0],
+              messages?: readonly ModelMessage[],
+            ) => {
+              if (!("data" in event)) return emit(event, messages);
+              return emit(
+                {
+                  ...event,
+                  data: { ...(event as { readonly data: object }).data, ...attemptContext },
+                } as typeof event,
+                messages,
+              );
+            };
       const { instructions, telemetryRuntimeContext = {} } =
         opts.preparedInput ?? prepareModelCallInput(opts.extraSystemNote);
       // Label the reissued call's telemetry; without this a retry is only
@@ -1023,7 +1055,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         instrumentationHooks === undefined
           ? undefined
           : {
-              attemptId: `${session.sessionId}:${instrumentationTurnId}:${emissionState.stepIndex}:${opts.attemptIndex}`,
+              attemptId,
               attemptIndex: opts.attemptIndex,
               functionId: telemetryConfig?.functionId ?? agentName,
               rootSessionId: parent?.rootSessionId ?? session.sessionId,
@@ -1042,7 +1074,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
       const hooks = buildStepHooks({
         cachePath,
-        emit,
+        emit: attemptEmit,
         emissionState,
         emitStepStarted: opts.suppressStepStartedEmission !== true,
         marker,
@@ -1082,6 +1114,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const agent = new ToolLoopAgent(agentSettings);
 
       const executeModelCall = async (): Promise<HarnessStepResult> => {
+        await attemptEmit?.(
+          createAttemptStartedEvent({
+            ...attemptContext,
+          }),
+        );
         if (emit) {
           const hiddenRuntimeActionToolNames = [...config.tools]
             .filter(
@@ -1104,7 +1141,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             invalidInputToolCallIds,
             inlineAuthorizationResults,
             trailingInlineToolResultParts,
-          } = await emitStreamContent(emit, emissionState, streamResult.fullStream, {
+          } = await emitStreamContent(attemptEmit!, emissionState, streamResult.fullStream, {
             excludedActionToolNames,
             tools: advertisedHarnessTools,
           });
@@ -1121,7 +1158,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           ) {
             throw new EmptyModelResponseError();
           }
-          await emitStepActions(emit, emissionState, stepResult, {
+          await emitStepActions(attemptEmit!, emissionState, stepResult, {
             emittedActionCallIds,
             excludedActionCallIds: invalidInputToolCallIds,
             excludedActionToolNames,
@@ -1205,7 +1242,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // Emit step.started before building the toolset so dynamic tool
     // resolvers subscribed to step.started write to LiveStepToolsKey.
     if (emit) {
-      await emitStepStarted(emit, emissionState, messages);
+      await emitStepStarted(emit, emissionState, messages, stepId);
     }
 
     // Workflow continuations replay the sandbox after step.started so nested
@@ -1307,6 +1344,8 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             turnId: emissionState.turnId,
           });
           emissionState = await emitRecoverableFailedTurn(emit, emissionState, {
+            attemptId: latestAttemptContext?.attemptId,
+            stepId,
             code: "WORKFLOW_STREAM_WRITE_FAILED",
             continuationToken: session.continuationToken,
             details: { ...streamWriteDetails, errorId },
@@ -1365,6 +1404,8 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             );
           }
           await emitFailedStep(emit, emissionState, {
+            attemptId: latestAttemptContext?.attemptId,
+            stepId,
             code: "MODEL_CALL_FAILED",
             details,
             message: errorMessage,
@@ -1408,6 +1449,8 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             modelCallLogFields,
           );
           await emitFailedStep(emit, emissionState, {
+            attemptId: latestAttemptContext?.attemptId,
+            stepId,
             code: "MODEL_CALL_FAILED",
             details,
             message: errorMessage,
@@ -1424,6 +1467,8 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           modelCallLogFields,
         );
         emissionState = await emitRecoverableFailedTurn(emit, emissionState, {
+          attemptId: latestAttemptContext?.attemptId,
+          stepId,
           code: "MODEL_CALL_FAILED",
           continuationToken: session.continuationToken,
           details,
@@ -1482,6 +1527,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // --- Handle result ------------------------------------------------------
 
     return handleStepResult({
+      attemptContext: latestAttemptContext!,
       config,
       emit,
       emissionState,
@@ -1991,6 +2037,7 @@ async function attemptEmptyResponseRecovery(input: {
  * park, continue the tool loop, or terminate.
  */
 async function handleStepResult(input: {
+  readonly attemptContext: AttemptExecutionContext;
   readonly config: ToolLoopHarnessConfig;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
@@ -2000,7 +2047,7 @@ async function handleStepResult(input: {
   readonly runtimeActionTools: HarnessToolMap;
   readonly session: HarnessSession;
 }): Promise<StepResult> {
-  const { config, emit, promptMessages, result, runStep } = input;
+  const { attemptContext, config, emit, promptMessages, result, runStep } = input;
   let { emissionState, session } = input;
 
   const resolvedStepOutput = resolveAssistantStepText(result.response.messages, result.text);
@@ -2120,11 +2167,7 @@ async function handleStepResult(input: {
       session: setHarnessEmissionState(
         setPendingRuntimeActionBatch({
           actions: pendingRuntimeActions,
-          event: {
-            sequence: emissionState.sequence,
-            stepIndex: emissionState.stepIndex,
-            turnId: emissionState.turnId,
-          },
+          event: attemptContext,
           responseMessages,
           session: { ...baseSession, history: [...promptMessages] },
         }),
@@ -2137,11 +2180,7 @@ async function handleStepResult(input: {
 
   if (inputRequests.length > 0) {
     let parkedSession = setPendingInputBatch({
-      event: {
-        sequence: emissionState.sequence,
-        stepIndex: emissionState.stepIndex,
-        turnId: emissionState.turnId,
-      },
+      event: attemptContext,
       requests: inputRequests,
       responseMessages,
       session: { ...baseSession, history: [...promptMessages] },
@@ -2150,10 +2189,8 @@ async function handleStepResult(input: {
     if (emit) {
       await emit(
         createInputRequestedEvent({
+          ...attemptContext,
           requests: inputRequests,
-          sequence: emissionState.sequence,
-          stepIndex: emissionState.stepIndex,
-          turnId: emissionState.turnId,
         }),
       );
 
@@ -2176,6 +2213,7 @@ async function handleStepResult(input: {
       for (const ch of challenges) {
         await emit(
           createAuthorizationRequiredEvent({
+            ...attemptContext,
             authorization: ch.challenge,
             name: ch.name,
             description: ch.challenge.instructions ?? `Authorization required for ${ch.name}`,
@@ -2194,7 +2232,10 @@ async function handleStepResult(input: {
         {
           ...baseSession,
           history: [...promptMessages],
-          state: setPendingAuthorization(baseSession.state, { challenges }),
+          state: setPendingAuthorization(baseSession.state, {
+            challenges,
+            event: attemptContext,
+          }),
         },
         emissionState,
       ),
@@ -2237,6 +2278,7 @@ async function handleStepResult(input: {
   // and read straight off the session here.
   if (config.mode === "task") {
     return finishTaskTurn({
+      attemptContext,
       emissionState,
       emit,
       history: promptMessages,
@@ -2248,6 +2290,7 @@ async function handleStepResult(input: {
   }
 
   return finishConversationTurn({
+    attemptContext,
     emissionState,
     emit,
     history: promptMessages,
@@ -2296,9 +2339,11 @@ async function emitStructuredResult(
   emissionState: ReturnType<typeof getHarnessEmissionState>,
   structured: JsonValue,
   mode: RunMode,
+  attemptContext: AttemptExecutionContext,
 ): Promise<ReturnType<typeof getHarnessEmissionState>> {
   await emit(
     createResultCompletedEvent({
+      ...attemptContext,
       result: structured,
       sequence: emissionState.sequence,
       stepIndex: emissionState.stepIndex,
@@ -2314,6 +2359,7 @@ async function emitStructuredResult(
  * structured value — or the plain assistant text — is the run's output.
  */
 async function finishTaskTurn(input: {
+  readonly attemptContext: AttemptExecutionContext;
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
   readonly history: readonly ModelMessage[];
@@ -2337,6 +2383,7 @@ async function finishTaskTurn(input: {
   if (structured === undefined) {
     if (emit) {
       await emitFailedStep(emit, emissionState, {
+        ...input.attemptContext,
         ...OUTPUT_SCHEMA_NOT_FULFILLED,
         sessionId: session.sessionId,
       });
@@ -2349,7 +2396,13 @@ async function finishTaskTurn(input: {
 
   session = persistStructuredAssistantTurn(session, history, structured);
   if (emit) {
-    emissionState = await emitStructuredResult(emit, emissionState, structured, "task");
+    emissionState = await emitStructuredResult(
+      emit,
+      emissionState,
+      structured,
+      "task",
+      input.attemptContext,
+    );
     session = setHarnessEmissionState(session, emissionState);
   }
   return { next: { done: true, output: structured }, session };
@@ -2361,6 +2414,7 @@ async function finishTaskTurn(input: {
  * ends the turn and the session waits for the next message.
  */
 async function finishConversationTurn(input: {
+  readonly attemptContext: AttemptExecutionContext;
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
   readonly history: readonly ModelMessage[];
@@ -2385,6 +2439,7 @@ async function finishConversationTurn(input: {
   if (structured === undefined) {
     if (emit) {
       emissionState = await emitRecoverableFailedTurn(emit, emissionState, {
+        ...input.attemptContext,
         ...OUTPUT_SCHEMA_NOT_FULFILLED,
         continuationToken: session.continuationToken,
       });
@@ -2399,7 +2454,13 @@ async function finishConversationTurn(input: {
 
   session = persistStructuredAssistantTurn(session, history, structured);
   if (emit) {
-    emissionState = await emitStructuredResult(emit, emissionState, structured, "conversation");
+    emissionState = await emitStructuredResult(
+      emit,
+      emissionState,
+      structured,
+      "conversation",
+      input.attemptContext,
+    );
     session = setHarnessEmissionState(session, emissionState);
   }
   const settledTurn = { output: structured } satisfies SettledTurn;

@@ -7,6 +7,7 @@ import type {
 import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import { resolveTextToResponses } from "#channel/resolve-text.js";
 import { classifyInputRequest, isApprovalRequest } from "#harness/input-request-class.js";
+import type { DurableEventOrigin } from "#harness/attempt-identity.js";
 import { coalesceTurnInputs } from "#harness/messages.js";
 import { resolveToolCallInputObject } from "#harness/runtime-actions.js";
 import {
@@ -31,11 +32,7 @@ type ToolResponsePart = Extract<ModelMessage, { role: "tool" }>["content"][numbe
  * Stream-emit coordinates carried so a parked batch's resolution can attribute
  * its events to the turn and step that requested the input.
  */
-interface PendingInputBatchEvent {
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}
+type PendingInputBatchEvent = DurableEventOrigin;
 
 /**
  * Serializable pending input batch stored on the session state.

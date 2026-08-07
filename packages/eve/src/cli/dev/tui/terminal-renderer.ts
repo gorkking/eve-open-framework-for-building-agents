@@ -3262,6 +3262,12 @@ export class TerminalRenderer implements AgentTUIRenderer {
         break;
       }
 
+      case "assistant-remove":
+        turnState.text.delete(event.id);
+        this.#removeBlock(event.id);
+        this.#paint();
+        break;
+
       case "reasoning-delta": {
         if (displayModes.reasoning === "hidden") break;
         const text = (turnState.reasoning.get(event.id) ?? "") + stripTerminalControls(event.delta);
@@ -3284,6 +3290,12 @@ export class TerminalRenderer implements AgentTUIRenderer {
         }
         break;
       }
+
+      case "reasoning-remove":
+        turnState.reasoning.delete(event.id);
+        this.#removeBlock(event.id);
+        this.#paint();
+        break;
 
       case "tool-call-preparing":
         if (displayModes.tools === "hidden") break;
@@ -3317,6 +3329,15 @@ export class TerminalRenderer implements AgentTUIRenderer {
           turnState,
         );
         break;
+
+      case "tool-remove": {
+        turnState.tools.delete(event.toolCallId);
+        const id = this.#parentToolBlockIds.get(event.toolCallId);
+        if (id !== undefined) this.#removeBlock(id);
+        this.#parentToolBlockIds.delete(event.toolCallId);
+        this.#paint();
+        break;
+      }
 
       case "tool-approval-request": {
         if (displayModes.tools === "hidden") break;

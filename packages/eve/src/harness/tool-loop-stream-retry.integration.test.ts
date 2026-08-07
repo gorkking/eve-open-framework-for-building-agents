@@ -128,8 +128,15 @@ describe("tool loop streamed provider retries", () => {
     });
     expect(JSON.stringify(result.session.history)).toContain("Recovered answer.");
     expect(JSON.stringify(result.session.history)).not.toContain("Discard this partial response.");
-    expect(events.filter((event) => event.type === "step.started")).toHaveLength(1);
-    expect(events.filter((event) => event.type === "step.completed")).toHaveLength(1);
+    const stepStarted = events.filter((event) => event.type === "step.started");
+    const attempts = events.filter((event) => event.type === "attempt.started");
+    expect(stepStarted).toHaveLength(1);
+    expect(attempts).toHaveLength(2);
+    expect(new Set(attempts.map((event) => event.data.attemptId)).size).toBe(2);
+    expect(attempts.every((event) => event.data.stepId === stepStarted[0]?.data.stepId)).toBe(true);
+    const completed = events.filter((event) => event.type === "step.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.data.attemptId).toBe(attempts[1]?.data.attemptId);
     expect(events.filter((event) => event.type === "step.failed")).toHaveLength(0);
     expect(events.filter((event) => event.type === "turn.failed")).toHaveLength(0);
     expect(events.filter((event) => event.type === "session.failed")).toHaveLength(0);
@@ -169,7 +176,12 @@ describe("tool loop streamed provider retries", () => {
         "The model provider is overloaded or timing out upstream of AI Gateway. " +
         "This is transient — retry shortly, or switch models with `/model` in `eve dev`.",
     });
-    expect(events.filter((event) => event.type === "step.failed")).toHaveLength(1);
+    const attempts = events.filter((event) => event.type === "attempt.started");
+    const failed = events.filter((event) => event.type === "step.failed");
+    expect(attempts).toHaveLength(3);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.data.attemptId).toBe(attempts.at(-1)?.data.attemptId);
+    expect(failed[0]?.data.stepId).toBe(attempts.at(-1)?.data.stepId);
     expect(events.filter((event) => event.type === "turn.failed")).toHaveLength(1);
     expect(events.filter((event) => event.type === "session.failed")).toHaveLength(1);
   });

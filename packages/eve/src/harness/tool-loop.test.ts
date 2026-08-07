@@ -211,7 +211,12 @@ function createEventCollector(): {
 
 function getCompatibilityEventTypes(events: readonly UnstampedMessageStreamEvent[]): string[] {
   return events
-    .filter((event) => event.type !== "message.appended" && event.type !== "reasoning.appended")
+    .filter(
+      (event) =>
+        event.type !== "attempt.started" &&
+        event.type !== "message.appended" &&
+        event.type !== "reasoning.appended",
+    )
     .map((event) => event.type);
 }
 
@@ -2614,7 +2619,7 @@ describe("createToolLoopHarness", () => {
     const secondResult = await createToolLoopHarness(config)(firstResult.session);
 
     expect(secondResult.next).toBeNull();
-    expect(events.filter((event) => event.type === "input.requested").at(-1)).toEqual({
+    expect(events.filter((event) => event.type === "input.requested").at(-1)).toMatchObject({
       data: {
         requests: [
           {
@@ -2725,7 +2730,7 @@ describe("createToolLoopHarness", () => {
       "step.completed",
     ]);
 
-    expect(events.find((e) => e.type === "message.completed")?.data).toEqual({
+    expect(events.find((e) => e.type === "message.completed")?.data).toMatchObject({
       finishReason: "tool-calls",
       message: "Let me add those.",
       sequence: 0,
@@ -2733,21 +2738,21 @@ describe("createToolLoopHarness", () => {
       turnId: "turn_0",
     });
 
-    expect(events.find((e) => e.type === "step.completed")?.data).toEqual({
+    expect(events.find((e) => e.type === "step.completed")?.data).toMatchObject({
       finishReason: "tool-calls",
       sequence: 0,
       stepIndex: 0,
       turnId: "turn_0",
     });
 
-    expect(events.find((e) => e.type === "actions.requested")?.data).toEqual({
+    expect(events.find((e) => e.type === "actions.requested")?.data).toMatchObject({
       actions: [{ callId: "call-1", input: { a: 1, b: 2 }, kind: "tool-call", toolName: "add" }],
       sequence: 0,
       stepIndex: 0,
       turnId: "turn_0",
     });
 
-    expect(events.find((e) => e.type === "action.result")?.data).toEqual({
+    expect(events.find((e) => e.type === "action.result")?.data).toMatchObject({
       result: { callId: "call-1", kind: "tool-result", output: "42", toolName: "add" },
       sequence: 0,
       stepIndex: 0,
@@ -3047,7 +3052,7 @@ describe("createToolLoopHarness", () => {
 
     await runStep(createTestSession(), { message: "Add 1 and 2" });
 
-    expect(events.find((event) => event.type === "actions.requested")?.data).toEqual({
+    expect(events.find((event) => event.type === "actions.requested")?.data).toMatchObject({
       actions: [{ callId: "call-ok", input: { a: 1, b: 2 }, kind: "tool-call", toolName: "add" }],
       sequence: 0,
       stepIndex: 0,
@@ -3246,7 +3251,7 @@ describe("createToolLoopHarness", () => {
 
     await runStep(createTestSession(), { message: "Weather in Vienna" });
 
-    expect(events.find((event) => event.type === "action.result")?.data).toEqual({
+    expect(events.find((event) => event.type === "action.result")?.data).toMatchObject({
       error: {
         code: "ACTION_RESULT_FAILED",
         message: "Temporary E2E crash for Vienna",
@@ -3354,7 +3359,7 @@ describe("createToolLoopHarness", () => {
     });
 
     expect(typeof result.next).toBe("function");
-    expect(events.find((event) => event.type === "action.result")?.data).toEqual({
+    expect(events.find((event) => event.type === "action.result")?.data).toMatchObject({
       error: {
         code: "ACTION_RESULT_FAILED",
         message:
@@ -3471,7 +3476,7 @@ describe("createToolLoopHarness", () => {
 
     const actionResults = events.filter((event) => event.type === "action.result");
     expect(actionResults).toHaveLength(1);
-    expect(actionResults[0]?.data).toEqual({
+    expect(actionResults[0]?.data).toMatchObject({
       result: {
         callId: "call-1",
         kind: "tool-result",
@@ -3687,7 +3692,7 @@ describe("createToolLoopHarness", () => {
     });
 
     expect(firstStep.next).toBe(runStep);
-    expect(events.filter((event) => event.type === "action.result")).toEqual([
+    expect(events.filter((event) => event.type === "action.result")).toMatchObject([
       expect.objectContaining({
         data: expect.objectContaining({
           error: expect.objectContaining({
@@ -4613,6 +4618,10 @@ describe("createToolLoopHarness", () => {
         expect(types).not.toContain("turn.failed");
         expect(types.filter((type) => type === "step.started")).toHaveLength(1);
         expect(types.filter((type) => type === "step.completed")).toHaveLength(1);
+        const attempts = events.filter((event) => event.type === "attempt.started");
+        expect(attempts).toHaveLength(2);
+        expect(attempts[0]?.data.attemptId).not.toBe(attempts[1]?.data.attemptId);
+        expect(attempts[0]?.data.stepId).toBe(attempts[1]?.data.stepId);
 
         expect(warnSpy).toHaveBeenCalledWith(
           "[eve:harness.tool-loop] empty model response; reissuing the model call once",
@@ -4991,7 +5000,7 @@ describe("createToolLoopHarness", () => {
 
     expect(
       events.filter((event) => event.type === "message.completed").map((event) => event.data),
-    ).toEqual([
+    ).toMatchObject([
       {
         finishReason: "tool-calls",
         message: "I'll search for that.",
@@ -5385,7 +5394,7 @@ describe("createToolLoopHarness", () => {
 
       expect(result.next).toBeNull();
       expect(result.settledTurn).toBeUndefined();
-      expect(getPendingAuthorization(result.session.state)).toEqual({
+      expect(getPendingAuthorization(result.session.state)).toMatchObject({
         challenges: full.challenges,
       });
 
@@ -5484,7 +5493,7 @@ describe("createToolLoopHarness", () => {
 
       expect(result.next).toBeNull();
       expect(result.settledTurn).toBeUndefined();
-      expect(getPendingAuthorization(result.session.state)).toEqual({
+      expect(getPendingAuthorization(result.session.state)).toMatchObject({
         challenges: full.challenges,
       });
 
@@ -5858,7 +5867,7 @@ describe("createToolLoopHarness", () => {
 
     const result = await harness(session, { message: "Use web_search." });
 
-    expect(events.filter((event) => event.type === "actions.requested")).toEqual([
+    expect(events.filter((event) => event.type === "actions.requested")).toMatchObject([
       {
         type: "actions.requested",
         data: {
@@ -5876,7 +5885,7 @@ describe("createToolLoopHarness", () => {
         },
       },
     ]);
-    expect(events.filter((event) => event.type === "action.result")).toEqual([
+    expect(events.filter((event) => event.type === "action.result")).toMatchObject([
       {
         type: "action.result",
         data: {
@@ -6427,7 +6436,7 @@ describe("createToolLoopHarness", () => {
 
     const result = await harness(session, { message: "Use web_search." });
 
-    expect(events.filter((event) => event.type === "action.result")).toEqual([
+    expect(events.filter((event) => event.type === "action.result")).toMatchObject([
       {
         type: "action.result",
         data: {
@@ -6938,7 +6947,7 @@ describe("createToolLoopHarness", () => {
       "turn.completed",
       "session.waiting",
     ]);
-    expect(events.find((event) => event.type === "actions.requested")).toEqual({
+    expect(events.find((event) => event.type === "actions.requested")).toMatchObject({
       data: {
         actions: [
           {
@@ -6954,7 +6963,7 @@ describe("createToolLoopHarness", () => {
       },
       type: "actions.requested",
     });
-    expect(events.find((event) => event.type === "input.requested")).toEqual({
+    expect(events.find((event) => event.type === "input.requested")).toMatchObject({
       data: {
         requests: [
           {
@@ -7708,7 +7717,7 @@ describe("createToolLoopHarness", () => {
 
     expect(result.next).toBeNull();
     expect(events.some((event) => event.type === "actions.requested")).toBe(false);
-    expect(events.find((event) => event.type === "input.requested")).toEqual({
+    expect(events.find((event) => event.type === "input.requested")).toMatchObject({
       data: {
         requests: [
           {
@@ -8010,7 +8019,7 @@ describe("createToolLoopHarness", () => {
       "session.waiting",
     ]);
 
-    expect(events.find((e) => e.type === "compaction.requested")?.data).toEqual({
+    expect(events.find((e) => e.type === "compaction.requested")?.data).toMatchObject({
       modelId: "openai/gpt-4",
       sequence: 0,
       sessionId: "test-session",
@@ -8018,7 +8027,7 @@ describe("createToolLoopHarness", () => {
       usageInputTokens: 5000,
     });
 
-    expect(events.find((e) => e.type === "compaction.completed")?.data).toEqual({
+    expect(events.find((e) => e.type === "compaction.completed")?.data).toMatchObject({
       modelId: "openai/gpt-4",
       sequence: 0,
       sessionId: "test-session",
@@ -8068,7 +8077,7 @@ describe("createToolLoopHarness", () => {
       state,
     });
     expect(getCompatibilityEventTypes(events)).toEqual(["context.cleared", "session.waiting"]);
-    expect(events.find((event) => event.type === "context.cleared")?.data).toEqual({
+    expect(events.find((event) => event.type === "context.cleared")?.data).toMatchObject({
       sequence: 0,
       sessionId: "test-session",
       turnId: "turn_0",
@@ -8282,6 +8291,7 @@ describe("createToolLoopHarness", () => {
       "turn.started",
       "message.received",
       "step.started",
+      "attempt.started",
       "reasoning.appended",
       "reasoning.completed",
       "message.appended",
@@ -8290,20 +8300,20 @@ describe("createToolLoopHarness", () => {
       "turn.completed",
       "session.waiting",
     ]);
-    expect(events.find((event) => event.type === "reasoning.appended")?.data).toEqual({
+    expect(events.find((event) => event.type === "reasoning.appended")?.data).toMatchObject({
       reasoningDelta: "Need to check the known constraints first.",
       reasoningSoFar: "Need to check the known constraints first.",
       sequence: 0,
       stepIndex: 0,
       turnId: "turn_0",
     });
-    expect(events.find((event) => event.type === "reasoning.completed")?.data).toEqual({
+    expect(events.find((event) => event.type === "reasoning.completed")?.data).toMatchObject({
       reasoning: "Need to check the known constraints first.",
       sequence: 0,
       stepIndex: 0,
       turnId: "turn_0",
     });
-    expect(events.find((event) => event.type === "message.appended")?.data).toEqual({
+    expect(events.find((event) => event.type === "message.appended")?.data).toMatchObject({
       messageDelta: "Answer ready.",
       messageSoFar: "Answer ready.",
       sequence: 0,
@@ -8338,6 +8348,7 @@ describe("createToolLoopHarness", () => {
       "turn.started",
       "message.received",
       "step.started",
+      "attempt.started",
       "message.appended",
       "message.appended",
       "message.completed",
@@ -8347,7 +8358,7 @@ describe("createToolLoopHarness", () => {
     ]);
     expect(
       events.filter((event) => event.type === "message.appended").map((event) => event.data),
-    ).toEqual([
+    ).toMatchObject([
       {
         messageDelta: "Hello",
         messageSoFar: "Hello",
@@ -8363,7 +8374,7 @@ describe("createToolLoopHarness", () => {
         turnId: "turn_0",
       },
     ]);
-    expect(events.find((event) => event.type === "message.completed")?.data).toEqual({
+    expect(events.find((event) => event.type === "message.completed")?.data).toMatchObject({
       finishReason: "stop",
       message: "Hello there.",
       sequence: 0,
@@ -9582,7 +9593,7 @@ describe("createToolLoopHarness", () => {
 
       expect(mockCreateAiSdkHookBridge).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
-          attemptId: "test-session:turn_0:0:0",
+          attemptId: expect.stringMatching(/^atp_/),
           attemptIndex: 0,
           sessionId: "test-session",
           stepIndex: 0,

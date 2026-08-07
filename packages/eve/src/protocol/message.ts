@@ -23,7 +23,7 @@ export const EVE_STREAM_TAIL_INDEX_HEADER = "x-eve-stream-tail-index";
 export const EVE_STREAM_VERSION_HEADER = "x-eve-stream-version";
 export const EVE_MESSAGE_STREAM_CONTENT_TYPE = "application/x-ndjson; charset=utf-8";
 export const EVE_MESSAGE_STREAM_FORMAT = "ndjson";
-export const EVE_MESSAGE_STREAM_VERSION = "21";
+export const EVE_MESSAGE_STREAM_VERSION = "22";
 
 /**
  * eve-owned finish reason for one completed assistant step.
@@ -42,6 +42,16 @@ export type AssistantStepFinishReason =
 
 type ProviderMetadataEntry = NonNullable<ProviderMetadata[string]>;
 type GatewayGenerationId = Extract<ProviderMetadataEntry["generationId"], string>;
+
+export interface StepIdentity {
+  /** Logical durable harness step which owns this event. Absent on legacy events. */
+  readonly stepId?: string;
+}
+
+export interface AttemptIdentity extends StepIdentity {
+  /** Physical model execution which produced this event. Absent on legacy events. */
+  readonly attemptId?: string;
+}
 
 export interface StepCompletedProviderMetadata {
   readonly gateway: {
@@ -207,7 +217,7 @@ export type MessageReceivedPart =
  * from an assistant step.
  */
 export interface ActionsRequestedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     actions: readonly RuntimeActionRequest[];
     sequence: number;
     stepIndex: number;
@@ -221,7 +231,7 @@ export interface ActionsRequestedStreamEvent {
  * continue the run.
  */
 export interface InputRequestedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     requests: readonly InputRequest[];
     sequence: number;
     stepIndex: number;
@@ -235,7 +245,7 @@ export interface InputRequestedStreamEvent {
  * session loop.
  */
 export interface ActionResultStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     error?: ActionResultError;
     result: RuntimeActionResult;
     sequence: number;
@@ -251,7 +261,7 @@ export interface ActionResultStreamEvent {
  * tool generator. The final snapshot is emitted as `action.result`.
  */
 export interface ActionPartialStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     result: RuntimeToolResultActionResult;
     sequence: number;
     stepIndex: number;
@@ -322,7 +332,7 @@ export interface SubagentCompletedStreamEvent {
  * current message for the current step.
  */
 export interface MessageAppendedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     messageDelta: string;
     messageSoFar: string;
     sequence: number;
@@ -337,7 +347,7 @@ export interface MessageAppendedStreamEvent {
  * reasoning block for the current step.
  */
 export interface ReasoningAppendedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     reasoningDelta: string;
     reasoningSoFar: string;
     sequence: number;
@@ -356,7 +366,7 @@ export interface ReasoningAppendedStreamEvent {
  * why that assistant message boundary completed.
  */
 export interface MessageCompletedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     finishReason: AssistantStepFinishReason;
     message: string | null;
     sequence: number;
@@ -371,7 +381,7 @@ export interface MessageCompletedStreamEvent {
  * current step.
  */
 export interface ReasoningCompletedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     reasoning: string;
     sequence: number;
     stepIndex: number;
@@ -385,7 +395,7 @@ export interface ReasoningCompletedStreamEvent {
  * matches the requested output schema.
  */
 export interface ResultCompletedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     result: JsonValue;
     sequence: number;
     stepIndex: number;
@@ -398,7 +408,7 @@ export interface ResultCompletedStreamEvent {
  * Stream event emitted when one model call starts inside the current turn.
  */
 export interface StepStartedStreamEvent {
-  data: {
+  data: StepIdentity & {
     sequence: number;
     stepIndex: number;
     turnId: string;
@@ -410,7 +420,7 @@ export interface StepStartedStreamEvent {
  * Stream event emitted when one model call completes successfully.
  */
 export interface StepCompletedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     finishReason: AssistantStepFinishReason;
     providerMetadata?: StepCompletedProviderMetadata;
     sequence: number;
@@ -431,7 +441,7 @@ export interface StepCompletedStreamEvent {
  * Stream event emitted when one model call fails.
  */
 export interface StepFailedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     code: string;
     details?: JsonObject;
     message: string;
@@ -445,6 +455,15 @@ export interface StepFailedStreamEvent {
 /**
  * Stream event emitted when one turn reaches a terminal successful outcome.
  */
+export interface AttemptStartedStreamEvent {
+  data: Required<AttemptIdentity> & {
+    sequence: number;
+    stepIndex: number;
+    turnId: string;
+  };
+  type: "attempt.started";
+}
+
 export interface TurnCompletedStreamEvent {
   data: {
     sequence: number;
@@ -528,7 +547,7 @@ export interface CompactionCompletedStreamEvent {
  * before it can continue.
  */
 export interface AuthorizationRequiredStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     authorization?: ConnectionAuthorizationChallenge;
     description: string;
     name: string;
@@ -560,7 +579,7 @@ export type ConnectionAuthorizationOutcome = AuthorizationOutcome;
  * model's next fragment streams in.
  */
 export interface AuthorizationCompletedStreamEvent {
-  data: {
+  data: AttemptIdentity & {
     /**
      * The challenge from the matching `authorization.required` event,
      * journaled across the park. Lets channels keep rendering the
@@ -639,6 +658,7 @@ export type UnstampedMessageStreamEvent =
   | InputRequestedStreamEvent
   | ActionPartialStreamEvent
   | ActionResultStreamEvent
+  | AttemptStartedStreamEvent
   | ReasoningCompletedStreamEvent
   | StepCompletedStreamEvent
   | StepFailedStreamEvent
@@ -947,18 +967,30 @@ function basenameOf(path: string): string {
   return segment.length > 0 ? segment : path;
 }
 
+type EventDataInput<TEvent extends { data: object }> = Readonly<TEvent["data"]>;
+
+function projectStepIdentity(input: StepIdentity): StepIdentity {
+  const identity: { stepId?: string } = {};
+  if (input.stepId !== undefined) identity.stepId = input.stepId;
+  return identity;
+}
+
+function projectAttemptIdentity(input: AttemptIdentity): AttemptIdentity {
+  const identity: { attemptId?: string; stepId?: string } = { ...projectStepIdentity(input) };
+  if (input.attemptId !== undefined) identity.attemptId = input.attemptId;
+  return identity;
+}
+
 /**
  * Creates the `actions.requested` event for one observed group of model action
  * requests.
  */
-export function createActionsRequestedEvent(input: {
-  readonly actions: readonly RuntimeActionRequest[];
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): ActionsRequestedStreamEvent {
+export function createActionsRequestedEvent(
+  input: EventDataInput<ActionsRequestedStreamEvent>,
+): ActionsRequestedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       actions: input.actions,
       sequence: input.sequence,
       stepIndex: input.stepIndex,
@@ -976,16 +1008,11 @@ export function createActionsRequestedEvent(input: {
  * has suspended the turn on a framework-owned webhook; both are absent
  * for `getToken`-only authorization sources that authorize out of band.
  */
-export function createAuthorizationRequiredEvent(input: {
-  readonly authorization?: ConnectionAuthorizationChallenge;
-  readonly description: string;
-  readonly name: string;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-  readonly webhookUrl?: string;
-}): AuthorizationRequiredStreamEvent {
+export function createAuthorizationRequiredEvent(
+  input: EventDataInput<AuthorizationRequiredStreamEvent>,
+): AuthorizationRequiredStreamEvent {
   const data: AuthorizationRequiredStreamEvent["data"] = {
+    ...projectAttemptIdentity(input),
     description: input.description,
     name: input.name,
     sequence: input.sequence,
@@ -1009,16 +1036,11 @@ export function createAuthorizationRequiredEvent(input: {
  * authorization source after `completeAuthorization` has resolved or the
  * authorization deadline has expired.
  */
-export function createAuthorizationCompletedEvent(input: {
-  readonly authorization?: ConnectionAuthorizationChallenge;
-  readonly name: string;
-  readonly outcome: AuthorizationOutcome;
-  readonly reason?: string;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): AuthorizationCompletedStreamEvent {
+export function createAuthorizationCompletedEvent(
+  input: EventDataInput<AuthorizationCompletedStreamEvent>,
+): AuthorizationCompletedStreamEvent {
   const data: AuthorizationCompletedStreamEvent["data"] = {
+    ...projectAttemptIdentity(input),
     name: input.name,
     outcome: input.outcome,
     sequence: input.sequence,
@@ -1040,14 +1062,12 @@ export function createAuthorizationCompletedEvent(input: {
 /**
  * Creates the `input.requested` event for one pending HITL batch.
  */
-export function createInputRequestedEvent(input: {
-  readonly requests: readonly InputRequest[];
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): InputRequestedStreamEvent {
+export function createInputRequestedEvent(
+  input: EventDataInput<InputRequestedStreamEvent>,
+): InputRequestedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       requests: input.requests,
       sequence: input.sequence,
       stepIndex: input.stepIndex,
@@ -1064,13 +1084,15 @@ export function createInputRequestedEvent(input: {
  * call never executed, so the outcome is forced to `rejected` rather than
  * derived from the synthesized denial output.
  */
-export function createActionResultEvent(input: {
-  readonly rejected?: boolean;
-  readonly result: RuntimeActionResult;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): ActionResultStreamEvent {
+export function createActionResultEvent(
+  input: AttemptIdentity & {
+    readonly rejected?: boolean;
+    readonly result: RuntimeActionResult;
+    readonly sequence: number;
+    readonly stepIndex: number;
+    readonly turnId: string;
+  },
+): ActionResultStreamEvent {
   const outcome =
     input.rejected === true
       ? { error: buildActionResultError(input.result), status: "rejected" as const }
@@ -1078,6 +1100,7 @@ export function createActionResultEvent(input: {
 
   return {
     data: {
+      ...projectAttemptIdentity(input),
       error: outcome.error,
       result: input.result,
       sequence: input.sequence,
@@ -1090,14 +1113,12 @@ export function createActionResultEvent(input: {
 }
 
 /** Creates an `action.partial` event for one preliminary tool-result snapshot. */
-export function createActionPartialEvent(input: {
-  readonly result: RuntimeToolResultActionResult;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): ActionPartialStreamEvent {
+export function createActionPartialEvent(
+  input: EventDataInput<ActionPartialStreamEvent>,
+): ActionPartialStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       result: input.result,
       sequence: input.sequence,
       stepIndex: input.stepIndex,
@@ -1142,15 +1163,12 @@ export function createSubagentCalledEvent(input: {
 /**
  * Creates the `message.appended` event for one streamed assistant text delta.
  */
-export function createMessageAppendedEvent(input: {
-  readonly messageDelta: string;
-  readonly messageSoFar: string;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): MessageAppendedStreamEvent {
+export function createMessageAppendedEvent(
+  input: EventDataInput<MessageAppendedStreamEvent>,
+): MessageAppendedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       messageDelta: input.messageDelta,
       messageSoFar: input.messageSoFar,
       sequence: input.sequence,
@@ -1164,15 +1182,12 @@ export function createMessageAppendedEvent(input: {
 /**
  * Creates the `reasoning.appended` event for one streamed reasoning delta.
  */
-export function createReasoningAppendedEvent(input: {
-  readonly reasoningDelta: string;
-  readonly reasoningSoFar: string;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): ReasoningAppendedStreamEvent {
+export function createReasoningAppendedEvent(
+  input: EventDataInput<ReasoningAppendedStreamEvent>,
+): ReasoningAppendedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       reasoningDelta: input.reasoningDelta,
       reasoningSoFar: input.reasoningSoFar,
       sequence: input.sequence,
@@ -1186,15 +1201,18 @@ export function createReasoningAppendedEvent(input: {
 /**
  * Creates the `message.completed` event for one completed assistant text chunk.
  */
-export function createMessageCompletedEvent(input: {
-  readonly finishReason?: AssistantStepFinishReason;
-  readonly message: string | null;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): MessageCompletedStreamEvent {
+export function createMessageCompletedEvent(
+  input: AttemptIdentity & {
+    readonly finishReason?: AssistantStepFinishReason;
+    readonly message: string | null;
+    readonly sequence: number;
+    readonly stepIndex: number;
+    readonly turnId: string;
+  },
+): MessageCompletedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       finishReason: input.finishReason ?? "stop",
       message: input.message,
       sequence: input.sequence,
@@ -1208,14 +1226,12 @@ export function createMessageCompletedEvent(input: {
 /**
  * Creates the `reasoning.completed` event for one completed reasoning block.
  */
-export function createReasoningCompletedEvent(input: {
-  readonly reasoning: string;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): ReasoningCompletedStreamEvent {
+export function createReasoningCompletedEvent(
+  input: EventDataInput<ReasoningCompletedStreamEvent>,
+): ReasoningCompletedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       reasoning: input.reasoning,
       sequence: input.sequence,
       stepIndex: input.stepIndex,
@@ -1228,14 +1244,12 @@ export function createReasoningCompletedEvent(input: {
 /**
  * Creates the `result.completed` event for one finalized structured result.
  */
-export function createResultCompletedEvent(input: {
-  readonly result: JsonValue;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): ResultCompletedStreamEvent {
+export function createResultCompletedEvent(
+  input: EventDataInput<ResultCompletedStreamEvent>,
+): ResultCompletedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       result: input.result,
       sequence: input.sequence,
       stepIndex: input.stepIndex,
@@ -1248,13 +1262,12 @@ export function createResultCompletedEvent(input: {
 /**
  * Creates the `step.started` event for one model call.
  */
-export function createStepStartedEvent(input: {
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): StepStartedStreamEvent {
+export function createStepStartedEvent(
+  input: EventDataInput<StepStartedStreamEvent>,
+): StepStartedStreamEvent {
   return {
     data: {
+      ...projectStepIdentity(input),
       sequence: input.sequence,
       stepIndex: input.stepIndex,
       turnId: input.turnId,
@@ -1266,21 +1279,11 @@ export function createStepStartedEvent(input: {
 /**
  * Creates the `step.completed` event for one completed model call.
  */
-export function createStepCompletedEvent(input: {
-  readonly finishReason: AssistantStepFinishReason;
-  readonly providerMetadata?: StepCompletedProviderMetadata;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-  readonly usage?: {
-    readonly costUsd?: number;
-    readonly inputTokens?: number;
-    readonly outputTokens?: number;
-    readonly cacheReadTokens?: number;
-    readonly cacheWriteTokens?: number;
-  };
-}): StepCompletedStreamEvent {
+export function createStepCompletedEvent(
+  input: EventDataInput<StepCompletedStreamEvent>,
+): StepCompletedStreamEvent {
   const data: StepCompletedStreamEvent["data"] = {
+    ...projectAttemptIdentity(input),
     finishReason: input.finishReason,
     sequence: input.sequence,
     stepIndex: input.stepIndex,
@@ -1303,16 +1306,12 @@ export function createStepCompletedEvent(input: {
 /**
  * Creates the `step.failed` event for one failed model call.
  */
-export function createStepFailedEvent(input: {
-  readonly code: string;
-  readonly details?: JsonObject;
-  readonly message: string;
-  readonly sequence: number;
-  readonly stepIndex: number;
-  readonly turnId: string;
-}): StepFailedStreamEvent {
+export function createStepFailedEvent(
+  input: EventDataInput<StepFailedStreamEvent>,
+): StepFailedStreamEvent {
   return {
     data: {
+      ...projectAttemptIdentity(input),
       code: input.code,
       details: input.details,
       message: input.message,
@@ -1324,9 +1323,13 @@ export function createStepFailedEvent(input: {
   };
 }
 
-/**
- * Creates the `turn.completed` event for one terminal successful turn.
- */
+/** Creates an `attempt.started` event for one physical model execution. */
+export function createAttemptStartedEvent(
+  input: EventDataInput<AttemptStartedStreamEvent>,
+): AttemptStartedStreamEvent {
+  return { data: input, type: "attempt.started" };
+}
+
 export function createTurnCompletedEvent(input: {
   readonly sequence: number;
   readonly turnId: string;

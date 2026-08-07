@@ -10,7 +10,11 @@ import type {
 type ToolResponsePart = Extract<ModelMessage, { role: "tool" }>["content"][number];
 type InlineToolResultPart = Extract<ToolResponsePart, { type: "tool-result" }>;
 
-import type { AssistantStepFinishReason, RuntimeIdentity } from "#protocol/message.js";
+import type {
+  AssistantStepFinishReason,
+  AttemptIdentity,
+  RuntimeIdentity,
+} from "#protocol/message.js";
 import {
   createActionsRequestedEvent,
   createActionPartialEvent,
@@ -110,10 +114,12 @@ export async function emitStepStarted(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
   messages?: readonly import("ai").ModelMessage[],
+  stepId?: string,
 ): Promise<void> {
   await emitFn(
     createStepStartedEvent({
       sequence: state.sequence,
+      stepId,
       stepIndex: state.stepIndex,
       turnId: state.turnId,
     }),
@@ -135,7 +141,7 @@ interface FailedStepPayload {
 async function emitStepAndTurnFailed(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
-  input: FailedStepPayload,
+  input: FailedStepPayload & AttemptIdentity,
 ): Promise<void> {
   await emitFn(
     createStepFailedEvent({
@@ -166,7 +172,7 @@ async function emitStepAndTurnFailed(
 export async function emitFailedStep(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
-  input: FailedStepPayload & { readonly sessionId: string },
+  input: FailedStepPayload & AttemptIdentity & { readonly sessionId: string },
 ): Promise<void> {
   await emitStepAndTurnFailed(emitFn, state, input);
   await emitFn(createSessionFailedEvent(input));
@@ -179,7 +185,7 @@ export async function emitFailedStep(
 export async function emitRecoverableFailedTurn(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
-  input: FailedStepPayload & { readonly continuationToken: string },
+  input: FailedStepPayload & AttemptIdentity & { readonly continuationToken: string },
 ): Promise<HarnessEmissionState> {
   await emitStepAndTurnFailed(emitFn, state, input);
   await emitFn(createSessionWaitingEvent());

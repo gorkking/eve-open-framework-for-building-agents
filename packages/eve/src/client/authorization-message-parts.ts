@@ -3,6 +3,7 @@ import type {
   AuthorizationRequiredStreamEvent,
 } from "#protocol/message.js";
 import type { EveAuthorizationPart } from "#client/message-reducer-types.js";
+import { projectPartIdentity } from "#client/message-reducer-attempts.js";
 
 export function createAuthorizationRequiredPart(
   event: AuthorizationRequiredStreamEvent,
@@ -11,6 +12,7 @@ export function createAuthorizationRequiredPart(
     event.data.authorization?.displayName ?? formatAuthorizationDisplayName(event.data.name);
 
   return {
+    ...projectPartIdentity(event.data),
     authorization: event.data.authorization,
     description: normalizeAuthorizationDescription(
       event.data.description,
@@ -35,7 +37,10 @@ export function createAuthorizationCompletedPart(
     existing?.displayName ??
     formatAuthorizationDisplayName(event.data.name);
 
+  const attemptId = existing?.attemptId ?? event.data.attemptId;
+  const stepId = existing?.stepId ?? event.data.stepId;
   return {
+    ...projectPartIdentity({ attemptId, stepId }),
     authorization:
       existing?.authorization || event.data.authorization
         ? { ...existing?.authorization, ...event.data.authorization }

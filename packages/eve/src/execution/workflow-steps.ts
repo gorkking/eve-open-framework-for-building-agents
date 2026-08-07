@@ -24,6 +24,7 @@ import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js
 import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
+import { createStepId, stepIdFromWorkflowStepId } from "#harness/attempt-identity.js";
 import { preserveSerializedAgentTraceState } from "#tracing/agent-trace-context-store.js";
 import { readTurnSleepDurationMs } from "#harness/turn-sleep.js";
 import { isTurnCancellation, throwIfTurnAborted } from "#harness/turn-cancellation.js";
@@ -153,6 +154,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   "use step";
 
   let input = rawInput;
+  let workflowStepId: string | undefined;
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
@@ -163,14 +165,18 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   // Populate the callback base URL so getHookUrl() works during tool
   // execution, preferring eve's active local origin over metadata fallback.
   try {
-    const { getWorkflowMetadata } = await import("#compiled/@workflow/core/index.js");
+    const { getStepMetadata, getWorkflowMetadata } =
+      await import("#compiled/@workflow/core/index.js");
     const metadata = getWorkflowMetadata();
+    workflowStepId = getStepMetadata().stepId;
     if (typeof metadata.url === "string") {
       ctx.set(CallbackBaseUrlKey, resolveWorkflowCallbackBaseUrl(metadata.url));
     }
   } catch {
     // Outside a workflow context (e.g. tests) — getHookUrl will return undefined.
   }
+  const stepId =
+    workflowStepId === undefined ? createStepId() : await stepIdFromWorkflowStepId(workflowStepId);
 
   // Authorization callback. If the delivery carries an
   // `authorizationCallback` and there's a pending authorization on
@@ -181,11 +187,15 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   // the `emit` function is created below.
   const pendingAuth = getPendingAuthorization(durableSession.state);
   let completedAuths:
-    | Array<{ name: string; authorization: ConnectionAuthorizationChallenge }>
+    | Array<{
+        name: string;
+        authorization: ConnectionAuthorizationChallenge;
+        event: NonNullable<typeof pendingAuth>["event"];
+      }>
     | undefined;
   if (pendingAuth && input.input?.kind === "deliver") {
     const authResults: Array<{ name: string } & AuthorizationResult> = [];
-    const completed: Array<{ name: string; authorization: ConnectionAuthorizationChallenge }> = [];
+    const completed: NonNullable<typeof completedAuths> = [];
     const remainingPayloads: DeliverPayload[] = [];
     for (const payload of input.input.payloads) {
       const cb = payload["authorizationCallback"] as
@@ -200,7 +210,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             callback: cb.callback,
             hookUrl: challenge.hookUrl,
           });
-          completed.push({ name: challenge.name, authorization: challenge.challenge });
+          completed.push({
+            name: challenge.name,
+            authorization: challenge.challenge,
+            event: pendingAuth.event,
+          });
         }
       } else {
         remainingPayloads.push(payload);
@@ -344,7 +358,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   ): Promise<void> => {
     const emitted = await emit(event);
     await dispatchStreamEventHooks({ ctx, registry: hookRegistry, event: emitted });
-    if (emitted.type !== "step.started") {
+    if (emitted.type !== "step.started" && emitted.type !== "attempt.started") {
       await dispatchDynamicModelEvent({
         ctx,
         dynamicModel: effectiveAgent.turnAgent.dynamicModel,
@@ -401,15 +415,17 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       });
       if (completedAuths) {
         const emissionState = getHarnessEmissionState(schemaSession.state);
-        for (const { name, authorization } of completedAuths) {
+        for (const { name, authorization, event } of completedAuths) {
           await handleEvent(
             createAuthorizationCompletedEvent({
+              ...(event ?? {
+                sequence: emissionState.sequence,
+                stepIndex: emissionState.stepIndex,
+                turnId: emissionState.turnId,
+              }),
               authorization,
               name,
               outcome: "authorized",
-              sequence: emissionState.sequence,
-              stepIndex: emissionState.stepIndex,
-              turnId: emissionState.turnId,
             }),
           );
         }
@@ -442,6 +458,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             nodeId: bundle.nodeId,
           },
           node: effectiveNode,
+          stepId,
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });
         return step(refreshedSession, stepInput);

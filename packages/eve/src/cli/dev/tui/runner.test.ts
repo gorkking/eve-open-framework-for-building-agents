@@ -1400,6 +1400,135 @@ describe("EveTUIRunner failure rendering", () => {
 });
 
 describe("EveTUIRunner reused step indexes", () => {
+  it("removes a superseded attempt and preserves a same-index continuation step", async () => {
+    const prompts: Array<string | undefined> = ["weather", undefined];
+    const emitted: AgentTUIStreamEvent[] = [];
+    const session = sessionYielding([
+      {
+        type: "step.started",
+        data: { sequence: 0, stepId: "stp_a", stepIndex: 0, turnId: "t0" },
+      },
+      {
+        type: "attempt.started",
+        data: {
+          attemptId: "atp_a",
+          sequence: 0,
+          stepId: "stp_a",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "message.appended",
+        data: {
+          attemptId: "atp_a",
+          messageDelta: "Discard this partial.",
+          messageSoFar: "Discard this partial.",
+          sequence: 0,
+          stepId: "stp_a",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "actions.requested",
+        data: {
+          actions: [
+            {
+              callId: "call_discarded",
+              input: {},
+              kind: "tool-call",
+              toolName: "discarded_tool",
+            },
+          ],
+          attemptId: "atp_a",
+          sequence: 0,
+          stepId: "stp_a",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "attempt.started",
+        data: {
+          attemptId: "atp_b",
+          sequence: 0,
+          stepId: "stp_a",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "message.appended",
+        data: {
+          attemptId: "atp_b",
+          messageDelta: "Recovered.",
+          messageSoFar: "Recovered.",
+          sequence: 0,
+          stepId: "stp_a",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "step.started",
+        data: { sequence: 0, stepId: "stp_b", stepIndex: 0, turnId: "t0" },
+      },
+      {
+        type: "attempt.started",
+        data: {
+          attemptId: "atp_c",
+          sequence: 0,
+          stepId: "stp_b",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "message.completed",
+        data: {
+          attemptId: "atp_c",
+          finishReason: "stop",
+          message: "Continuation.",
+          sequence: 0,
+          stepId: "stp_b",
+          stepIndex: 0,
+          turnId: "t0",
+        },
+      },
+      {
+        type: "session.waiting",
+        data: { continuationToken: "session-id", wait: "next-user-message" },
+      },
+    ]);
+    const renderer: AgentTUIRenderer = {
+      readPrompt: vi.fn(async () => prompts.shift()),
+      renderStream: vi.fn(async (result) => {
+        for await (const event of result.events as AsyncIterable<AgentTUIStreamEvent>) {
+          emitted.push(event);
+        }
+      }),
+    };
+
+    await new EveTUIRunner({ session, renderer, name: "Weather Agent" }).run();
+
+    expect(emitted.filter((event) => event.type === "step-start")).toHaveLength(2);
+    expect(emitted).toContainEqual({
+      id: "text:t0:stp_a:atp_a",
+      type: "assistant-remove",
+    });
+    expect(emitted).toContainEqual({ toolCallId: "call_discarded", type: "tool-remove" });
+    expect(emitted.filter((event) => event.type === "assistant-delta")).toEqual([
+      { delta: "Discard this partial.", id: "text:t0:stp_a:atp_a", type: "assistant-delta" },
+      { delta: "Recovered.", id: "text:t0:stp_a:atp_b", type: "assistant-delta" },
+    ]);
+    expect(emitted).toContainEqual({
+      id: "text:t0:stp_b:atp_c",
+      text: "Continuation.",
+      type: "assistant-complete",
+    });
+  });
+
   it("renders the post-subagent message that the harness emits under a reused stepIndex", async () => {
     // Mirrors the real parent stream around a subagent dispatch: the second
     // model call arrives under a fresh `step.started` but the SAME

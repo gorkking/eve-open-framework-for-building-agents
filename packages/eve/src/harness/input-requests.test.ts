@@ -587,7 +587,13 @@ describe("resolvePendingInput", () => {
 
   it("returns a rejected action for an explicitly denied approval", () => {
     const session = setPendingInputBatch({
-      event: { sequence: 5, stepIndex: 1, turnId: "turn_0" },
+      event: {
+        attemptId: "atp_origin",
+        sequence: 5,
+        stepId: "stp_origin",
+        stepIndex: 1,
+        turnId: "turn_0",
+      },
       requests: [
         {
           action: {
@@ -620,7 +626,13 @@ describe("resolvePendingInput", () => {
 
     expect(result.outcome).toBe("resolved");
     expect(result.rejectedActions).toEqual({
-      event: { sequence: 5, stepIndex: 1, turnId: "turn_0" },
+      event: {
+        attemptId: "atp_origin",
+        sequence: 5,
+        stepId: "stp_origin",
+        stepIndex: 1,
+        turnId: "turn_0",
+      },
       results: [
         {
           callId: "approval-call",

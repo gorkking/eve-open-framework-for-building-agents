@@ -415,7 +415,9 @@ describe("createExecutionNodeStep", () => {
         },
       ],
       event: {
+        attemptId: expect.stringMatching(/^atp_/),
         sequence: 0,
+        stepId: expect.stringMatching(/^stp_/),
         stepIndex: 0,
         turnId: "",
       },

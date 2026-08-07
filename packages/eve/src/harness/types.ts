@@ -15,6 +15,7 @@ import type { WebSearchProvider } from "#shared/web-search.js";
 import type { AgentReasoningDefinition } from "#shared/agent-definition.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import type { HarnessInstrumentation } from "#harness/instrumentation-runtime.js";
+import type { StepId } from "#harness/attempt-identity.js";
 
 /**
  * Serializable tool definition stored on the session.
@@ -307,6 +308,8 @@ export interface ToolLoopHarnessConfig {
    * authoritative server-side metadata.
    */
   readonly runtimeIdentity?: RuntimeIdentity;
+  /** Stable identity supplied by the durable execution boundary for this logical step. */
+  readonly stepId?: StepId;
   /**
    * Unified tool definitions for this harness step.
    *

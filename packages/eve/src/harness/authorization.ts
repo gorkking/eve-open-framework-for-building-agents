@@ -37,6 +37,7 @@ import type { ConnectionAuthorizationChallenge } from "#public/connections/error
 import type { AuthorizationCallback } from "#runtime/connections/types.js";
 import type { JsonValue } from "#public/types/json.js";
 import { createEveConnectionCallbackRoutePath } from "#protocol/routes.js";
+import type { DurableEventOrigin } from "#harness/attempt-identity.js";
 
 const AUTHORIZATION_BRAND = "__eveAuthorization" as const;
 const AUTHORIZATION_PENDING_BRAND = "__eveAuthorizationPending" as const;
@@ -258,6 +259,7 @@ const PENDING_AUTHORIZATION_KEY = "eve.runtime.pendingAuthorization";
 
 export interface PendingAuthorizationState {
   readonly challenges: readonly AuthorizationChallenge[];
+  readonly event?: DurableEventOrigin;
 }
 
 export function setPendingAuthorization(
@@ -287,7 +289,7 @@ export function clearPendingAuthorization(
       if (challenges.length > 0) {
         return {
           ...sessionState,
-          [PENDING_AUTHORIZATION_KEY]: { challenges },
+          [PENDING_AUTHORIZATION_KEY]: { ...pending, challenges },
         };
       }
     }

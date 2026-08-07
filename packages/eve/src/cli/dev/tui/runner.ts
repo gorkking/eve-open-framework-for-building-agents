@@ -146,10 +146,13 @@ export type AgentTUIStreamEvent =
   | { type: "step-finish"; usage?: AgentTUIStreamUsage }
   | { type: "assistant-delta"; id: string; delta: string }
   | { type: "assistant-complete"; id: string; text?: string | null }
+  | { type: "assistant-remove"; id: string }
   | { type: "reasoning-delta"; id: string; delta: string }
   | { type: "reasoning-complete"; id: string }
+  | { type: "reasoning-remove"; id: string }
   | { type: "tool-call-preparing"; toolCallId: string; toolName: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
+  | { type: "tool-remove"; toolCallId: string }
   | { type: "tool-approval-request"; approvalId: string; toolCallId: string }
   | { type: "tool-result"; toolCallId: string; output: unknown }
   | { type: "tool-error"; toolCallId: string; errorText: string }
@@ -1848,6 +1851,9 @@ async function* eveEventsToTUIStream(
   // reused key from a re-emission. A fresh `step.started` since the part
   // completed is the discriminator.
   let stepEpoch = 0;
+  const activeAttempts = new Map<string, string>();
+  const attemptToolCallIds = new Map<string, Set<string>>();
+  const seenStepIds = new Set<string>();
   const knownToolCalls = new Set<string>();
   const seenInputRequestIds = new Set<string>();
   // The harness reports one underlying failure as a cascade (`step.failed` →
@@ -1881,12 +1887,38 @@ async function* eveEventsToTUIStream(
         break;
 
       case "step.started":
-        stepEpoch += 1;
+        if (event.data.stepId !== undefined) {
+          if (seenStepIds.has(event.data.stepId)) break;
+          seenStepIds.add(event.data.stepId);
+        } else {
+          stepEpoch += 1;
+        }
         yield { type: "step-start" };
         break;
 
+      case "attempt.started": {
+        const previousAttemptId = activeAttempts.get(event.data.stepId);
+        if (previousAttemptId !== undefined && previousAttemptId !== event.data.attemptId) {
+          const previousIdentity = { ...event.data, attemptId: previousAttemptId };
+          const previousTextBase = attemptPartId("text", previousIdentity);
+          yield* removePartGenerations(textParts, previousTextBase, "assistant-remove");
+          const previousReasoningBase = attemptPartId("reasoning", previousIdentity);
+          yield* removePartGenerations(reasoningParts, previousReasoningBase, "reasoning-remove");
+          const previousToolKey = attemptLaneKey(event.data.stepId, previousAttemptId);
+          for (const callId of attemptToolCallIds.get(previousToolKey) ?? []) {
+            knownToolCalls.delete(callId);
+            removePendingToolCall(pendingInputRequests, seenInputRequestIds, turnState, callId);
+            yield { toolCallId: callId, type: "tool-remove" };
+          }
+          attemptToolCallIds.delete(previousToolKey);
+        }
+        activeAttempts.set(event.data.stepId, event.data.attemptId);
+        break;
+      }
+
       case "step.completed": {
         const stepEvent = event as StepCompletedStreamEvent;
+        if (!isCurrentAttempt(activeAttempts, stepEvent.data)) break;
         latestStepUsage = stepEvent.data.usage;
         yield* closeOpenParts(textParts, "assistant-complete", stepEpoch);
         yield* closeOpenParts(reasoningParts, "reasoning-complete", stepEpoch);
@@ -1896,7 +1928,8 @@ async function* eveEventsToTUIStream(
 
       case "message.appended": {
         const appended = event as MessageAppendedStreamEvent;
-        const base = textPartId(appended.data.turnId, appended.data.stepIndex);
+        const base = attemptPartId("text", appended.data);
+        if (!isCurrentAttempt(activeAttempts, appended.data)) break;
         const state = partStateFor(textParts, base);
         const next = appended.data.messageSoFar;
 
@@ -1922,7 +1955,8 @@ async function* eveEventsToTUIStream(
       }
 
       case "message.completed": {
-        const base = textPartId(event.data.turnId, event.data.stepIndex);
+        const base = attemptPartId("text", event.data);
+        if (!isCurrentAttempt(activeAttempts, event.data)) break;
         const state = partStateFor(textParts, base);
         const message = event.data.message;
 
@@ -1969,7 +2003,8 @@ async function* eveEventsToTUIStream(
 
       case "reasoning.appended": {
         const appended = event as ReasoningAppendedStreamEvent;
-        const base = reasoningPartId(appended.data.turnId, appended.data.stepIndex);
+        const base = attemptPartId("reasoning", appended.data);
+        if (!isCurrentAttempt(activeAttempts, appended.data)) break;
         const state = partStateFor(reasoningParts, base);
         const next = appended.data.reasoningSoFar;
 
@@ -1991,7 +2026,8 @@ async function* eveEventsToTUIStream(
       }
 
       case "reasoning.completed": {
-        const base = reasoningPartId(event.data.turnId, event.data.stepIndex);
+        const base = attemptPartId("reasoning", event.data);
+        if (!isCurrentAttempt(activeAttempts, event.data)) break;
         const state = partStateFor(reasoningParts, base);
         const next = event.data.reasoning;
 
@@ -2023,12 +2059,14 @@ async function* eveEventsToTUIStream(
 
       case "actions.requested": {
         const data = (event as ActionsRequestedStreamEvent).data;
+        if (!isCurrentAttempt(activeAttempts, data)) break;
         const actions = data.actions.filter((action) => action.kind === "tool-call");
         if (actions.length === 0) break;
 
         for (const action of actions) {
           if (knownToolCalls.has(action.callId)) continue;
           knownToolCalls.add(action.callId);
+          recordAttemptToolCall(attemptToolCallIds, data, action.callId);
           yield {
             type: "tool-call",
             toolCallId: action.callId,
@@ -2041,6 +2079,7 @@ async function* eveEventsToTUIStream(
 
       case "input.requested": {
         const data = (event as InputRequestedStreamEvent).data;
+        if (!isCurrentAttempt(activeAttempts, data)) break;
         const requests = data.requests.filter((request) => request.action.kind === "tool-call");
         if (requests.length === 0) break;
 
@@ -2053,6 +2092,7 @@ async function* eveEventsToTUIStream(
           // carries the prompt copy.
           if (request.kind !== "session-limit" && !knownToolCalls.has(toolCallId)) {
             knownToolCalls.add(toolCallId);
+            recordAttemptToolCall(attemptToolCallIds, data, toolCallId);
             yield {
               type: "tool-call",
               toolCallId,
@@ -2082,6 +2122,7 @@ async function* eveEventsToTUIStream(
 
       case "action.result": {
         const resultEvent = event as ActionResultStreamEvent;
+        if (!isCurrentAttempt(activeAttempts, resultEvent.data)) break;
         if (resultEvent.data.result.kind !== "tool-result") {
           break;
         }
@@ -2266,12 +2307,63 @@ function upsertPendingQuestion(state: AgentTUITurnState, request: InputRequest):
   }
 }
 
-function textPartId(turnId: string, stepIndex: number): string {
-  return `text:${turnId}:${stepIndex}`;
+interface AttemptScopedPartData {
+  readonly attemptId?: string;
+  readonly stepId?: string;
+  readonly stepIndex: number;
+  readonly turnId: string;
 }
 
-function reasoningPartId(turnId: string, stepIndex: number): string {
-  return `reasoning:${turnId}:${stepIndex}`;
+function attemptPartId(kind: "reasoning" | "text", data: AttemptScopedPartData): string {
+  const lane =
+    data.stepId !== undefined && data.attemptId !== undefined
+      ? `${data.stepId}:${data.attemptId}`
+      : String(data.stepIndex);
+  return `${kind}:${data.turnId}:${lane}`;
+}
+
+function removePendingToolCall(
+  requests: Map<string, InputRequest>,
+  seenRequestIds: Set<string>,
+  turnState: AgentTUITurnState,
+  callId: string,
+): void {
+  for (const [requestId, request] of requests) {
+    if (request.action.callId !== callId) continue;
+    requests.delete(requestId);
+    seenRequestIds.delete(requestId);
+  }
+  turnState.pendingApprovals = turnState.pendingApprovals.filter(
+    (approval) => approval.toolCallId !== callId,
+  );
+  turnState.pendingQuestions = turnState.pendingQuestions.filter(
+    (request) => request.action.callId !== callId,
+  );
+}
+
+function attemptLaneKey(stepId: string, attemptId: string): string {
+  return `${stepId}:${attemptId}`;
+}
+
+function recordAttemptToolCall(
+  attempts: Map<string, Set<string>>,
+  data: AttemptScopedPartData,
+  callId: string,
+): void {
+  if (data.stepId === undefined || data.attemptId === undefined) return;
+  const key = attemptLaneKey(data.stepId, data.attemptId);
+  const callIds = attempts.get(key) ?? new Set<string>();
+  callIds.add(callId);
+  attempts.set(key, callIds);
+}
+
+function isCurrentAttempt(
+  activeAttempts: ReadonlyMap<string, string>,
+  data: AttemptScopedPartData,
+): boolean {
+  if (data.stepId === undefined || data.attemptId === undefined) return true;
+  const activeAttemptId = activeAttempts.get(data.stepId);
+  return activeAttemptId === undefined || activeAttemptId === data.attemptId;
 }
 
 /**
@@ -2305,6 +2397,19 @@ function partGenerationId(base: string, generation: number): string {
   return generation === 0 ? base : `${base}#${generation}`;
 }
 
+function* removePartGenerations(
+  parts: Map<string, StreamPartState>,
+  base: string,
+  type: "assistant-remove" | "reasoning-remove",
+): Generator<AgentTUIStreamEvent> {
+  const state = parts.get(base);
+  if (state === undefined) return;
+  for (let generation = 0; generation <= state.generation; generation += 1) {
+    yield { id: partGenerationId(base, generation), type };
+  }
+  parts.delete(base);
+}
+
 /** Closes every still-open generation at a step or turn boundary. */
 function* closeOpenParts(
   parts: Map<string, StreamPartState>,
@@ -2322,6 +2427,7 @@ function* closeOpenParts(
 function isPostTurnVisibleEvent(event: MessageStreamEvent): boolean {
   switch (event.type) {
     case "actions.requested":
+    case "attempt.started":
     case "authorization.completed":
     case "authorization.required":
     case "input.requested":

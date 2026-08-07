@@ -5,10 +5,10 @@ import type { StepFailedStreamEvent } from "#client/index.js";
 import { failureDetails, localFailureHint } from "./errors.js";
 
 function stepFailed(
-  details?: Record<string, unknown>,
+  details?: NonNullable<StepFailedStreamEvent["data"]["details"]>,
   message = "model call failed",
 ): StepFailedStreamEvent {
-  const data: Record<string, unknown> = {
+  const data: StepFailedStreamEvent["data"] = {
     code: "MODEL_CALL_FAILED",
     message,
     sequence: 0,
@@ -16,7 +16,7 @@ function stepFailed(
     turnId: "t0",
   };
   if (details !== undefined) data.details = details;
-  return { type: "step.failed", data } as StepFailedStreamEvent;
+  return { type: "step.failed", data };
 }
 
 describe("failureDetails", () => {

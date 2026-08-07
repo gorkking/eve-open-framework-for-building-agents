@@ -5,6 +5,7 @@ import { stampTestEvents } from "#internal/testing/events.js";
 import {
   createActionPartialEvent,
   createActionResultEvent,
+  createAttemptStartedEvent,
   createActionsRequestedEvent,
   createAuthorizationCompletedEvent,
   createAuthorizationRequiredEvent,
@@ -32,6 +33,123 @@ function reduceServerEvents(
 }
 
 describe("defaultMessageReducer", () => {
+  it("supersedes only a retried attempt, preserving same-index continuation output", () => {
+    const reducer = defaultMessageReducer();
+    const data = reduceServerEvents(reducer, reducer.initial(), [
+      createStepStartedEvent({ sequence: 0, stepId: "stp_a", stepIndex: 0, turnId: "turn_1" }),
+      createAttemptStartedEvent({
+        attemptId: "atp_a",
+        sequence: 0,
+        stepId: "stp_a",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createMessageCompletedEvent({
+        attemptId: "atp_a",
+        message: "Discarded retry output.",
+        sequence: 0,
+        stepId: "stp_a",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createActionsRequestedEvent({
+        actions: [
+          {
+            callId: "call_discarded",
+            input: {},
+            kind: "tool-call",
+            toolName: "discarded_tool",
+          },
+        ],
+        attemptId: "atp_a",
+        sequence: 0,
+        stepId: "stp_a",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createAttemptStartedEvent({
+        attemptId: "atp_b",
+        sequence: 0,
+        stepId: "stp_a",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createMessageCompletedEvent({
+        attemptId: "atp_b",
+        message: "Retried output.",
+        sequence: 0,
+        stepId: "stp_a",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createMessageCompletedEvent({
+        attemptId: "atp_a",
+        message: "Late stale output.",
+        sequence: 0,
+        stepId: "stp_a",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createStepStartedEvent({ sequence: 0, stepId: "stp_b", stepIndex: 0, turnId: "turn_1" }),
+      createAttemptStartedEvent({
+        attemptId: "atp_c",
+        sequence: 0,
+        stepId: "stp_b",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createMessageCompletedEvent({
+        attemptId: "atp_c",
+        message: "Continuation output.",
+        sequence: 0,
+        stepId: "stp_b",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+    ]);
+
+    expect(data.messages[0]?.parts.filter((part) => part.type === "text")).toEqual([
+      expect.objectContaining({ text: "Retried output." }),
+      expect.objectContaining({ text: "Continuation output." }),
+    ]);
+    expect(data.messages[0]?.parts.filter((part) => part.type === "step-start")).toHaveLength(2);
+    expect(findToolPart(data, "call_discarded")).toBeUndefined();
+  });
+
+  it("keeps legacy output when a stamped same-index step follows it", () => {
+    const reducer = defaultMessageReducer();
+    const data = reduceServerEvents(reducer, reducer.initial(), [
+      createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_1" }),
+      createMessageCompletedEvent({
+        message: "Legacy output.",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createStepStartedEvent({ sequence: 0, stepId: "stp_new", stepIndex: 0, turnId: "turn_1" }),
+      createAttemptStartedEvent({
+        attemptId: "atp_new",
+        sequence: 0,
+        stepId: "stp_new",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+      createMessageCompletedEvent({
+        attemptId: "atp_new",
+        message: "Stamped continuation.",
+        sequence: 0,
+        stepId: "stp_new",
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+    ]);
+
+    expect(data.messages[0]?.parts.filter((part) => part.type === "text")).toEqual([
+      expect.objectContaining({ text: "Legacy output." }),
+      expect.objectContaining({ text: "Stamped continuation." }),
+    ]);
+  });
+
   it("replaces tool-generator snapshots and ignores a late partial after the terminal result", () => {
     const reducer = defaultMessageReducer();
     let data = reduceServerEvents(reducer, reducer.initial(), [

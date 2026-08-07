@@ -1,5 +1,10 @@
 import type { EveAgentReducer, EveAgentReducerEvent } from "#client/reducer.js";
 import {
+  isSupersededAttemptEvent,
+  projectPartIdentity,
+  projectResultIdentity,
+} from "#client/message-reducer-attempts.js";
+import {
   createAuthorizationCompletedPart,
   createAuthorizationRequiredPart,
 } from "#client/authorization-message-parts.js";
@@ -38,14 +43,7 @@ export type {
 
 type EveAssistantMessage = EveMessage & { readonly role: "assistant" };
 
-/**
- * Creates a UIMessage-compatible eve reducer for chat and agent UIs.
- *
- * The returned projection keeps eve-owned types while following the AI SDK
- * `messages[].parts[]` rendering convention used by AI Elements. It projects
- * text, reasoning, tool calls, tool results, tool approvals, submitted HITL
- * responses, and authorization prompts.
- */
+/** Creates a UIMessage-compatible eve reducer for chat and agent UIs. */
 export function defaultMessageReducer(): EveAgentReducer<EveMessageData> {
   return {
     initial() {
@@ -58,6 +56,8 @@ export function defaultMessageReducer(): EveAgentReducer<EveMessageData> {
 }
 
 function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): EveMessageData {
+  if (isSupersededAttemptEvent(data, event)) return data;
+
   switch (event.type) {
     case "client.message.submitted":
       return upsertMessage(data, {
@@ -102,12 +102,18 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
 
     case "step.started":
       return updateAssistantMessage(data, event.data.turnId, (message) =>
-        ensureStepStartPart(message, event.data.stepIndex),
+        ensureStepStartPart(message, event.data.stepIndex, event.data.stepId),
+      );
+
+    case "attempt.started":
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        activateAttempt(message, event.data.stepIndex, event.data.stepId, event.data.attemptId),
       );
 
     case "reasoning.appended":
       return updateAssistantMessage(data, event.data.turnId, (message) =>
-        upsertRun(ensureStepStartPart(message, event.data.stepIndex), {
+        upsertRun(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), {
+          ...projectPartIdentity(event.data),
           state: "streaming",
           stepIndex: event.data.stepIndex,
           text: event.data.reasoningSoFar,
@@ -117,7 +123,8 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
 
     case "reasoning.completed":
       return updateAssistantMessage(data, event.data.turnId, (message) =>
-        upsertRun(ensureStepStartPart(message, event.data.stepIndex), {
+        upsertRun(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), {
+          ...projectPartIdentity(event.data),
           state: "done",
           stepIndex: event.data.stepIndex,
           text: event.data.reasoning,
@@ -130,7 +137,8 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
       for (const action of event.data.actions) {
         const descriptor = normalizeActionRequest(action);
         next = updateAssistantMessage(next, event.data.turnId, (message) =>
-          upsertPart(ensureStepStartPart(message, event.data.stepIndex), {
+          upsertPart(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), {
+            ...projectPartIdentity(event.data),
             input: "input" in action ? action.input : undefined,
             state: "input-available",
             stepIndex: event.data.stepIndex,
@@ -149,10 +157,11 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
       for (const request of event.data.requests) {
         const descriptor = normalizeActionRequest(request.action);
         next = updateAssistantMessage(next, event.data.turnId, (message) =>
-          upsertPart(ensureStepStartPart(message, event.data.stepIndex), {
+          upsertPart(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), {
             approval: {
               id: request.requestId,
             },
+            ...projectPartIdentity(event.data),
             input: request.action.input,
             state: "approval-requested",
             stepIndex: event.data.stepIndex,
@@ -179,8 +188,9 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
         createToolMetadata(descriptor),
       );
       const resultPartBase = {
+        ...projectPartIdentity(existing ?? event.data),
         input: existing?.input,
-        stepIndex: event.data.stepIndex,
+        stepIndex: existing?.stepIndex ?? event.data.stepIndex,
         toolCallId: event.data.result.callId,
         toolMetadata,
         toolName: existing?.toolName ?? descriptor.toolName,
@@ -221,7 +231,7 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
       }
 
       return updateAssistantMessage(data, event.data.turnId, (message) =>
-        upsertPart(ensureStepStartPart(message, event.data.stepIndex), nextPart),
+        upsertPart(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), nextPart),
       );
     }
 
@@ -234,11 +244,12 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
       const descriptor = normalizeActionResult(event.data.result);
       const nextPart: EveDynamicToolPart = {
         approval: approvedApproval(existing),
+        ...projectPartIdentity(existing ?? event.data),
         input: existing?.input,
         output: event.data.result.output,
         partial: true,
         state: "output-available",
-        stepIndex: event.data.stepIndex,
+        stepIndex: existing?.stepIndex ?? event.data.stepIndex,
         toolCallId: event.data.result.callId,
         toolMetadata: mergeToolMetadata(existing?.toolMetadata, createToolMetadata(descriptor)),
         toolName: existing?.toolName ?? descriptor.toolName,
@@ -250,14 +261,14 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
       }
 
       return updateAssistantMessage(data, event.data.turnId, (message) =>
-        upsertPart(ensureStepStartPart(message, event.data.stepIndex), nextPart),
+        upsertPart(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), nextPart),
       );
     }
 
     case "authorization.required":
       return updateAssistantMessage(data, event.data.turnId, (message) =>
         upsertPart(
-          ensureStepStartPart(message, event.data.stepIndex),
+          ensureStepStartPart(message, event.data.stepIndex, event.data.stepId),
           createAuthorizationRequiredPart(event),
         ),
       );
@@ -267,7 +278,8 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
 
     case "message.appended":
       return updateAssistantMessage(data, event.data.turnId, (message) =>
-        upsertRun(ensureStepStartPart(message, event.data.stepIndex), {
+        upsertRun(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), {
+          ...projectPartIdentity(event.data),
           state: "streaming",
           stepIndex: event.data.stepIndex,
           text: event.data.messageSoFar,
@@ -281,7 +293,8 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
           return removeTextPart(message, event.data.stepIndex);
         }
 
-        return upsertRun(ensureStepStartPart(message, event.data.stepIndex), {
+        return upsertRun(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), {
+          ...projectPartIdentity(event.data),
           state: "done",
           stepIndex: event.data.stepIndex,
           text: event.data.message,
@@ -290,7 +303,10 @@ function reduceMessageData(data: EveMessageData, event: EveAgentReducerEvent): E
       });
 
     case "result.completed":
-      return updateAssistantMetadata(data, event.data.turnId, { result: event.data.result });
+      return updateAssistantMetadata(data, event.data.turnId, {
+        result: event.data.result,
+        ...projectResultIdentity(event.data),
+      });
 
     case "turn.completed":
       return updateAssistantMetadata(data, event.data.turnId, { status: "complete" });
@@ -332,6 +348,7 @@ function respondToInputRequest(data: EveMessageData, response: InputResponse): E
 
   return updateToolPart(data, existing.toolCallId, {
     approval,
+    ...projectPartIdentity(existing),
     input: existing.input,
     state: "approval-responded",
     stepIndex: existing.stepIndex,
@@ -388,11 +405,23 @@ function createAssistantMessage(turnId: string): EveAssistantMessage {
   };
 }
 
-function ensureStepStartPart(message: EveAssistantMessage, stepIndex: number): EveAssistantMessage {
-  const stepStartCount = message.parts.filter((part) => part.type === "step-start").length;
-  if (stepStartCount > stepIndex) {
-    return message;
+function ensureStepStartPart(
+  message: EveAssistantMessage,
+  stepIndex: number,
+  stepId?: string,
+): EveAssistantMessage {
+  if (stepId !== undefined) {
+    if (message.parts.some((part) => part.type === "step-start" && part.stepId === stepId)) {
+      return message;
+    }
+    return {
+      ...message,
+      parts: [...message.parts, { stepId, stepIndex, type: "step-start" }],
+    };
   }
+
+  const stepStartCount = message.parts.filter((part) => part.type === "step-start").length;
+  if (stepStartCount > stepIndex) return message;
 
   const missingCount = stepIndex - stepStartCount + 1;
   return {
@@ -423,18 +452,51 @@ function upsertPart(message: EveAssistantMessage, next: EveMessagePart): EveAssi
 
 type EveRunPart = Extract<EveMessagePart, { readonly type: "text" | "reasoning" }>;
 
-// Upserts a text/reasoning part, keeping multiple runs per step distinct: one
-// step can produce text, call tools, then produce more text (see
-// `MessageCompletedStreamEvent`), so a step-only key would collapse them.
-//
-// We find the latest same-step run of this type: while it is still streaming,
-// its snapshots replace it in place; once it is done (or there is none), `next`
-// begins a new run appended in arrival order.
+function activateAttempt(
+  message: EveAssistantMessage,
+  stepIndex: number,
+  stepId: string,
+  attemptId: string,
+): EveAssistantMessage {
+  const withStep = ensureStepStartPart(message, stepIndex, stepId);
+  const supersedesResult = withStep.metadata?.resultStepId === stepId;
+  return {
+    ...withStep,
+    metadata: supersedesResult
+      ? {
+          ...withStep.metadata,
+          result: undefined,
+          resultAttemptId: undefined,
+          resultStepId: undefined,
+        }
+      : withStep.metadata,
+    parts: withStep.parts
+      .filter(
+        (part) =>
+          part.type === "step-start" ||
+          !("stepId" in part) ||
+          part.stepId !== stepId ||
+          !("attemptId" in part) ||
+          part.attemptId === attemptId,
+      )
+      .map((part) =>
+        part.type === "step-start" && part.stepId === stepId
+          ? { ...part, activeAttemptId: attemptId }
+          : part,
+      ),
+  };
+}
+
 function upsertRun(message: EveAssistantMessage, next: EveRunPart): EveAssistantMessage {
   let lastIndex = -1;
   for (let index = message.parts.length - 1; index >= 0; index -= 1) {
     const part = message.parts[index];
-    if (part?.type === next.type && part.stepIndex === next.stepIndex) {
+    if (
+      part?.type === next.type &&
+      part.stepIndex === next.stepIndex &&
+      part.stepId === next.stepId &&
+      part.attemptId === next.attemptId
+    ) {
       lastIndex = index;
       break;
     }
@@ -506,7 +568,7 @@ function completeAuthorization(
   }
 
   return updateAssistantMessage(data, event.data.turnId, (message) =>
-    upsertPart(ensureStepStartPart(message, event.data.stepIndex), next),
+    upsertPart(ensureStepStartPart(message, event.data.stepIndex, event.data.stepId), next),
   );
 }
 
@@ -609,7 +671,7 @@ function partKey(part: EveMessagePart): string {
     case "file":
       return `file:${part.stepIndex ?? 0}:${part.filename ?? part.url ?? part.mediaType}`;
     case "step-start":
-      return "step-start";
+      return `step-start:${part.stepId ?? part.stepIndex ?? 0}`;
     case "authorization":
       return `authorization:${part.turnId}:${part.stepIndex}:${part.name}`;
     case "dynamic-tool":

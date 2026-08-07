@@ -48,7 +48,8 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 | `session.started`         | A durable session was created.                                                                                   |
 | `turn.started`            | A new turn began.                                                                                                |
 | `message.received`        | An inbound user message was accepted; carries flattened text plus structured text/file parts.                    |
-| `step.started`            | A model step began.                                                                                              |
+| `step.started`            | A logical model step began; carries its stable `stepId`.                                                         |
+| `attempt.started`         | A physical model execution began; carries `stepId` and a fresh `attemptId`.                                      |
 | `actions.requested`       | The model requested one or more actions, including tool calls; calls stream before execution.                    |
 | `action.partial`          | A locally executed tool generator yielded a preliminary output snapshot.                                         |
 | `action.result`           | A tool call returned.                                                                                            |
@@ -75,6 +76,8 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 
 `reasoning.appended` and `message.appended` stream incremental output as it arrives. When the durable stream writer is busy, eve may coalesce adjacent deltas of the same type; the text remains in source order, and any other event forms an ordering barrier. Each append carries both the new delta and the cumulative text for the current block. The finalized block shows up on `message.completed` and `reasoning.completed`, which is the compatibility path for clients that don't render incremental streaming.
 
+Stream version 22 identifies logical steps and physical model attempts separately. Attempt-owned events carry both `stepId` and `attemptId`. When a new `attemptId` appears under the same `stepId`, replace the older attempt in your conversation projection. A different `stepId` remains a distinct continuation even when it reuses the same `stepIndex`. Supersession does not remove raw events or roll back tool side effects.
+
 `action.partial` carries one complete preliminary output snapshot from an authored async-generator tool. A later partial for the same `callId` replaces it, and `action.result` is the final snapshot. When the durable writer is busy, eve may keep only the newest adjacent partial for a call. Treat partials as last-write-wins: a durable step can retry and replay overlapping event runs. Provider-executed tool progress and MCP progress notifications are not projected as `action.partial` events.
 
 Note: consider the privacy, confidentiality, and user-experience implications for displaying, storing, or transmitting reasoning events in your application.
@@ -96,6 +99,8 @@ Alongside `type` and `data`, every event carries a `meta` envelope:
     "message": "Sunny and 72°F.",
     "finishReason": "stop",
     "sequence": 0,
+    "stepId": "stp_01KZCZXQGM2MQRRGBBSP6Q28WB",
+    "attemptId": "atp_01KZCZXQGM2MQRRGBBSP6Q28WC",
     "stepIndex": 0,
     "turnId": "turn_0"
   },
@@ -126,9 +131,11 @@ Because ids lead with a timestamp, a `primary key (id)` stays roughly append-ord
 - Rewinding with `startIndex=0`, or reading back from the tail with a negative `startIndex`.
 - Restoring a saved event log that overlaps the prefix the live stream replays.
 
-**What it does not cover: a retried step re-emits under new ids.** eve runs each durable step up to four times. If a step is interrupted partway — a crash, a timeout, a model error it retries through — whatever it already wrote stays on the stream, and the new attempt emits its own events with their own ids. Both attempts carry the same `turnId`, `stepIndex`, and `sequence`, because the retry restores that state from the step's input, but they are distinct events and no field records which attempt finished.
+**What it does not cover: a retried step re-emits under new event ids.** eve runs each durable step up to four times. If a step is interrupted partway—a crash, a timeout, or a model error it retries through—whatever it already wrote stays on the stream, and the new attempt emits events with new `meta.id` values. Use the shared `stepId` and new `attemptId` to project the replacement attempt. `meta.id` still deduplicates delivery of each raw event.
 
 Replaying a _completed_ step is a different thing and emits nothing at all: eve serves the recorded result from its journal without re-running the body. Crash recovery, redeploys, and resuming a parked turn therefore add nothing to the stream. Only an interrupted step re-runs.
+
+Events persisted before stream version 22 have no `stepId` or `attemptId`. Keep any accumulator-reset fallback you use for that legacy prefix; use explicit identities once stamped events begin.
 
 Three more things to know:
 

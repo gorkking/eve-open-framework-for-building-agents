@@ -19,6 +19,7 @@ export interface HookEventMap {
   readonly "action.partial": ProtocolEvent<"action.partial">;
   readonly "action.result": ProtocolEvent<"action.result">;
   readonly "actions.requested": ProtocolEvent<"actions.requested">;
+  readonly "attempt.started": ProtocolEvent<"attempt.started">;
   readonly "authorization.completed": ProtocolEvent<"authorization.completed">;
   readonly "authorization.required": ProtocolEvent<"authorization.required">;
   readonly "compaction.completed": ProtocolEvent<"compaction.completed">;
