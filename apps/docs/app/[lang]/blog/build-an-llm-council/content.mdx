@@ -1,6 +1,8 @@
 PewDiePie recently turned a 10-GPU home lab into a [large language model (LLM) council](https://youtu.be/qw4fDU18RcU). His custom ChatOS sent the same prompt to a group of local models and had them vote on the strongest response.
 
-In the next few minutes, you’ll build a hosted version with [eve](https://eve.dev/docs/) and [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), without tripping the circuit breakers in your home. One root agent sends a prompt to four providers, streams their answers, and judges the result.
+One model may lack knowledge in a certain domain, overly censor harmless requests, or respond differently as providers change their policies. An LLM council lets you compare multiple perspectives side by side, inspect their cost and disagreement, then use a final judge to produce a more reliable answer.
+
+In the next few minutes, you’ll build a hosted version with [eve](https://eve.dev/docs/) and [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), without tripping the circuit breakers in your home.
 
 For the full reference implementation, or to follow along in code, see the [eve LLM Council repository](https://github.com/vercel-labs/eve-llm-council).
 
