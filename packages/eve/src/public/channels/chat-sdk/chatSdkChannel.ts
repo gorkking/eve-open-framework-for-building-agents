@@ -385,6 +385,46 @@ function defaultEvents<TAdapters extends ChatSdkAdapters>(
       if (!channel.thread || event.requests.length === 0) return;
       await channel.thread.post(renderInputRequests(event.requests, inputActionPrefix));
     },
+    async "authorization.required"(event, channel, _ctx) {
+      const thread = channel.thread;
+      if (!thread) return;
+
+      const displayName = authorizationDisplayName(event.name, event.authorization?.displayName);
+      const challenge = renderAuthorizationRequired({
+        description: event.description,
+        displayName,
+        instructions: event.authorization?.instructions,
+        url: event.authorization?.url,
+        userCode: event.authorization?.userCode,
+      });
+
+      if (thread.isDM) {
+        await thread.post({ markdown: challenge });
+        return;
+      }
+
+      await thread.post({ markdown: `Authorization required for ${displayName}.` });
+      const author = channel.state.thread?.currentMessage?.author;
+      if (!author) return;
+
+      try {
+        await thread.postEphemeral(author, { markdown: challenge }, { fallbackToDM: true });
+      } catch (error) {
+        // The public status still explains why the session is blocked when an
+        // adapter cannot deliver a private challenge.
+        log.warn("failed to deliver connection authorization challenge privately", { error });
+      }
+    },
+    async "authorization.completed"(event, channel, _ctx) {
+      if (!channel.thread) return;
+      const displayName = authorizationDisplayName(event.name, event.authorization?.displayName);
+      const reason = event.reason === undefined ? "" : ` (${event.reason})`;
+      const message =
+        event.outcome === "authorized"
+          ? `${displayName} connected. Resuming.`
+          : `${displayName} authorization ${formatAuthorizationOutcome(event.outcome)}${reason}.`;
+      await channel.thread.post({ markdown: message });
+    },
     async "message.completed"(event, channel, _ctx) {
       if (event.finishReason === "tool-calls") {
         channel.state.pendingToolCallMessage = event.message
@@ -526,6 +566,34 @@ function renderInputRequest(request: InputRequest, inputActionPrefix: string) {
     CardText("This request needs a freeform answer. Continue from the eve session UI."),
   );
   return children;
+}
+
+function authorizationDisplayName(name: string, displayName: string | undefined): string {
+  if (displayName !== undefined) return displayName;
+  if (name.length === 0) return name;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function renderAuthorizationRequired(input: {
+  readonly description: string;
+  readonly displayName: string;
+  readonly instructions?: string;
+  readonly url?: string;
+  readonly userCode?: string;
+}): string {
+  return [
+    `Authorization required for ${input.displayName}.`,
+    input.description,
+    input.instructions === input.description ? undefined : input.instructions,
+    input.userCode === undefined ? undefined : `Code: ${input.userCode}`,
+    input.url === undefined ? undefined : `[Sign in with ${input.displayName}](${input.url})`,
+  ]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join("\n\n");
+}
+
+function formatAuthorizationOutcome(outcome: "declined" | "failed" | "timed-out"): string {
+  return outcome === "timed-out" ? "timed out" : outcome;
 }
 
 async function postFailure(
