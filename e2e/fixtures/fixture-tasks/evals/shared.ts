@@ -82,22 +82,33 @@ export async function waitForCompletedTask(
   verificationMessage: string,
   taskId: string,
 ): Promise<EveEvalTurn> {
+  return await waitForTaskStatus(t, session, verificationMessage, taskId, "completed");
+}
+
+/** Polls the non-blocking task view until the expected task reaches `status`. */
+export async function waitForTaskStatus(
+  t: EveEvalContext,
+  session: TaskEvalSessionDriver,
+  verificationMessage: string,
+  taskId: string,
+  status: string,
+): Promise<EveEvalTurn> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const turn = await session.send(`${verificationMessage} ${taskId}`);
     const peeked = turn.toolCalls.find((call) => call.name === "task_peek");
-    if (taskStatus(peeked?.output, taskId) === "completed") {
+    if (taskStatus(peeked?.output, taskId) === status) {
       await t.require(
         peeked?.output,
         satisfies(
-          (output) => taskStatus(output, taskId) === "completed",
-          `task_peek returns completed task ${taskId}`,
+          (output) => taskStatus(output, taskId) === status,
+          `task_peek returns ${status} task ${taskId}`,
         ),
       );
       return turn;
     }
     await t.sleep(100);
   }
-  throw new Error(`Task ${taskId} did not complete after 20 task_peek attempts.`);
+  throw new Error(`Task ${taskId} did not reach "${status}" after 20 task_peek attempts.`);
 }
 
 function messageText(message: unknown): string {

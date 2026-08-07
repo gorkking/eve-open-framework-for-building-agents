@@ -12,9 +12,20 @@ const TASK_ID_PATTERN = /task_[a-z0-9]+/iu;
 function respond(request: MockModelRequest): MockModelResponse | string {
   const message = request.lastUserMessage ?? "";
   if (message.includes("TASK-FANOUT-INTERACTIVE-CHECK")) return "TASK-FANOUT-INTERACTIVE-OK";
-  if (message.startsWith("Background task ")) return "TASK-NOTIFICATION-ACK";
+  if (message.startsWith("Background task ")) {
+    // The fan-in scenario acts on wake notifications; every other
+    // scenario acknowledges them without running tools.
+    if (request.userMessages.includes("TASK-FAN-IN")) return fanInNotification(request);
+    return "TASK-NOTIFICATION-ACK";
+  }
 
   if (message === "TASK-FANOUT-PARENT-UPDATES") return fanoutTasks(request);
+  if (message === "TASK-FAN-IN") return fanInTasks(request);
+  if (message === "TASK-CANCEL-SETUP") return setupCancelWorker(request);
+  if (message === "TASK-CANCEL-NOW") return cancelWorkerTask(request);
+  if (message.startsWith("TASK-CANCEL-VERIFY ")) {
+    return peekTask(request, "task-cancel-verify", "TASK-CANCEL-STATUS", message);
+  }
 
   if (message.startsWith("TASK-HITL-VERIFY ")) {
     return peekTask(request, "task-hitl-verify", "TASK-HITL-STATUS", message);
@@ -56,6 +67,78 @@ function fanoutTasks(request: MockModelRequest): MockModelResponse | string {
     };
   }
   return "TASK-FANOUT-STARTED";
+}
+
+const FAN_IN_CALL_IDS = ["task-fan-in-1", "task-fan-in-2"] as const;
+
+function fanInTasks(request: MockModelRequest): MockModelResponse | string {
+  const pending = FAN_IN_CALL_IDS.filter((id) => resultById(request, id) === undefined);
+  if (pending.length > 0) {
+    return {
+      toolCalls: pending.map((id) => ({
+        id,
+        input: { message: `Run the release gate, then return ${id.toUpperCase()}.` },
+        name: "fanout-worker",
+      })),
+    };
+  }
+  return "TASK-FAN-IN-STARTED";
+}
+
+/**
+ * The deterministic join predicate: on every wake, peek every fan-in task
+ * and answer only when all of them are completed. This is the model-side
+ * contract that replaced `task_await` — the framework delivers one wake
+ * per ready transition and the model decides whether the state suffices.
+ */
+function fanInNotification(request: MockModelRequest): MockModelResponse | string {
+  const callId = `task-fan-in-check-${request.userMessageCount}`;
+  const checked = resultById(request, callId);
+  if (checked === undefined) {
+    const taskIds = FAN_IN_CALL_IDS.map((id) => findTaskId(resultById(request, id)?.output)).filter(
+      (taskId): taskId is string => taskId !== undefined,
+    );
+    if (taskIds.length !== FAN_IN_CALL_IDS.length) {
+      throw new Error("Fan-in notification arrived before both task receipts.");
+    }
+    return { toolCalls: [{ id: callId, input: { taskIds }, name: "task_peek" }] };
+  }
+  return allTasksCompleted(checked.output) ? "TASK-FAN-IN-COMPLETE" : "TASK-FAN-IN-WAITING";
+}
+
+function allTasksCompleted(output: unknown): boolean {
+  if (output === null || typeof output !== "object") return false;
+  const tasks = Reflect.get(output, "tasks");
+  if (!Array.isArray(tasks) || tasks.length === 0) return false;
+  return tasks.every(
+    (task) =>
+      task !== null && typeof task === "object" && Reflect.get(task, "status") === "completed",
+  );
+}
+
+function setupCancelWorker(request: MockModelRequest): MockModelResponse | string {
+  if (resultById(request, "task-cancel-worker") === undefined) {
+    return {
+      toolCalls: [
+        {
+          id: "task-cancel-worker",
+          input: { message: "Run the release gate, then return CANCEL-WORKER-DONE." },
+          name: "fanout-worker",
+        },
+      ],
+    };
+  }
+  return "TASK-CANCEL-READY";
+}
+
+function cancelWorkerTask(request: MockModelRequest): MockModelResponse | string {
+  const callId = `task-cancel-call-${request.userMessageCount}`;
+  if (resultById(request, callId) === undefined) {
+    const taskId = findTaskId(resultById(request, "task-cancel-worker")?.output);
+    if (taskId === undefined) throw new Error("Cancel scenario has no initial task id.");
+    return { toolCalls: [{ id: callId, input: { taskIds: [taskId] }, name: "task_cancel" }] };
+  }
+  return "TASK-CANCEL-DONE";
 }
 
 function startApprovalWorker(
