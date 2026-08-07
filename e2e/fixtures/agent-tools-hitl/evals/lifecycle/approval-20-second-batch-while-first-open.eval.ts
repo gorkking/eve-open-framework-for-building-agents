@@ -3,14 +3,14 @@ import { defineEval } from "eve/evals";
 import { eventIndex, gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * B-4: while an approval batch is open, a later turn creates its own input
+ * approval-20: while an approval batch is open, a later turn creates its own input
  * batch. Both stay independently addressable: closing the newer question
  * neither touches the older approval nor replays its batch; the approval
  * still settles and runs afterward.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "B-4: later batches coexist with an older open approval batch.",
+  description: "approval-20: later batches coexist with an older open approval batch.",
   async test(t) {
     gateLifecycle(t);
 

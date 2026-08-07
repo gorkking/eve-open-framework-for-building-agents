@@ -3,14 +3,14 @@ import { defineEval } from "eve/evals";
 import { eventIndex, gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * AP-9 + AP-14: a response referencing a closed request is stale — it changes
+ * approval-9 + approval-14: a response referencing a closed request is stale — it changes
  * no request and never executes the tool, and the agent still initiates a
  * turn with the stale-attempt context.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
   description:
-    "AP-9/AP-14: responses after closure are stale; no second adjudication or execution.",
+    "approval-9/approval-14: responses after closure are stale; no second adjudication or execution.",
   async test(t) {
     gateLifecycle(t);
 
@@ -30,7 +30,7 @@ export default defineEval({
         ) >= 0,
     );
 
-    // AP-9/AP-14: the late approve is stale — rejected, no execution, and the
+    // approval-9/approval-14: the late approve is stale — rejected, no execution, and the
     // agent runs a turn with the stale-attempt context.
     const stale = await t.send({
       inputResponses: [{ requestId: request.requestId, optionId: "approve" }],

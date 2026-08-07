@@ -3,13 +3,13 @@ import { defineEval } from "eve/evals";
 import { eventBefore, gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * AP-7: one delivery carrying an accepted response plus a message is
+ * approval-7: one delivery carrying an accepted response plus a message is
  * serialized — settlement, restored batch output, tool result, then the
  * message as ordinary turn input. Each part happens exactly once.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "AP-7: compound response+message settles first, then runs the message.",
+  description: "approval-7: compound response+message settles first, then runs the message.",
   async test(t) {
     gateLifecycle(t);
 
