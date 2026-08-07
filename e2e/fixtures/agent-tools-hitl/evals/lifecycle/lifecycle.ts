@@ -26,8 +26,19 @@ export interface EventSelector {
 
 type RespondedOutcome = "allowed" | "answered" | "cancelled" | "continued" | "denied" | "stopped";
 
+export interface ResponderExpectation {
+  readonly authenticator: string;
+  readonly issuer?: string;
+  readonly principalId: string;
+}
+
 type TerminalExpectation =
-  | { readonly optionId: string; readonly outcome: RespondedOutcome; readonly type: "responded" }
+  | {
+      readonly optionId: string;
+      readonly outcome: RespondedOutcome;
+      readonly responder?: ResponderExpectation | null;
+      readonly type: "responded";
+    }
   | {
       readonly reason: "cancelled" | "route-lost" | "session-ended" | "superseded";
       readonly type: "dismissed";
@@ -143,7 +154,7 @@ export function exactRequestTerminal(
   const response = asRecord(event.data.response);
   return (
     event.type === "input.responded" &&
-    hasResponseIdentity(event.data) &&
+    matchesResponseIdentity(event.data, expected.responder ?? null) &&
     event.data.outcome === expected.outcome &&
     response?.requestId === request.requestId &&
     response.optionId === expected.optionId
@@ -154,13 +165,14 @@ export function exactRequestRejection(
   events: readonly unknown[],
   request: RequestTrace,
   reason: "invalid" | "policy-failed" | "stale" | "unauthorized",
+  responder: ResponderExpectation | null = null,
 ): boolean {
   const rejected = requestEvents(events, request.requestId);
   return (
     rejected.length === 1 &&
     rejected[0]!.type === "input.response.rejected" &&
     matchesOwnerCoordinates(rejected[0]!.data, request) &&
-    hasResponseIdentity(rejected[0]!.data) &&
+    matchesResponseIdentity(rejected[0]!.data, responder) &&
     rejected[0]!.data.reason === reason
   );
 }
@@ -258,9 +270,17 @@ function matchesCoordinates(data: UnknownRecord, request: RequestTrace): boolean
   );
 }
 
-function hasResponseIdentity(data: UnknownRecord): boolean {
+function matchesResponseIdentity(
+  data: UnknownRecord,
+  expected: ResponderExpectation | null,
+): boolean {
+  if (typeof data.candidateId !== "string" || data.candidateId.length === 0) return false;
+  if (expected === null) return data.responder === null;
+  const responder = asRecord(data.responder);
   return (
-    typeof data.candidateId === "string" && data.candidateId.length > 0 && data.responder === null
+    responder?.authenticator === expected.authenticator &&
+    responder.principalId === expected.principalId &&
+    responder.issuer === expected.issuer
   );
 }
 

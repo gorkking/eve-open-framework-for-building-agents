@@ -1,6 +1,8 @@
 import { defineEval } from "eve/evals";
 import { equals } from "eve/evals/expect";
 
+import { verifyFollowUp } from "./shared";
+
 const GOOG_PRICE = "178.92";
 
 /**
@@ -32,5 +34,7 @@ export default defineEval({
       count: 1,
     });
     t.messageIncludes(GOOG_PRICE);
+
+    await verifyFollowUp(t, resumed.sessionId, "PROXY-APPROVE-FOLLOW-UP-OK");
   },
 });

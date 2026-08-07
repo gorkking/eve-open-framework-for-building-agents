@@ -69,7 +69,12 @@ export default defineEval({
       "the duplicate is one stale rejection with no second execution",
       (events) =>
         exactRequestRejection(events, trace, "stale") &&
-        exactRequestActionResult(events, trace, null),
+        exactRequestActionResult(events, trace, null) &&
+        exactEventOrder(events, [
+          { type: "input.response.rejected", requestId: trace.requestId },
+          { type: "message.completed" },
+          { type: "session.waiting" },
+        ]),
     );
 
     t.eventsSatisfy("one matching execution overall", (events) =>

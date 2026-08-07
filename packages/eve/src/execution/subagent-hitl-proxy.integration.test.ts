@@ -10,6 +10,7 @@ import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { serializeContext } from "#context/serialize.js";
 import { hasProxyInputRequests, upsertProxyInputRequests } from "#harness/proxy-input-requests.js";
+import { hasPendingInputBatch } from "#harness/input-requests.js";
 import type { HarnessEmitFn, HarnessSession } from "#harness/types.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type { InputRequest } from "#runtime/input/types.js";
@@ -22,6 +23,8 @@ import { emitProxiedInputRequest, routeDeliverPayload } from "#execution/subagen
 /**
  * Integration coverage for subagent HITL proxy emission and routing.
  */
+
+const LIFECYCLE_CONTRACT_ACTIVE = process.env.EVE_HITL_LIFECYCLE_CONTRACT === "1";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -197,6 +200,48 @@ function buildCapturingEmit(ctx: ContextContainer): {
 // ---------------------------------------------------------------------------
 
 describe("subagent HITL proxy → Slack-style text-approve regression (Finding #1)", () => {
+  it("projects the child request unchanged without creating parent-owned pending input", async () => {
+    const adapter = buildSlackishAdapter();
+    const ctx = new ContextContainer();
+    ctx.set(BundleKey, buildMockBundle([adapter]));
+    ctx.set(ChannelKey, adapter);
+    const request = buildApprovalRequest("req-projection-1");
+    const hookPayload = buildHitlPayload({
+      callId: "call-projection-1",
+      childContinuationToken: "subagent:parent:call-projection-1",
+      childSessionId: "sess-projection-child",
+      request,
+      subagentName: "projection-child",
+    });
+    const { emit, events } = buildCapturingEmit(ctx);
+
+    const projected = await emitProxiedInputRequest({
+      emit,
+      hookPayload,
+      mode: "conversation",
+      session: buildEmptySession("parent-token", "sess-parent"),
+    });
+
+    expect(events[0]).toEqual({ type: "input.requested", data: hookPayload.event });
+    expect(projected.entries).toEqual([
+      [
+        request.requestId,
+        {
+          childContinuationToken: hookPayload.childContinuationToken,
+          kind: request.kind,
+          ...(LIFECYCLE_CONTRACT_ACTIVE
+            ? {
+                sequence: hookPayload.event.sequence,
+                stepIndex: hookPayload.event.stepIndex,
+                turnId: hookPayload.event.turnId,
+              }
+            : {}),
+        },
+      ],
+    ]);
+    expect(hasPendingInputBatch(projected.session.state)).toBe(false);
+  });
+
   it("persists adapter-state mutations across a serialize/deserialize boundary so text replies resolve against the cached batch", async () => {
     // Build the parent-side adapter registry + bundle so the
     // ChannelKey codec can round-trip our Slack-like adapter.
