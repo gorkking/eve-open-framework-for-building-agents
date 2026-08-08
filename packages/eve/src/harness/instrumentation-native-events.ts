@@ -74,7 +74,7 @@ async function publishActionStarts(
       Object.freeze({
         callId: action.callId,
         idempotencyKey,
-        input: action.input,
+        input: hooks.capturesContent ? action.input : undefined,
         kind: action.kind,
         name: actionName(action),
         scope,
@@ -100,7 +100,11 @@ async function publishActionTerminal(
     await hooks.publish(
       Object.freeze({
         idempotencyKey,
-        output: Object.freeze({ output: event.data.result.output, type: "result" }),
+        output: Object.freeze(
+          hooks.capturesContent
+            ? { output: event.data.result.output, type: "result" }
+            : { type: "result" },
+        ),
         scope,
         type: "action.completed",
       }),

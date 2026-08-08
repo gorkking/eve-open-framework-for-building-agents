@@ -24,6 +24,7 @@ describe("createInstrumentationHandleEvent", () => {
   it("publishes native lifecycle transitions after durable handling", async () => {
     const order: string[] = [];
     const hooks: InstrumentationHooks = {
+      capturesContent: false,
       publish: async (event) => {
         order.push(`lifecycle:${event.type}`);
       },
@@ -69,6 +70,7 @@ describe("createInstrumentationHandleEvent", () => {
     expect(
       createInstrumentationHandleEvent({
         hooks: {
+          capturesContent: false,
           publish: async () => {},
         },
         sessionId: "session-1",
@@ -81,6 +83,7 @@ describe("createInstrumentationHandleEvent", () => {
     const handleEvent = createInstrumentationHandleEvent({
       handleEvent: async () => {},
       hooks: {
+        capturesContent: false,
         publish: async (event) => {
           events.push(event);
         },
@@ -112,6 +115,7 @@ describe("createInstrumentationHandleEvent", () => {
     const handleEvent = createInstrumentationHandleEvent({
       handleEvent: async () => {},
       hooks: {
+        capturesContent: false,
         publish: async (event) => {
           events.push(event);
         },
@@ -190,7 +194,7 @@ describe("createInstrumentationHandleEvent", () => {
       const handleEvent = createInstrumentationHandleEvent({
         getAttemptScope: () => scope,
         handleEvent: async () => {},
-        hooks: { publish: async (event) => void events.push(event) },
+        hooks: { capturesContent: true, publish: async (event) => void events.push(event) },
         sessionId: "session-1",
       })!;
       await handleEvent(requested);
@@ -201,7 +205,7 @@ describe("createInstrumentationHandleEvent", () => {
     await contextStorage.run(restored, async () => {
       const handleEvent = createInstrumentationHandleEvent({
         handleEvent: async () => {},
-        hooks: { publish: async (event) => void events.push(event) },
+        hooks: { capturesContent: true, publish: async (event) => void events.push(event) },
         sessionId: "session-1",
       })!;
       await handleEvent(

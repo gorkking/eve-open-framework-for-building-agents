@@ -10,6 +10,7 @@ import {
   releaseInstrumentationState,
 } from "#harness/instrumentation-state.js";
 import { createLogger, formatError } from "#internal/logging.js";
+import { withoutInstrumentationContent } from "#harness/instrumentation-content.js";
 
 /**
  * Stable eve identity for one actual model attempt.
@@ -91,10 +92,30 @@ export type InstrumentationActionKind =
   | "subagent-call"
   | "tool-call";
 
-/** How one action ended. */
+/**
+ * How one action ended.
+ *
+ * `type` survives a provider that declined content, so whether the tool errored
+ * is answerable without seeing what it returned.
+ */
 export type InstrumentationActionOutput =
-  | { readonly type: "result"; readonly output: unknown }
-  | { readonly type: "error"; readonly error: unknown };
+  | { readonly type: "result"; readonly output?: unknown }
+  | { readonly type: "error"; readonly error?: unknown };
+
+/**
+ * How much of an event a provider is handed.
+ *
+ * `"metadata"` — the default — is structure, identity, usage, and timing: every
+ * field except what the conversation actually said. `"content"` adds the
+ * prompt, the response, tool arguments, and tool results.
+ *
+ * Declared per provider rather than per process, because two consumers of one
+ * bus rarely have the same retention path. Content is built at all only when
+ * some provider asked for it, and a provider that did not ask never receives
+ * it — which is the same guarantee a destination that declines content gets,
+ * one layer lower and without an OpenTelemetry pipeline to route it through.
+ */
+export type InstrumentationCapture = "content" | "metadata";
 
 /**
  * Every event carries an `idempotencyKey` naming the operation it is about: a
@@ -188,7 +209,8 @@ export interface InstrumentationSessionSettledEvent {
 
 export interface InstrumentationSessionFailedEvent {
   readonly type: "session.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId?: string;
@@ -225,7 +247,8 @@ export interface InstrumentationTurnSettledEvent {
 
 export interface InstrumentationTurnFailedEvent {
   readonly type: "turn.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId: string;
@@ -243,7 +266,8 @@ export interface InstrumentationStepAttemptCompletedEvent {
 
 export interface InstrumentationStepAttemptFailedEvent {
   readonly type: "step.attempt.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -267,14 +291,16 @@ export interface InstrumentationStepAttemptMetadataEvent {
 export interface InstrumentationModelCallStartedEvent {
   readonly type: "model.call.started";
   readonly idempotencyKey: string;
-  readonly input: InstrumentationModelInput;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly input?: InstrumentationModelInput;
   readonly model: InstrumentationModelRef;
   readonly scope: InstrumentationAttemptScope;
 }
 
 export interface InstrumentationModelCallCompletedEvent {
   readonly type: "model.call.completed";
-  readonly content: readonly InstrumentationContentPart[];
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly content?: readonly InstrumentationContentPart[];
   readonly finishReason: string;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
@@ -283,7 +309,8 @@ export interface InstrumentationModelCallCompletedEvent {
 
 export interface InstrumentationModelCallFailedEvent {
   readonly type: "model.call.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -312,7 +339,8 @@ export interface InstrumentationToolCallCompletedEvent {
 
 export interface InstrumentationToolCallFailedEvent {
   readonly type: "tool.call.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -330,7 +358,8 @@ export interface InstrumentationActionStartedEvent {
   readonly type: "action.started";
   readonly callId: string;
   readonly idempotencyKey: string;
-  readonly input: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly input?: unknown;
   readonly kind: InstrumentationActionKind;
   readonly name: string;
   readonly scope: InstrumentationAttemptScope;
@@ -345,7 +374,8 @@ export interface InstrumentationActionCompletedEvent {
 
 export interface InstrumentationActionFailedEvent {
   readonly type: "action.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -374,6 +404,8 @@ export type InstrumentationEventHandler<TEvent> = (
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
   readonly name: string;
+  /** Defaults to `"metadata"`. See {@link InstrumentationCapture}. */
+  readonly capture?: InstrumentationCapture;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
     readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptCompletedEvent>;
@@ -402,10 +434,6 @@ export interface InstrumentationProviderDefinition {
   /** Releases resources when the process is going away. */
   readonly shutdown?: () => void | PromiseLike<void>;
 }
-
-type InstrumentationProviderInput = Omit<InstrumentationProviderDefinition, "name"> & {
-  readonly name?: string;
-};
 
 /** Events that pair a start with its terminal under one `idempotencyKey`. */
 export type InstrumentationCorrelatedEvent =
@@ -448,6 +476,14 @@ export type InstrumentationExecutionOperation =
 
 /** Provider-neutral hook operations consumed by the AI SDK bridge. */
 export interface InstrumentationHooks {
+  /**
+   * Whether any registered provider declared `capture: "content"`.
+   *
+   * False means nothing downstream can read what was said, so the publisher
+   * should not serialize it in the first place. This is the only way the
+   * projection is skipped rather than merely withheld.
+   */
+  readonly capturesContent: boolean;
   publish(event: InstrumentationEvent): Promise<void>;
 }
 
@@ -465,10 +501,12 @@ export interface CreateInstrumentationHooksOptions {
 
 /** Creates failure-isolated hooks backed by an ordered provider list. */
 export function createInstrumentationHooks(
-  providers: readonly InstrumentationProviderInput[],
+  providers: readonly InstrumentationProviderDefinition[],
   options: CreateInstrumentationHooksOptions = {},
 ): InstrumentationHooks {
   const handlerTimeoutMs = options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS;
+
+  const capturesContent = providers.some((provider) => provider.capture === "content");
 
   const publish = async (event: InstrumentationEvent): Promise<void> => {
     const terminal = isTerminal(event.type);
@@ -495,22 +533,25 @@ export function createInstrumentationHooks(
       }
     }
 
-    for (const [providerIndex, provider] of providers.entries()) {
-      const providerName = provider.name ?? `provider-${String(providerIndex)}`;
+    // Built at most once per event and shared by every metadata-only provider.
+    // Publishers still avoid constructing optional content when nobody asked.
+    let stripped: InstrumentationEvent | undefined;
+
+    for (const provider of providers) {
       // The operation is over for this provider either way, so release what it
       // staged at the start. Nothing downstream can read it now, and a provider
       // that was abandoned or has no terminal handler could never release it
       // itself.
       const release = (): void => {
-        if (terminal) releaseInstrumentationState(providerName, event.idempotencyKey);
+        if (terminal) releaseInstrumentationState(provider.name, event.idempotencyKey);
         if (attemptTerminal)
-          releaseInstrumentationAttemptState(providerName, event.scope.attemptId);
-        if (cleanupSession) releaseInstrumentationTurnState(providerName, event.sessionId);
+          releaseInstrumentationAttemptState(provider.name, event.scope.attemptId);
+        if (cleanupSession) releaseInstrumentationTurnState(provider.name, event.sessionId);
         if (cleanupTurn)
-          releaseInstrumentationTurnState(providerName, event.sessionId, event.turnId);
+          releaseInstrumentationTurnState(provider.name, event.sessionId, event.turnId);
       };
 
-      if (isInstrumentationStateAbandoned(providerName, event.idempotencyKey)) {
+      if (isInstrumentationStateAbandoned(provider.name, event.idempotencyKey)) {
         release();
         continue;
       }
@@ -521,17 +562,23 @@ export function createInstrumentationHooks(
         continue;
       }
 
-      const state = instrumentationStateSlot(providerName, event.idempotencyKey, owner);
+      const state = instrumentationStateSlot(provider.name, event.idempotencyKey, owner);
       const ctx: InstrumentationHandlerContext = { state };
+
+      let visible = event;
+      if (provider.capture !== "content") {
+        stripped ??= withoutInstrumentationContent(event);
+        visible = stripped;
+      }
 
       try {
         const settled = await withTimeout(
-          () => (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, ctx),
+          () => (handler as InstrumentationEventHandler<InstrumentationEvent>)(visible, ctx),
           handlerTimeoutMs,
           () => {
             state.revoke();
             if (startedBoundary) {
-              abandonInstrumentationState(providerName, event.idempotencyKey, owner);
+              abandonInstrumentationState(provider.name, event.idempotencyKey, owner);
             }
           },
         );
@@ -541,7 +588,7 @@ export function createInstrumentationHooks(
         if (!settled && startedBoundary) {
           log.warn("instrumentation provider timed out", {
             boundary: event.type,
-            provider: providerName,
+            provider: provider.name,
             timeoutMs: handlerTimeoutMs,
           });
         }
@@ -549,7 +596,7 @@ export function createInstrumentationHooks(
         log.warn("instrumentation provider failed", {
           boundary: event.type,
           error: formatError(error),
-          provider: providerName,
+          provider: provider.name,
         });
       } finally {
         state.revoke();
@@ -558,7 +605,7 @@ export function createInstrumentationHooks(
     }
   };
 
-  return { publish };
+  return { capturesContent, publish };
 }
 
 /** Resolves false when the deadline wins; rejects with whatever the handler threw. */

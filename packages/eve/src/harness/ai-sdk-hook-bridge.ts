@@ -19,10 +19,13 @@ import {
   modelCallIdempotencyKey,
   toolCallIdempotencyKey,
 } from "#harness/instrumentation-lifecycle.js";
+import { structuralProviderMetadata } from "#harness/instrumentation-content.js";
 
 type TelemetryEvent<TKey extends keyof Telemetry> = Parameters<NonNullable<Telemetry[TKey]>>[0];
 
 interface AttemptState {
+  /** False when no provider asked for content, so none is projected at all. */
+  readonly capturesContent: boolean;
   readonly modelKeys: Map<string, string>;
   readonly scope: InstrumentationAttemptScope;
   readonly toolKeys: Map<string, string>;
@@ -38,6 +41,7 @@ export function createAiSdkHookBridge(
   runInContext: InstrumentationContextRunner = directRunInContext,
 ): Telemetry {
   const state: AttemptState = {
+    capturesContent: hooks.capturesContent,
     modelKeys: new Map(),
     scope,
     toolKeys: new Map(),
@@ -80,10 +84,13 @@ export function createAiSdkHookBridge(
       // that the per-call telemetry events don't. Publish it for providers
       // that know what to do with it; skip when there is none.
       if (event.providerMetadata === undefined) return;
+      const providerMetadata = state.capturesContent
+        ? event.providerMetadata
+        : structuralProviderMetadata(event.providerMetadata);
       await hooks.publish(
         Object.freeze({
           idempotencyKey: attemptIdempotencyKey(state.scope),
-          providerMetadata: event.providerMetadata,
+          providerMetadata,
           scope: state.scope,
           type: "step.attempt.metadata",
         }),
@@ -160,10 +167,12 @@ function toModelCallStarted(
 ): InstrumentationModelCallStartedEvent {
   return Object.freeze({
     idempotencyKey,
-    input: Object.freeze({
-      instructions: source.instructions,
-      messages: Object.freeze([...source.messages]),
-    }),
+    input: state.capturesContent
+      ? Object.freeze({
+          instructions: source.instructions,
+          messages: Object.freeze([...source.messages]),
+        })
+      : undefined,
     model: Object.freeze({ modelId: source.modelId, provider: source.provider }),
     scope: state.scope,
     type: "model.call.started",
@@ -176,7 +185,7 @@ function toModelCallCompleted(
   source: TelemetryEvent<"onLanguageModelCallEnd">,
 ): InstrumentationModelCallCompletedEvent {
   return Object.freeze({
-    content: toContentParts(source.content),
+    content: state.capturesContent ? toContentParts(source.content) : undefined,
     finishReason: source.finishReason,
     idempotencyKey,
     scope: state.scope,
@@ -247,7 +256,7 @@ function toToolCallStarted(
   return Object.freeze({
     callId: source.toolCall.toolCallId,
     idempotencyKey,
-    input: source.toolCall.input,
+    input: state.capturesContent ? source.toolCall.input : undefined,
     scope: state.scope,
     toolName: source.toolCall.toolName,
     type: "tool.call.started",
@@ -261,7 +270,7 @@ function toToolCallCompleted(
 ): InstrumentationToolCallCompletedEvent {
   return Object.freeze({
     idempotencyKey,
-    output: toToolOutput(source.toolOutput),
+    output: toToolOutput(source.toolOutput, state.capturesContent),
     scope: state.scope,
     type: "tool.call.completed",
   });
@@ -269,8 +278,14 @@ function toToolCallCompleted(
 
 function toToolOutput(
   toolOutput: TelemetryEvent<"onToolExecutionEnd">["toolOutput"],
+  capturesContent: boolean,
 ): InstrumentationToolOutput {
-  return toolOutput.type === "tool-result"
-    ? Object.freeze({ output: toolOutput.output, type: "result" })
-    : Object.freeze({ error: toolOutput.error, type: "error" });
+  if (toolOutput.type === "tool-result") {
+    return Object.freeze(
+      capturesContent ? { output: toolOutput.output, type: "result" } : { type: "result" },
+    );
+  }
+  return Object.freeze(
+    capturesContent ? { error: toolOutput.error, type: "error" } : { type: "error" },
+  );
 }

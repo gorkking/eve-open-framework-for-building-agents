@@ -11,6 +11,7 @@ import {
   toolCallIdempotencyKey,
   turnIdempotencyKey,
   type InstrumentationAttemptScope,
+  type InstrumentationToolCallCompletedEvent,
 } from "#harness/instrumentation-lifecycle.js";
 import {
   findInstrumentationActionScopeForCall,
@@ -291,5 +292,105 @@ describe("provider handler deadlines", () => {
       });
     });
     expect(terminal).toHaveBeenCalledOnce();
+  });
+});
+
+describe("capture", () => {
+  it("reports content capture only when some provider asked for it", () => {
+    expect(createInstrumentationHooks([{ name: "quiet" }]).capturesContent).toBe(false);
+    expect(
+      createInstrumentationHooks([{ capture: "metadata", name: "quiet" }, { name: "also-quiet" }])
+        .capturesContent,
+    ).toBe(false);
+    expect(
+      createInstrumentationHooks([{ name: "quiet" }, { capture: "content", name: "loud" }])
+        .capturesContent,
+    ).toBe(true);
+  });
+
+  it("allows only structural provider metadata by default", async () => {
+    const metadataOnly = vi.fn();
+    const wantsContent = vi.fn();
+    const hooks = createInstrumentationHooks([
+      { events: { "step.attempt.metadata": metadataOnly }, name: "metadata" },
+      {
+        capture: "content",
+        events: { "step.attempt.metadata": wantsContent },
+        name: "content",
+      },
+    ]);
+    const providerMetadata = {
+      gateway: {
+        cost: "0.01",
+        generationId: "generation-1",
+        groundingSegments: ["private result"],
+      },
+      google: { searchQueries: ["private query"], thoughtSignature: "private signature" },
+    };
+
+    await hooks.publish({
+      idempotencyKey: attemptIdempotencyKey(scope),
+      providerMetadata,
+      scope,
+      type: "step.attempt.metadata",
+    });
+
+    const visible = metadataOnly.mock.calls[0]?.[0];
+    expect(visible.providerMetadata).toEqual({
+      gateway: { cost: "0.01", generationId: "generation-1" },
+    });
+    expect(Object.isFrozen(visible)).toBe(true);
+    expect(Object.isFrozen(visible.providerMetadata)).toBe(true);
+    expect(Object.isFrozen(visible.providerMetadata.gateway)).toBe(true);
+    expect(wantsContent.mock.calls[0]?.[0].providerMetadata).toBe(providerMetadata);
+  });
+
+  it("withholds failure details from metadata providers", async () => {
+    const metadataOnly = vi.fn();
+    const wantsContent = vi.fn();
+    const hooks = createInstrumentationHooks([
+      { events: { "action.failed": metadataOnly }, name: "metadata" },
+      { capture: "content", events: { "action.failed": wantsContent }, name: "content" },
+    ]);
+    const error = { output: "private tool output", requestBody: "private request" };
+    const actionScope = { ...scope };
+
+    await hooks.publish({
+      error,
+      idempotencyKey: actionIdempotencyKey(scope.sessionId, scope.turnId, "call-1"),
+      scope: actionScope,
+      type: "action.failed",
+    });
+
+    expect(metadataOnly.mock.calls[0]?.[0]).toMatchObject({
+      error: undefined,
+      type: "action.failed",
+    });
+    expect(Object.isFrozen(metadataOnly.mock.calls[0]?.[0])).toBe(true);
+    expect(wantsContent.mock.calls[0]?.[0].error).toBe(error);
+  });
+
+  it("freezes one stripped projection shared by metadata providers", async () => {
+    const observed = vi.fn();
+    const mutator = vi.fn((event: InstrumentationToolCallCompletedEvent) => {
+      expect(Reflect.set(event, "finishReason", "corrupted")).toBe(false);
+      expect(Reflect.set(event.output, "type", "error")).toBe(false);
+    });
+    const hooks = createInstrumentationHooks([
+      { events: { "tool.call.completed": mutator }, name: "first" },
+      { events: { "tool.call.completed": observed }, name: "second" },
+      { capture: "content", name: "content" },
+    ]);
+
+    await hooks.publish({
+      idempotencyKey: toolCallIdempotencyKey(scope, "call-1", 0),
+      output: { output: "private", type: "result" },
+      scope,
+      type: "tool.call.completed",
+    });
+
+    expect(observed.mock.calls[0]?.[0].output).toEqual({ type: "result" });
+    expect(Object.isFrozen(observed.mock.calls[0]?.[0])).toBe(true);
+    expect(Object.isFrozen(observed.mock.calls[0]?.[0].output)).toBe(true);
   });
 });

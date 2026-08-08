@@ -82,6 +82,46 @@ Pass `spanProcessors` instead when the destination needs its own batching, sampl
 
 `otel()` and `otelIntegration()` come from `eve/instrumentation/otel`, a separate entrypoint from `eve/instrumentation`.
 
+## Content is per provider
+
+A provider declares how much of each event it wants. The default is
+`"metadata"`: structure, identity, usage, and timing, but not what the
+conversation said. `"content"` adds the prompt, the response, tool arguments,
+and tool results.
+
+```ts title="agent/instrumentation/audit.ts"
+export default defineInstrumentation({
+  capture: "content",
+  events: {
+    "model.call.completed": (event) => {
+      console.log(event.content);
+    },
+  },
+});
+```
+
+Asking is what makes eve build the projection at all. A directory in which no
+provider asked — and whose destinations all declined — never serializes a
+prompt, so declining is cheaper than filtering as well as safer. Providers that
+did not ask receive the same events with the content fields absent; a
+`capture: "content"` provider beside them changes nothing about what they see.
+
+Structure survives declining. `action.completed` still says whether the tool
+returned or threw, and `model.call.completed` still carries its finish reason
+and token usage — a provider counting failures or cost never has to ask for
+content to get them.
+
+Failure details and opaque provider metadata can contain prompts, tool output,
+search queries, or retrieved text, so metadata providers do not receive them.
+`step.attempt.metadata` keeps only the gateway cost and generation ID by
+default; `capture: "content"` exposes the complete provider payload and failure
+objects.
+
+Content fields are therefore optional on the event types that carry them:
+`input` on `model.call.started`, `action.started`, and `tool.call.started`;
+`content` on `model.call.completed`; and the payloads inside action and tool-call
+outputs.
+
 ## Content is per destination
 
 `recordInputs` and `recordOutputs` belong to a destination, not to the process. Content is written onto a span if any destination wants it, and each destination that declined never exports it. A local spool and a hosted backend no longer have to agree:
@@ -94,7 +134,7 @@ export default otelIntegration({
 });
 ```
 
-An agent whose every destination declines still never materializes a prompt — the union of nothing is nothing. Declining wraps every processor in that file, an author's included: they are this destination, and the point of declining is that nothing under it sees what was said. The wrapper copies the span rather than editing it, because the span it is handed is shared with every other destination in the pipeline.
+An agent whose every destination declines still never materializes a prompt — the OpenTelemetry pipeline is itself one provider, and a pipeline whose destinations all declined asks for `"metadata"` like any other. Declining wraps every processor in that file, an author's included: they are this destination, and the point of declining is that nothing under it sees what was said. The wrapper copies the span rather than editing it, because the span it is handed is shared with every other destination in the pipeline.
 
 For sensitive, regulated, or production data, decline content on any destination whose retention path you have not reviewed. You are responsible for ensuring an observability or eval provider is approved for what is exported to it.
 
@@ -147,7 +187,10 @@ A provider's `events` map takes one handler per event type, each called with `(e
 | `action.started`, `action.completed`, `action.failed`                                            | Every eve dispatch: tool call, skill load, subagent, or remote agent |
 | `tool.call.started`, `tool.call.completed`, `tool.call.failed`                                   | The AI SDK execution boundary for an ordinary tool call              |
 
-An ordinary tool emits both families. `action.*` is eve's durable dispatch boundary and covers work that can settle in another worker; `tool.call.*` is the model SDK's in-process execution boundary. Handle one unless you intentionally want both views.
+An ordinary tool emits both families. `action.*` is eve's durable dispatch
+boundary and covers work that can settle in another worker; `tool.call.*` is the
+model SDK's in-process execution boundary. Handle one unless you intentionally
+want both views.
 
 Every event carries an `idempotencyKey` naming the operation it is about. A start and its terminal share a key when the terminal arrives. An incomplete model stream can close without one, so live resources need step-attempt cleanup or their own expiry.
 

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import {
+  attemptIdempotencyKey,
   createInstrumentationHooks,
+  modelCallIdempotencyKey,
   type InstrumentationAttemptScope,
   type InstrumentationModelCallStartedEvent,
   type InstrumentationModelCallTerminalEvent,
@@ -58,7 +60,7 @@ describe("createAiSdkHookBridge", () => {
       },
     ]);
 
-    const id = `model:${scope.attemptId}:0`;
+    const id = modelCallIdempotencyKey(scope, 0);
     expect(calls).toEqual([
       `a:started:${id}`,
       `b:started:${id}`,
@@ -94,7 +96,10 @@ describe("createAiSdkHookBridge", () => {
   it("passes the identity captured at model-call start to the context runner", async () => {
     const ids: string[] = [];
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.started": (event) => void ids.push(event.idempotencyKey) } },
+      {
+        events: { "model.call.started": (event) => void ids.push(event.idempotencyKey) },
+        name: "recorder",
+      },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks, (operation, execute) => {
       ids.push(operation.idempotencyKey);
@@ -111,7 +116,7 @@ describe("createAiSdkHookBridge", () => {
 
     await bridge.executeLanguageModelCall!({ callId: "call-1", execute: async () => "result" });
 
-    const expected = `model:${scope.attemptId}:0`;
+    const expected = modelCallIdempotencyKey(scope, 0);
     expect(ids).toEqual([expected, expected]);
   });
 
@@ -132,7 +137,10 @@ describe("createAiSdkHookBridge", () => {
   it("derives replay-stable model identity without the AI SDK call ID", async () => {
     const keys: string[] = [];
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.started": (event) => void keys.push(event.idempotencyKey) } },
+      {
+        events: { "model.call.started": (event) => void keys.push(event.idempotencyKey) },
+        name: "keys",
+      },
     ]);
 
     for (const callId of ["sdk-random-1", "sdk-random-2"]) {
@@ -143,7 +151,7 @@ describe("createAiSdkHookBridge", () => {
       ]);
     }
 
-    expect(keys).toEqual([`model:${scope.attemptId}:2`, `model:${scope.attemptId}:2`]);
+    expect(keys).toEqual([modelCallIdempotencyKey(scope, 2), modelCallIdempotencyKey(scope, 2)]);
   });
 
   it("publishes step provider metadata as step.metadata, skipping steps without any", async () => {
@@ -155,19 +163,29 @@ describe("createAiSdkHookBridge", () => {
             events.push(event);
           },
         },
+        name: "metadata",
       },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
     await Reflect.apply(bridge.onStepEnd!, bridge, [
-      { providerMetadata: { gateway: { cost: "0.000082" } } },
+      {
+        providerMetadata: {
+          gateway: {
+            cost: "0.000082",
+            generationId: "generation-1",
+            groundingSegments: ["private result"],
+          },
+          google: { searchQueries: ["private query"] },
+        },
+      },
     ]);
     await Reflect.apply(bridge.onStepEnd!, bridge, [{ providerMetadata: undefined }]);
 
     expect(events).toEqual([
       {
-        idempotencyKey: `step:${scope.attemptId}`,
-        providerMetadata: { gateway: { cost: "0.000082" } },
+        idempotencyKey: attemptIdempotencyKey(scope),
+        providerMetadata: { gateway: { cost: "0.000082", generationId: "generation-1" } },
         scope,
         type: "step.attempt.metadata",
       },
@@ -183,11 +201,13 @@ describe("createAiSdkHookBridge", () => {
             throw new Error("provider failed");
           },
         },
+        name: "thrower",
       },
       {
         events: {
           "model.call.completed": after,
         },
+        name: "after",
       },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
@@ -211,7 +231,9 @@ describe("createAiSdkHookBridge", () => {
 
   it("terminalizes started operations when the attempt errors", async () => {
     const after = vi.fn();
-    const hooks = createInstrumentationHooks([{ events: { "model.call.failed": after } }]);
+    const hooks = createInstrumentationHooks([
+      { capture: "content", events: { "model.call.failed": after }, name: "after" },
+    ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
     await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
@@ -236,8 +258,8 @@ describe("createAiSdkHookBridge", () => {
     });
     const started = vi.fn();
     const hooks = createInstrumentationHooks([
-      { events: { "step.attempt.started": mutator } },
-      { events: { "step.attempt.started": started } },
+      { events: { "step.attempt.started": mutator }, name: "mutator" },
+      { events: { "step.attempt.started": started }, name: "started" },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
@@ -247,7 +269,7 @@ describe("createAiSdkHookBridge", () => {
     await Reflect.apply(bridge.onStepStart!, bridge, [{ callId: "call-1", stepNumber: 0 }]);
 
     const expected = {
-      idempotencyKey: `step:${scope.attemptId}`,
+      idempotencyKey: attemptIdempotencyKey(scope),
       operation: { modelId: "model", operationId: "ai.streamText", provider: "test" },
       scope,
       type: "step.attempt.started",
@@ -258,6 +280,7 @@ describe("createAiSdkHookBridge", () => {
 
   it("projects the model call callbacks onto eve fields only", async () => {
     const before = vi.fn((event: InstrumentationModelCallStartedEvent) => {
+      if (event.input === undefined) throw new Error("expected model input");
       expect(Object.isFrozen(event)).toBe(true);
       expect(Object.isFrozen(event.input)).toBe(true);
       expect(Object.isFrozen(event.input.messages)).toBe(true);
@@ -265,6 +288,7 @@ describe("createAiSdkHookBridge", () => {
     });
     const after = vi.fn((event: InstrumentationModelCallTerminalEvent) => {
       if (event.type !== "model.call.completed") throw new Error("expected completed model call");
+      if (event.content === undefined) throw new Error("expected model content");
       expect(Object.isFrozen(event)).toBe(true);
       expect(Object.isFrozen(event.content)).toBe(true);
       expect(event.content.every((part) => Object.isFrozen(part))).toBe(true);
@@ -272,7 +296,11 @@ describe("createAiSdkHookBridge", () => {
       expect(Object.isFrozen(event.usage.inputTokenDetails)).toBe(true);
     });
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.completed": after, "model.call.started": before } },
+      {
+        capture: "content",
+        events: { "model.call.completed": after, "model.call.started": before },
+        name: "spy",
+      },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
@@ -310,7 +338,7 @@ describe("createAiSdkHookBridge", () => {
 
     expect(before).toHaveBeenCalledExactlyOnceWith(
       {
-        idempotencyKey: `model:${scope.attemptId}:0`,
+        idempotencyKey: modelCallIdempotencyKey(scope, 0),
         input: { instructions: "be brief", messages: [{ content: "hi", role: "user" }] },
         model: { modelId: "model", provider: "test" },
         scope,
@@ -330,7 +358,7 @@ describe("createAiSdkHookBridge", () => {
           { error: "boom", input: { a: 2 }, toolName: "search", type: "tool-error" },
         ],
         finishReason: "tool-calls",
-        idempotencyKey: `model:${scope.attemptId}:0`,
+        idempotencyKey: modelCallIdempotencyKey(scope, 0),
         scope,
         type: "model.call.completed",
         usage: {
@@ -363,8 +391,17 @@ describe("createAiSdkHookBridge", () => {
         expect(Object.isFrozen(event)).toBe(true);
         expect(Object.isFrozen(event.output)).toBe(true);
       });
+      const actionStarted = vi.fn();
       const hooks = createInstrumentationHooks([
-        { events: { "tool.call.completed": after, "tool.call.started": before } },
+        {
+          capture: "content",
+          events: {
+            "action.started": actionStarted,
+            "tool.call.completed": after,
+            "tool.call.started": before,
+          },
+          name: "spy",
+        },
       ]);
       const bridge = createAiSdkHookBridge(scope, hooks);
       const toolCall = { input: { q: "eve" }, toolCallId: "tool-1", toolName: "search" };
@@ -394,9 +431,90 @@ describe("createAiSdkHookBridge", () => {
         },
         expect.anything(),
       );
+      expect(actionStarted).not.toHaveBeenCalled();
     },
   );
 
+  it("omits content from the projection when no provider asked for it", async () => {
+    const modelStarted = vi.fn();
+    const modelCompleted = vi.fn();
+    const toolStarted = vi.fn();
+    const toolCompleted = vi.fn();
+    const hooks = createInstrumentationHooks([
+      {
+        events: {
+          "model.call.completed": modelCompleted,
+          "model.call.started": modelStarted,
+          "tool.call.completed": toolCompleted,
+          "tool.call.started": toolStarted,
+        },
+        name: "metadata-only",
+      },
+    ]);
+    const bridge = createAiSdkHookBridge(scope, hooks);
+    const toolCall = { input: { q: "eve" }, toolCallId: "tool-1", toolName: "search" };
+
+    await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
+      {
+        callId: "call-1",
+        instructions: "be brief",
+        messages: [{ content: "hi", role: "user" }],
+        modelId: "model",
+        provider: "test",
+        tools: undefined,
+      },
+    ]);
+    await Reflect.apply(bridge.onLanguageModelCallEnd!, bridge, [
+      {
+        callId: "call-1",
+        content: [{ text: "hello", type: "text" }],
+        finishReason: "stop",
+        performance: { responseTimeMs: 1 },
+        responseId: "response-1",
+        usage: { inputTokens: 1, outputTokens: 2 },
+      },
+    ]);
+    await Reflect.apply(bridge.onToolExecutionStart!, bridge, [{ callId: "call-1", toolCall }]);
+    await Reflect.apply(bridge.onToolExecutionEnd!, bridge, [
+      {
+        callId: "call-1",
+        toolCall,
+        toolExecutionMs: 1,
+        toolOutput: { output: "ok", type: "tool-result" },
+      },
+    ]);
+
+    expect(modelStarted.mock.calls[0]?.[0].input).toBeUndefined();
+    expect(modelCompleted.mock.calls[0]?.[0].content).toBeUndefined();
+    // Structure survives: usage, the finish reason, and the tool's identity are
+    // not what was said.
+    expect(modelCompleted.mock.calls[0]?.[0].finishReason).toBe("stop");
+    expect(toolStarted.mock.calls[0]?.[0].input).toBeUndefined();
+    expect(toolStarted.mock.calls[0]?.[0].toolName).toBe("search");
+    expect(toolCompleted.mock.calls[0]?.[0].output).toEqual({ type: "result" });
+  });
+
+  it("withholds content from a metadata provider sharing a bus with a content one", async () => {
+    const metadataOnly = vi.fn();
+    const wantsContent = vi.fn();
+    const hooks = createInstrumentationHooks([
+      { events: { "tool.call.started": metadataOnly }, name: "metadata-only" },
+      {
+        capture: "content",
+        events: { "tool.call.started": wantsContent },
+        name: "wants-content",
+      },
+    ]);
+    const bridge = createAiSdkHookBridge(scope, hooks);
+
+    await Reflect.apply(bridge.onToolExecutionStart!, bridge, [
+      { callId: "call-1", toolCall: { input: { q: "eve" }, toolCallId: "t", toolName: "search" } },
+    ]);
+
+    expect(wantsContent.mock.calls[0]?.[0].input).toEqual({ q: "eve" });
+    expect(metadataOnly.mock.calls[0]?.[0].input).toBeUndefined();
+    expect(metadataOnly.mock.calls[0]?.[0].toolName).toBe("search");
+  });
   it("keeps each provider's state to itself", async () => {
     const observed = new Map<string, unknown>();
     const provider = (name: string): InstrumentationProviderDefinition => {
@@ -438,7 +556,9 @@ describe("createAiSdkHookBridge", () => {
 
   it("skips a terminal handler when the operation never started", async () => {
     const completed = vi.fn();
-    const hooks = createInstrumentationHooks([{ events: { "model.call.completed": completed } }]);
+    const hooks = createInstrumentationHooks([
+      { events: { "model.call.completed": completed }, name: "completed" },
+    ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
     // No onLanguageModelCallStart, so the bridge holds no id and publishes
@@ -476,6 +596,7 @@ describe("createAiSdkHookBridge", () => {
             terminalStates.set(event.idempotencyKey, started.get(event.idempotencyKey));
           },
         },
+        name: "parallel",
       },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);

@@ -142,6 +142,7 @@ function toProviderDefinition(
   entry: RegisteredInstrumentationProvider,
 ): InstrumentationProviderDefinition {
   return {
+    capture: entry.provider.capture,
     events: entry.provider.events as InstrumentationProviderDefinition["events"],
     flush: entry.provider.flush,
     // The file the provider came from, which is the only name an author can

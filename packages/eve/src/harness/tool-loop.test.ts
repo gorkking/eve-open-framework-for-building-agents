@@ -9596,7 +9596,7 @@ describe("createToolLoopHarness", () => {
       });
       const attemptCompleted = vi.fn();
       const hooks = createInstrumentationHooks([
-        { events: { "step.attempt.completed": attemptCompleted } },
+        { events: { "step.attempt.completed": attemptCompleted }, name: "attempt" },
       ]);
       const runInContext: InstrumentationContextRunner = (_operation, execute) => execute();
       const config = createTestConfig("conversation", undefined, {
@@ -9669,7 +9669,9 @@ describe("createToolLoopHarness", () => {
         toolResults: [],
       });
       const started = vi.fn();
-      const hooks = createInstrumentationHooks([{ events: { "action.started": started } }]);
+      const hooks = createInstrumentationHooks([
+        { events: { "action.started": started }, name: "actions" },
+      ]);
       const { emit } = createEventCollector();
       const runStep = createToolLoopHarness(
         createTestConfig("conversation", emit, {

@@ -295,7 +295,7 @@ export function createAgentOtelInstrumentation(
       },
       attempt.operation.context,
     );
-    if (recordInputs) {
+    if (recordInputs && event.input !== undefined) {
       const messages = messagesContentAttribute(event.input.messages);
       if (messages !== undefined) span.setAttribute("ai.prompt.messages", messages);
       const system = systemPromptAttribute(event.input.instructions);
@@ -318,8 +318,9 @@ export function createAgentOtelInstrumentation(
       if (attempt !== undefined) setUsage(attempt.step.span, event.usage);
       if (recordOutputs) {
         state.span.setAttribute("ai.response.finish_reason", event.finishReason);
+        const content = event.content ?? [];
         const reasoning = textContentAttribute(
-          event.content
+          content
             .filter((part) => part.type === "reasoning")
             .map((part) => part.text)
             .filter((part) => part.trim().length > 0)
@@ -327,13 +328,13 @@ export function createAgentOtelInstrumentation(
         );
         if (reasoning !== undefined) state.span.setAttribute("ai.response.reasoning", reasoning);
         const text = textContentAttribute(
-          event.content
+          content
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join(""),
         );
         if (text !== undefined) state.span.setAttribute("ai.response.text", text);
-        const toolCalls = event.content
+        const toolCalls = content
           .filter((part) => part.type === "tool-call")
           .map((part) => ({ input: part.input, toolName: part.toolName }));
         if (toolCalls.length > 0) {
@@ -343,7 +344,7 @@ export function createAgentOtelInstrumentation(
         // Provider-executed tools (e.g. web_search) run inside the model call,
         // never reach eve's tool loop, and so never get an ai.toolCall span.
         // Their results only exist as content parts on the model response.
-        const toolResults = event.content
+        const toolResults = content
           .filter((part) => part.type === "tool-result" || part.type === "tool-error")
           .map((part) =>
             part.type === "tool-result"
@@ -490,6 +491,10 @@ export function createAgentOtelInstrumentation(
 
   return {
     hook: {
+      // The destinations behind this pipeline filter content per exporter, but
+      // that filter only runs on a span that has it. Declining both here is
+      // what stops the projection from being built upstream.
+      capture: recordInputs || recordOutputs ? "content" : "metadata",
       events: {
         ...actions.events,
         "step.attempt.completed": onStepTerminal,

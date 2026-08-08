@@ -9,7 +9,10 @@
 // runtime. The event shapes are eve's own vocabulary; deriving the handler map
 // from the union below is what keeps the public contract from drifting away
 // from the bus that feeds it.
-import type { InstrumentationEvent } from "#harness/instrumentation-lifecycle.js";
+import type {
+  InstrumentationCapture,
+  InstrumentationEvent,
+} from "#harness/instrumentation-lifecycle.js";
 import type { JsonValue } from "#public/types/json.js";
 
 export type { JsonValue } from "#public/types/json.js";
@@ -21,6 +24,7 @@ export type {
   InstrumentationActionOutput,
   InstrumentationActionStartedEvent,
   InstrumentationAttemptScope,
+  InstrumentationCapture,
   InstrumentationContentPart,
   InstrumentationEvent,
   InstrumentationModelCallCompletedEvent,
@@ -131,6 +135,15 @@ export type ProviderEvents = {
  * throws is logged and the next provider still runs.
  */
 export interface ProviderDefinition {
+  /**
+   * How much of each event this provider is handed. Defaults to `"metadata"`:
+   * structure, identity, usage, and timing, but not what was said.
+   *
+   * `"content"` adds the prompt, the response, tool arguments, and tool
+   * results. Asking is what makes eve build the projection at all, so a
+   * directory in which nobody asks never serializes a prompt.
+   */
+  readonly capture?: InstrumentationCapture;
   readonly events?: ProviderEvents;
   /** Runs once at server startup, before any event is published. */
   readonly setup?: (context: ProviderSetupContext) => void | PromiseLike<void>;

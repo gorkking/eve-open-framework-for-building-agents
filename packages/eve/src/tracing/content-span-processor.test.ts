@@ -91,6 +91,31 @@ describe("contentFilteringProcessor", () => {
     });
   });
 
+  it("withholds exception details when outputs are declined", () => {
+    const downstream = recordingProcessor();
+    const original = {
+      ...(span({ "service.name": "weather" }) as object),
+      events: [
+        { attributes: { "exception.message": "private output" }, name: "exception" },
+        { attributes: { detail: "private event data" }, name: "turn.completed" },
+      ],
+      status: { code: 2, message: "private failure detail" },
+    };
+
+    contentFilteringProcessor(downstream, { recordInputs: true, recordOutputs: false }).onEnd(
+      original as never,
+    );
+
+    const visible = downstream.ended[0] as {
+      events: unknown[];
+      status: unknown;
+    };
+    expect(visible.events).toEqual([{ attributes: undefined, name: "turn.completed" }]);
+    expect(visible.status).toEqual({ code: 2 });
+    expect(original.events).toHaveLength(2);
+    expect(original.status).toEqual({ code: 2, message: "private failure detail" });
+  });
+
   it("redacts initial attributes before onStart without exposing the original", () => {
     const downstream = recordingProcessor();
     const original = span({

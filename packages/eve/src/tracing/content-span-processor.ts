@@ -77,9 +77,15 @@ function facadeFor(
   if (existing !== undefined) return existing;
 
   const attributes: Record<string, unknown> = {};
+  const events: unknown[] = [];
+  const status: Record<string, unknown> = {};
   const target = Object.create(Reflect.getPrototypeOf(span)) as Record<PropertyKey, unknown>;
   const boundMethods = new Map<PropertyKey, unknown>();
-  const refresh = (): void => refreshAttributes(attributes, span, content);
+  const refresh = (): void => {
+    refreshAttributes(attributes, span, content);
+    refreshEvents(events, span, content);
+    refreshStatus(status, span, content);
+  };
   let value: object;
   const readOriginal = (property: PropertyKey): unknown => {
     const original = Reflect.get(span, property, span) as unknown;
@@ -101,8 +107,18 @@ function facadeFor(
     enumerable: true,
     value: attributes,
   });
+  Object.defineProperty(target, "events", {
+    configurable: true,
+    enumerable: true,
+    value: events,
+  });
+  Object.defineProperty(target, "status", {
+    configurable: true,
+    enumerable: true,
+    value: status,
+  });
   for (const property of Reflect.ownKeys(span)) {
-    if (property === "attributes") continue;
+    if (property === "attributes" || property === "events" || property === "status") continue;
     const descriptor = Reflect.getOwnPropertyDescriptor(span, property);
     Object.defineProperty(target, property, {
       configurable: true,
@@ -138,4 +154,39 @@ function refreshAttributes(
 
   const kept = withoutDeclinedContent(source as Record<string, unknown>, content);
   Object.assign(destination, kept ?? source);
+}
+
+function refreshEvents(
+  destination: unknown[],
+  span: object,
+  content: ResolvedContentOptions,
+): void {
+  destination.length = 0;
+  const source = (span as { readonly events?: unknown }).events;
+  if (!Array.isArray(source)) return;
+  if (content.recordOutputs) {
+    destination.push(...source);
+    return;
+  }
+  for (const event of source) {
+    if (typeof event !== "object" || event === null) continue;
+    const record = event as Readonly<Record<string, unknown>>;
+    if (record["name"] === "exception") continue;
+    destination.push({ ...record, attributes: undefined });
+  }
+}
+
+function refreshStatus(
+  destination: Record<string, unknown>,
+  span: object,
+  content: ResolvedContentOptions,
+): void {
+  for (const key of Object.keys(destination)) delete destination[key];
+  const source = (span as { readonly status?: unknown }).status;
+  if (typeof source !== "object" || source === null) return;
+  const record = source as Readonly<Record<string, unknown>>;
+  if (record["code"] !== undefined) destination["code"] = record["code"];
+  if (content.recordOutputs && record["message"] !== undefined) {
+    destination["message"] = record["message"];
+  }
 }
