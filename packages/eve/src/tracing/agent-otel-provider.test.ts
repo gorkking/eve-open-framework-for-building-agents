@@ -15,7 +15,10 @@ import {
   SESSION_WINDOW_TURN_LIMIT,
 } from "#tracing/agent-trace-state.js";
 import {
+  attemptIdempotencyKey,
   createInstrumentationHooks,
+  sessionIdempotencyKey,
+  turnIdempotencyKey,
   type InstrumentationAttemptScope,
   type InstrumentationContextRunner,
   type InstrumentationHooks,
@@ -168,19 +171,26 @@ async function emitAttempt(input: {
 
   if (input.providerMetadata !== undefined) {
     await input.hooks.publish({
+      idempotencyKey: attemptIdempotencyKey(scope),
       providerMetadata: input.providerMetadata,
       scope,
       type: "step.attempt.metadata",
     });
   }
 
-  await input.hooks.publish({ scope, type: "step.attempt.completed" });
   await input.hooks.publish({
+    idempotencyKey: attemptIdempotencyKey(scope),
+    scope,
+    type: "step.attempt.completed",
+  });
+  await input.hooks.publish({
+    idempotencyKey: turnIdempotencyKey(input.sessionId, input.turnId),
     sessionId: input.sessionId,
     turnId: input.turnId,
     type: "turn.completed",
   });
   await input.hooks.publish({
+    idempotencyKey: sessionIdempotencyKey(input.sessionId),
     sessionId: input.sessionId,
     turnId: input.turnId,
     type: "session.waiting",
@@ -200,12 +210,14 @@ async function publishTurnStarted(input: {
   await input.hooks.publish({
     agentName: "weather",
     channelKind: "http",
+    idempotencyKey: sessionIdempotencyKey(input.sessionId),
     parentTraceContext: input.parentTraceContext,
     rootSessionId,
     sessionId: input.sessionId,
     type: "session.started",
   });
   await input.hooks.publish({
+    idempotencyKey: turnIdempotencyKey(input.sessionId, input.turnId),
     parentLineage: input.parentLineage,
     parentTraceContext: input.parentTraceContext,
     rootSessionId,
@@ -222,8 +234,18 @@ async function completeTurn(
   sessionId: string,
   turnId: string,
 ): Promise<void> {
-  await hooks.publish({ sessionId, turnId, type: "turn.completed" });
-  await hooks.publish({ sessionId, turnId, type: "session.waiting" });
+  await hooks.publish({
+    idempotencyKey: turnIdempotencyKey(sessionId, turnId),
+    sessionId,
+    turnId,
+    type: "turn.completed",
+  });
+  await hooks.publish({
+    idempotencyKey: sessionIdempotencyKey(sessionId),
+    sessionId,
+    turnId,
+    type: "session.waiting",
+  });
 }
 
 function byName(spans: readonly ReadableSpan[], name: string): ReadableSpan[] {
@@ -392,11 +414,13 @@ describe("createAgentOtelInstrumentation", () => {
     await runtime.hooks.publish({
       agentName: "weather",
       channelKind: "http",
+      idempotencyKey: sessionIdempotencyKey("session-1"),
       rootSessionId: "session-1",
       sessionId: "session-1",
       type: "session.started",
     });
     await runtime.hooks.publish({
+      idempotencyKey: turnIdempotencyKey("session-1", "turn-1"),
       rootSessionId: "session-1",
       sequence: 0,
       sessionId: "session-1",

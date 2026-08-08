@@ -7,6 +7,11 @@ import type {
   InstrumentationToolCallStartedEvent,
   InstrumentationTraceContext,
 } from "#harness/instrumentation-lifecycle.js";
+import {
+  sessionIdempotencyKey,
+  toolCallIdempotencyKey,
+  turnIdempotencyKey,
+} from "#harness/instrumentation-lifecycle.js";
 import type { HandleEventFn, HarnessToolMap } from "#harness/types.js";
 
 export interface InstrumentationActionSource {
@@ -67,7 +72,7 @@ async function publishDelegationActions(
     await hooks.publish(
       Object.freeze({
         callId: action.callId,
-        id: `${source.scope.attemptId}:tool:${action.callId}:0`,
+        idempotencyKey: toolCallIdempotencyKey(source.scope, action.callId, 0),
         input: action.input,
         kind: tool.runtimeAction.kind,
         scope: source.scope,
@@ -87,6 +92,7 @@ function toLifecycleEvent(
     case "session.started":
       return {
         agentName: input.agentName,
+        idempotencyKey: sessionIdempotencyKey(input.sessionId),
         parentTraceContext: input.parentTraceContext,
         rootSessionId: input.rootSessionId ?? input.sessionId,
         sessionId: input.sessionId,
@@ -94,16 +100,23 @@ function toLifecycleEvent(
       };
     case "session.completed":
     case "session.waiting":
-      return { sessionId: input.sessionId, turnId: activeTurnId, type: event.type };
+      return {
+        idempotencyKey: sessionIdempotencyKey(input.sessionId),
+        sessionId: input.sessionId,
+        turnId: activeTurnId,
+        type: event.type,
+      };
     case "session.failed":
       return {
         error: new Error(event.data.message),
+        idempotencyKey: sessionIdempotencyKey(input.sessionId),
         sessionId: input.sessionId,
         turnId: activeTurnId,
         type: "session.failed",
       };
     case "turn.started":
       return {
+        idempotencyKey: turnIdempotencyKey(input.sessionId, event.data.turnId),
         parentLineage: input.parentLineage,
         parentTraceContext: input.parentTraceContext,
         rootSessionId: input.rootSessionId ?? input.sessionId,
@@ -114,10 +127,16 @@ function toLifecycleEvent(
       };
     case "turn.completed":
     case "turn.cancelled":
-      return { sessionId: input.sessionId, turnId: event.data.turnId, type: event.type };
+      return {
+        idempotencyKey: turnIdempotencyKey(input.sessionId, event.data.turnId),
+        sessionId: input.sessionId,
+        turnId: event.data.turnId,
+        type: event.type,
+      };
     case "turn.failed":
       return {
         error: new Error(event.data.message),
+        idempotencyKey: turnIdempotencyKey(input.sessionId, event.data.turnId),
         sessionId: input.sessionId,
         turnId: event.data.turnId,
         type: "turn.failed",

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { turnIdempotencyKey } from "#harness/instrumentation-lifecycle.js";
 import {
   finalizeInstrumentationProviders,
   getInstrumentationProviders,
@@ -162,6 +163,7 @@ describe("finalizeInstrumentationProviders", () => {
 
     const runtime = finalizeInstrumentationProviders({ serviceName: "weather-agent" });
     await runtime.hooks.publish({
+      idempotencyKey: turnIdempotencyKey("session-1", "turn-1"),
       rootSessionId: "session-1",
       sequence: 0,
       sessionId: "session-1",

@@ -53,7 +53,9 @@ describe("ContextAgentTraceStateStore", () => {
         parentSpanId: "2".repeat(16),
         startTimeMs: 1_700_000_000_000,
       });
-      expect(store.getTurn("session-1", "turn-1")?.terminal?.error).toMatchObject({
+      const terminal = store.getTurn("session-1", "turn-1")?.terminal;
+      expect(terminal?.type).toBe("turn.failed");
+      expect(terminal?.type === "turn.failed" ? terminal.error : undefined).toMatchObject({
         message: "failed",
       });
     });

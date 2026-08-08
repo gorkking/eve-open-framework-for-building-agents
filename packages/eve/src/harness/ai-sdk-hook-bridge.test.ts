@@ -29,11 +29,13 @@ describe("createAiSdkHookBridge", () => {
       return {
         events: {
           "model.call.started"(event) {
-            calls.push(`${name}:started:${event.id}`);
-            states.set(event.id, `${name}-state`);
+            calls.push(`${name}:started:${event.idempotencyKey}`);
+            states.set(event.idempotencyKey, `${name}-state`);
           },
           "model.call.completed"(event) {
-            calls.push(`${name}:completed:${event.id}:${String(states.get(event.id))}`);
+            calls.push(
+              `${name}:completed:${event.idempotencyKey}:${String(states.get(event.idempotencyKey))}`,
+            );
           },
         },
       };
@@ -55,7 +57,7 @@ describe("createAiSdkHookBridge", () => {
       },
     ]);
 
-    const id = `${scope.attemptId}:model:call-1:0`;
+    const id = `model:${scope.attemptId}:0`;
     expect(calls).toEqual([
       `a:started:${id}`,
       `b:started:${id}`,
@@ -91,10 +93,10 @@ describe("createAiSdkHookBridge", () => {
   it("passes the identity captured at model-call start to the context runner", async () => {
     const ids: string[] = [];
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.started": (event) => void ids.push(event.id) } },
+      { events: { "model.call.started": (event) => void ids.push(event.idempotencyKey) } },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks, (operation, execute) => {
-      ids.push(operation.id);
+      ids.push(operation.idempotencyKey);
       return execute();
     });
     Reflect.apply(bridge.onStart!, bridge, [
@@ -108,7 +110,7 @@ describe("createAiSdkHookBridge", () => {
 
     await bridge.executeLanguageModelCall!({ callId: "call-1", execute: async () => "result" });
 
-    const expected = `${scope.attemptId}:model:call-1:0`;
+    const expected = `model:${scope.attemptId}:0`;
     expect(ids).toEqual([expected, expected]);
   });
 
@@ -124,6 +126,23 @@ describe("createAiSdkHookBridge", () => {
     expect(await bridge.executeLanguageModelCall!({ callId: "missing", execute })).toBe("result");
     expect(execute).toHaveBeenCalledOnce();
     expect(adapterCalls).toBe(0);
+  });
+
+  it("derives replay-stable model identity without the AI SDK call ID", async () => {
+    const keys: string[] = [];
+    const hooks = createInstrumentationHooks([
+      { events: { "model.call.started": (event) => void keys.push(event.idempotencyKey) } },
+    ]);
+
+    for (const callId of ["sdk-random-1", "sdk-random-2"]) {
+      const bridge = createAiSdkHookBridge(scope, hooks);
+      await Reflect.apply(bridge.onStepStart!, bridge, [{ callId, stepNumber: 2 }]);
+      await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
+        { callId, messages: [], modelId: "model", provider: "test", tools: undefined },
+      ]);
+    }
+
+    expect(keys).toEqual([`model:${scope.attemptId}:2`, `model:${scope.attemptId}:2`]);
   });
 
   it("publishes step provider metadata as step.metadata, skipping steps without any", async () => {
@@ -146,6 +165,7 @@ describe("createAiSdkHookBridge", () => {
 
     expect(events).toEqual([
       {
+        idempotencyKey: `step:${scope.attemptId}`,
         providerMetadata: { gateway: { cost: "0.000082" } },
         scope,
         type: "step.attempt.metadata",
@@ -225,6 +245,7 @@ describe("createAiSdkHookBridge", () => {
     await Reflect.apply(bridge.onStepStart!, bridge, [{ callId: "call-1", stepNumber: 0 }]);
 
     const expected = {
+      idempotencyKey: `step:${scope.attemptId}`,
       operation: { modelId: "model", operationId: "ai.streamText", provider: "test" },
       scope,
       type: "step.attempt.started",
@@ -286,7 +307,7 @@ describe("createAiSdkHookBridge", () => {
     ]);
 
     expect(before).toHaveBeenCalledExactlyOnceWith({
-      id: `${scope.attemptId}:model:call-1:0`,
+      idempotencyKey: `model:${scope.attemptId}:0`,
       input: { instructions: "be brief", messages: [{ content: "hi", role: "user" }] },
       model: { modelId: "model", provider: "test" },
       scope,
@@ -303,7 +324,7 @@ describe("createAiSdkHookBridge", () => {
         { error: "boom", input: { a: 2 }, toolName: "search", type: "tool-error" },
       ],
       finishReason: "tool-calls",
-      id: `${scope.attemptId}:model:call-1:0`,
+      idempotencyKey: `model:${scope.attemptId}:0`,
       scope,
       type: "model.call.completed",
       usage: {
@@ -347,7 +368,7 @@ describe("createAiSdkHookBridge", () => {
 
       expect(before).toHaveBeenCalledExactlyOnceWith({
         callId: "tool-1",
-        id: `${scope.attemptId}:tool:tool-1:0`,
+        idempotencyKey: `tool:${scope.attemptId}:tool-1:0`,
         input: { q: "eve" },
         kind: "tool-call",
         scope,
@@ -355,7 +376,7 @@ describe("createAiSdkHookBridge", () => {
         type: "tool.call.started",
       });
       expect(after).toHaveBeenCalledExactlyOnceWith({
-        id: `${scope.attemptId}:tool:tool-1:0`,
+        idempotencyKey: `tool:${scope.attemptId}:tool-1:0`,
         output: expected,
         scope,
         type: "tool.call.completed",
@@ -389,9 +410,9 @@ describe("createAiSdkHookBridge", () => {
       return {
         events: {
           "model.call.completed": (event) => {
-            observed.set(name, own.get(event.id));
+            observed.set(name, own.get(event.idempotencyKey));
           },
-          "model.call.started": (event) => void own.set(event.id, `${name}-state`),
+          "model.call.started": (event) => void own.set(event.idempotencyKey, `${name}-state`),
         },
       };
     };
@@ -450,14 +471,14 @@ describe("createAiSdkHookBridge", () => {
         events: {
           async "tool.call.started"(event) {
             started.set(
-              event.id,
+              event.idempotencyKey,
               await new Promise<string>((resolve) => {
-                resolvers.set(event.id, () => resolve(`state:${event.id}`));
+                resolvers.set(event.idempotencyKey, () => resolve(`state:${event.idempotencyKey}`));
               }),
             );
           },
           "tool.call.completed"(event) {
-            terminalStates.set(event.id, started.get(event.id));
+            terminalStates.set(event.idempotencyKey, started.get(event.idempotencyKey));
           },
         },
       },
@@ -474,8 +495,8 @@ describe("createAiSdkHookBridge", () => {
     const second = start("tool-2");
     await vi.waitFor(() => expect(resolvers.size).toBe(2));
 
-    const firstId = `${scope.attemptId}:tool:tool-1:0`;
-    const secondId = `${scope.attemptId}:tool:tool-2:0`;
+    const firstId = `tool:${scope.attemptId}:tool-1:0`;
+    const secondId = `tool:${scope.attemptId}:tool-2:0`;
     resolvers.get(secondId)!();
     resolvers.get(firstId)!();
     await Promise.all([first, second]);

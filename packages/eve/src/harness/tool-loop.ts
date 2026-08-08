@@ -119,6 +119,7 @@ import {
   type InstrumentationActionSource,
 } from "#harness/instrumentation-native-events.js";
 import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
+import { attemptIdempotencyKey } from "#harness/instrumentation-lifecycle.js";
 import { resolveParentLineage } from "#harness/parent-lineage.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import {
@@ -1184,6 +1185,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         const result = await executeModelCall();
         if (attemptScope !== undefined) {
           await instrumentationHooks?.publish({
+            idempotencyKey: attemptIdempotencyKey(attemptScope),
             scope: attemptScope,
             type: "step.attempt.completed",
           });
@@ -1193,6 +1195,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         if (attemptScope !== undefined) {
           await instrumentationHooks?.publish({
             error,
+            idempotencyKey: attemptIdempotencyKey(attemptScope),
             scope: attemptScope,
             type: "step.attempt.failed",
           });
