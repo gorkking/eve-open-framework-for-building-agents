@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { turnIdempotencyKey } from "#harness/instrumentation-lifecycle.js";
 import {
+  EVE_EVALUATION_ENV_FLAG,
+  EVE_EVALUATION_RUN_ID_ENV,
+} from "#internal/application/dev-environment.js";
+import {
   finalizeInstrumentationProviders,
   getInstrumentationProviders,
   registerInstrumentationProvider,
@@ -59,6 +63,7 @@ describe("registerInstrumentationProvider", () => {
     expect(contexts).toHaveLength(1);
     expect(contexts[0]?.agentName).toBe("weather-agent");
     expect(contexts[0]?.environment).toMatch(/^(development|preview|production)$/);
+    expect(contexts[0]?.evaluation).toBeUndefined();
     expect(contexts[0]?.frameworkVersion).toEqual(expect.any(String));
   });
 
@@ -72,6 +77,23 @@ describe("registerInstrumentationProvider", () => {
     );
 
     expect(contexts[0]?.environment).toBe("preview");
+  });
+
+  it("reports an evaluation server to setup", async () => {
+    vi.stubEnv(EVE_EVALUATION_ENV_FLAG, "1");
+    vi.stubEnv(EVE_EVALUATION_RUN_ID_ENV, "eval-run-1");
+
+    const contexts: ProviderSetupContext[] = [];
+    await register(
+      "otel",
+      defineInstrumentation({
+        setup: (context) => {
+          contexts.push(context);
+        },
+      }),
+    );
+
+    expect(contexts[0]?.evaluation).toEqual({ runId: "eval-run-1" });
   });
 
   it("registers nothing for a disabled slot", async () => {

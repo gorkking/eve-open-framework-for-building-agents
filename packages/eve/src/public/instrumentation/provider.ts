@@ -69,6 +69,11 @@ export const DISABLED = Symbol.for("eve.instrumentation.disabled");
 /** Where the agent is running when `setup` fires. */
 export type InstrumentationEnvironment = "development" | "preview" | "production";
 
+/** The local eval run this server was started to serve. */
+export interface EvaluationRef {
+  readonly runId: string;
+}
+
 /**
  * Passed to {@link InstrumentationProvider.setup} once at server startup,
  * before any event is published.
@@ -77,6 +82,8 @@ export interface ProviderSetupContext {
   /** The agent name declared by `defineAgent`. */
   readonly agentName: string;
   readonly environment: InstrumentationEnvironment;
+  /** Present only when this server was started for a local `eve eval` run. */
+  readonly evaluation?: EvaluationRef;
   /** The eve version running the agent. */
   readonly frameworkVersion: string;
 }
