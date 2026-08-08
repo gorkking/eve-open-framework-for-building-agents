@@ -65,7 +65,7 @@ describe("local instrumentation runtime", () => {
       ]);
       await Reflect.apply(bridge.onStepStart!, bridge, [{ callId: "call-1", stepNumber: 0 }]);
       await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
-        { callId: "call-1", modelId: "model-1", provider: "test", tools: undefined },
+        { callId: "call-1", messages: [], modelId: "model-1", provider: "test", tools: undefined },
       ]);
       await bridge.executeLanguageModelCall!({
         callId: "call-1",

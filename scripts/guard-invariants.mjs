@@ -93,6 +93,12 @@
  *             dropped, every retained epoch needs a compiling fixture, and
  *             every public authoring value must belong to a capability.
  *
+ *   rule 37 — The instrumentation lifecycle contract stays provider-neutral.
+ *             `harness/instrumentation-lifecycle.ts` must not import from
+ *             `ai`: its event payloads are eve's published shape, so deriving
+ *             them from the model SDK's callback types would make an SDK
+ *             upgrade a breaking change for every provider. Map at the bridge.
+ *
  * Baselines for rules with pre-existing violations live in
  * `guard-invariants-baseline.json`. Counts and allowlists in that file
  * may only shrink (as offenders are removed) — they may never grow.
@@ -102,6 +108,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import { checkExtensionCapabilityContracts } from "./extension-capability-contracts.mjs";
+import { checkRule37 } from "./guard-invariants-rule37.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), "../..");
 const BASELINE_PATH = join(REPO_ROOT, "scripts/guard-invariants-baseline.json");
@@ -182,6 +189,7 @@ function isTsLike(relPath) {
  *   rule28: Violation[];
  *   rule33: Violation[];
  *   rule35: Violation[];
+ *   rule37: Violation[];
  *   symlinks: string[];
  * }} state
  */
@@ -210,6 +218,7 @@ async function scanRepo(state) {
     checkRule28(posix, lines, state.rule28);
     checkRule33(posix, lines, state.rule33);
     checkRule35(posix, lines, state.rule35);
+    checkRule37(posix, content, state.rule37);
   }
 }
 
@@ -1066,6 +1075,7 @@ async function main() {
     rule28: /** @type {Violation[]} */ ([]),
     rule33: /** @type {Violation[]} */ ([]),
     rule35: /** @type {Violation[]} */ ([]),
+    rule37: /** @type {Violation[]} */ ([]),
     symlinks: /** @type {string[]} */ ([]),
   };
 
@@ -1156,6 +1166,7 @@ async function main() {
 
   // Rule 35
   violations.push(...state.rule35);
+  violations.push(...state.rule37);
 
   // Rule 36
   for (const issue of await checkExtensionCapabilityContracts()) {

@@ -1,8 +1,4 @@
-import type { Telemetry } from "ai";
-
 import { createLogger, formatError } from "#internal/logging.js";
-
-type TelemetryEvent<TKey extends keyof Telemetry> = Parameters<NonNullable<Telemetry[TKey]>>[0];
 
 /** Stable eve identity for one actual model attempt. */
 export interface InstrumentationAttemptScope {
@@ -15,11 +11,65 @@ export interface InstrumentationAttemptScope {
   readonly turnId: string;
 }
 
+/** The model SDK operation an attempt runs through. */
+export interface InstrumentationOperationRef {
+  readonly modelId: string;
+  readonly operationId: string;
+  readonly provider: string;
+}
+
+export interface InstrumentationModelRef {
+  readonly modelId: string;
+  readonly provider: string;
+}
+
+/** Token usage for one model call. A field is absent when the provider omits it. */
+export interface InstrumentationUsage {
+  readonly inputTokenDetails?: {
+    readonly cacheReadTokens?: number;
+    readonly cacheWriteTokens?: number;
+  };
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
+/** Final model input for one call. Message shape stays opaque to this layer. */
+export interface InstrumentationModelInput {
+  readonly instructions?: unknown;
+  readonly messages: readonly unknown[];
+}
+
+/**
+ * The model response parts eve records. A kind outside this union is dropped
+ * when the bridge maps a response, so widening the union is what makes a new
+ * kind reachable by a provider.
+ */
+export type InstrumentationContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "reasoning"; readonly text: string }
+  | { readonly type: "tool-call"; readonly input: unknown; readonly toolName: string }
+  | {
+      readonly type: "tool-result";
+      readonly input: unknown;
+      readonly output: unknown;
+      readonly toolName: string;
+    }
+  | {
+      readonly type: "tool-error";
+      readonly error: unknown;
+      readonly input: unknown;
+      readonly toolName: string;
+    };
+
+/** How one tool execution ended. */
+export type InstrumentationToolOutput =
+  | { readonly type: "result"; readonly output: unknown }
+  | { readonly type: "error"; readonly error: unknown };
+
 export interface InstrumentationAttemptStartedEvent {
   readonly type: "attempt.started";
+  readonly operation: InstrumentationOperationRef;
   readonly scope: InstrumentationAttemptScope;
-  readonly operation: TelemetryEvent<"onStart">;
-  readonly step: TelemetryEvent<"onStepStart">;
 }
 
 export interface InstrumentationSessionStartedEvent {
@@ -48,12 +98,29 @@ export interface InstrumentationParentLineage {
   readonly turnId: string;
 }
 
-export interface InstrumentationSessionTransitionEvent {
-  readonly type: "session.completed" | "session.failed" | "session.waiting";
-  readonly error?: unknown;
+/**
+ * A session transition that carries no failure.
+ *
+ * `session.waiting` sits here rather than with the failed shape because it is
+ * not terminal: the session suspends awaiting input or approval and may resume
+ * with a new turn.
+ */
+export interface InstrumentationSessionSettledEvent {
+  readonly type: "session.completed" | "session.waiting";
   readonly sessionId: string;
   readonly turnId?: string;
 }
+
+export interface InstrumentationSessionFailedEvent {
+  readonly type: "session.failed";
+  readonly error: unknown;
+  readonly sessionId: string;
+  readonly turnId?: string;
+}
+
+export type InstrumentationSessionTransitionEvent =
+  | InstrumentationSessionSettledEvent
+  | InstrumentationSessionFailedEvent;
 
 export interface InstrumentationTurnStartedEvent {
   readonly type: "turn.started";
@@ -92,15 +159,18 @@ export interface InstrumentationAttemptMetadataEvent {
 export interface InstrumentationModelCallStartedEvent {
   readonly type: "model.call.started";
   readonly id: string;
+  readonly input: InstrumentationModelInput;
+  readonly model: InstrumentationModelRef;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onLanguageModelCallStart">;
 }
 
 export interface InstrumentationModelCallCompletedEvent {
   readonly type: "model.call.completed";
+  readonly content: readonly InstrumentationContentPart[];
+  readonly finishReason: string;
   readonly id: string;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onLanguageModelCallEnd">;
+  readonly usage: InstrumentationUsage;
 }
 
 export interface InstrumentationModelCallFailedEvent {
@@ -116,16 +186,18 @@ export type InstrumentationModelCallTerminalEvent =
 
 export interface InstrumentationToolCallStartedEvent {
   readonly type: "tool.call.started";
+  readonly callId: string;
   readonly id: string;
+  readonly input: unknown;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onToolExecutionStart">;
+  readonly toolName: string;
 }
 
 export interface InstrumentationToolCallCompletedEvent {
   readonly type: "tool.call.completed";
   readonly id: string;
+  readonly output: InstrumentationToolOutput;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onToolExecutionEnd">;
 }
 
 export interface InstrumentationToolCallFailedEvent {
@@ -164,16 +236,16 @@ export interface InstrumentationProviderDefinition {
       event: InstrumentationAttemptMetadataEvent,
     ) => void | PromiseLike<void>;
     readonly "session.completed"?: (
-      event: InstrumentationSessionTransitionEvent,
+      event: InstrumentationSessionSettledEvent,
     ) => void | PromiseLike<void>;
     readonly "session.failed"?: (
-      event: InstrumentationSessionTransitionEvent,
+      event: InstrumentationSessionFailedEvent,
     ) => void | PromiseLike<void>;
     readonly "session.started"?: (
       event: InstrumentationSessionStartedEvent,
     ) => void | PromiseLike<void>;
     readonly "session.waiting"?: (
-      event: InstrumentationSessionTransitionEvent,
+      event: InstrumentationSessionSettledEvent,
     ) => void | PromiseLike<void>;
     readonly "tool.call"?: RelatedLifecycleHook<
       InstrumentationToolCallStartedEvent,

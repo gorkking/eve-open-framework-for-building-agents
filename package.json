@@ -20,7 +20,7 @@
     "fix:deps": "syncpack fix-mismatches && syncpack format",
     "fmt": "oxfmt",
     "guard:fixtures": "node ./scripts/guard-test-fixtures.mjs",
-    "guard:invariants": "node ./scripts/guard-invariants.mjs",
+    "guard:invariants": "node --test ./scripts/guard-invariants-rule37.test.mjs && node ./scripts/guard-invariants.mjs",
     "konsistent": "konsistent",
     "lint": "oxlint --fix",
     "prepare": "simple-git-hooks",
