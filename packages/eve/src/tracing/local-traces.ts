@@ -23,7 +23,15 @@ export interface LocalTracesProcessor extends SpanProcessor {
   releaseSession(sessionId: string): Promise<boolean>;
 }
 
-/** Whether a processor still exposes the local spool's session lifecycle. */
+/**
+ * Reports whether a processor tracks which session owns which trace, so eve can
+ * tell it when that session is done.
+ *
+ * Anything standing between eve and the spool has to answer for the spool, so
+ * this is the check a wrapper uses to decide whether it must forward the call.
+ *
+ * @internal
+ */
 export function hasSessionRelease(processor: SpanProcessor): processor is LocalTracesProcessor {
   return typeof (processor as Partial<LocalTracesProcessor>).releaseSession === "function";
 }

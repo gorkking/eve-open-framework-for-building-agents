@@ -40,6 +40,6 @@ describe("instrumentation provider local default", () => {
     await runtime.forceFlush();
     await runtime.shutdown();
 
-    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["local", "backend"]);
+    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["backend", "local"]);
   });
 });

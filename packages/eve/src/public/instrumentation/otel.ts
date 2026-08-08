@@ -31,7 +31,12 @@ export {
 
 export type { SpanExporter, SpanProcessor } from "#compiled/@vercel/otel/index.js";
 
-/** Vercel Agent Runs, enabled by default in production. */
+/**
+ * Vercel Agent Runs, enabled by default in production.
+ *
+ * Export it from `agent/instrumentation/agent-runs.ts` to narrow content, or
+ * export `disableInstrumentation()` from that file to turn it off.
+ */
 export function agentRuns(options: ContentOptions = {}): OtelIntegration {
   return agentRunsIntegration(options);
 }

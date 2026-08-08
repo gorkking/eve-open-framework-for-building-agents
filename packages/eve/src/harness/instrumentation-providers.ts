@@ -91,7 +91,9 @@ export async function registerInstrumentationProvider(input: {
 
 /** Registered providers in slot order. @internal */
 export function getInstrumentationProviders(): readonly RegisteredInstrumentationProvider[] {
-  return [...providerRegistry()].map(([slot, provider]) => ({ provider, slot }));
+  return [...providerRegistry()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([slot, provider]) => ({ provider, slot }));
 }
 
 /**

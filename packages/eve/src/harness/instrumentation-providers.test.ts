@@ -134,11 +134,11 @@ describe("seedInstrumentationProviders", () => {
     vi.stubEnv(DEVELOPMENT_WORKER_APP_ROOT_ENV, "/tmp/eve-seed-test");
   });
 
-  it("keeps default local traces beside an authored destination", async () => {
+  it("sorts default local traces with authored destinations", async () => {
     seedInstrumentationProviders();
     await register("backend", otelIntegration());
 
-    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["local", "backend"]);
+    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["backend", "local"]);
   });
 
   it("seeds Agent Runs only in Vercel production", () => {
@@ -169,6 +169,21 @@ describe("seedInstrumentationProviders", () => {
     await register("agent-runs", authored);
 
     expect(getInstrumentationProviders()).toEqual([{ provider: authored, slot: "agent-runs" }]);
+  });
+
+  it("sorts built-ins, authored slots, and reserved-slot replacements together", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    seedInstrumentationProviders();
+    await register("zeta", defineInstrumentation({}));
+    await register("audit", defineInstrumentation({}));
+    await register("local", localTraces({ recordInputs: false }));
+
+    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual([
+      "agent-runs",
+      "audit",
+      "local",
+      "zeta",
+    ]);
   });
 });
 
