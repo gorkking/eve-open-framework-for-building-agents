@@ -1,6 +1,6 @@
 import { context, propagation, trace, type Context } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { registerOtelPipeline } from "#tracing/otel-registration.js";
 
@@ -40,7 +40,8 @@ describe("registerOtelPipeline", () => {
   it("does not export the private registration span", async () => {
     const exporter = new InMemorySpanExporter();
     const processor = new SimpleSpanProcessor(exporter);
-    registerOtelPipeline({
+    const shutdown = vi.spyOn(processor, "shutdown");
+    const runtime = registerOtelPipeline({
       pipeline: { spanProcessors: [processor] },
       serviceName: "weather",
     });
@@ -49,6 +50,7 @@ describe("registerOtelPipeline", () => {
     await processor.forceFlush();
 
     expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["user.work"]);
-    await processor.shutdown();
+    await runtime.shutdown();
+    expect(shutdown).toHaveBeenCalledOnce();
   });
 });

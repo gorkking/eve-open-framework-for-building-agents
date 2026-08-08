@@ -151,30 +151,58 @@ describe("seedInstrumentationProviders", () => {
 });
 
 describe("finalizeInstrumentationProviders", () => {
+  const turnStarted = {
+    idempotencyKey: turnIdempotencyKey("session-1", "turn-1"),
+    rootSessionId: "session-1",
+    sequence: 0,
+    sessionId: "session-1",
+    turnId: "turn-1",
+    type: "turn.started",
+  } as const;
+
   beforeEach(() => {
     vi.unstubAllEnvs();
     delete (globalThis as Record<symbol, unknown>)[REGISTRY_GLOBAL_KEY];
     delete (globalThis as Record<symbol, unknown>)[RUNTIME_GLOBAL_KEY];
   });
 
-  it("installs a bus for authored providers without an OpenTelemetry destination", async () => {
+  it("publishes to an authored handler", async () => {
     const started = vi.fn();
     await register("rows", defineInstrumentation({ events: { "turn.started": started } }));
 
     const runtime = finalizeInstrumentationProviders({ serviceName: "weather-agent" });
-    await runtime.hooks.publish({
-      idempotencyKey: turnIdempotencyKey("session-1", "turn-1"),
-      rootSessionId: "session-1",
-      sequence: 0,
-      sessionId: "session-1",
-      turnId: "turn-1",
-      type: "turn.started",
-    });
+    await runtime.hooks.publish(turnStarted);
 
     expect(started).toHaveBeenCalledOnce();
+    expect(started.mock.calls[0]?.[0]).toMatchObject({ turnId: "turn-1" });
   });
 
-  it("drives authored flush and shutdown hooks", async () => {
+  it("still runs execution when no destination was declared", async () => {
+    // A directory with no `otel()` has nothing to hang a span on, so
+    // `runInContext` degrades to running the work directly rather than
+    // going missing.
+    await register("rows", defineInstrumentation({}));
+
+    const runtime = finalizeInstrumentationProviders({ serviceName: "weather-agent" });
+    const result = await runtime.runInContext(
+      {
+        idempotencyKey: "tool:session-1:turn-1:0:0:call-1:0",
+        scope: {
+          attemptId: "session-1:turn-1:0:0",
+          attemptIndex: 0,
+          sessionId: "session-1",
+          stepIndex: 0,
+          turnId: "turn-1",
+        },
+        type: "tool.call",
+      },
+      () => Promise.resolve("ran"),
+    );
+
+    expect(result).toBe("ran");
+  });
+
+  it("drains and releases every provider", async () => {
     const flush = vi.fn();
     const shutdown = vi.fn();
     await register("rows", defineInstrumentation({ flush, shutdown }));

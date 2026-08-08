@@ -480,6 +480,7 @@ function createInstrumentationPluginSource(input: {
     "// Default export satisfies the Nitro plugin contract so this file",
     "// can be used directly as a Nitro plugin without a separate wrapper.",
     "export default function installInstrumentationPlugin(nitroApp) {",
+    "  // The last point a buffered exporter can still reach the network.",
     "  nitroApp?.hooks?.hook('close', async () => {",
     "    await shutdownInstrumentationProviders();",
     "  });",

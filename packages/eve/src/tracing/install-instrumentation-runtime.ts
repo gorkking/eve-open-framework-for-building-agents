@@ -19,7 +19,16 @@ import { registerOtelPipeline, type RegisteredOtelPipeline } from "#tracing/otel
 
 const log = createLogger("tracing.install-instrumentation-runtime");
 
-/** Installs the bus and the one OpenTelemetry pipeline collected for this process. */
+/**
+ * Installs the process instrumentation runtime around a collected pipeline.
+ *
+ * Both layouts land here. `eve dev`'s zero-config default and an authored
+ * `agent/instrumentation/` directory differ only in where the declared values
+ * came from, so sharing the install keeps them on one runtime path.
+ *
+ * A directory that declared no OpenTelemetry still gets a bus: its providers
+ * see every event, they just have no spans to hang them on.
+ */
 export function installInstrumentationRuntime(input: {
   readonly collected: CollectedOtel;
   readonly frameworkVersion: string;
@@ -44,6 +53,7 @@ export function installInstrumentationRuntime(input: {
       stateStore: new ContextAgentTraceStateStore(),
       tracer: trace.getTracer("eve.agent", input.frameworkVersion),
     });
+    // First, so the span is open before an authored provider sees the event.
     providers.unshift(agentOtel.hook);
     runInContext = agentOtel.runInContext;
 

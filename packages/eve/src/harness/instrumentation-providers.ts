@@ -95,16 +95,17 @@ export function getInstrumentationProviders(): readonly RegisteredInstrumentatio
 }
 
 /**
- * Builds the process's OpenTelemetry pipeline from the registered providers.
+ * Installs the process instrumentation runtime from the registered providers.
  *
  * Called once by the generated Nitro plugin after every slot has registered,
- * which is also why it cannot happen inside `setup`: the pipeline is the union
- * of every destination declared in the directory, so no single file knows
- * enough to build it. A `setup` that reaches for a tracer therefore gets the
- * no-op one; declare destinations as values and let this assemble them.
+ * which is also why it cannot happen inside `setup`: the OpenTelemetry pipeline
+ * is the union of every destination declared in the directory, so no single
+ * file knows enough to build it. A `setup` that reaches for a tracer therefore
+ * gets the no-op one; declare destinations as values and let this assemble
+ * them.
  *
- * A directory that declared no OpenTelemetry at all leaves the global tracer
- * provider slot alone.
+ * A directory that declared no OpenTelemetry at all still gets a bus. Its
+ * providers see every event; they just have no spans to hang them on.
  *
  * @internal — not part of the public API.
  */
@@ -120,17 +121,29 @@ export function finalizeInstrumentationProviders(input: {
   });
 }
 
-/** Drains and releases the process runtime from Nitro's close hook. */
+/**
+ * Releases every registered provider and OTel processor from Nitro's close
+ * hook, the last point a buffered exporter can still reach the network.
+ */
 export async function shutdownInstrumentationProviders(): Promise<void> {
   await getInstrumentationRuntime()?.shutdown();
 }
 
+/**
+ * Adapts an authored provider onto the internal bus contract.
+ *
+ * The event maps are the same shape — the public one is derived from the
+ * internal union and both handlers take `(event, ctx)` — so only the name has
+ * to be supplied.
+ */
 function toProviderDefinition(
   entry: RegisteredInstrumentationProvider,
 ): InstrumentationProviderDefinition {
   return {
     events: entry.provider.events as InstrumentationProviderDefinition["events"],
     flush: entry.provider.flush,
+    // The file the provider came from, which is the only name an author can
+    // recognize in a log line about it.
     name: entry.slot,
     shutdown: entry.provider.shutdown,
   };
