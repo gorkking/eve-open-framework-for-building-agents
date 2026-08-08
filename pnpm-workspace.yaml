@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - apps/*/*
+  # Templates retain standalone lockfiles until they are validated as workspace apps.
+  - "!apps/templates/*"
   - e2e/fixtures/*
   - packages/*
 
