@@ -7,23 +7,31 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "vitest";
 
+import { ContextContainer, contextStorage } from "#context/container.js";
+import { deserializeContext, serializeContext } from "#context/serialize.js";
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { ContextAgentTraceStateStore } from "#tracing/agent-trace-context-store.js";
 import {
+  type AgentTraceStateStore,
   InMemoryAgentTraceStateStore,
   SESSION_WINDOW_TURN_LIMIT,
 } from "#tracing/agent-trace-state.js";
 import {
-  attemptIdempotencyKey,
   createInstrumentationHooks,
-  sessionIdempotencyKey,
-  turnIdempotencyKey,
+  type InstrumentationActionKind,
   type InstrumentationAttemptScope,
   type InstrumentationContextRunner,
   type InstrumentationHooks,
   type InstrumentationParentLineage,
   type InstrumentationTraceContext,
+} from "#harness/instrumentation-lifecycle.js";
+import {
+  actionIdempotencyKey,
+  attemptIdempotencyKey,
+  sessionIdempotencyKey,
+  turnIdempotencyKey,
 } from "#harness/instrumentation-lifecycle.js";
 
 interface TestRuntime {
@@ -33,7 +41,9 @@ interface TestRuntime {
   readonly runInContext: InstrumentationContextRunner;
 }
 
-function createRuntime(stateStore = new InMemoryAgentTraceStateStore()): TestRuntime {
+function createRuntime(
+  stateStore: AgentTraceStateStore = new InMemoryAgentTraceStateStore(),
+): TestRuntime {
   const exporter = new InMemorySpanExporter();
   const idGenerator = new AgentSpanIdGenerator();
   const provider = new BasicTracerProvider({
@@ -55,6 +65,7 @@ async function emitAttempt(input: {
   readonly hooks: InstrumentationHooks;
   readonly runInContext: InstrumentationContextRunner;
   readonly providerMetadata?: Readonly<Record<string, unknown>>;
+  readonly actionKind?: InstrumentationActionKind;
   readonly sessionId: string;
   readonly skipModelTerminal?: boolean;
   readonly skipToolTerminal?: boolean;
@@ -137,6 +148,16 @@ async function emitAttempt(input: {
       },
     ]);
   }
+  const actionKey = actionIdempotencyKey(input.sessionId, input.turnId, "tool-1");
+  await input.hooks.publish({
+    callId: "tool-1",
+    idempotencyKey: actionKey,
+    input: { secret: "value" },
+    kind: input.actionKind ?? "tool-call",
+    name: "weather",
+    scope,
+    type: "action.started",
+  });
   await Reflect.apply(bridge.onToolExecutionStart!, bridge, [
     {
       callId: "call-1",
@@ -161,6 +182,15 @@ async function emitAttempt(input: {
             : { error: input.toolError, type: "tool-error" },
       },
     ]);
+    await input.hooks.publish({
+      idempotencyKey: actionKey,
+      output:
+        input.toolError === undefined
+          ? { output: { temperature: 72 }, type: "result" }
+          : { error: input.toolError, type: "error" },
+      scope,
+      type: "action.completed",
+    });
   }
 
   if (input.providerMetadata !== undefined) {
@@ -267,6 +297,7 @@ describe("createAgentOtelInstrumentation", () => {
     const step = byName(spans, "agent.step")[0]!;
     const operation = byName(spans, "ai.streamText")[0]!;
     const model = byName(spans, "ai.streamText.doStream")[0]!;
+    const action = byName(spans, "agent.action")[0]!;
     const tool = byName(spans, "ai.toolCall")[0]!;
 
     const session = byName(spans, "agent.session")[0]!;
@@ -280,7 +311,8 @@ describe("createAgentOtelInstrumentation", () => {
     expect(step.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
     expect(operation.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(model.parentSpanContext?.spanId).toBe(operation.spanContext().spanId);
-    expect(tool.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
+    expect(action.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
+    expect(tool.parentSpanContext?.spanId).toBe(action.spanContext().spanId);
     expect(new Set(spans.map((span) => span.spanContext().traceId))).toHaveLength(1);
     expect(turn.events.map((event) => event.name)).toEqual([
       "turn.started",
@@ -302,9 +334,108 @@ describe("createAgentOtelInstrumentation", () => {
       "gen_ai.usage.cache_creation.input_tokens": 2,
       "gen_ai.usage.cache_read.input_tokens": 4,
     });
+    expect(action.attributes).toMatchObject({
+      "agent.action.kind": "tool-call",
+      "agent.action.name": "weather",
+      "agent.framework.name": "eve",
+      "agent.root.session.id": "session-1",
+    });
   });
 
-  it("ends model and tool spans still open when the step attempt terminates", async () => {
+  it("reconstructs a durable action span in a replacement worker", async () => {
+    const first = createRuntime(new ContextAgentTraceStateStore());
+    const context = new ContextContainer();
+    const scope: InstrumentationAttemptScope = {
+      attemptId: "session-1:turn-1:0:0",
+      attemptIndex: 0,
+      sessionId: "session-1",
+      stepIndex: 0,
+      turnId: "turn-1",
+    };
+    const actionKey = actionIdempotencyKey(scope.sessionId, scope.turnId, "tool-1");
+    const toolKey = `tool:${scope.attemptId}:tool-1:0`;
+
+    await contextStorage.run(context, async () => {
+      await publishTurnStarted({
+        hooks: first.hooks,
+        sessionId: scope.sessionId,
+        turnId: scope.turnId,
+        turnSequence: 0,
+      });
+      await first.hooks.publish({
+        idempotencyKey: attemptIdempotencyKey(scope),
+        operation: { modelId: "model", operationId: "ai.streamText", provider: "test" },
+        scope,
+        type: "step.attempt.started",
+      });
+      await first.hooks.publish({
+        callId: "tool-1",
+        idempotencyKey: actionKey,
+        input: { secret: "value" },
+        kind: "tool-call",
+        name: "weather",
+        scope,
+        type: "action.started",
+      });
+      await first.hooks.publish({
+        idempotencyKey: attemptIdempotencyKey(scope),
+        scope,
+        type: "step.attempt.completed",
+      });
+    });
+    await first.provider.forceFlush();
+    const firstSpans = first.exporter.getFinishedSpans();
+    const step = byName(firstSpans, "agent.step")[0]!;
+
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const restored = await deserializeContext(await serializeContext(context));
+    const replacement = createRuntime(new ContextAgentTraceStateStore());
+    const replacementScope = {
+      ...scope,
+      attemptId: "session-1:turn-2:0:0",
+      turnId: "turn-2",
+    };
+    await contextStorage.run(restored, async () => {
+      // Approval-resumed tools can execute before the replacement AI SDK emits
+      // a new step start. The persisted action context is still their parent.
+      await replacement.hooks.publish({
+        callId: "tool-1",
+        idempotencyKey: toolKey,
+        input: {},
+        scope: replacementScope,
+        toolName: "weather",
+        type: "tool.call.started",
+      });
+      await replacement.hooks.publish({
+        idempotencyKey: toolKey,
+        output: { output: "ok", type: "result" },
+        scope: replacementScope,
+        type: "tool.call.completed",
+      });
+      await replacement.hooks.publish({
+        idempotencyKey: actionKey,
+        output: { output: { temperature: 72 }, type: "result" },
+        scope,
+        type: "action.completed",
+      });
+    });
+    await replacement.provider.forceFlush();
+
+    const replacementSpans = replacement.exporter.getFinishedSpans();
+    const action = byName(replacementSpans, "agent.action")[0]!;
+    const tool = byName(replacementSpans, "ai.toolCall")[0]!;
+    expect(action.spanContext().spanId).toBe(tool.parentSpanContext?.spanId);
+    expect(action.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
+    expect(action.attributes).toMatchObject({
+      "agent.action.kind": "tool-call",
+      "agent.action.name": "weather",
+      "gen_ai.tool.call.arguments": expect.stringContaining("secret"),
+      "gen_ai.tool.call.result": expect.stringContaining("temperature"),
+    });
+    expect(nanos(action.duration)).toBeGreaterThan(0n);
+  });
+
+  it("ends SDK spans but leaves durable actions for their own terminal", async () => {
     const runtime = createRuntime();
     await emitAttempt({
       hooks: runtime.hooks,
@@ -322,6 +453,25 @@ describe("createAgentOtelInstrumentation", () => {
     expect(byName(spans, "agent.action")).toHaveLength(0);
     expect(byName(spans, "ai.toolCall")).toHaveLength(1);
     expect(byName(spans, "agent.step")).toHaveLength(1);
+  });
+
+  it("labels a subagent action by its kind, not as a plain tool", async () => {
+    const runtime = createRuntime();
+    await emitAttempt({
+      hooks: runtime.hooks,
+      actionKind: "subagent-call",
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const action = runtime.exporter.getFinishedSpans().find((span) => span.name === "agent.action");
+    expect(action?.attributes).toMatchObject({
+      "agent.action.kind": "subagent-call",
+      "agent.action.name": "weather",
+    });
   });
 
   it("captures model and tool inputs/outputs on the operation spans", async () => {
@@ -358,6 +508,10 @@ describe("createAgentOtelInstrumentation", () => {
     );
     expect(tool.attributes["gen_ai.tool.call.arguments"]).toBe('{"secret":"value"}');
     expect(tool.attributes["gen_ai.tool.call.result"]).toBe('{"temperature":72}');
+    // Runtime action spans carry content for dispatches that have no SDK tool boundary.
+    const action = byName(spans, "agent.action")[0]!;
+    expect(action.attributes["gen_ai.tool.call.arguments"]).toContain("secret");
+    expect(action.attributes["gen_ai.tool.call.result"]).toContain("temperature");
   });
 
   it("truncates long conversations from the front, keeping valid JSON and recent messages", async () => {
@@ -575,8 +729,10 @@ describe("createAgentOtelInstrumentation", () => {
     const replacementSpans = replacementRuntime.exporter.getFinishedSpans();
     const turn = byName(replacementSpans, "agent.turn")[0]!;
     const step = byName(replacementSpans, "agent.step")[0]!;
+    const action = byName(replacementSpans, "agent.action")[0]!;
 
     expect(step.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
+    expect(action.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(step.spanContext().traceId).toBe(turn.spanContext().traceId);
   });
 
@@ -793,7 +949,7 @@ describe("createAgentOtelInstrumentation", () => {
     expect(rolled.spanContext().traceId).not.toBe(parentWindow.spanContext().traceId);
   });
 
-  it("marks a failed SDK tool call without failing its turn", async () => {
+  it("marks a failed action without failing its turn", async () => {
     const runtime = createRuntime();
     await emitAttempt({
       hooks: runtime.hooks,
@@ -806,7 +962,7 @@ describe("createAgentOtelInstrumentation", () => {
     await runtime.provider.forceFlush();
 
     const spans = runtime.exporter.getFinishedSpans();
-    expect(byName(spans, "ai.toolCall")[0]!.status.code).toBe(SpanStatusCode.ERROR);
+    expect(byName(spans, "agent.action")[0]!.status.code).toBe(SpanStatusCode.ERROR);
     expect(byName(spans, "agent.turn")[0]!.status.code).toBe(SpanStatusCode.UNSET);
   });
 });

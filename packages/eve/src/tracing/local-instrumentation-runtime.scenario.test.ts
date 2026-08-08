@@ -11,6 +11,7 @@ import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import { listLocalTraces } from "#tracing/local-trace-reader.js";
 import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
 import {
+  actionIdempotencyKey,
   attemptIdempotencyKey,
   sessionIdempotencyKey,
   turnIdempotencyKey,
@@ -92,6 +93,16 @@ describe("local instrumentation runtime", () => {
           usage: { inputTokens: 1, outputTokens: 1 },
         },
       ]);
+      const actionKey = actionIdempotencyKey("session-1", "turn-1", "tool-1");
+      await runtime.hooks.publish({
+        callId: "tool-1",
+        idempotencyKey: actionKey,
+        input: {},
+        kind: "tool-call",
+        name: "weather",
+        scope,
+        type: "action.started",
+      });
       await Reflect.apply(bridge.onToolExecutionStart!, bridge, [
         {
           callId: "call-1",
@@ -116,6 +127,12 @@ describe("local instrumentation runtime", () => {
           toolOutput: { output: { temperature: 72 }, type: "tool-result" },
         },
       ]);
+      await runtime.hooks.publish({
+        idempotencyKey: actionKey,
+        output: { output: { temperature: 72 }, type: "result" },
+        scope,
+        type: "action.completed",
+      });
       await runtime.hooks.publish({
         idempotencyKey: attemptIdempotencyKey(scope),
         scope,
@@ -157,6 +174,7 @@ describe("local instrumentation runtime", () => {
         "agent.step",
         "ai.streamText",
         "ai.streamText.doStream",
+        "agent.action",
         "ai.toolCall",
         "user.model-work",
         "user.tool-work",
@@ -170,7 +188,8 @@ describe("local instrumentation runtime", () => {
     expect(span(spans, "user.model-work").parentSpanId).toBe(
       span(spans, "ai.streamText.doStream").spanId,
     );
-    expect(span(spans, "ai.toolCall").parentSpanId).toBe(span(spans, "agent.step").spanId);
+    expect(span(spans, "agent.action").parentSpanId).toBe(span(spans, "agent.step").spanId);
+    expect(span(spans, "ai.toolCall").parentSpanId).toBe(span(spans, "agent.action").spanId);
     expect(span(spans, "user.tool-work").parentSpanId).toBe(span(spans, "ai.toolCall").spanId);
     const listed = await listLocalTraces(appRoot);
     expect(listed).toHaveLength(1);

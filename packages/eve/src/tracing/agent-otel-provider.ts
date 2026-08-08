@@ -22,6 +22,7 @@ import {
   toolResultsContentAttribute,
 } from "#tracing/agent-otel-content.js";
 import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
+import { createAgentActionInstrumentation } from "#tracing/agent-action-instrumentation.js";
 import type {
   InstrumentationStepAttemptMetadataEvent,
   InstrumentationAttemptScope,
@@ -92,6 +93,20 @@ export function createAgentOtelInstrumentation(
   const steps = new WeakMap<InstrumentationAttemptScope, AttemptSpanState>();
   const modelSpans = new WeakMap<InstrumentationAttemptScope, Map<string, SpanState>>();
   const toolSpans = new WeakMap<InstrumentationAttemptScope, Map<string, ToolSpanState>>();
+  const actions = createAgentActionInstrumentation({
+    frameworkVersion: input.frameworkVersion,
+    idGenerator: input.idGenerator,
+    recordInputs,
+    recordOutputs,
+    resolveParent: (event) => {
+      const step = steps.get(event.scope)?.step;
+      return step === undefined
+        ? undefined
+        : { context: step.context, spanContext: step.span.spanContext() };
+    },
+    stateStore: input.stateStore,
+    tracer: input.tracer,
+  });
 
   const onSessionStarted = async (event: InstrumentationSessionStartedEvent): Promise<void> => {
     await ensureSessionContext(event);
@@ -197,6 +212,9 @@ export function createAgentOtelInstrumentation(
   };
 
   const onTurnTerminal = async (event: InstrumentationTurnTerminalEvent): Promise<void> => {
+    if (event.type === "turn.cancelled" || event.type === "turn.failed") {
+      await actions.deleteForTurn(event.sessionId, event.turnId);
+    }
     const turn = await input.stateStore.getTurn(event.sessionId, event.turnId);
     if (turn === undefined) return;
     await input.stateStore.setTurn(event.sessionId, event.turnId, {
@@ -256,6 +274,7 @@ export function createAgentOtelInstrumentation(
     // turn that still needs its metadata — so only release session-scoped
     // state on terminal transitions.
     if (event.type === "session.completed" || event.type === "session.failed") {
+      await actions.deleteForSession(event.sessionId);
       await input.stateStore.deleteSession(event.sessionId);
     }
   };
@@ -340,9 +359,12 @@ export function createAgentOtelInstrumentation(
     state.span.end();
   };
 
-  const onToolCallStarted = (event: InstrumentationToolCallStartedEvent): void => {
+  const onToolCallStarted = async (event: InstrumentationToolCallStartedEvent): Promise<void> => {
     const attempt = steps.get(event.scope);
-    if (attempt === undefined) return;
+    const parentContext =
+      (await actions.contextFor(event.scope.sessionId, event.scope.turnId, event.callId)) ??
+      attempt?.step.context;
+    if (parentContext === undefined) return;
     const span = input.tracer.startSpan(
       "ai.toolCall",
       {
@@ -352,16 +374,13 @@ export function createAgentOtelInstrumentation(
           "gen_ai.tool.name": event.toolName,
         },
       },
-      attempt.step.context,
+      parentContext,
     );
     if (recordInputs) {
       const args = contentAttribute(event.input, false);
       if (args !== undefined) span.setAttribute("gen_ai.tool.call.arguments", args);
     }
-    const state: ToolSpanState = {
-      context: trace.setSpan(attempt.step.context, span),
-      span,
-    };
+    const state = { context: trace.setSpan(parentContext, span), span };
     getExecutionContexts(event.scope).tools.set(event.idempotencyKey, state.context);
     getSpanStates(toolSpans, event.scope).set(event.idempotencyKey, state);
   };
@@ -472,6 +491,7 @@ export function createAgentOtelInstrumentation(
   return {
     hook: {
       events: {
+        ...actions.events,
         "step.attempt.completed": onStepTerminal,
         "step.attempt.failed": onStepTerminal,
         "step.attempt.metadata": onStepMetadata,
