@@ -1,14 +1,22 @@
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type {
+  InstrumentationAttemptScope,
   InstrumentationHooks,
   InstrumentationParentLineage,
   InstrumentationPointEvent,
+  InstrumentationToolCallStartedEvent,
   InstrumentationTraceContext,
 } from "#harness/instrumentation-lifecycle.js";
-import type { HandleEventFn } from "#harness/types.js";
+import type { HandleEventFn, HarnessToolMap } from "#harness/types.js";
+
+export interface InstrumentationActionSource {
+  readonly scope: InstrumentationAttemptScope;
+  readonly tools: HarnessToolMap;
+}
 
 export interface CreateInstrumentationHandleEventInput {
   readonly agentName?: string;
+  readonly getActionSource?: () => InstrumentationActionSource | undefined;
   readonly handleEvent?: HandleEventFn;
   readonly hooks?: InstrumentationHooks;
   readonly parentLineage?: InstrumentationParentLineage;
@@ -27,13 +35,47 @@ export function createInstrumentationHandleEvent(
 
   const handleEvent = input.handleEvent;
   const hooks = input.hooks;
+  const publishedActions = new Set<string>();
   let activeTurnId = input.turnId;
   return async (event, messages) => {
     await handleEvent(event, messages);
     const lifecycleEvent = toLifecycleEvent(event, input, activeTurnId);
     if (event.type === "turn.started") activeTurnId = event.data.turnId;
     if (lifecycleEvent !== undefined) await hooks.publish(lifecycleEvent);
+    if (event.type === "actions.requested") {
+      await publishDelegationActions(event, input, hooks, publishedActions);
+    }
   };
+}
+
+async function publishDelegationActions(
+  event: Extract<UnstampedMessageStreamEvent, { type: "actions.requested" }>,
+  input: CreateInstrumentationHandleEventInput,
+  hooks: InstrumentationHooks,
+  published: Set<string>,
+): Promise<void> {
+  const source = input.getActionSource?.();
+  if (source === undefined) return;
+
+  for (const action of event.data.actions) {
+    if (action.kind !== "subagent-call" && action.kind !== "remote-agent-call") continue;
+    const tool = source.tools.get(action.name);
+    if (tool?.runtimeAction === undefined || tool.execute !== undefined) continue;
+    const deduplicationKey = `${source.scope.attemptId}:${action.callId}`;
+    if (published.has(deduplicationKey)) continue;
+    published.add(deduplicationKey);
+    await hooks.publish(
+      Object.freeze({
+        callId: action.callId,
+        id: `${source.scope.attemptId}:tool:${action.callId}:0`,
+        input: action.input,
+        kind: tool.runtimeAction.kind,
+        scope: source.scope,
+        toolName: tool.name,
+        type: "tool.call.started",
+      } satisfies InstrumentationToolCallStartedEvent),
+    );
+  }
 }
 
 function toLifecycleEvent(

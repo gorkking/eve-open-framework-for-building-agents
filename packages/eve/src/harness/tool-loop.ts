@@ -114,8 +114,11 @@ import {
 import { createToolResultMessagePartFromToolError } from "#harness/action-result-helpers.js";
 import { activeTurnId } from "#harness/active-turn-id.js";
 import { buildTelemetryRuntimeContext } from "#harness/instrumentation-runtime-context.js";
-import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
-import { createInstrumentationHandleEvent } from "#harness/instrumentation-native-events.js";
+import { createAiSdkHookBridge, type ActionKindResolver } from "#harness/ai-sdk-hook-bridge.js";
+import {
+  createInstrumentationHandleEvent,
+  type InstrumentationActionSource,
+} from "#harness/instrumentation-native-events.js";
 import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
 import { resolveParentLineage } from "#harness/parent-lineage.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
@@ -571,8 +574,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     let emissionState = getHarnessEmissionState(session.state);
     const store = contextStorage.getStore();
     const parent = store?.get(ParentSessionKey);
+    let actionSource: InstrumentationActionSource | undefined;
     const emit = createInstrumentationHandleEvent({
       agentName: config.runtimeIdentity?.agentName,
+      getActionSource: () => actionSource,
       handleEvent: baseEmit,
       hooks: config.instrumentation?.hooks,
       parentLineage: resolveParentLineage(parent, store?.get(ChannelKey)),
@@ -1031,6 +1036,12 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
               stepIndex: emissionState.stepIndex,
               turnId: instrumentationTurnId,
             };
+      actionSource =
+        attemptScope === undefined
+          ? undefined
+          : { scope: attemptScope, tools: advertisedHarnessTools };
+      const resolveActionKind: ActionKindResolver = (toolName) =>
+        advertisedHarnessTools.get(toolName)?.runtimeAction?.kind ?? "tool-call";
       const bridgeIntegration =
         attemptScope === undefined || instrumentationHooks === undefined
           ? undefined
@@ -1038,6 +1049,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
               attemptScope,
               instrumentationHooks,
               config.instrumentation?.runInContext,
+              resolveActionKind,
             );
 
       const hooks = buildStepHooks({

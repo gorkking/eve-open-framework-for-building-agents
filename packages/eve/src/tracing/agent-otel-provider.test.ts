@@ -7,7 +7,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "vitest";
 
-import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
+import { createAiSdkHookBridge, type ActionKindResolver } from "#harness/ai-sdk-hook-bridge.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
 import {
@@ -52,6 +52,7 @@ async function emitAttempt(input: {
   readonly hooks: InstrumentationHooks;
   readonly runInContext: InstrumentationContextRunner;
   readonly providerMetadata?: Readonly<Record<string, unknown>>;
+  readonly resolveActionKind?: ActionKindResolver;
   readonly sessionId: string;
   readonly skipModelTerminal?: boolean;
   readonly skipToolTerminal?: boolean;
@@ -72,7 +73,12 @@ async function emitAttempt(input: {
     await publishTurnStarted(input);
   }
 
-  const bridge = createAiSdkHookBridge(scope, input.hooks, input.runInContext);
+  const bridge = createAiSdkHookBridge(
+    scope,
+    input.hooks,
+    input.runInContext,
+    input.resolveActionKind,
+  );
   Reflect.apply(bridge.onStart!, bridge, [
     {
       callId: "call-1",
@@ -283,7 +289,7 @@ describe("createAgentOtelInstrumentation", () => {
       "gen_ai.usage.cache_read.input_tokens": 4,
     });
     expect(action.attributes).toMatchObject({
-      "agent.action.kind": "tool",
+      "agent.action.kind": "tool-call",
       "agent.action.name": "weather",
       "agent.framework.name": "eve",
       "agent.root.session.id": "session-1",
@@ -308,6 +314,25 @@ describe("createAgentOtelInstrumentation", () => {
     expect(byName(spans, "agent.action")).toHaveLength(1);
     expect(byName(spans, "ai.toolCall")).toHaveLength(1);
     expect(byName(spans, "agent.step")).toHaveLength(1);
+  });
+
+  it("labels a subagent action by its kind, not as a plain tool", async () => {
+    const runtime = createRuntime();
+    await emitAttempt({
+      hooks: runtime.hooks,
+      resolveActionKind: () => "subagent-call",
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const action = runtime.exporter.getFinishedSpans().find((span) => span.name === "agent.action");
+    expect(action?.attributes).toMatchObject({
+      "agent.action.kind": "subagent-call",
+      "agent.action.name": "weather",
+    });
   });
 
   it("captures model and tool inputs/outputs on the operation spans", async () => {

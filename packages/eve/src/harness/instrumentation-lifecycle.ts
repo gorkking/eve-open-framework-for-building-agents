@@ -69,6 +69,13 @@ export type InstrumentationContentPart =
       readonly toolName: string;
     };
 
+/**
+ * What eve dispatched a tool call as. The model sees every action as a tool,
+ * so this is the only thing that separates a subagent or remote-agent call
+ * from an ordinary tool in a trace.
+ */
+export type InstrumentationActionKind = "remote-agent-call" | "subagent-call" | "tool-call";
+
 /** How one tool execution ended. */
 export type InstrumentationToolOutput =
   | { readonly type: "result"; readonly output: unknown }
@@ -197,6 +204,7 @@ export interface InstrumentationToolCallStartedEvent {
   readonly callId: string;
   readonly id: string;
   readonly input: unknown;
+  readonly kind: InstrumentationActionKind;
   readonly scope: InstrumentationAttemptScope;
   readonly toolName: string;
 }
