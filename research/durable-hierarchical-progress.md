@@ -466,65 +466,52 @@ partial contribution until another lifecycle boundary.
 
 ### Agent-level authoring
 
+The initial agent API should be zero-config:
+
+```ts
+export default defineAgent({
+  model: "openai/gpt-5.4",
+});
+```
+
 A raw `(state, event) => state` replacement API is too easy to make lossy or
-break child and terminal invariants. Consider three levels of power.
+break child and terminal invariants. Fixed retention counts are also the wrong
+abstraction: canonical progress is scoped around meaningful work, not a sliding
+window of recent events.
 
-#### Declarative policy
-
-```ts
-export default defineAgent({
-  model: "openai/gpt-5.4",
-  progress: {
-    retainCompletedActions: 5,
-    retainCompletedChildren: "turn",
-    plans: "prefer-over-actions",
-  },
-});
+```text
+turn
+└── plan
+    ├── item: Reproduce
+    │   ├── search logs       [completed]
+    │   └── run test          [completed]
+    ├── item: Implement fix   [running]
+    │   ├── edit file         [completed]
+    │   └── run tests         [running]
+    └── item: Open PR         [pending]
 ```
 
-This handles common retention choices but cannot add domain-specific aggregate
-state.
+The framework applies deterministic scope-based compaction:
 
-#### Canonical annotations
+- retain every active or blocked action;
+- attach actions to the most specific active plan item, child, or implicit turn
+  phase;
+- while a scope is active, retain its completed actions;
+- when a plan item completes, retain its outcome and collapse internal action
+  detail from the live projection;
+- retain failed/cancelled detail sufficient to explain the outcome;
+- retain the current plan and active child scopes until their owning turn
+  settles;
+- leave the complete audit trail in the durable event stream.
 
-```ts
-export default defineAgent({
-  model: "openai/gpt-5.4",
-  progress: defineProgress({
-    annotate(snapshot, update) {
-      if (update.kind === "plan.updated") {
-        return { focus: update.plan.items.find((item) => item.phase === "running")?.label };
-      }
-    },
-  }),
-});
-```
+Whether completed scopes are expanded or hidden is channel presentation policy.
+`preferPlans` therefore does not belong on the agent definition either.
+Agent-authored semantic state enters through structured plans and
+`reportProgress()`, not a custom canonical reducer. Defer agent annotations and
+reducer middleware until adoption demonstrates information that cannot be
+expressed as a contribution.
 
-Annotations add bounded, serializable information while the framework still
-owns the canonical graph. They do not remove or rewrite nodes.
-
-#### Reducer middleware
-
-```ts
-progress: defineProgress({
-  reduce(base, update) {
-    const next = base(update);
-    return { ...next, annotations: updateAnnotations(next, update) };
-  },
-});
-```
-
-This is flexible but exposes ordering and replay semantics. If offered, `base`
-must always establish structural invariants first, and the callback should only
-be able to change an owned extension state or derived annotations, not core
-nodes.
-
-Recommended initial API: an optional `progress` field on `defineAgent` with
-declarative retention plus typed `annotate`. Every subagent definition gets the
-same surface. Do not add a separate filesystem slot until multiple independent
-progress modules need composition.
-
-The canonical projection should also be observable without being mutable:
+The canonical projection should be observable without being mutable:
 
 ```ts
 export default defineHook({
@@ -688,7 +675,7 @@ The smallest coherent first public surface is:
    types;
 2. `ctx.progress.report()` for operation-local milestones;
 3. optional typed tool `progress` projectors;
-4. agent `progress` retention/annotation policy, not arbitrary core reduction;
+4. deterministic framework-owned scope reduction, with no initial agent config;
 5. `progress.updated` as an observe-only hook event;
 6. `defineChannelProgress({ project, reconcile })` with cached project output
    and refresh reasons;
@@ -760,10 +747,10 @@ ProgressNode`. Every channel can understand the result, but the shared shape
    definitions and delegated-agent boundaries.
 
 Do not require an agent author to reconstruct the action map, child revision
-checks, or terminal precedence. Those are framework invariants. Agent-level
-authoring should primarily add typed domain contributions and configure bounded
-retention, not collapse the graph to one display string. Tool-level projectors
-answer what one operation's output means; the canonical reducer combines those
+checks, terminal precedence, or retention. Those are framework invariants.
+Agent-level authoring should add typed domain contributions, not collapse the
+graph to one display string. Tool-level projectors answer what one operation's
+output means; the canonical reducer combines and scope-compacts those
 contributions without deciding what a particular audience should see.
 
 A child may publish an explicit semantic summary because it understands its own
