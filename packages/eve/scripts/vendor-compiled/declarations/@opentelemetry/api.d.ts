@@ -55,8 +55,13 @@ export interface TextMapGetter<Carrier = unknown> {
   keys(carrier: Carrier): string[];
 }
 
+export interface TextMapSetter<Carrier = unknown> {
+  set(carrier: Carrier, key: string, value: string): void;
+}
+
 export declare const propagation: {
   extract<Carrier>(context: Context, carrier: Carrier, getter: TextMapGetter<Carrier>): Context;
+  inject<Carrier>(context: Context, carrier: Carrier, setter: TextMapSetter<Carrier>): void;
 };
 
 export declare const trace: {
