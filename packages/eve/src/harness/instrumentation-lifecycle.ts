@@ -1,6 +1,8 @@
 import { createLogger, formatError } from "#internal/logging.js";
 import {
+  abandonInstrumentationState,
   instrumentationStateSlot,
+  isInstrumentationStateAbandoned,
   releaseInstrumentationAttemptState,
   releaseInstrumentationState,
   type InstrumentationStateSlot,
@@ -380,12 +382,21 @@ export interface InstrumentationHooks {
 
 const log = createLogger("harness.instrumentation-lifecycle");
 
+const DEFAULT_HANDLER_TIMEOUT_MS = 5_000;
+
+export interface CreateInstrumentationHooksOptions {
+  readonly handlerTimeoutMs?: number;
+}
+
 /** Creates failure-isolated hooks backed by an ordered provider list. */
 export function createInstrumentationHooks(
   providers: readonly InstrumentationProviderInput[],
+  options: CreateInstrumentationHooksOptions = {},
 ): InstrumentationHooks {
+  const handlerTimeoutMs = options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS;
   const publish = async (event: InstrumentationEvent): Promise<void> => {
     const terminal = isTerminal(event.type);
+    const startedBoundary = event.type.endsWith(".started");
     const attemptTerminal =
       event.type === "step.attempt.completed" || event.type === "step.attempt.failed";
     const attemptId = stateAttemptId(event);
@@ -396,6 +407,10 @@ export function createInstrumentationHooks(
         if (attemptTerminal)
           releaseInstrumentationAttemptState(providerName, event.scope.attemptId);
       };
+      if (isInstrumentationStateAbandoned(providerName, event.idempotencyKey)) {
+        release();
+        continue;
+      }
       const handler = provider.events?.[event.type];
       if (handler === undefined) {
         release();
@@ -403,7 +418,23 @@ export function createInstrumentationHooks(
       }
       const state = instrumentationStateSlot(providerName, event.idempotencyKey, attemptId);
       try {
-        await (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, { state });
+        const settled = await withTimeout(
+          () => (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, { state }),
+          handlerTimeoutMs,
+          () => {
+            state.revoke();
+            if (startedBoundary) {
+              abandonInstrumentationState(providerName, event.idempotencyKey, attemptId);
+            }
+          },
+        );
+        if (!settled && startedBoundary) {
+          log.warn("instrumentation provider timed out", {
+            boundary: event.type,
+            provider: providerName,
+            timeoutMs: handlerTimeoutMs,
+          });
+        }
       } catch (error) {
         log.warn("instrumentation provider failed", {
           boundary: event.type,
@@ -418,6 +449,27 @@ export function createInstrumentationHooks(
   };
 
   return { publish };
+}
+
+async function withTimeout(
+  run: () => void | PromiseLike<void>,
+  timeoutMs: number,
+  onTimeout: () => void,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(run()).then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => {
+          onTimeout();
+          resolve(false);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function stateAttemptId(event: InstrumentationEvent): string | undefined {

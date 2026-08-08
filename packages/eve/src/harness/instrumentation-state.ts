@@ -3,8 +3,9 @@ import { ContextKey } from "#context/key.js";
 import { type JsonValue, parseJsonValue } from "#shared/json.js";
 
 interface InstrumentationStateRecord {
-  readonly attemptId?: string;
-  readonly value: JsonValue;
+  abandoned?: true;
+  attemptId?: string;
+  value?: JsonValue;
 }
 
 type InstrumentationStateMap = Readonly<Record<string, InstrumentationStateRecord>>;
@@ -58,12 +59,36 @@ export function instrumentationStateSlot(
         return;
       }
       const record: InstrumentationStateRecord = { value: parseJsonValue(value) };
-      if (attemptId !== undefined) {
-        (record as { attemptId?: string }).attemptId = attemptId;
-      }
+      const current = contextStorage.getStore()?.get(InstrumentationStateKey)?.[key];
+      if (current?.abandoned === true) record.abandoned = true;
+      if (attemptId !== undefined) record.attemptId = attemptId;
       writeState((state) => writeSlot(state, key, record));
     },
   };
+}
+
+export function abandonInstrumentationState(
+  provider: string,
+  idempotencyKey: string,
+  attemptId?: string,
+): void {
+  if (contextStorage.getStore() === undefined) return;
+  const key = stateKey(provider, idempotencyKey);
+  writeState((state) => {
+    const current = state[key];
+    const record: InstrumentationStateRecord = { abandoned: true };
+    const owner = attemptId ?? current?.attemptId;
+    if (owner !== undefined) record.attemptId = owner;
+    if (current?.value !== undefined) record.value = current.value;
+    return writeSlot(state, key, record);
+  });
+}
+
+export function isInstrumentationStateAbandoned(provider: string, idempotencyKey: string): boolean {
+  return (
+    contextStorage.getStore()?.get(InstrumentationStateKey)?.[stateKey(provider, idempotencyKey)]
+      ?.abandoned === true
+  );
 }
 
 export function releaseInstrumentationState(provider: string, idempotencyKey: string): void {
@@ -119,11 +144,11 @@ function deserializeState(data: unknown): InstrumentationStateMap {
   for (const [key, value] of Object.entries(data)) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
     const record = value as Record<string, unknown>;
-    if (record["value"] === undefined) continue;
-    state[key] = {
-      attemptId: typeof record["attemptId"] === "string" ? record["attemptId"] : undefined,
-      value: record["value"] as JsonValue,
-    };
+    const parsed: InstrumentationStateRecord = {};
+    if (record["abandoned"] === true) parsed.abandoned = true;
+    if (typeof record["attemptId"] === "string") parsed.attemptId = record["attemptId"];
+    if (record["value"] !== undefined) parsed.value = record["value"] as JsonValue;
+    if (parsed.abandoned === true || parsed.value !== undefined) state[key] = parsed;
   }
   return state;
 }

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
+import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
   attemptIdempotencyKey,
   createInstrumentationHooks,
@@ -114,5 +115,114 @@ describe("provider state lifecycle", () => {
       });
       expect(instrumentationStateSlot("sink", modelKey).get()).toBeUndefined();
     });
+  });
+});
+
+describe("provider handler deadlines", () => {
+  const key = turnIdempotencyKey("session-1", "turn-1");
+  const started = {
+    idempotencyKey: key,
+    rootSessionId: "session-1",
+    sequence: 0,
+    sessionId: "session-1",
+    turnId: "turn-1",
+    type: "turn.started" as const,
+  };
+  const completed = {
+    idempotencyKey: key,
+    sessionId: "session-1",
+    turnId: "turn-1",
+    type: "turn.completed" as const,
+  };
+  const hang = () => new Promise<void>(() => {});
+
+  it("lets providers behind a hanging handler run", async () => {
+    const after = vi.fn();
+    const hooks = createInstrumentationHooks(
+      [
+        { events: { "turn.started": hang }, name: "hangs" },
+        { events: { "turn.started": after }, name: "after" },
+      ],
+      { handlerTimeoutMs: 1 },
+    );
+    await contextStorage.run(new ContextContainer(), () => hooks.publish(started));
+    expect(after).toHaveBeenCalledOnce();
+  });
+
+  it("persists abandonment across workers and skips the terminal", async () => {
+    const terminal = vi.fn();
+    const context = new ContextContainer();
+    const starts = createInstrumentationHooks(
+      [{ events: { "turn.started": hang }, name: "sink" }],
+      { handlerTimeoutMs: 1 },
+    );
+    await contextStorage.run(context, () => starts.publish(started));
+
+    const restored = await deserializeContext(await serializeContext(context));
+    const terminals = createInstrumentationHooks(
+      [{ events: { "turn.completed": terminal }, name: "sink" }],
+      { handlerTimeoutMs: 1 },
+    );
+    await contextStorage.run(restored, () => terminals.publish(completed));
+    expect(terminal).not.toHaveBeenCalled();
+  });
+
+  it("ignores a timed-out handler's late state write", async () => {
+    let resume!: () => void;
+    const continued = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const hooks = createInstrumentationHooks(
+      [
+        {
+          events: {
+            "turn.started": async (_event, ctx) => {
+              await continued;
+              ctx.state.set("late");
+            },
+          },
+          name: "slow",
+        },
+      ],
+      { handlerTimeoutMs: 1 },
+    );
+    await contextStorage.run(new ContextContainer(), async () => {
+      await hooks.publish(started);
+      await hooks.publish(completed);
+      resume();
+      await continued;
+      await Promise.resolve();
+      expect(instrumentationStateSlot("slow", key).get()).toBeUndefined();
+    });
+  });
+
+  it("does not abandon an operation for a point-event timeout", async () => {
+    const terminal = vi.fn();
+    const hooks = createInstrumentationHooks(
+      [
+        {
+          events: {
+            "step.attempt.completed": terminal,
+            "step.attempt.metadata": hang,
+          },
+          name: "slow-metadata",
+        },
+      ],
+      { handlerTimeoutMs: 1 },
+    );
+    await contextStorage.run(new ContextContainer(), async () => {
+      await hooks.publish({
+        idempotencyKey: attemptIdempotencyKey(scope),
+        providerMetadata: {},
+        scope,
+        type: "step.attempt.metadata",
+      });
+      await hooks.publish({
+        idempotencyKey: attemptIdempotencyKey(scope),
+        scope,
+        type: "step.attempt.completed",
+      });
+    });
+    expect(terminal).toHaveBeenCalledOnce();
   });
 });

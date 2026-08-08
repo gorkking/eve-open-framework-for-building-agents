@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
+  abandonInstrumentationState,
   instrumentationStateSlot,
+  isInstrumentationStateAbandoned,
   preserveSerializedInstrumentationState,
   releaseInstrumentationAttemptState,
   releaseInstrumentationState,
@@ -71,6 +73,17 @@ describe("instrumentation state", () => {
     ).toEqual({
       authored: "original",
       "eve.harness.instrumentationState": { state: true },
+    });
+  });
+
+  it("persists abandonment across serialization", async () => {
+    const context = new ContextContainer();
+    contextStorage.run(context, () => {
+      abandonInstrumentationState("sink", "model:1", "attempt-1");
+    });
+    const restored = await deserializeContext(await serializeContext(context));
+    contextStorage.run(restored, () => {
+      expect(isInstrumentationStateAbandoned("sink", "model:1")).toBe(true);
     });
   });
 });
