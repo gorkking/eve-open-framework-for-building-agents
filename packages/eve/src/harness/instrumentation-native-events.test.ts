@@ -1,7 +1,9 @@
-import { jsonSchema } from "ai";
 import { describe, expect, it } from "vitest";
 
+import { ContextContainer, contextStorage } from "#context/container.js";
+import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
+  createActionResultEvent,
   createActionsRequestedEvent,
   createSessionStartedEvent,
   createSessionWaitingEvent,
@@ -12,6 +14,11 @@ import {
 } from "#protocol/message.js";
 import { createInstrumentationHandleEvent } from "#harness/instrumentation-native-events.js";
 import type { InstrumentationHooks } from "#harness/instrumentation-lifecycle.js";
+import {
+  actionIdempotencyKey,
+  sessionIdempotencyKey,
+  turnIdempotencyKey,
+} from "#harness/instrumentation-lifecycle.js";
 
 describe("createInstrumentationHandleEvent", () => {
   it("publishes native lifecycle transitions after durable handling", async () => {
@@ -86,7 +93,7 @@ describe("createInstrumentationHandleEvent", () => {
 
     expect(events).toEqual([
       {
-        idempotencyKey: "session:session-1",
+        idempotencyKey: sessionIdempotencyKey("session-1"),
         sessionId: "session-1",
         turnId: "turn-1",
         type: "session.waiting",
@@ -119,7 +126,7 @@ describe("createInstrumentationHandleEvent", () => {
 
     expect(events.filter((event) => event.type === "turn.started")).toEqual([
       {
-        idempotencyKey: "turn:child-1:child-turn-1",
+        idempotencyKey: turnIdempotencyKey("child-1", "child-turn-1"),
         parentLineage,
         parentTraceContext: undefined,
         rootSessionId: "session-1",
@@ -129,7 +136,7 @@ describe("createInstrumentationHandleEvent", () => {
         type: "turn.started",
       },
       {
-        idempotencyKey: "turn:child-1:child-turn-2",
+        idempotencyKey: turnIdempotencyKey("child-1", "child-turn-2"),
         parentLineage,
         parentTraceContext: undefined,
         rootSessionId: "session-1",
@@ -141,7 +148,7 @@ describe("createInstrumentationHandleEvent", () => {
     ]);
   });
 
-  it("publishes each non-executable delegation once from actions.requested", async () => {
+  it("publishes every runtime action and settles it in a replacement worker", async () => {
     const events: unknown[] = [];
     const scope = {
       attemptId: "session-1:turn-1:0:0",
@@ -150,50 +157,7 @@ describe("createInstrumentationHandleEvent", () => {
       stepIndex: 0,
       turnId: "turn-1",
     };
-    const tools = new Map([
-      [
-        "delegate",
-        {
-          description: "Delegate work.",
-          inputSchema: jsonSchema({ type: "object" }),
-          name: "delegate",
-          runtimeAction: {
-            kind: "subagent-call" as const,
-            nodeId: "workers",
-            subagentName: "worker",
-          },
-        },
-      ],
-      [
-        "add",
-        {
-          description: "Add numbers.",
-          execute: () => 3,
-          inputSchema: jsonSchema({ type: "object" }),
-          name: "add",
-        },
-      ],
-      [
-        "remote",
-        {
-          description: "Call a remote agent.",
-          inputSchema: jsonSchema({ type: "object" }),
-          name: "remote",
-          runtimeAction: {
-            kind: "remote-agent-call" as const,
-            nodeId: "remote-agents",
-            remoteAgentName: "analyst",
-            subagentName: "analyst",
-          },
-        },
-      ],
-    ]);
-    const handleEvent = createInstrumentationHandleEvent({
-      getActionSource: () => ({ scope, tools }),
-      handleEvent: async () => {},
-      hooks: { publish: async (event) => void events.push(event) },
-      sessionId: "session-1",
-    })!;
+    const context = new ContextContainer();
     const requested = createActionsRequestedEvent({
       actions: [
         {
@@ -205,6 +169,7 @@ describe("createInstrumentationHandleEvent", () => {
           nodeId: "workers",
           subagentName: "worker",
         },
+        { callId: "skill-1", input: { name: "research" }, kind: "load-skill" },
         {
           callId: "remote-1",
           description: "Call a remote agent.",
@@ -221,30 +186,104 @@ describe("createInstrumentationHandleEvent", () => {
       turnId: "turn-1",
     });
 
-    await handleEvent(requested);
-    await handleEvent(requested);
+    await contextStorage.run(context, async () => {
+      const handleEvent = createInstrumentationHandleEvent({
+        getAttemptScope: () => scope,
+        handleEvent: async () => {},
+        hooks: { publish: async (event) => void events.push(event) },
+        sessionId: "session-1",
+      })!;
+      await handleEvent(requested);
+      await handleEvent(requested);
+    });
 
-    expect(events).toEqual([
+    const restored = await deserializeContext(await serializeContext(context));
+    await contextStorage.run(restored, async () => {
+      const handleEvent = createInstrumentationHandleEvent({
+        handleEvent: async () => {},
+        hooks: { publish: async (event) => void events.push(event) },
+        sessionId: "session-1",
+      })!;
+      await handleEvent(
+        createActionResultEvent({
+          result: {
+            callId: "delegate-1",
+            kind: "subagent-result",
+            origin: "dispatch",
+            output: "unavailable",
+            isError: true,
+            subagentName: "worker",
+          },
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn-2",
+        }),
+      );
+      await handleEvent(
+        createActionResultEvent({
+          result: {
+            callId: "add-1",
+            kind: "tool-result",
+            output: 3,
+            toolName: "add",
+          },
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn-2",
+        }),
+      );
+    });
+
+    expect(events.slice(0, 4)).toEqual([
       {
         callId: "delegate-1",
-        idempotencyKey: "tool:session-1:turn-1:0:0:delegate-1:0",
+        idempotencyKey: actionIdempotencyKey("session-1", "turn-1", "delegate-1"),
         input: { task: "research" },
         kind: "subagent-call",
+        name: "delegate",
         scope,
-        toolName: "delegate",
-        type: "tool.call.started",
+        type: "action.started",
+      },
+      {
+        callId: "skill-1",
+        idempotencyKey: actionIdempotencyKey("session-1", "turn-1", "skill-1"),
+        input: { name: "research" },
+        kind: "load-skill",
+        name: "load_skill",
+        scope,
+        type: "action.started",
       },
       {
         callId: "remote-1",
-        idempotencyKey: "tool:session-1:turn-1:0:0:remote-1:0",
+        idempotencyKey: actionIdempotencyKey("session-1", "turn-1", "remote-1"),
         input: { task: "analyze" },
         kind: "remote-agent-call",
+        name: "remote",
         scope,
-        toolName: "remote",
-        type: "tool.call.started",
+        type: "action.started",
+      },
+      {
+        callId: "add-1",
+        idempotencyKey: actionIdempotencyKey("session-1", "turn-1", "add-1"),
+        input: { a: 1, b: 2 },
+        kind: "tool-call",
+        name: "add",
+        scope,
+        type: "action.started",
       },
     ]);
-    expect(Object.isFrozen(events[0])).toBe(true);
-    expect(Object.isFrozen(events[1])).toBe(true);
+    expect(events[4]).toMatchObject({
+      idempotencyKey: actionIdempotencyKey("session-1", "turn-1", "delegate-1"),
+      scope,
+      type: "action.failed",
+    });
+    expect(events[5]).toEqual({
+      idempotencyKey: actionIdempotencyKey("session-1", "turn-1", "add-1"),
+      output: { output: 3, type: "result" },
+      scope,
+      type: "action.completed",
+    });
+    expect(events).toHaveLength(6);
+    expect(events.every(Object.isFrozen)).toBe(true);
   });
 });

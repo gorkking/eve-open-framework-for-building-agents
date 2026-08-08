@@ -7,7 +7,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { describe, expect, it } from "vitest";
 
-import { createAiSdkHookBridge, type ActionKindResolver } from "#harness/ai-sdk-hook-bridge.js";
+import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
 import {
@@ -55,7 +55,6 @@ async function emitAttempt(input: {
   readonly hooks: InstrumentationHooks;
   readonly runInContext: InstrumentationContextRunner;
   readonly providerMetadata?: Readonly<Record<string, unknown>>;
-  readonly resolveActionKind?: ActionKindResolver;
   readonly sessionId: string;
   readonly skipModelTerminal?: boolean;
   readonly skipToolTerminal?: boolean;
@@ -76,12 +75,7 @@ async function emitAttempt(input: {
     await publishTurnStarted(input);
   }
 
-  const bridge = createAiSdkHookBridge(
-    scope,
-    input.hooks,
-    input.runInContext,
-    input.resolveActionKind,
-  );
+  const bridge = createAiSdkHookBridge(scope, input.hooks, input.runInContext);
   Reflect.apply(bridge.onStart!, bridge, [
     {
       callId: "call-1",
@@ -273,7 +267,6 @@ describe("createAgentOtelInstrumentation", () => {
     const step = byName(spans, "agent.step")[0]!;
     const operation = byName(spans, "ai.streamText")[0]!;
     const model = byName(spans, "ai.streamText.doStream")[0]!;
-    const action = byName(spans, "agent.action")[0]!;
     const tool = byName(spans, "ai.toolCall")[0]!;
 
     const session = byName(spans, "agent.session")[0]!;
@@ -287,8 +280,7 @@ describe("createAgentOtelInstrumentation", () => {
     expect(step.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
     expect(operation.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(model.parentSpanContext?.spanId).toBe(operation.spanContext().spanId);
-    expect(action.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
-    expect(tool.parentSpanContext?.spanId).toBe(action.spanContext().spanId);
+    expect(tool.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(new Set(spans.map((span) => span.spanContext().traceId))).toHaveLength(1);
     expect(turn.events.map((event) => event.name)).toEqual([
       "turn.started",
@@ -310,12 +302,6 @@ describe("createAgentOtelInstrumentation", () => {
       "gen_ai.usage.cache_creation.input_tokens": 2,
       "gen_ai.usage.cache_read.input_tokens": 4,
     });
-    expect(action.attributes).toMatchObject({
-      "agent.action.kind": "tool-call",
-      "agent.action.name": "weather",
-      "agent.framework.name": "eve",
-      "agent.root.session.id": "session-1",
-    });
   });
 
   it("ends model and tool spans still open when the step attempt terminates", async () => {
@@ -333,28 +319,9 @@ describe("createAgentOtelInstrumentation", () => {
 
     const spans = runtime.exporter.getFinishedSpans();
     expect(byName(spans, "ai.streamText.doStream")).toHaveLength(1);
-    expect(byName(spans, "agent.action")).toHaveLength(1);
+    expect(byName(spans, "agent.action")).toHaveLength(0);
     expect(byName(spans, "ai.toolCall")).toHaveLength(1);
     expect(byName(spans, "agent.step")).toHaveLength(1);
-  });
-
-  it("labels a subagent action by its kind, not as a plain tool", async () => {
-    const runtime = createRuntime();
-    await emitAttempt({
-      hooks: runtime.hooks,
-      resolveActionKind: () => "subagent-call",
-      runInContext: runtime.runInContext,
-      sessionId: "session-1",
-      turnId: "turn-1",
-      turnSequence: 0,
-    });
-    await runtime.provider.forceFlush();
-
-    const action = runtime.exporter.getFinishedSpans().find((span) => span.name === "agent.action");
-    expect(action?.attributes).toMatchObject({
-      "agent.action.kind": "subagent-call",
-      "agent.action.name": "weather",
-    });
   });
 
   it("captures model and tool inputs/outputs on the operation spans", async () => {
@@ -391,10 +358,6 @@ describe("createAgentOtelInstrumentation", () => {
     );
     expect(tool.attributes["gen_ai.tool.call.arguments"]).toBe('{"secret":"value"}');
     expect(tool.attributes["gen_ai.tool.call.result"]).toBe('{"temperature":72}');
-    // Structural spans stay structural: content lives only on the operation spans.
-    const structural = byName(spans, "agent.action")[0]!;
-    expect(JSON.stringify(structural.attributes)).not.toContain("secret");
-    expect(JSON.stringify(structural.attributes)).not.toContain("temperature");
   });
 
   it("truncates long conversations from the front, keeping valid JSON and recent messages", async () => {
@@ -612,10 +575,8 @@ describe("createAgentOtelInstrumentation", () => {
     const replacementSpans = replacementRuntime.exporter.getFinishedSpans();
     const turn = byName(replacementSpans, "agent.turn")[0]!;
     const step = byName(replacementSpans, "agent.step")[0]!;
-    const action = byName(replacementSpans, "agent.action")[0]!;
 
     expect(step.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
-    expect(action.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(step.spanContext().traceId).toBe(turn.spanContext().traceId);
   });
 
@@ -832,7 +793,7 @@ describe("createAgentOtelInstrumentation", () => {
     expect(rolled.spanContext().traceId).not.toBe(parentWindow.spanContext().traceId);
   });
 
-  it("marks a failed action without failing its turn", async () => {
+  it("marks a failed SDK tool call without failing its turn", async () => {
     const runtime = createRuntime();
     await emitAttempt({
       hooks: runtime.hooks,
@@ -845,7 +806,7 @@ describe("createAgentOtelInstrumentation", () => {
     await runtime.provider.forceFlush();
 
     const spans = runtime.exporter.getFinishedSpans();
-    expect(byName(spans, "agent.action")[0]!.status.code).toBe(SpanStatusCode.ERROR);
+    expect(byName(spans, "ai.toolCall")[0]!.status.code).toBe(SpanStatusCode.ERROR);
     expect(byName(spans, "agent.turn")[0]!.status.code).toBe(SpanStatusCode.UNSET);
   });
 });

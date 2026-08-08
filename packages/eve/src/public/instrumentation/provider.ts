@@ -15,7 +15,11 @@ import type { JsonValue } from "#public/types/json.js";
 export type { JsonValue } from "#public/types/json.js";
 
 export type {
+  InstrumentationActionCompletedEvent,
+  InstrumentationActionFailedEvent,
   InstrumentationActionKind,
+  InstrumentationActionOutput,
+  InstrumentationActionStartedEvent,
   InstrumentationAttemptScope,
   InstrumentationContentPart,
   InstrumentationEvent,

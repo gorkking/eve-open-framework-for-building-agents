@@ -157,7 +157,6 @@ describe("local instrumentation runtime", () => {
         "agent.step",
         "ai.streamText",
         "ai.streamText.doStream",
-        "agent.action",
         "ai.toolCall",
         "user.model-work",
         "user.tool-work",
@@ -171,8 +170,7 @@ describe("local instrumentation runtime", () => {
     expect(span(spans, "user.model-work").parentSpanId).toBe(
       span(spans, "ai.streamText.doStream").spanId,
     );
-    expect(span(spans, "agent.action").parentSpanId).toBe(span(spans, "agent.step").spanId);
-    expect(span(spans, "ai.toolCall").parentSpanId).toBe(span(spans, "agent.action").spanId);
+    expect(span(spans, "ai.toolCall").parentSpanId).toBe(span(spans, "agent.step").spanId);
     expect(span(spans, "user.tool-work").parentSpanId).toBe(span(spans, "ai.toolCall").spanId);
     const listed = await listLocalTraces(appRoot);
     expect(listed).toHaveLength(1);

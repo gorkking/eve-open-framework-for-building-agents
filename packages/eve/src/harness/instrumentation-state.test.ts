@@ -15,7 +15,9 @@ describe("instrumentation state", () => {
   it("survives a serialized step boundary", async () => {
     const context = new ContextContainer();
     contextStorage.run(context, () => {
-      instrumentationStateSlot("sink", "model:1", "attempt-1").set({ rowId: "row-1" });
+      instrumentationStateSlot("sink", "model:1", { attemptId: "attempt-1" }).set({
+        rowId: "row-1",
+      });
     });
     const restored = await deserializeContext(await serializeContext(context));
     contextStorage.run(restored, () => {
@@ -55,8 +57,8 @@ describe("instrumentation state", () => {
 
   it("releases exact and attempt-owned state", () => {
     contextStorage.run(new ContextContainer(), () => {
-      instrumentationStateSlot("sink", "model:1", "attempt-1").set("one");
-      instrumentationStateSlot("sink", "model:2", "attempt-2").set("two");
+      instrumentationStateSlot("sink", "model:1", { attemptId: "attempt-1" }).set("one");
+      instrumentationStateSlot("sink", "model:2", { attemptId: "attempt-2" }).set("two");
       releaseInstrumentationState("sink", "model:2");
       releaseInstrumentationAttemptState("sink", "attempt-1");
       expect(instrumentationStateSlot("sink", "model:1").get()).toBeUndefined();
@@ -79,7 +81,7 @@ describe("instrumentation state", () => {
   it("persists abandonment across serialization", async () => {
     const context = new ContextContainer();
     contextStorage.run(context, () => {
-      abandonInstrumentationState("sink", "model:1", "attempt-1");
+      abandonInstrumentationState("sink", "model:1", { attemptId: "attempt-1" });
     });
     const restored = await deserializeContext(await serializeContext(context));
     contextStorage.run(restored, () => {

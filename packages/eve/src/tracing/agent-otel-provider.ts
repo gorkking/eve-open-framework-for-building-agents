@@ -53,9 +53,7 @@ interface AttemptSpanState {
   readonly step: SpanState;
 }
 
-interface ToolSpanState extends SpanState {
-  readonly toolSpan: Span;
-}
+type ToolSpanState = SpanState;
 
 export interface AgentOtelInstrumentationInput {
   /**
@@ -345,26 +343,7 @@ export function createAgentOtelInstrumentation(
   const onToolCallStarted = (event: InstrumentationToolCallStartedEvent): void => {
     const attempt = steps.get(event.scope);
     if (attempt === undefined) return;
-    const actionSpan = input.tracer.startSpan(
-      "agent.action",
-      {
-        attributes: {
-          "agent.action.call_id": event.callId,
-          "agent.action.kind": event.kind,
-          "agent.action.name": event.toolName,
-          "agent.framework.name": "eve",
-          "agent.framework.version": input.frameworkVersion,
-          "agent.root.session.id": event.scope.rootSessionId ?? event.scope.sessionId,
-          "agent.session.id": event.scope.sessionId,
-          "agent.step.attempt": event.scope.attemptIndex,
-          "agent.step.index": event.scope.stepIndex,
-          "agent.turn.id": event.scope.turnId,
-        },
-      },
-      attempt.step.context,
-    );
-    const actionContext = trace.setSpan(attempt.step.context, actionSpan);
-    const toolSpan = input.tracer.startSpan(
+    const span = input.tracer.startSpan(
       "ai.toolCall",
       {
         attributes: {
@@ -373,16 +352,15 @@ export function createAgentOtelInstrumentation(
           "gen_ai.tool.name": event.toolName,
         },
       },
-      actionContext,
+      attempt.step.context,
     );
     if (recordInputs) {
       const args = contentAttribute(event.input, false);
-      if (args !== undefined) toolSpan.setAttribute("gen_ai.tool.call.arguments", args);
+      if (args !== undefined) span.setAttribute("gen_ai.tool.call.arguments", args);
     }
     const state: ToolSpanState = {
-      context: trace.setSpan(actionContext, toolSpan),
-      span: actionSpan,
-      toolSpan,
+      context: trace.setSpan(attempt.step.context, span),
+      span,
     };
     getExecutionContexts(event.scope).tools.set(event.idempotencyKey, state.context);
     getSpanStates(toolSpans, event.scope).set(event.idempotencyKey, state);
@@ -393,16 +371,13 @@ export function createAgentOtelInstrumentation(
     const state = takeSpanState(toolSpans, event.scope, event.idempotencyKey);
     if (state === undefined) return;
     if (event.type === "tool.call.failed") {
-      recordError(state.toolSpan, event.error);
       recordError(state.span, event.error);
     } else if (event.output.type === "error") {
-      recordError(state.toolSpan, event.output.error);
       recordError(state.span, event.output.error);
     } else if (recordOutputs) {
       const result = contentAttribute(event.output.output, false);
-      if (result !== undefined) state.toolSpan.setAttribute("gen_ai.tool.call.result", result);
+      if (result !== undefined) state.span.setAttribute("gen_ai.tool.call.result", result);
     }
-    state.toolSpan.end();
     state.span.end();
   };
 
@@ -543,10 +518,7 @@ export function createAgentOtelInstrumentation(
   function drainOpenSpans(scope: InstrumentationAttemptScope): void {
     for (const state of modelSpans.get(scope)?.values() ?? []) state.span.end();
     modelSpans.delete(scope);
-    for (const state of toolSpans.get(scope)?.values() ?? []) {
-      state.toolSpan.end();
-      state.span.end();
-    }
+    for (const state of toolSpans.get(scope)?.values() ?? []) state.span.end();
     toolSpans.delete(scope);
   }
 }

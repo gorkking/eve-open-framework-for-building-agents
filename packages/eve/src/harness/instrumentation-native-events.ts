@@ -1,27 +1,28 @@
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type {
+  InstrumentationActionFailedEvent,
+  InstrumentationActionStartedEvent,
   InstrumentationAttemptScope,
   InstrumentationHooks,
   InstrumentationParentLineage,
   InstrumentationPointEvent,
-  InstrumentationToolCallStartedEvent,
   InstrumentationTraceContext,
 } from "#harness/instrumentation-lifecycle.js";
 import {
+  actionIdempotencyKey,
   sessionIdempotencyKey,
-  toolCallIdempotencyKey,
   turnIdempotencyKey,
 } from "#harness/instrumentation-lifecycle.js";
-import type { HandleEventFn, HarnessToolMap } from "#harness/types.js";
-
-export interface InstrumentationActionSource {
-  readonly scope: InstrumentationAttemptScope;
-  readonly tools: HarnessToolMap;
-}
+import {
+  rememberInstrumentationActionScope,
+  takeInstrumentationActionScopeForCall,
+} from "#harness/instrumentation-state.js";
+import type { HandleEventFn } from "#harness/types.js";
+import type { RuntimeActionRequest } from "#runtime/actions/types.js";
 
 export interface CreateInstrumentationHandleEventInput {
   readonly agentName?: string;
-  readonly getActionSource?: () => InstrumentationActionSource | undefined;
+  readonly getAttemptScope?: () => InstrumentationAttemptScope | undefined;
   readonly handleEvent?: HandleEventFn;
   readonly hooks?: InstrumentationHooks;
   readonly parentLineage?: InstrumentationParentLineage;
@@ -48,39 +49,83 @@ export function createInstrumentationHandleEvent(
     if (event.type === "turn.started") activeTurnId = event.data.turnId;
     if (lifecycleEvent !== undefined) await hooks.publish(lifecycleEvent);
     if (event.type === "actions.requested") {
-      await publishDelegationActions(event, input, hooks, publishedActions);
+      await publishActionStarts(event, input, hooks, publishedActions);
+    } else if (event.type === "action.result") {
+      await publishActionTerminal(event, input, hooks);
     }
   };
 }
 
-async function publishDelegationActions(
+async function publishActionStarts(
   event: Extract<UnstampedMessageStreamEvent, { type: "actions.requested" }>,
   input: CreateInstrumentationHandleEventInput,
   hooks: InstrumentationHooks,
   published: Set<string>,
 ): Promise<void> {
-  const source = input.getActionSource?.();
-  if (source === undefined) return;
+  const scope = input.getAttemptScope?.();
+  if (scope === undefined) return;
 
   for (const action of event.data.actions) {
-    if (action.kind !== "subagent-call" && action.kind !== "remote-agent-call") continue;
-    const tool = source.tools.get(action.name);
-    if (tool?.runtimeAction === undefined || tool.execute !== undefined) continue;
-    const deduplicationKey = `${source.scope.attemptId}:${action.callId}`;
-    if (published.has(deduplicationKey)) continue;
-    published.add(deduplicationKey);
+    const idempotencyKey = actionIdempotencyKey(input.sessionId, event.data.turnId, action.callId);
+    if (published.has(idempotencyKey)) continue;
+    published.add(idempotencyKey);
+    rememberInstrumentationActionScope(idempotencyKey, scope);
     await hooks.publish(
       Object.freeze({
         callId: action.callId,
-        idempotencyKey: toolCallIdempotencyKey(source.scope, action.callId, 0),
+        idempotencyKey,
         input: action.input,
-        kind: tool.runtimeAction.kind,
-        scope: source.scope,
-        toolName: tool.name,
-        type: "tool.call.started",
-      } satisfies InstrumentationToolCallStartedEvent),
+        kind: action.kind,
+        name: actionName(action),
+        scope,
+        type: "action.started",
+      } satisfies InstrumentationActionStartedEvent),
     );
   }
+}
+
+async function publishActionTerminal(
+  event: Extract<UnstampedMessageStreamEvent, { type: "action.result" }>,
+  input: CreateInstrumentationHandleEventInput,
+  hooks: InstrumentationHooks,
+): Promise<void> {
+  const correlation = takeInstrumentationActionScopeForCall(
+    input.sessionId,
+    event.data.result.callId,
+  );
+  if (correlation === undefined) return;
+  const { idempotencyKey, scope } = correlation;
+
+  if (event.data.status === "completed") {
+    await hooks.publish(
+      Object.freeze({
+        idempotencyKey,
+        output: Object.freeze({ output: event.data.result.output, type: "result" }),
+        scope,
+        type: "action.completed",
+      }),
+    );
+    return;
+  }
+
+  const error =
+    event.data.error === undefined
+      ? event.data.result.output
+      : Object.assign(new Error(event.data.error.message), { code: event.data.error.code });
+  await hooks.publish(
+    Object.freeze({
+      error,
+      idempotencyKey,
+      scope,
+      type: "action.failed",
+    } satisfies InstrumentationActionFailedEvent),
+  );
+}
+
+function actionName(action: RuntimeActionRequest): string {
+  if (action.kind === "tool-call") return action.toolName;
+  if (action.kind === "load-skill") return "load_skill";
+  return action.name;
 }
 
 function toLifecycleEvent(
