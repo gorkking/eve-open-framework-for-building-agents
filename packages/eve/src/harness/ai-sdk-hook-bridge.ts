@@ -2,7 +2,7 @@ import type { Telemetry } from "ai";
 
 import type {
   InstrumentationAttemptScope,
-  InstrumentationAttemptStartedEvent,
+  InstrumentationStepAttemptStartedEvent,
   InstrumentationContentPart,
   InstrumentationContextRunner,
   InstrumentationHooks,
@@ -48,14 +48,14 @@ export function createAiSdkHookBridge(
     },
     async onStepStart(event) {
       state.stepNumber = event.stepNumber;
-      const started = toAttemptStarted(state);
+      const started = toStepAttemptStarted(state);
       if (started !== undefined) await hooks.publish(started);
     },
     async onLanguageModelCallStart(event) {
       const id = createModelCallIdentity(state, event.callId);
       state.modelIds.set(event.callId, id);
       const started = toModelCallStarted(state, id, event);
-      await hooks.before("model.call", started);
+      await hooks.publish(started);
     },
     executeLanguageModelCall({ callId, execute }) {
       const id = state.modelIds.get(callId);
@@ -68,7 +68,7 @@ export function createAiSdkHookBridge(
       if (id === undefined) return;
       state.modelIds.delete(event.callId);
       const completed = toModelCallCompleted(state, id, event);
-      await hooks.after("model.call", completed);
+      await hooks.publish(completed);
     },
     async onStepEnd(event) {
       // Step results carry provider metadata (e.g. Vercel AI Gateway cost)
@@ -79,7 +79,7 @@ export function createAiSdkHookBridge(
         Object.freeze({
           providerMetadata: event.providerMetadata,
           scope: state.scope,
-          type: "attempt.metadata",
+          type: "step.attempt.metadata",
         }),
       );
     },
@@ -87,7 +87,7 @@ export function createAiSdkHookBridge(
       const id = createToolCallIdentity(state, event.toolCall.toolCallId);
       state.toolIds.set(event.toolCall.toolCallId, id);
       const started = toToolCallStarted(state, id, event);
-      await hooks.before("tool.call", started);
+      await hooks.publish(started);
     },
     executeTool({ toolCallId, execute }) {
       const id = state.toolIds.get(toolCallId);
@@ -99,7 +99,7 @@ export function createAiSdkHookBridge(
       if (id === undefined) return;
       state.toolIds.delete(toolCallId);
       const completed = toToolCallCompleted(state, id, event);
-      await hooks.after("tool.call", completed);
+      await hooks.publish(completed);
     },
     async onAbort(event) {
       await failOpenOperations(event);
@@ -112,14 +112,10 @@ export function createAiSdkHookBridge(
   async function failOpenOperations(error: unknown): Promise<void> {
     const pending: Promise<void>[] = [];
     for (const id of state.modelIds.values()) {
-      pending.push(
-        hooks.after("model.call", Object.freeze({ error, id, scope, type: "model.call.failed" })),
-      );
+      pending.push(hooks.publish(Object.freeze({ error, id, scope, type: "model.call.failed" })));
     }
     for (const id of state.toolIds.values()) {
-      pending.push(
-        hooks.after("tool.call", Object.freeze({ error, id, scope, type: "tool.call.failed" })),
-      );
+      pending.push(hooks.publish(Object.freeze({ error, id, scope, type: "tool.call.failed" })));
     }
     state.modelIds.clear();
     state.toolIds.clear();
@@ -129,12 +125,14 @@ export function createAiSdkHookBridge(
 
 const directRunInContext: InstrumentationContextRunner = (_operation, execute) => execute();
 
-function toAttemptStarted(state: AttemptState): InstrumentationAttemptStartedEvent | undefined {
+function toStepAttemptStarted(
+  state: AttemptState,
+): InstrumentationStepAttemptStartedEvent | undefined {
   if (state.operation === undefined || state.stepNumber === undefined) return undefined;
   return Object.freeze({
     operation: state.operation,
     scope: state.scope,
-    type: "attempt.started",
+    type: "step.attempt.started",
   });
 }
 

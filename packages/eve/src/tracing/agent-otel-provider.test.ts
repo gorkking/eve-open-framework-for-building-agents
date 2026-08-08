@@ -8,12 +8,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
-import {
-  createAgentOtelInstrumentation,
-  SESSION_WINDOW_TURN_LIMIT,
-} from "#tracing/agent-otel-provider.js";
+import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
-import { InMemoryAgentTraceStateStore } from "#tracing/agent-trace-state.js";
+import {
+  InMemoryAgentTraceStateStore,
+  SESSION_WINDOW_TURN_LIMIT,
+} from "#tracing/agent-trace-state.js";
 import {
   createInstrumentationHooks,
   type InstrumentationAttemptScope,
@@ -53,6 +53,8 @@ async function emitAttempt(input: {
   readonly runInContext: InstrumentationContextRunner;
   readonly providerMetadata?: Readonly<Record<string, unknown>>;
   readonly sessionId: string;
+  readonly skipModelTerminal?: boolean;
+  readonly skipToolTerminal?: boolean;
   readonly toolError?: Error;
   readonly turnAlreadyStarted?: boolean;
   readonly turnId: string;
@@ -98,38 +100,40 @@ async function emitAttempt(input: {
     },
   ]);
   await bridge.executeLanguageModelCall!({ callId: "call-1", execute: async () => undefined });
-  await Reflect.apply(bridge.onLanguageModelCallEnd!, bridge, [
-    {
-      callId: "call-1",
-      content: [
-        { type: "reasoning", text: "thinking about weather" },
-        { type: "text", text: "Checking the weather." },
-        {
-          input: { query: "weather today" },
-          providerExecuted: true,
-          toolCallId: "search-1",
-          toolName: "web_search",
-          type: "tool-call",
+  if (input.skipModelTerminal !== true) {
+    await Reflect.apply(bridge.onLanguageModelCallEnd!, bridge, [
+      {
+        callId: "call-1",
+        content: [
+          { type: "reasoning", text: "thinking about weather" },
+          { type: "text", text: "Checking the weather." },
+          {
+            input: { query: "weather today" },
+            providerExecuted: true,
+            toolCallId: "search-1",
+            toolName: "web_search",
+            type: "tool-call",
+          },
+          {
+            input: { query: "weather today" },
+            output: { results: ["sunny"] },
+            providerExecuted: true,
+            toolCallId: "search-1",
+            toolName: "web_search",
+            type: "tool-result",
+          },
+        ],
+        finishReason: "tool-calls",
+        performance: { responseTimeMs: 10 },
+        responseId: "response-1",
+        usage: {
+          inputTokenDetails: { cacheReadTokens: 4, cacheWriteTokens: 2 },
+          inputTokens: 10,
+          outputTokens: 5,
         },
-        {
-          input: { query: "weather today" },
-          output: { results: ["sunny"] },
-          providerExecuted: true,
-          toolCallId: "search-1",
-          toolName: "web_search",
-          type: "tool-result",
-        },
-      ],
-      finishReason: "tool-calls",
-      performance: { responseTimeMs: 10 },
-      responseId: "response-1",
-      usage: {
-        inputTokenDetails: { cacheReadTokens: 4, cacheWriteTokens: 2 },
-        inputTokens: 10,
-        outputTokens: 5,
       },
-    },
-  ]);
+    ]);
+  }
   await Reflect.apply(bridge.onToolExecutionStart!, bridge, [
     {
       callId: "call-1",
@@ -141,28 +145,30 @@ async function emitAttempt(input: {
     execute: async () => undefined,
     toolCallId: "tool-1",
   });
-  await Reflect.apply(bridge.onToolExecutionEnd!, bridge, [
-    {
-      callId: "call-1",
-      messages: [],
-      toolCall: { input: {}, toolCallId: "tool-1", toolName: "weather" },
-      toolExecutionMs: 1,
-      toolOutput:
-        input.toolError === undefined
-          ? { output: { temperature: 72 }, type: "tool-result" }
-          : { error: input.toolError, type: "tool-error" },
-    },
-  ]);
+  if (input.skipToolTerminal !== true) {
+    await Reflect.apply(bridge.onToolExecutionEnd!, bridge, [
+      {
+        callId: "call-1",
+        messages: [],
+        toolCall: { input: {}, toolCallId: "tool-1", toolName: "weather" },
+        toolExecutionMs: 1,
+        toolOutput:
+          input.toolError === undefined
+            ? { output: { temperature: 72 }, type: "tool-result" }
+            : { error: input.toolError, type: "tool-error" },
+      },
+    ]);
+  }
 
   if (input.providerMetadata !== undefined) {
     await input.hooks.publish({
       providerMetadata: input.providerMetadata,
       scope,
-      type: "attempt.metadata",
+      type: "step.attempt.metadata",
     });
   }
 
-  await input.hooks.publish({ scope, type: "attempt.completed" });
+  await input.hooks.publish({ scope, type: "step.attempt.completed" });
   await input.hooks.publish({
     sessionId: input.sessionId,
     turnId: input.turnId,
@@ -282,6 +288,26 @@ describe("createAgentOtelInstrumentation", () => {
       "agent.framework.name": "eve",
       "agent.root.session.id": "session-1",
     });
+  });
+
+  it("ends model and tool spans still open when the step attempt terminates", async () => {
+    const runtime = createRuntime();
+    await emitAttempt({
+      hooks: runtime.hooks,
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      skipModelTerminal: true,
+      skipToolTerminal: true,
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const spans = runtime.exporter.getFinishedSpans();
+    expect(byName(spans, "ai.streamText.doStream")).toHaveLength(1);
+    expect(byName(spans, "agent.action")).toHaveLength(1);
+    expect(byName(spans, "ai.toolCall")).toHaveLength(1);
+    expect(byName(spans, "agent.step")).toHaveLength(1);
   });
 
   it("captures model and tool inputs/outputs on the operation spans", async () => {

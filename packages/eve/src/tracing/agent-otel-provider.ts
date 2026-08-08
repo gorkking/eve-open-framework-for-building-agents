@@ -10,6 +10,11 @@ import {
 } from "#compiled/@opentelemetry/api/index.js";
 
 import {
+  SESSION_WINDOW_TURN_LIMIT,
+  type AgentSessionTraceState,
+  type AgentTraceStateStore,
+} from "#tracing/agent-trace-state.js";
+import {
   contentAttribute,
   messagesContentAttribute,
   systemPromptAttribute,
@@ -17,12 +22,11 @@ import {
   toolResultsContentAttribute,
 } from "#tracing/agent-otel-content.js";
 import type { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
-import type { AgentSessionTraceState, AgentTraceStateStore } from "#tracing/agent-trace-state.js";
 import type {
-  InstrumentationAttemptMetadataEvent,
+  InstrumentationStepAttemptMetadataEvent,
   InstrumentationAttemptScope,
-  InstrumentationAttemptStartedEvent,
-  InstrumentationAttemptTerminalEvent,
+  InstrumentationStepAttemptStartedEvent,
+  InstrumentationStepAttemptTerminalEvent,
   InstrumentationContextRunner,
   InstrumentationModelCallTerminalEvent,
   InstrumentationModelCallStartedEvent,
@@ -51,9 +55,6 @@ interface AttemptSpanState {
 interface ToolSpanState extends SpanState {
   readonly toolSpan: Span;
 }
-
-/** Sized so an ordinary session stays one trace and only an outsized one rolls. */
-export const SESSION_WINDOW_TURN_LIMIT = 200;
 
 export interface AgentOtelInstrumentationInput {
   /**
@@ -87,6 +88,8 @@ export function createAgentOtelInstrumentation(
   // that worker is lost, Workflow retries the whole step from entry rather
   // than resuming this callback sequence in a replacement process.
   const steps = new WeakMap<InstrumentationAttemptScope, AttemptSpanState>();
+  const modelSpans = new WeakMap<InstrumentationAttemptScope, Map<string, SpanState>>();
+  const toolSpans = new WeakMap<InstrumentationAttemptScope, Map<string, ToolSpanState>>();
 
   const onSessionStarted = async (event: InstrumentationSessionStartedEvent): Promise<void> => {
     await ensureSessionContext(event);
@@ -127,7 +130,7 @@ export function createAgentOtelInstrumentation(
     });
   };
 
-  const onAttemptStarted = async (event: InstrumentationAttemptStartedEvent): Promise<void> => {
+  const onStepStarted = async (event: InstrumentationStepAttemptStartedEvent): Promise<void> => {
     const turn = await input.stateStore.getTurn(event.scope.sessionId, event.scope.turnId);
     if (turn === undefined) return;
     const turnContext = contextFromSpanContext(turn.context);
@@ -171,14 +174,17 @@ export function createAgentOtelInstrumentation(
     });
   };
 
-  const onAttemptTerminal = (event: InstrumentationAttemptTerminalEvent): void => {
+  const onStepTerminal = (event: InstrumentationStepAttemptTerminalEvent): void => {
     executionContexts.delete(event.scope);
+    drainOpenSpans(event.scope);
     const attempt = steps.get(event.scope);
     if (attempt === undefined) return;
+    // The span event drops the `attempt` segment: this span *is* one attempt,
+    // and `agent.step.attempt` on it already says which.
     attempt.step.span.addEvent(
-      event.type === "attempt.completed" ? "step.completed" : "step.failed",
+      event.type === "step.attempt.completed" ? "step.completed" : "step.failed",
     );
-    if (event.type === "attempt.failed") {
+    if (event.type === "step.attempt.failed") {
       recordError(attempt.operation.span, event.error);
       recordError(attempt.step.span, event.error);
     }
@@ -248,9 +254,9 @@ export function createAgentOtelInstrumentation(
     }
   };
 
-  const beforeModelCall = (event: InstrumentationModelCallStartedEvent): SpanState | undefined => {
+  const onModelCallStarted = (event: InstrumentationModelCallStartedEvent): void => {
     const attempt = steps.get(event.scope);
-    if (attempt === undefined) return undefined;
+    if (attempt === undefined) return;
     attempt.step.span.setAttribute("agent.model.id", event.model.modelId);
     attempt.step.span.setAttribute("agent.model.provider", event.model.provider);
     const span = input.tracer.startSpan(
@@ -272,12 +278,13 @@ export function createAgentOtelInstrumentation(
     }
     const state = { context: trace.setSpan(attempt.operation.context, span), span };
     getExecutionContexts(event.scope).models.set(event.id, state.context);
-    return state;
+    getSpanStates(modelSpans, event.scope).set(event.id, state);
   };
 
-  const afterModelCall = (event: InstrumentationModelCallTerminalEvent, state: unknown): void => {
+  const onModelCallTerminal = (event: InstrumentationModelCallTerminalEvent): void => {
     executionContexts.get(event.scope)?.models.delete(event.id);
-    if (!isSpanState(state)) return;
+    const state = takeSpanState(modelSpans, event.scope, event.id);
+    if (state === undefined) return;
     if (event.type === "model.call.failed") {
       recordError(state.span, event.error);
     } else {
@@ -327,11 +334,9 @@ export function createAgentOtelInstrumentation(
     state.span.end();
   };
 
-  const beforeToolCall = (
-    event: InstrumentationToolCallStartedEvent,
-  ): ToolSpanState | undefined => {
+  const onToolCallStarted = (event: InstrumentationToolCallStartedEvent): void => {
     const attempt = steps.get(event.scope);
-    if (attempt === undefined) return undefined;
+    if (attempt === undefined) return;
     const actionSpan = input.tracer.startSpan(
       "agent.action",
       {
@@ -372,12 +377,13 @@ export function createAgentOtelInstrumentation(
       toolSpan,
     };
     getExecutionContexts(event.scope).tools.set(event.id, state.context);
-    return state;
+    getSpanStates(toolSpans, event.scope).set(event.id, state);
   };
 
-  const afterToolCall = (event: InstrumentationToolCallTerminalEvent, state: unknown): void => {
+  const onToolCallTerminal = (event: InstrumentationToolCallTerminalEvent): void => {
     executionContexts.get(event.scope)?.tools.delete(event.id);
-    if (!isToolSpanState(state)) return;
+    const state = takeSpanState(toolSpans, event.scope, event.id);
+    if (state === undefined) return;
     if (event.type === "tool.call.failed") {
       recordError(state.toolSpan, event.error);
       recordError(state.span, event.error);
@@ -467,7 +473,7 @@ export function createAgentOtelInstrumentation(
     };
   };
 
-  const onAttemptMetadata = (event: InstrumentationAttemptMetadataEvent): void => {
+  const onStepMetadata = (event: InstrumentationStepAttemptMetadataEvent): void => {
     const attempt = steps.get(event.scope);
     if (attempt === undefined) return;
     // Vercel AI Gateway reports per-call cost in providerMetadata.gateway;
@@ -483,16 +489,20 @@ export function createAgentOtelInstrumentation(
   return {
     hook: {
       events: {
-        "attempt.completed": onAttemptTerminal,
-        "attempt.failed": onAttemptTerminal,
-        "attempt.metadata": onAttemptMetadata,
-        "attempt.started": onAttemptStarted,
-        "model.call": { after: afterModelCall, before: beforeModelCall },
+        "step.attempt.completed": onStepTerminal,
+        "step.attempt.failed": onStepTerminal,
+        "step.attempt.metadata": onStepMetadata,
+        "step.attempt.started": onStepStarted,
+        "model.call.completed": onModelCallTerminal,
+        "model.call.failed": onModelCallTerminal,
+        "model.call.started": onModelCallStarted,
         "session.completed": onSessionTransition,
         "session.failed": onSessionTransition,
         "session.started": onSessionStarted,
         "session.waiting": onSessionTransition,
-        "tool.call": { after: afterToolCall, before: beforeToolCall },
+        "tool.call.completed": onToolCallTerminal,
+        "tool.call.failed": onToolCallTerminal,
+        "tool.call.started": onToolCallStarted,
         "turn.cancelled": onTurnTerminal,
         "turn.completed": onTurnTerminal,
         "turn.failed": onTurnTerminal,
@@ -520,6 +530,41 @@ export function createAgentOtelInstrumentation(
     }
     return state;
   }
+
+  function drainOpenSpans(scope: InstrumentationAttemptScope): void {
+    for (const state of modelSpans.get(scope)?.values() ?? []) state.span.end();
+    modelSpans.delete(scope);
+    for (const state of toolSpans.get(scope)?.values() ?? []) {
+      state.toolSpan.end();
+      state.span.end();
+    }
+    toolSpans.delete(scope);
+  }
+}
+
+function getSpanStates<T>(
+  spans: WeakMap<InstrumentationAttemptScope, Map<string, T>>,
+  scope: InstrumentationAttemptScope,
+): Map<string, T> {
+  let scoped = spans.get(scope);
+  if (scoped === undefined) {
+    scoped = new Map();
+    spans.set(scope, scoped);
+  }
+  return scoped;
+}
+
+function takeSpanState<T>(
+  spans: WeakMap<InstrumentationAttemptScope, Map<string, T>>,
+  scope: InstrumentationAttemptScope,
+  id: string,
+): T | undefined {
+  const scoped = spans.get(scope);
+  const state = scoped?.get(id);
+  if (scoped === undefined) return undefined;
+  scoped.delete(id);
+  if (scoped.size === 0) spans.delete(scope);
+  return state;
 }
 
 function parentLineageAttributes(
@@ -583,14 +628,6 @@ function readUsd(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function isSpanState(value: unknown): value is SpanState {
-  return typeof value === "object" && value !== null && "context" in value && "span" in value;
-}
-
-function isToolSpanState(value: unknown): value is ToolSpanState {
-  return isSpanState(value) && "toolSpan" in value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -5,6 +5,9 @@ import type {
   InstrumentationTurnTerminalEvent,
 } from "#harness/instrumentation-lifecycle.js";
 
+/** Sized so an ordinary session stays one trace and only an outsized one rolls. */
+export const SESSION_WINDOW_TURN_LIMIT = 200;
+
 export interface AgentSessionTraceState {
   readonly agentName?: string;
   readonly channelKind?: string;
@@ -72,6 +75,6 @@ export class InMemoryAgentTraceStateStore implements AgentTraceStateStore {
   }
 }
 
-function turnKey(sessionId: string, turnId: string): string {
+export function turnKey(sessionId: string, turnId: string): string {
   return `${sessionId}:${turnId}`;
 }
