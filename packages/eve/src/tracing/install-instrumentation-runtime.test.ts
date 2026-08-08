@@ -45,7 +45,7 @@ describe("installInstrumentationRuntime", () => {
     const runtime = installInstrumentationRuntime({
       collected: collectOtelPipeline([otelIntegration()]),
       frameworkVersion: "test",
-      providers: [{ flush: providerFlush, shutdown: providerShutdown }],
+      providers: [{ flush: providerFlush, name: "test", shutdown: providerShutdown }],
       serviceName: "weather",
     });
 

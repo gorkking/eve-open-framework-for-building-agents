@@ -1,4 +1,10 @@
 import { createLogger, formatError } from "#internal/logging.js";
+import {
+  instrumentationStateSlot,
+  releaseInstrumentationAttemptState,
+  releaseInstrumentationState,
+  type InstrumentationStateSlot,
+} from "#harness/instrumentation-state.js";
 
 /**
  * Stable eve identity for one actual model attempt.
@@ -285,15 +291,23 @@ export type InstrumentationToolCallTerminalEvent =
   | InstrumentationToolCallCompletedEvent
   | InstrumentationToolCallFailedEvent;
 
+export interface InstrumentationHandlerContext {
+  readonly state: InstrumentationStateSlot;
+}
+
 /**
  * The AI SDK can omit a model terminal when an incomplete stream closes. A
  * provider that correlates starts with terminals must scope that state to the
  * attempt and release anything still open when the step attempt terminates.
  */
-export type InstrumentationEventHandler<TEvent> = (event: TEvent) => void | PromiseLike<void>;
+export type InstrumentationEventHandler<TEvent> = (
+  event: TEvent,
+  ctx: InstrumentationHandlerContext,
+) => void | PromiseLike<void>;
 
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
+  readonly name: string;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
     readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptCompletedEvent>;
@@ -315,9 +329,12 @@ export interface InstrumentationProviderDefinition {
     readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
   readonly flush?: () => void | PromiseLike<void>;
-  readonly name?: string;
   readonly shutdown?: () => void | PromiseLike<void>;
 }
+
+type InstrumentationProviderInput = Omit<InstrumentationProviderDefinition, "name"> & {
+  readonly name?: string;
+};
 
 /** Events that pair a start with its terminal under one `idempotencyKey`. */
 export type InstrumentationCorrelatedEvent =
@@ -365,22 +382,53 @@ const log = createLogger("harness.instrumentation-lifecycle");
 
 /** Creates failure-isolated hooks backed by an ordered provider list. */
 export function createInstrumentationHooks(
-  providers: readonly InstrumentationProviderDefinition[],
+  providers: readonly InstrumentationProviderInput[],
 ): InstrumentationHooks {
   const publish = async (event: InstrumentationEvent): Promise<void> => {
-    for (const provider of providers) {
+    const terminal = isTerminal(event.type);
+    const attemptTerminal =
+      event.type === "step.attempt.completed" || event.type === "step.attempt.failed";
+    const attemptId = stateAttemptId(event);
+    for (const [providerIndex, provider] of providers.entries()) {
+      const providerName = provider.name ?? `provider-${String(providerIndex)}`;
+      const release = (): void => {
+        if (terminal) releaseInstrumentationState(providerName, event.idempotencyKey);
+        if (attemptTerminal)
+          releaseInstrumentationAttemptState(providerName, event.scope.attemptId);
+      };
       const handler = provider.events?.[event.type];
-      if (handler === undefined) continue;
+      if (handler === undefined) {
+        release();
+        continue;
+      }
+      const state = instrumentationStateSlot(providerName, event.idempotencyKey, attemptId);
       try {
-        await (handler as InstrumentationEventHandler<InstrumentationEvent>)(event);
+        await (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, { state });
       } catch (error) {
         log.warn("instrumentation provider failed", {
           boundary: event.type,
           error: formatError(error),
+          provider: providerName,
         });
+      } finally {
+        state.revoke();
+        release();
       }
     }
   };
 
   return { publish };
+}
+
+function stateAttemptId(event: InstrumentationEvent): string | undefined {
+  if (!("scope" in event)) return undefined;
+  return event.type.startsWith("model.call.") ||
+    event.type.startsWith("tool.call.") ||
+    event.type.startsWith("step.attempt.")
+    ? event.scope.attemptId
+    : undefined;
+}
+
+function isTerminal(type: InstrumentationEvent["type"]): boolean {
+  return type.endsWith(".completed") || type.endsWith(".failed") || type.endsWith(".cancelled");
 }

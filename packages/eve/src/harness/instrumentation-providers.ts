@@ -1,7 +1,4 @@
-import type {
-  InstrumentationEvent,
-  InstrumentationProviderDefinition,
-} from "#harness/instrumentation-lifecycle.js";
+import type { InstrumentationProviderDefinition } from "#harness/instrumentation-lifecycle.js";
 import {
   getInstrumentationRuntime,
   type InstrumentationRuntime,
@@ -15,9 +12,7 @@ import { collectOtelPipeline } from "#tracing/otel-declaration.js";
 import {
   isInstrumentationDisabled,
   isInstrumentationProvider,
-  type Handler,
   type InstrumentationProvider,
-  type ProviderContext,
 } from "#public/instrumentation/provider.js";
 
 /**
@@ -130,19 +125,11 @@ export async function shutdownInstrumentationProviders(): Promise<void> {
   await getInstrumentationRuntime()?.shutdown();
 }
 
-const PROVIDER_CONTEXT: ProviderContext = Object.freeze({});
-
 function toProviderDefinition(
   entry: RegisteredInstrumentationProvider,
 ): InstrumentationProviderDefinition {
-  const events: Record<string, (event: never) => void | PromiseLike<void>> = {};
-  for (const [type, handler] of Object.entries(entry.provider.events ?? {})) {
-    if (handler === undefined) continue;
-    const invoke = handler as Handler<InstrumentationEvent>;
-    events[type] = (event: InstrumentationEvent) => invoke(event, PROVIDER_CONTEXT);
-  }
   return {
-    events: events as InstrumentationProviderDefinition["events"],
+    events: entry.provider.events as InstrumentationProviderDefinition["events"],
     flush: entry.provider.flush,
     name: entry.slot,
     shutdown: entry.provider.shutdown,

@@ -10,6 +10,9 @@
 // from the union below is what keeps the public contract from drifting away
 // from the bus that feeds it.
 import type { InstrumentationEvent } from "#harness/instrumentation-lifecycle.js";
+import type { JsonValue } from "#public/types/json.js";
+
+export type { JsonValue } from "#public/types/json.js";
 
 export type {
   InstrumentationActionKind,
@@ -74,20 +77,21 @@ export interface ProviderSetupContext {
   readonly frameworkVersion: string;
 }
 
-/**
- * The second argument to every handler.
- *
- * Empty today. It exists now so adding durable per-provider state later is an
- * additive change rather than a second break in every handler signature.
- */
-export type ProviderContext = Readonly<Record<never, never>>;
+export interface ProviderState {
+  get(): JsonValue | undefined;
+  /** Stages a JSON value; `undefined` releases this operation's slot. */
+  set(value: JsonValue | undefined): void;
+}
+
+export interface ProviderContext {
+  readonly state: ProviderState;
+}
 
 /**
  * One event handler.
  *
- * eve balances every start with exactly one terminal, so a handler that needs
- * to carry a value from a start to its terminal can key its own map on
- * `event.id` and delete on the terminal.
+ * A handler can carry durable JSON state from a start to its terminal through
+ * `ctx.state`. eve scopes and releases that state by provider and operation.
  */
 export type Handler<TEvent> = (event: TEvent, ctx: ProviderContext) => void | PromiseLike<void>;
 

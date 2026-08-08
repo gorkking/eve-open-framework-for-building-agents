@@ -516,6 +516,7 @@ export function createAgentOtelInstrumentation(
         "turn.failed": onTurnTerminal,
         "turn.started": onTurnStarted,
       },
+      name: "eve.otel",
     },
     runInContext(operation, execute) {
       const contexts = executionContexts.get(operation.scope);
