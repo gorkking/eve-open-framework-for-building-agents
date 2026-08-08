@@ -428,6 +428,7 @@ const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z
     dynamicModel: compiledDynamicModelDefinitionSchema.optional(),
     experimental: z
       .object({
+        instrumentationProviders: z.boolean().optional(),
         subagentPersistentSessions: z.boolean().optional(),
         workflow: compiledAgentWorkflowDefinitionSchema.optional(),
       })
@@ -833,6 +834,7 @@ export function createCompiledAgentNodeManifest(input: {
         input.config.experimental === undefined
           ? undefined
           : {
+              instrumentationProviders: input.config.experimental.instrumentationProviders,
               subagentPersistentSessions: input.config.experimental.subagentPersistentSessions,
               workflow:
                 input.config.experimental.workflow === undefined

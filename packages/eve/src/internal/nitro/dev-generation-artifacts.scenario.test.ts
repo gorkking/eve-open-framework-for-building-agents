@@ -13,6 +13,7 @@ import {
   stageDevelopmentGeneration,
 } from "#internal/nitro/development-generation.js";
 import { createAuthoredSourceRuntimeCompiledArtifactsSource } from "#internal/application/runtime-compiled-artifacts-source.js";
+import type { MaterializedInstrumentation } from "#internal/materialized-authored-modules.js";
 import { useScenarioApp } from "#internal/testing/scenario-app.js";
 
 describe("development generation artifacts", () => {
@@ -454,9 +455,12 @@ describe("development generation artifacts", () => {
         join(first.runtimeAppRoot, ".eve", "compile", "authored-modules.json"),
         "utf8",
       ),
-    ) as { readonly instrumentation?: string };
+    ) as { readonly instrumentation?: MaterializedInstrumentation };
+    if (firstIndex.instrumentation?.kind !== "config") {
+      throw new Error("expected materialized config instrumentation");
+    }
     const materializedInstrumentation = await readFile(
-      join(first.runtimeAppRoot, ".eve", "compile", firstIndex.instrumentation!),
+      join(first.runtimeAppRoot, ".eve", "compile", firstIndex.instrumentation.modulePath),
       "utf8",
     );
 

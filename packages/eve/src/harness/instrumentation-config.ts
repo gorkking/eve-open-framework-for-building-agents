@@ -1,7 +1,5 @@
-import type {
-  InstrumentationDefinition,
-  InstrumentationSetupContext,
-} from "#public/instrumentation/index.js";
+import { createInstrumentationSetupContext } from "#harness/instrumentation-setup-context.js";
+import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 
 /**
  * Process-global store for the authored instrumentation config.
@@ -28,22 +26,23 @@ interface InstrumentationConfigGlobal {
 const globalContainer = globalThis as typeof globalThis & InstrumentationConfigGlobal;
 
 /**
- * Registers the authored instrumentation config and invokes its `setup`
- * callback with the resolved agent name.
+ * Registers the authored instrumentation config and awaits its `setup`
+ * callback.
  *
  * Called once by the generated instrumentation Nitro plugin at server
  * startup. Subsequent calls overwrite the previous value.
  *
+ * The store write lands before `setup` runs so a synchronous caller sees the
+ * config without waiting on the returned promise.
+ *
  * @internal — not part of the public API.
  */
-export function registerInstrumentationConfig(
+export async function registerInstrumentationConfig(
   config: InstrumentationDefinition,
-  context: InstrumentationSetupContext,
-): void {
-  if (config.setup !== undefined) {
-    config.setup(context);
-  }
+  input: { readonly agentName: string },
+): Promise<void> {
   globalContainer[INSTRUMENTATION_CONFIG_GLOBAL_KEY] = config;
+  await config.setup?.(createInstrumentationSetupContext(input.agentName));
 }
 
 /**

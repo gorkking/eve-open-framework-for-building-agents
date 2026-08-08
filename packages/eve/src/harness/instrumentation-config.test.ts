@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { InstrumentationSetupContext } from "#public/instrumentation/index.js";
+
 /**
  * Regression coverage for the instrumentation-config chunk-isolation failure.
  *
@@ -25,7 +27,7 @@ describe("instrumentation-config chunk-isolation regression", () => {
     vi.resetModules();
     const moduleA = await import("#harness/instrumentation-config.js");
     const config = { functionId: "test.instrumentation.cross-module.alice" };
-    moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
+    await moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
 
     vi.resetModules();
     const moduleB = await import("#harness/instrumentation-config.js");
@@ -40,7 +42,7 @@ describe("instrumentation-config chunk-isolation regression", () => {
     const { registerInstrumentationConfig } = await import("#harness/instrumentation-config.js");
 
     const canary = { functionId: "test.instrumentation.global-mount.canary" };
-    registerInstrumentationConfig(canary, { agentName: "test-agent" });
+    await registerInstrumentationConfig(canary, { agentName: "test-agent" });
 
     expect((globalThis as Record<symbol, unknown>)[globalKey]).toBe(canary);
   });
@@ -51,7 +53,7 @@ describe("instrumentation-config chunk-isolation regression", () => {
     vi.resetModules();
     const moduleA = await import("#harness/instrumentation-config.js");
     const config = { functionId: "test.instrumentation.reimport.canary" };
-    moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
+    await moduleA.registerInstrumentationConfig(config, { agentName: "test-agent" });
     const firstRef = (globalThis as Record<symbol, unknown>)[globalKey];
 
     vi.resetModules();
@@ -61,13 +63,23 @@ describe("instrumentation-config chunk-isolation regression", () => {
     expect(secondRef).toBe(firstRef);
   });
 
-  it("invokes the setup callback with the supplied context", async () => {
+  it("awaits the setup callback with the resolved context", async () => {
     vi.resetModules();
     const { registerInstrumentationConfig } = await import("#harness/instrumentation-config.js");
 
-    const setup = vi.fn();
-    registerInstrumentationConfig({ setup }, { agentName: "weather-agent" });
+    const contexts: InstrumentationSetupContext[] = [];
+    await registerInstrumentationConfig(
+      {
+        setup: (context) => {
+          contexts.push(context);
+        },
+      },
+      { agentName: "weather-agent" },
+    );
 
-    expect(setup).toHaveBeenCalledExactlyOnceWith({ agentName: "weather-agent" });
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.agentName).toBe("weather-agent");
+    expect(contexts[0]?.environment).toMatch(/^(development|production)$/);
+    expect(contexts[0]?.frameworkVersion).toEqual(expect.any(String));
   });
 });

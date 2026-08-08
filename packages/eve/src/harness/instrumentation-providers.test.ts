@@ -1,0 +1,95 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  getInstrumentationProviders,
+  registerInstrumentationProvider,
+} from "#harness/instrumentation-providers.js";
+import { defineInstrumentation } from "#public/instrumentation/index.js";
+import {
+  disableInstrumentation,
+  type ProviderSetupContext,
+} from "#public/instrumentation/provider.js";
+
+const REGISTRY_GLOBAL_KEY = Symbol.for("eve.harness-instrumentation-providers");
+
+function register(slot: string, value: unknown): Promise<void> {
+  return registerInstrumentationProvider({ agentName: "weather-agent", slot, value });
+}
+
+describe("registerInstrumentationProvider", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    delete (globalThis as Record<symbol, unknown>)[REGISTRY_GLOBAL_KEY];
+  });
+
+  it("registers a provider under its slot", async () => {
+    const provider = defineInstrumentation({ events: {} });
+    await register("otel", provider);
+
+    expect(getInstrumentationProviders()).toEqual([{ provider, slot: "otel" }]);
+  });
+
+  it("preserves registration order across slots", async () => {
+    await register("agent-runs", defineInstrumentation({}));
+    await register("local", defineInstrumentation({}));
+
+    expect(getInstrumentationProviders().map(({ slot }) => slot)).toEqual(["agent-runs", "local"]);
+  });
+
+  it("awaits setup with the resolved provider context", async () => {
+    const contexts: ProviderSetupContext[] = [];
+    await register(
+      "otel",
+      defineInstrumentation({
+        setup: (context) => {
+          contexts.push(context);
+        },
+        shutdown: () => {},
+      }),
+    );
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.agentName).toBe("weather-agent");
+    expect(contexts[0]?.environment).toMatch(/^(development|preview|production)$/);
+    expect(contexts[0]?.frameworkVersion).toEqual(expect.any(String));
+  });
+
+  it("reports Vercel preview separately from production", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview");
+    const contexts: ProviderSetupContext[] = [];
+
+    await register(
+      "otel",
+      defineInstrumentation({ setup: (context) => void contexts.push(context) }),
+    );
+
+    expect(contexts[0]?.environment).toBe("preview");
+  });
+
+  it("registers nothing for a disabled slot", async () => {
+    await register("local", disableInstrumentation());
+
+    expect(getInstrumentationProviders()).toEqual([]);
+  });
+
+  it("removes an already-registered provider when a later file disables the slot", async () => {
+    await register("local", defineInstrumentation({}));
+    await register("local", disableInstrumentation());
+
+    expect(getInstrumentationProviders()).toEqual([]);
+  });
+
+  // A slot that registers nothing is telemetry that silently does nothing —
+  // the failure this surface exists to prevent — so the shape check throws
+  // rather than skipping the file.
+  it.each([
+    ["a bare object", { events: {} }],
+    ["a function", () => {}],
+    ["undefined", undefined],
+    ["null", null],
+  ])("throws when the default export is %s", async (_label, value) => {
+    await expect(register("otel", value)).rejects.toThrow(
+      /The default export of "instrumentation\/otel" is not an instrumentation provider/,
+    );
+  });
+});

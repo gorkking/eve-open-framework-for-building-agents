@@ -216,6 +216,7 @@ describe("application Nitro creation", () => {
     const { createDevelopmentApplicationNitro } =
       await import("#internal/nitro/host/create-application-nitro.js");
     const preparedHost = createPreparedHost();
+    preparedHost.compiledArtifacts.instrumentationLayout = { kind: "config" };
     preparedHost.compiledArtifacts.instrumentationPluginPath = "/app/instrumentation.mjs";
 
     await createDevelopmentApplicationNitro(preparedHost);
@@ -225,6 +226,32 @@ describe("application Nitro creation", () => {
     expect(plugins).not.toEqual(
       expect.arrayContaining([expect.stringContaining("local-tracing-runtime-plugin.ts")]),
     );
+  });
+
+  it("keeps local tracing beside provider slots unless local is authored", async () => {
+    const { createDevelopmentApplicationNitro } =
+      await import("#internal/nitro/host/create-application-nitro.js");
+
+    for (const [slots, expectsLocal] of [
+      ["rows", true],
+      ["local", false],
+    ] as const) {
+      const nitroStub = createNitroStub();
+      createNitroMock.mockResolvedValueOnce(nitroStub.nitro);
+      const preparedHost = createPreparedHost();
+      preparedHost.compiledArtifacts.instrumentationLayout = {
+        kind: "providers",
+        slots: [slots],
+      };
+      preparedHost.compiledArtifacts.instrumentationPluginPath = "/app/instrumentation.mjs";
+
+      await createDevelopmentApplicationNitro(preparedHost);
+
+      const plugins = createNitroMock.mock.calls.at(-1)?.[0].plugins as string[];
+      expect(plugins.some((plugin) => plugin.includes("local-tracing-runtime-plugin.ts"))).toBe(
+        expectsLocal,
+      );
+    }
   });
 
   it("preserves workflow bundle side effects and skips workflow transform for cached bundles", async () => {
