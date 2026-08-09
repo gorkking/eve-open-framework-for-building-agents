@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLocalTracesProcessor } from "#tracing/local-traces.js";
+import { createLocalTracesProcessor, resolveLocalTracesContent } from "#tracing/local-traces.js";
 
 vi.mock("#tracing/local-trace-span-processor.js", () => ({
   LocalTraceSpanProcessor: class {
@@ -59,5 +59,18 @@ describe("createLocalTracesProcessor", () => {
     expect(() => processor.onEnd(agentSpan("session-one", "a".repeat(32)))).not.toThrow();
     await expect(processor.forceFlush()).resolves.toBeUndefined();
     await expect(processor.shutdown()).resolves.toBeUndefined();
+  });
+
+  it("lets the environment override narrow only this destination", () => {
+    vi.stubEnv("EVE_TRACES_CONTENT", "off");
+    expect(resolveLocalTracesContent()).toEqual({ recordInputs: false, recordOutputs: false });
+  });
+
+  it("preserves explicit destination narrowing when content is enabled", () => {
+    vi.stubEnv("EVE_TRACES_CONTENT", "on");
+    expect(resolveLocalTracesContent({ recordInputs: false })).toEqual({
+      recordInputs: false,
+      recordOutputs: true,
+    });
   });
 });

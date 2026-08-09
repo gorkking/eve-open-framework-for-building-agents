@@ -7,6 +7,9 @@ import type {
 } from "#compiled/@vercel/otel/index.js";
 
 import { batchSpanProcessor } from "#tracing/batch-span-processor.js";
+import type { ResolvedContentOptions } from "#tracing/content-attributes.js";
+import { contentFilteringProcessor } from "#tracing/content-span-processor.js";
+import { vercelRuntimeSpanProcessor } from "#tracing/vercel-runtime-span-exporter.js";
 
 /**
  * The process-wide OpenTelemetry settings, declared by `otel()`.
@@ -47,8 +50,16 @@ export interface OtelOptions {
   readonly propagators?: readonly PropagatorOrName[];
 }
 
-/** Where one `otelIntegration()` sends spans. */
-export interface OtelIntegrationOptions {
+/** What one destination records of the conversation itself. */
+export interface ContentOptions {
+  /** Record model prompts and tool call inputs. Defaults to `true`. */
+  readonly recordInputs?: boolean;
+  /** Record model responses and tool call outputs. Defaults to `true`. */
+  readonly recordOutputs?: boolean;
+}
+
+/** Where one `otelIntegration()` sends spans, and what it records. */
+export interface OtelIntegrationOptions extends ContentOptions {
   /** Merged into the pipeline in declaration order. */
   readonly spanProcessors?: readonly SpanProcessor[];
   /** Wrapped in eve's batching processor and appended after `spanProcessors`. */
@@ -70,6 +81,7 @@ export interface OtelDeclaration {
 /** One declared destination. A process may have as many as it has files. */
 export interface OtelIntegration {
   readonly [OTEL_INTEGRATION]: true;
+  readonly content: ResolvedContentOptions;
   readonly spanProcessors: readonly SpanProcessorOrName[];
 }
 
@@ -90,21 +102,39 @@ export function otel(options: OtelOptions = {}): OtelDeclaration {
  * when the destination needs its own batching, sampling, or filtering.
  */
 export function otelIntegration(options: OtelIntegrationOptions = {}): OtelIntegration {
+  const content = resolveContentOptions(options);
   const declared = options.spanProcessors ?? [];
+  const spanProcessors =
+    options.traceExporter === undefined
+      ? declared
+      : [...declared, batchSpanProcessor(options.traceExporter)];
   return {
     [OTEL_INTEGRATION]: true,
+    content,
     spanProcessors:
-      options.traceExporter === undefined
-        ? declared
-        : [...declared, batchSpanProcessor(options.traceExporter)],
+      content.recordInputs && content.recordOutputs
+        ? spanProcessors
+        : spanProcessors.map((processor) => contentFilteringProcessor(processor, content)),
   };
 }
 
-/** Vercel Agent Runs through @vercel/otel's automatic processor. @internal */
-export function agentRunsIntegration(): OtelIntegration {
+/** Vercel Agent Runs through the production request-context transport. @internal */
+export function agentRunsIntegration(options: ContentOptions = {}): OtelIntegration {
+  const content = resolveContentOptions(options);
   return {
     [OTEL_INTEGRATION]: true,
-    spanProcessors: ["auto"],
+    content,
+    spanProcessors:
+      content.recordInputs && content.recordOutputs
+        ? ["auto"]
+        : [contentFilteringProcessor(vercelRuntimeSpanProcessor(), content)],
+  };
+}
+
+export function resolveContentOptions(options: ContentOptions): ResolvedContentOptions {
+  return {
+    recordInputs: options.recordInputs !== false,
+    recordOutputs: options.recordOutputs !== false,
   };
 }
 
@@ -175,8 +205,8 @@ export function collectOtelPipeline(values: readonly unknown[]): CollectedOtel {
   for (const value of values) {
     if (isOtelIntegration(value)) {
       declared = true;
-      recordInputs = true;
-      recordOutputs = true;
+      recordInputs ||= value.content.recordInputs;
+      recordOutputs ||= value.content.recordOutputs;
       spanProcessors.push(...value.spanProcessors);
       continue;
     }

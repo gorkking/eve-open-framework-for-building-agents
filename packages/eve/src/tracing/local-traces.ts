@@ -80,6 +80,20 @@ export function createLocalTracesProcessor(
   };
 }
 
+/** Intersects the local destination policy with `EVE_TRACES_CONTENT`. */
+export function resolveLocalTracesContent(
+  options: {
+    readonly recordInputs?: boolean;
+    readonly recordOutputs?: boolean;
+  } = {},
+): { readonly recordInputs: boolean; readonly recordOutputs: boolean } {
+  const enabled = process.env.EVE_TRACES_CONTENT !== "off";
+  return {
+    recordInputs: enabled && options.recordInputs !== false,
+    recordOutputs: enabled && options.recordOutputs !== false,
+  };
+}
+
 /** A production-authored `localTraces()` has no local development store. */
 function inertLocalTracesProcessor(): LocalTracesProcessor {
   return {

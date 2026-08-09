@@ -56,13 +56,34 @@ describe("otelIntegration", () => {
     expect(integration.spanProcessors).toHaveLength(2);
     expect(integration.spanProcessors[0]).toBe(first);
   });
+
+  it("records everything unless told otherwise", () => {
+    expect(otelIntegration().content).toStrictEqual({ recordInputs: true, recordOutputs: true });
+  });
+
+  it("puts a declined policy in front of every processor", () => {
+    const first = processor();
+    const integration = otelIntegration({ recordOutputs: false, spanProcessors: [first] });
+
+    expect(integration.content).toStrictEqual({ recordInputs: true, recordOutputs: false });
+    expect(integration.spanProcessors[0]).not.toBe(first);
+  });
 });
 
 describe("agentRunsIntegration", () => {
   it("uses Vercel's automatic processor by default", () => {
     const integration = agentRunsIntegration();
 
+    expect(integration.content).toStrictEqual({ recordInputs: true, recordOutputs: true });
     expect(integration.spanProcessors).toStrictEqual(["auto"]);
+  });
+
+  it("wraps the request-context transport when its content policy is narrowed", () => {
+    const integration = agentRunsIntegration({ recordInputs: false });
+
+    expect(integration.content).toStrictEqual({ recordInputs: false, recordOutputs: true });
+    expect(integration.spanProcessors).toHaveLength(1);
+    expect(integration.spanProcessors[0]).not.toBe("auto");
   });
 });
 
@@ -118,6 +139,24 @@ describe("collectOtelPipeline", () => {
       recordOutputs: false,
       traceChannelRequests: true,
     });
+  });
+
+  it("takes content capture as the union across destinations", () => {
+    const collected = collectOtelPipeline([
+      otelIntegration({ recordInputs: false, recordOutputs: false }),
+      otelIntegration({ recordInputs: false, recordOutputs: true }),
+    ]);
+
+    expect(collected.settings).toMatchObject({ recordInputs: false, recordOutputs: true });
+  });
+
+  it("writes nothing when every destination declined", () => {
+    const collected = collectOtelPipeline([
+      otelIntegration({ recordInputs: false, recordOutputs: false }),
+      otelIntegration({ recordInputs: false, recordOutputs: false }),
+    ]);
+
+    expect(collected.settings).toMatchObject({ recordInputs: false, recordOutputs: false });
   });
 
   // A process has one tracer provider, so letting the first declaration win
