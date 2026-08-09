@@ -24,7 +24,7 @@ export function getDb() {
 
 export const db = new Proxy({} as NeonHttpDatabase<typeof schema>, {
   get(_, prop) {
-    return (getDb() as unknown as Record<string | symbol, unknown>)[prop];
+    return (getDb() as Record<string | symbol, unknown>)[prop];
   },
 });
 
@@ -45,7 +45,7 @@ export async function isDatabaseSchemaReady() {
         to_regclass('public.session') is not null as session_ready,
         to_regclass('public."user"') is not null as user_ready,
         to_regclass('public.verification') is not null as verification_ready
-    `) as unknown as [
+    `) as [
       {
         readonly account_ready: boolean;
         readonly chat_event_ready: boolean;

@@ -82,12 +82,26 @@ export async function updateProfileForUser(userId: string, patch: UserProfilePat
       .where(eq(schema.user.id, userId));
   }
 
+  const profilePatch: {
+    bio?: string | null;
+    locale?: string | null;
+    timezone?: string | null;
+  } = {};
+
+  if (patch.timezone !== undefined) {
+    profilePatch.timezone = patch.timezone;
+  }
+
+  if (patch.locale !== undefined) {
+    profilePatch.locale = patch.locale;
+  }
+
+  if (patch.bio !== undefined) {
+    profilePatch.bio = patch.bio;
+  }
+
   await db.update(schema.userProfiles)
-    .set({
-      ...(patch.timezone !== undefined ? { timezone: patch.timezone } : {}),
-      ...(patch.locale !== undefined ? { locale: patch.locale } : {}),
-      ...(patch.bio !== undefined ? { bio: patch.bio } : {}),
-    })
+    .set(profilePatch)
     .where(eq(schema.userProfiles.userId, userId));
 
   if (patch.phoneNumber !== undefined) {

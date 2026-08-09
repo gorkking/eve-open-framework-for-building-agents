@@ -186,7 +186,7 @@ function createPersistedClientSession({
     setState(nextSession: ClientSessionState | undefined) {
       session = nextSession;
     },
-  } as unknown as PersistedClientSession;
+  } as PersistedClientSession;
 }
 
 async function postSessionTurn(
@@ -851,7 +851,7 @@ export function AgentChatSession({
 
   const agent = useEveAgent({
     initialEvents: activeChat?.events ?? [],
-    session: persistedSessionRef.current as unknown as ClientSession,
+    session: persistedSessionRef.current as ClientSession,
     onEvent: persistStreamEvent,
     onFinish: (snapshot) => {
       void persistSnapshot(snapshot);
