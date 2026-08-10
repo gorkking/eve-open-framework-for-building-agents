@@ -13,8 +13,9 @@ import {
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transitions: ["owner.limit.message.supersede", "owner.limit.response.reject-stale"] },
   description:
-    "A visible session-limit prompt is replaced by a fresh generation; responses to the old prompt are stale.",
+    "owner.limit.message.supersede / owner.limit.response.reject-stale: a message opens a fresh generation and the old response is stale.",
   async test(t) {
     gateLifecycle(t);
 

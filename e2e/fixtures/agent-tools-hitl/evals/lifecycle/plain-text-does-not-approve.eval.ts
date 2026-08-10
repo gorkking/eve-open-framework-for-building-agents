@@ -6,7 +6,7 @@ import {
   exactRequestActionResult,
   exactRequestTerminal,
   expectFollowUpSessionActive,
-  noRequestLifecycleEvents,
+  noRequestEvents,
   traceRequest,
   verifyFollowUpTurn,
 } from "./lifecycle";
@@ -19,6 +19,7 @@ import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transition: "owner.approval.message.run-open" },
   description:
     "owner.approval.message.run-open: typed 'approve' is a message; only structured responses settle.",
   async test(t) {
@@ -40,8 +41,7 @@ export default defineEval({
     typed.event("message.completed", { count: 1 });
     typed.eventsSatisfy(
       "typed approve runs a model turn and settles nothing",
-      (events) =>
-        noRequestLifecycleEvents(events, trace) && exactRequestActionResult(events, trace, null),
+      (events) => noRequestEvents(events, trace) && exactRequestActionResult(events, trace, null),
     );
     const approved = await respondToRequests(t, {
       requestId: request.requestId,
@@ -56,6 +56,7 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestActionResult(events, trace, {
           output: GUARDED_ECHO_TOKEN,

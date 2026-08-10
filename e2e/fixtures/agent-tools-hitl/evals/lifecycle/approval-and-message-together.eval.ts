@@ -18,6 +18,7 @@ import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transition: "owner.approval.compound.settle-then-run" },
   description:
     "owner.approval.compound.settle-then-run: compound response+message settles first, then runs the message.",
   async test(t) {
@@ -46,6 +47,7 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestActionResult(events, trace, {
           output: GUARDED_ECHO_TOKEN,

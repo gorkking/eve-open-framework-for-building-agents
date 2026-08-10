@@ -12,8 +12,11 @@ import {
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: {
+    transitions: ["owner.limit.response.settle-continue", "owner.limit.response.settle-stop"],
+  },
   description:
-    "Continue processes a co-delivered message; Stop cancels without granting budget and remains resumable.",
+    "owner.limit.response.settle-continue / owner.limit.response.settle-stop: Continue runs co-delivered input; Stop cancels and stays resumable.",
   async test(t) {
     gateLifecycle(t);
 

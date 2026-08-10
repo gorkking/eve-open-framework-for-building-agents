@@ -3,10 +3,10 @@ import type { EveEvalContext } from "eve/evals";
 export const GUARDED_ECHO_TOKEN = "guarded-echo-ok-T4Q9";
 
 /**
- * The HITL lifecycle contract (research/hitl-request-lifecycle.md) is written
- * backwards: these evals encode the normative scenarios before the behavior
- * and lifecycle-event stages land. Until then they skip; flipping this flag
- * activates them as the acceptance suite for those stages.
+ * These evals encode the transition catalog in
+ * research/hitl-request-lifecycle.md before the interpreter and lifecycle
+ * event stages land. Until then they skip; flipping this flag activates them
+ * as the acceptance suite for those stages.
  */
 export const LIFECYCLE_CONTRACT_ACTIVE = process.env.EVE_HITL_LIFECYCLE_CONTRACT === "1";
 

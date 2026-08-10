@@ -134,34 +134,14 @@ export async function respond(
   session: EveEvalSession | EveEvalContext,
   response: InputResponse,
 ): Promise<EveEvalTurn> {
-  const args: unknown[] = session.respond.length === 0 ? [response] : [[response]];
-  return (await Reflect.apply(session.respond, session, args)) as EveEvalTurn;
+  return await session.respond(response);
 }
 
 export async function sendCompound(
   t: EveEvalContext,
   input: { readonly inputResponses: readonly InputResponse[]; readonly message: string },
-): Promise<{ readonly session: EveEvalSession; readonly turn: EveEvalTurn }> {
-  const sessionId = t.sessionId;
-  const state = t.state as
-    | { readonly continuationToken?: unknown; readonly streamIndex?: unknown }
-    | undefined;
-  if (sessionId === undefined || typeof state?.streamIndex !== "number") {
-    throw new Error("Compound delivery requires an active session cursor.");
-  }
-  const body =
-    typeof state.continuationToken === "string"
-      ? { ...input, continuationToken: state.continuationToken }
-      : input;
-  const response = await t.target.fetch(`/eve/v1/session/${encodeURIComponent(sessionId)}`, {
-    body: JSON.stringify(body),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-    signal: t.signal,
-  });
-  if (!response.ok) throw new Error(`Compound delivery failed (${String(response.status)}).`);
-  const live = t.target.watchTurn(sessionId, { startIndex: state.streamIndex });
-  return { session: live.session, turn: await live.result() };
+): Promise<{ readonly session: EveEvalContext; readonly turn: EveEvalTurn }> {
+  return { session: t, turn: await t.send(input) };
 }
 
 export function expectWaiting(turn: EveEvalTurn, sessionId: string): void {

@@ -7,7 +7,7 @@ import {
   exactRequestExposure,
   exactRequestTerminal,
   expectFollowUpSessionActive,
-  noRequestLifecycleEvents,
+  noRequestEvents,
   requireRequest,
   traceRequest,
   verifyFollowUpTurn,
@@ -16,12 +16,15 @@ import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
  * owner.batch.response.settle-partial + owner.batch.close.fire-continuation: one assistant turn creates an approval and a question in the
- * same assistant-turn input batch. Settling one request leaves the batch
+ * same ApprovalBatch group. Settling one request leaves the batch
  * pending and runs nothing; settling the last request restores the stored
  * model output once and runs the approved tool exactly once.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: {
+    transitions: ["owner.batch.response.settle-partial", "owner.batch.close.fire-continuation"],
+  },
   description:
     "owner.batch.response.settle-partial/owner.batch.close.fire-continuation: batch stays pending on partial settlement; last outcome closes it.",
   async test(t) {
@@ -58,8 +61,9 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
-        noRequestLifecycleEvents(events, questionTrace) &&
+        noRequestEvents(events, questionTrace) &&
         exactRequestActionResult(events, approvalTrace, null),
     );
     // owner.batch.close.fire-continuation: the last request closes the batch; the approved tool runs once.
@@ -76,6 +80,7 @@ export default defineEval({
           type: "responded",
           optionId: "yes",
           outcome: "answered",
+          responder: null,
         }) &&
         exactRequestActionResult(events, approvalTrace, {
           output: GUARDED_ECHO_TOKEN,
@@ -95,11 +100,13 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestTerminal(events, questionTrace, {
           type: "responded",
           optionId: "yes",
           outcome: "answered",
+          responder: null,
         }) &&
         exactRequestActionResult(events, approvalTrace, {
           output: GUARDED_ECHO_TOKEN,

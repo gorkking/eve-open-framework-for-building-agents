@@ -12,8 +12,6 @@ import type { SubagentInputRequestHookPayload } from "#channel/types.js";
 import type { InputRequest, InputRequestKind } from "#runtime/input/types.js";
 import type { HarnessSession } from "#harness/types.js";
 
-const LIFECYCLE_CONTRACT_ACTIVE = process.env.EVE_HITL_LIFECYCLE_CONTRACT === "1";
-
 function createSession(state?: Record<string, unknown>): HarnessSession {
   return {
     agent: {

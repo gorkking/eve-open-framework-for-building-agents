@@ -16,6 +16,7 @@ import { gateLifecycle } from "./shared";
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transition: "owner.question.message.dismiss-superseded" },
   description:
     "owner.question.message.dismiss-superseded: the originating actor's message supersedes their open question.",
   async test(t) {

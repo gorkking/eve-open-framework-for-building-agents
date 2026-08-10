@@ -4,8 +4,9 @@ import { authorizationId, gateLifecycle, invokeCallback, sendAs, verifyFollowUp 
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transition: "owner.auth.message.run-open" },
   description:
-    "An ordinary message runs while authorization remains open and the callback still resumes.",
+    "owner.auth.message.run-open: an ordinary message runs while the challenge stays open.",
   async test(t) {
     gateLifecycle(t);
     const parked = await sendAs(
