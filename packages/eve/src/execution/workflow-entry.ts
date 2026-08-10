@@ -440,6 +440,10 @@ async function runDriverLoop(input: {
         driverWritable: input.driverWritable,
         sessionState: action.sessionState,
       });
+      if (next.sessionState !== undefined) {
+        action = { ...action, sessionState: next.sessionState };
+        input.crashCleanupState.lastSessionState = next.sessionState;
+      }
 
       if (next.kind === "expired") {
         return {
