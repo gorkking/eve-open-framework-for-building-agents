@@ -60,8 +60,10 @@ export async function resolveDiscoveryProject(
   const source = options.source ?? createDiskProjectSource();
   const startDirectory = await resolveSearchDirectory(source, startPath);
 
-  if (options.source === undefined) {
-    const collectionChild = await resolveOwningAgentCollection(startDirectory);
+  let currentDirectory = startDirectory;
+
+  while (true) {
+    const collectionChild = await resolveOwningAgentCollection(currentDirectory, { source });
     if (collectionChild !== undefined) {
       return {
         agentRoot: join(collectionChild.member.appRoot, "agent"),
@@ -69,7 +71,7 @@ export async function resolveDiscoveryProject(
         layout: "nested",
       };
     }
-    const collection = await resolveAgentCollection(startDirectory);
+    const collection = await resolveAgentCollection(currentDirectory, { source });
     if (collection !== undefined) {
       throw new Error(
         `This directory is an eve agent collection. Run single-agent commands from one of: ${collection.members
@@ -77,11 +79,7 @@ export async function resolveDiscoveryProject(
           .join(", ")}.`,
       );
     }
-  }
 
-  let currentDirectory = startDirectory;
-
-  while (true) {
     const nestedProjectFromAgentDirectory = await tryResolveNestedProjectFromAgentDirectory(
       source,
       currentDirectory,

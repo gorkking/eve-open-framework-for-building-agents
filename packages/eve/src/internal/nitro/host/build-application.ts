@@ -40,7 +40,7 @@ import type { ApplicationBuildOptions } from "#internal/nitro/host/types.js";
 import { findClosestVercelOutputDirectory } from "#shared/vercel-output-directory.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { resolveDiscoveryProject } from "#discover/project.js";
-import { resolveOwningAgentCollection } from "#internal/agent-collection.js";
+import { resolveEveProjectContext } from "#internal/project-context.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 
 function trimTrailingSlash(path: string): string {
@@ -387,11 +387,11 @@ async function buildApplicationInWorkspace(
     prepareProductionApplicationHost(workspace),
   );
   const isVercelBuild = Boolean(process.env.VERCEL);
-  const collectionChild = await resolveOwningAgentCollection(preparedHost.appRoot);
+  const projectContext = await resolveEveProjectContext(preparedHost.appRoot);
   const collectionPublicRoutePrefix =
-    !isVercelBuild || collectionChild === undefined
+    !isVercelBuild || projectContext.kind !== "collection-member"
       ? undefined
-      : `/eve/agents/${collectionChild.member.name}`;
+      : `/eve/agents/${projectContext.member.name}`;
   if (
     options.publicRoutePrefix !== undefined &&
     collectionPublicRoutePrefix !== undefined &&

@@ -206,7 +206,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
     .description("Build the current package as an eve extension.")
     .action(async () => {
       const { loadDevelopmentEnvironmentFiles } = await import("#cli/dev/environment.js");
-      loadDevelopmentEnvironmentFiles(appRoot);
+      await loadDevelopmentEnvironmentFiles(appRoot);
 
       const { runExtensionBuildCommand } = await import("#cli/commands/extension-build.js");
       await runExtensionBuildCommand(logger, appRoot);
@@ -254,7 +254,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
     .action(async (options: ProductionCliOptions) => {
       const { loadDevelopmentEnvironmentFiles } = await import("#cli/dev/environment.js");
 
-      loadDevelopmentEnvironmentFiles(appRoot);
+      await loadDevelopmentEnvironmentFiles(appRoot);
 
       const startProductionHost = runtime.startProductionHost ?? (await loadStartProductionHost());
       const server = await startProductionHost(appRoot, {
@@ -410,7 +410,7 @@ function createCliProgram(logger: CliLogger, runtime: CliRuntimeOverrides): Comm
 
       if (remoteServerUrl) {
         const { loadDevelopmentEnvironmentFiles } = await import("#cli/dev/environment.js");
-        loadDevelopmentEnvironmentFiles(appRoot);
+        await loadDevelopmentEnvironmentFiles(appRoot);
         logger.log(
           `↗ ${existingLocalDevelopmentServer ? "local" : "remote"} mode targeting ${theme.info(new URL(remoteServerUrl).host)}`,
         );

@@ -1,10 +1,11 @@
-import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
 import { detectPackageManager } from "#setup/package-manager.js";
 import { packageManagerWorkspaceClaimsProject } from "#setup/scaffold/workspace-root.js";
 
 const AGENTS_DIRECTORY = "agents";
+const PUBLIC_AGENT_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/;
 
 export interface AgentCollectionMember {
   readonly appRoot: string;
@@ -17,33 +18,25 @@ export interface AgentCollection {
   readonly root: string;
 }
 
-async function pathKind(path: string): Promise<"directory" | "file" | undefined> {
-  try {
-    const entry = await stat(path);
-    if (entry.isDirectory()) return "directory";
-    if (entry.isFile()) return "file";
-    return undefined;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
 /** Resolve a strict, direct-child `agents/<name>/agent/` collection at `root`. */
-export async function resolveAgentCollection(root: string): Promise<AgentCollection | undefined> {
+export async function resolveAgentCollection(
+  root: string,
+  options: { readonly source?: ProjectSource } = {},
+): Promise<AgentCollection | undefined> {
+  const source = options.source ?? createDiskProjectSource();
   const collectionRoot = resolve(root);
   const agentsRoot = join(collectionRoot, AGENTS_DIRECTORY);
-  if ((await pathKind(agentsRoot)) !== "directory") return undefined;
-  if ((await pathKind(join(collectionRoot, "package.json"))) !== "file") {
+  if ((await source.stat(agentsRoot)) !== "directory") return undefined;
+  if ((await source.stat(join(collectionRoot, "package.json"))) !== "file") {
     throw new Error("An eve agent collection requires package.json at the collection root.");
   }
-  if ((await pathKind(join(collectionRoot, "agent"))) === "directory") {
+  if ((await source.stat(join(collectionRoot, "agent"))) === "directory") {
     throw new Error(
       "An eve project cannot contain both root agent/ and agents/. Move the root agent under agents/<name>/ or remove the collection.",
     );
   }
 
-  const entries = (await readdir(agentsRoot, { withFileTypes: true }))
+  const entries = (await source.readDirectory(agentsRoot))
     .filter((entry) => !entry.name.startsWith("."))
     .sort((left, right) => left.name.localeCompare(right.name));
   const directories = entries.filter((entry) => entry.isDirectory());
@@ -51,13 +44,19 @@ export async function resolveAgentCollection(root: string): Promise<AgentCollect
     throw new Error("The agents/ collection must contain at least one direct child agent.");
   }
 
-  const packageManager = await detectPackageManager(collectionRoot);
+  const packageManager =
+    source.kind === "disk" ? await detectPackageManager(collectionRoot) : undefined;
   const members: AgentCollectionMember[] = [];
   for (const entry of directories) {
+    if (!PUBLIC_AGENT_NAME_PATTERN.test(entry.name)) {
+      throw new Error(
+        `Agent collection member ${JSON.stringify(entry.name)} has an invalid public identity. Use lowercase letters, numbers, hyphens, or underscores, beginning and ending with a letter or number.`,
+      );
+    }
     const appRoot = join(agentsRoot, entry.name);
-    if ((await pathKind(join(appRoot, "agent"))) !== "directory") {
+    if ((await source.stat(join(appRoot, "agent"))) !== "directory") {
       const flatHint =
-        (await pathKind(join(appRoot, "agent.ts"))) === "file"
+        (await source.stat(join(appRoot, "agent.ts"))) === "file"
           ? " Move flat authored files under an agent/ directory."
           : "";
       throw new Error(
@@ -66,13 +65,14 @@ export async function resolveAgentCollection(root: string): Promise<AgentCollect
     }
 
     const packageJsonPath = join(appRoot, "package.json");
-    const hasPackageJson = (await pathKind(packageJsonPath)) === "file";
+    const hasPackageJson = (await source.stat(packageJsonPath)) === "file";
     if (
+      source.kind === "disk" &&
       hasPackageJson &&
-      !packageManagerWorkspaceClaimsProject(packageManager.kind, collectionRoot, appRoot)
+      !packageManagerWorkspaceClaimsProject(packageManager!.kind, collectionRoot, appRoot)
     ) {
       throw new Error(
-        `${join(AGENTS_DIRECTORY, entry.name, "package.json")} defines a child package that is not a member of the root ${packageManager.kind} workspace. Add agents/* to the workspace configuration.`,
+        `${join(AGENTS_DIRECTORY, entry.name, "package.json")} defines a child package that is not a member of the root ${packageManager!.kind} workspace. Add agents/* to the workspace configuration.`,
       );
     }
     const member: { appRoot: string; name: string; packageJsonPath?: string } = {
@@ -89,13 +89,14 @@ export async function resolveAgentCollection(root: string): Promise<AgentCollect
 /** Resolve the collection owning a strict direct child app root. */
 export async function resolveOwningAgentCollection(
   appRoot: string,
+  options: { readonly source?: ProjectSource } = {},
 ): Promise<
   { readonly collection: AgentCollection; readonly member: AgentCollectionMember } | undefined
 > {
   const resolvedAppRoot = resolve(appRoot);
   const agentsRoot = dirname(resolvedAppRoot);
   if (basename(agentsRoot) !== AGENTS_DIRECTORY) return undefined;
-  const collection = await resolveAgentCollection(dirname(agentsRoot));
+  const collection = await resolveAgentCollection(dirname(agentsRoot), options);
   const member = collection?.members.find((candidate) => candidate.appRoot === resolvedAppRoot);
   return collection === undefined || member === undefined ? undefined : { collection, member };
 }

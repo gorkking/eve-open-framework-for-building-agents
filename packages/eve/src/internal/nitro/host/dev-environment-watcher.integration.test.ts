@@ -35,7 +35,7 @@ describe("development environment reload transactions", () => {
     const appRoot = await createEnvironmentApp();
     process.env.EVE_WATCH_ENV_SHELL = "from-parent";
 
-    loadDevelopmentEnvironmentFiles(appRoot);
+    await loadDevelopmentEnvironmentFiles(appRoot);
 
     expect(process.env.EVE_WATCH_ENV_FILE_ONLY).toBe("from-env");
     expect(process.env.EVE_WATCH_ENV_SHARED).toBe("from-local");
@@ -54,7 +54,7 @@ describe("development environment reload transactions", () => {
     );
     await writeFile(join(appRoot, ".env.local"), "EVE_WATCH_ENV_SHARED=from-child\n");
 
-    loadDevelopmentEnvironmentFiles(appRoot);
+    await loadDevelopmentEnvironmentFiles(appRoot);
 
     expect(process.env.EVE_WATCH_ENV_ROOT_ONLY).toBe("from-root");
     expect(process.env.EVE_WATCH_ENV_SHARED).toBe("from-child");
@@ -76,7 +76,7 @@ describe("development environment reload transactions", () => {
   it("restores the complete prior environment when a candidate is rejected", async () => {
     const appRoot = await createEnvironmentApp();
     const envLocalPath = join(appRoot, ".env.local");
-    loadDevelopmentEnvironmentFiles(appRoot);
+    await loadDevelopmentEnvironmentFiles(appRoot);
     await writeFile(
       envLocalPath,
       "EVE_WATCH_ENV_NEW=from-candidate\nEVE_WATCH_ENV_SHARED=from-candidate\n",
@@ -96,7 +96,7 @@ describe("development environment reload transactions", () => {
 
   it("retains the candidate environment after commit", async () => {
     const appRoot = await createEnvironmentApp();
-    loadDevelopmentEnvironmentFiles(appRoot);
+    await loadDevelopmentEnvironmentFiles(appRoot);
     await writeFile(join(appRoot, ".env.local"), "EVE_WATCH_ENV_SHARED=committed\n");
 
     const reload = stageDevelopmentEnvironmentFiles(appRoot);
@@ -108,7 +108,7 @@ describe("development environment reload transactions", () => {
 
   it("reapplies a rolled-back environment edit when a later rebuild stages again", async () => {
     const appRoot = await createEnvironmentApp();
-    loadDevelopmentEnvironmentFiles(appRoot);
+    await loadDevelopmentEnvironmentFiles(appRoot);
     await writeFile(join(appRoot, ".env.local"), "EVE_WATCH_ENV_SHARED=after-fix\n");
 
     stageDevelopmentEnvironmentFiles(appRoot).rollback();

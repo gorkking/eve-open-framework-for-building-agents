@@ -46,7 +46,7 @@ export function registerRuntimeInvokeCommand(input: {
     ...input,
     deps: {
       loadEnvironment: async (root) =>
-        (await import("#cli/dev/environment.js")).loadDevelopmentEnvironmentFiles(root),
+        await (await import("#cli/dev/environment.js")).loadDevelopmentEnvironmentFiles(root),
       runInvoke: async (invokeInput) =>
         await (input.runtime.runInvoke ?? (await import("./invoke.js")).runInvoke)(invokeInput),
       startHost: async (root) =>

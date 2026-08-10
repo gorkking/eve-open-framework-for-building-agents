@@ -240,7 +240,7 @@ export async function startProductionServer(
     );
   }
 
-  loadDevelopmentEnvironmentFiles(appRoot);
+  await loadDevelopmentEnvironmentFiles(appRoot);
   await prewarmBuiltAppSandboxes({
     appRoot,
     log: (message) => console.log(message),

@@ -52,7 +52,7 @@ export async function runEvalCommand(
 ): Promise<void> {
   const appRoot = resolveApplicationRoot();
 
-  loadDevelopmentEnvironmentFiles(appRoot);
+  await loadDevelopmentEnvironmentFiles(appRoot);
 
   const requestedEvalIds = evalIds.length > 0 ? evalIds : undefined;
   const discovered = await discoverAndImportEvals(appRoot, requestedEvalIds);

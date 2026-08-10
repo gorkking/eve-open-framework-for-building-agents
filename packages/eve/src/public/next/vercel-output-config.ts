@@ -16,7 +16,7 @@ import {
 import {
   createServiceConfigRecord,
   hasServices,
-  isRecord,
+  parseVercelServicesConfig,
   type VercelServiceConfig,
   type VercelServicesConfig,
 } from "#internal/vercel/vercel-services-config.js";
@@ -82,45 +82,12 @@ async function resolveVercelOutputConfigLocation(nextRoot: string): Promise<{
   };
 }
 
-function normalizeVercelServicesConfig(value: unknown, fileName: string): VercelServicesConfig {
-  if (!isRecord(value)) {
-    throw new Error(`${fileName} must contain a JSON object.`);
-  }
-
-  const services = value.services;
-
-  if (
-    services !== undefined &&
-    !isRecord(services) &&
-    !(
-      Array.isArray(services) &&
-      services.every(
-        (service) =>
-          isRecord(service) && typeof service.name === "string" && service.name.trim().length > 0,
-      )
-    )
-  ) {
-    throw new Error(`${fileName} services must be a JSON object or named service array.`);
-  }
-
-  const routes = value.routes;
-
-  if (routes !== undefined && !Array.isArray(routes)) {
-    throw new Error(`${fileName} routes must be an array.`);
-  }
-
-  return value as VercelServicesConfig;
-}
-
 async function readVercelServicesConfig(
   path: string,
   fileName: string,
 ): Promise<VercelServicesConfig> {
   try {
-    return normalizeVercelServicesConfig(
-      JSON.parse(await readFile(path, "utf8")) as unknown,
-      fileName,
-    );
+    return parseVercelServicesConfig(JSON.parse(await readFile(path, "utf8")) as unknown, fileName);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return {};

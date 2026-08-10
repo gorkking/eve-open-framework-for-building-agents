@@ -32,6 +32,39 @@ function supportService() {
 }
 
 describe("validateAuthoredAgentServices", () => {
+  it("allows public agent names that are not generated Vercel service names", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eve-authored-services-digits-"));
+    await writeFile(join(root, "package.json"), JSON.stringify({ private: true }));
+    await mkdir(join(root, "agents", "support-2", "agent"), { recursive: true });
+    await writeFile(
+      join(root, "vercel.json"),
+      JSON.stringify({
+        services: {
+          customer_care: {
+            framework: "eve",
+            root: "agents/support-2",
+            routes: [
+              {
+                src: "^/eve/agents/support-2/eve/v1/(.*)$",
+                transforms: [{ args: "/eve/v1/$1", op: "set", type: "request.path" }],
+              },
+            ],
+          },
+        },
+        rewrites: [
+          {
+            source: "/eve/agents/support-2/eve/v1/(.*)",
+            destination: { service: "customer_care" },
+          },
+        ],
+      }),
+    );
+    const collection = await resolveAgentCollection(root);
+    await expect(validateAuthoredAgentServices(collection!)).resolves.toEqual({
+      omittedAgentNames: [],
+    });
+  });
+
   it("validates selected agents and reports omitted children", async () => {
     const root = await createCollection({
       services: { "customer-care": supportService(), commerce: { root: "apps/commerce" } },

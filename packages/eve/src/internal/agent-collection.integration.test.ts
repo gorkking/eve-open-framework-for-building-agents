@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { createMemoryProjectSource } from "#discover/project-source.js";
+import { resolveDiscoveryProject } from "#discover/project.js";
 import {
   resolveAgentCollection,
   resolveOwningAgentCollection,
@@ -43,6 +45,23 @@ describe("resolveAgentCollection", () => {
     await mkdir(join(root, "agents", "support"), { recursive: true });
     await writeFile(join(root, "agents", "support", "agent.ts"), "export default {};\n");
     await expect(resolveAgentCollection(root)).rejects.toThrow(/Move flat authored files/);
+  });
+
+  it("uses the same collection semantics through an in-memory project source", async () => {
+    const source = createMemoryProjectSource({
+      files: {
+        "/memory/project/package.json": "{}",
+        "/memory/project/agents/support/agent/instructions.md": "Support users.",
+      },
+    });
+
+    await expect(
+      resolveDiscoveryProject("/memory/project/agents/support", { source }),
+    ).resolves.toEqual({
+      agentRoot: "/memory/project/agents/support/agent",
+      appRoot: "/memory/project/agents/support",
+      layout: "nested",
+    });
   });
 
   it("resolves the collection that owns a package-less child", async () => {

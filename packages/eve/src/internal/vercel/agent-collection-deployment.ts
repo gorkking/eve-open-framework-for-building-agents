@@ -10,14 +10,19 @@ export type AgentCollectionDeploymentMode = "authored" | "inferred";
 export async function resolveAgentCollectionDeploymentMode(
   collection: AgentCollection,
 ): Promise<AgentCollectionDeploymentMode> {
-  for (const member of collection.members) {
-    assertValidVercelServiceName(`eve-${member.name}`, "Generated agent collection service name");
-  }
-
   const config = await readVercelJsonFile(join(collection.root, "vercel.json"));
-  return config.services !== undefined ||
+  const mode =
+    config.services !== undefined ||
     config.experimentalServices !== undefined ||
     config.experimentalServicesV2 !== undefined
-    ? "authored"
-    : "inferred";
+      ? "authored"
+      : "inferred";
+
+  if (mode === "inferred") {
+    for (const member of collection.members) {
+      assertValidVercelServiceName(`eve-${member.name}`, "Generated agent collection service name");
+    }
+  }
+
+  return mode;
 }

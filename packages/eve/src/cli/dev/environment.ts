@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { parseEnv } from "node:util";
 
+import { resolveEveProjectContext } from "#internal/project-context.js";
 import { isObject } from "#shared/guards.js";
 
 /**
@@ -31,6 +32,7 @@ export interface DevelopmentEnvironmentReload {
 }
 
 const developmentEnvironmentLoaders = new Map<string, DevelopmentEnvironmentLoader>();
+const developmentEnvironmentRoots = new Map<string, readonly string[]>();
 
 /**
  * Returns the local development environment files eve loads from an
@@ -50,8 +52,15 @@ export function getDevelopmentEnvironmentFilePaths(appRoot: string): string[] {
  * precedence. Variables supplied by env files are refreshed on subsequent
  * reloads so dev-mode file watching can pick up changed values.
  */
-export function loadDevelopmentEnvironmentFiles(appRoot: string): void {
-  getDevelopmentEnvironmentLoader(appRoot).reload();
+export async function loadDevelopmentEnvironmentFiles(appRoot: string): Promise<void> {
+  const resolvedAppRoot = resolve(appRoot);
+  const context = await resolveEveProjectContext(resolvedAppRoot);
+  const roots =
+    context.kind === "collection-member"
+      ? [context.collection.root, resolvedAppRoot]
+      : [resolvedAppRoot];
+  developmentEnvironmentRoots.set(resolvedAppRoot, roots);
+  getDevelopmentEnvironmentLoader(resolvedAppRoot).reload();
 }
 
 export function stageDevelopmentEnvironmentFiles(appRoot: string): DevelopmentEnvironmentReload {
@@ -168,13 +177,7 @@ function applyDevelopmentEnvironmentValues(input: {
 
 function resolveDevelopmentEnvironmentRoots(appRoot: string): readonly string[] {
   const resolvedAppRoot = resolve(appRoot);
-  const agentsRoot = dirname(resolvedAppRoot);
-  const collectionRoot = dirname(agentsRoot);
-  return basename(agentsRoot) === "agents" &&
-    existsSync(join(collectionRoot, "package.json")) &&
-    existsSync(join(resolvedAppRoot, "agent"))
-    ? [collectionRoot, resolvedAppRoot]
-    : [resolvedAppRoot];
+  return developmentEnvironmentRoots.get(resolvedAppRoot) ?? [resolvedAppRoot];
 }
 
 function readDevelopmentEnvironmentValues(
