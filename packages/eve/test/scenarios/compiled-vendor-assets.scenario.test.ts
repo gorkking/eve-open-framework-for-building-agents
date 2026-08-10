@@ -265,6 +265,7 @@ describe("compiled vendor assets", () => {
           "eventsource-parser/stream": "#compiled/eventsource-parser/stream/index.js",
           "zod/v3": "#compiled/zod/index.js",
           "zod/v4": "#compiled/zod/index.js",
+          "zod/v4/core": "./_zod-core.js",
         },
       },
     ] as const;
