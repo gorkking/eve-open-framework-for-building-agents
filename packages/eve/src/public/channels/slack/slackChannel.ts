@@ -47,6 +47,7 @@ import {
 import {
   formatSlackInboundMessage,
   formatSlackThreadContext,
+  formatSlackUnfurlContext,
 } from "#public/channels/slack/model-context.js";
 import {
   loadThreadContextMessages,
@@ -1177,7 +1178,11 @@ async function deliverSlackMessage(input: {
       fileParts,
     );
 
-    const channelContext = input.result.context ?? [];
+    const unfurlContext = formatSlackUnfurlContext(message.raw);
+    const channelContext = [
+      ...(input.result.context ?? []),
+      ...(unfurlContext === undefined ? [] : [unfurlContext]),
+    ];
     const sendOptions: SlackSendOptions =
       channelContext.length === 0
         ? { auth: input.result.auth, title: message.markdown }

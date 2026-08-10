@@ -71,6 +71,8 @@ Only the first available handler runs. A message hook returning `null` drops the
 
 `onInteraction(action, ctx)` separately handles `block_actions` callbacks not consumed by HITL. eve attaches the triggering Slack user id to the same model message as its text, preserving speaker attribution without profile lookups.
 
+When Slack includes a preview for a link pasted into an accepted mention, DM, or channel message, eve adds up to five previews to model context. Each preview is capped at 2,000 characters and labeled as untrusted quoted content rather than instructions. This uses only the unfurl Slack already included in the inbound event and does not fetch the linked message or require additional scopes.
+
 #### Continue conversations without repeated mentions
 
 Use `onMessage` to handle explicit mentions and continue replies in threads with an active eve session:
