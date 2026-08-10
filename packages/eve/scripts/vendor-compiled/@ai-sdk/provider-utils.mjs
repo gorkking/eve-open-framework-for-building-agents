@@ -1,4 +1,4 @@
-import { createDeclarationCopier } from "../_shared.mjs";
+import { buildTypeReexportStub, createDeclarationCopier } from "../_shared.mjs";
 
 export default {
   packageName: "@ai-sdk/provider-utils",
@@ -18,6 +18,14 @@ export default {
       },
       "zod/v3": { kind: "vendored", compiledPath: "zod" },
       "zod/v4": { kind: "vendored", compiledPath: "zod" },
+      // $ZodType is type-only here; the vendored zod bundle intentionally
+      // exposes only zod's main entry, so re-export core types from the real
+      // subpath instead of rewriting to `#compiled/zod`.
+      "zod/v4/core": {
+        kind: "stub",
+        stubBaseName: "_zod-core",
+        build: buildTypeReexportStub,
+      },
     },
   }),
 };

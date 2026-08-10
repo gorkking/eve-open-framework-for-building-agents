@@ -356,6 +356,28 @@ export function buildOpaqueTypesStub(names, moduleName) {
 }
 
 /**
+ * Generic stub builder: emits `export type { ... } from "<moduleName>";` for
+ * every name in `names`. Use as the `build` callback of a `stub` rewrite rule
+ * when the upstream `.d.ts` references the module in type positions only and
+ * the real types must be preserved — e.g. `zod/v4/core`, whose runtime
+ * exports the vendored zod bundle deliberately does not expose top-level,
+ * but whose types the vendored zod declaration already resolves through the
+ * real `zod` package. Opaquing these to `unknown` (buildOpaqueTypesStub)
+ * would silently degrade upstream generics.
+ */
+export function buildTypeReexportStub(names, moduleName) {
+  const sorted = [...names].sort();
+  const lines = [
+    `// Auto-generated stub for \`${moduleName}\` types referenced by a vendored .d.ts.`,
+    `// Emitted by createDeclarationCopier > buildTypeReexportStub.`,
+    ``,
+    `export type { ${sorted.join(", ")} } from "${moduleName}";`,
+    ``,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+/**
  * rolldown plugin factory: short-circuits resolution of optional native
  * dependencies that aren't shipped in the vendored bundle. The stub
  * throws if anything ever imports it at runtime — vendored consumers
