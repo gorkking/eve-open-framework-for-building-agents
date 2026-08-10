@@ -16,6 +16,7 @@ import {
 } from "#public/channels/slack/hitl.js";
 import type { SlackMessage } from "#public/channels/slack/inbound.js";
 import {
+  chunkMessageText,
   SLACK_MAX_BLOCKS_PER_MESSAGE,
   truncateMessageText,
   truncateTypingStatus,
@@ -31,6 +32,7 @@ import type { InputRequest } from "#runtime/input/types.js";
 const log = createLogger("slack.defaults");
 const REASONING_TYPING_REFRESH_INTERVAL_MS = 5_000;
 const REASONING_TYPING_MIN_PROGRESS_CHARS = 4;
+const SLACK_MESSAGE_POST_INTERVAL_MS = 1_000;
 
 /**
  * Workspace-scoped projection of the Slack actor that produced
@@ -198,7 +200,13 @@ export const defaultEvents: SlackChannelInternalEvents = {
       await channel.thread.startTyping();
       return;
     }
-    await channel.thread.post(event.message);
+    const chunks = chunkMessageText(event.message);
+    for (const [index, chunk] of chunks.entries()) {
+      if (index > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, SLACK_MESSAGE_POST_INTERVAL_MS));
+      }
+      await channel.thread.post(chunk);
+    }
   },
 
   async "turn.failed"(event, channel, _ctx) {
