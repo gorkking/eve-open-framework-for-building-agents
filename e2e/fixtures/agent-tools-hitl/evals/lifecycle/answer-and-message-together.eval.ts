@@ -12,12 +12,13 @@ import {
 import { gateLifecycle } from "./shared";
 
 /**
- * question-4: an accepted answer plus a message in one delivery — the answer settles
+ * owner.question.compound.settle-then-run: an accepted answer plus a message in one delivery — the answer settles
  * the question (supersession does not run), then the message runs.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "question-4: compound answer+message settles the question, then runs the message.",
+  description:
+    "owner.question.compound.settle-then-run: compound answer+message settles the question, then runs the message.",
   async test(t) {
     gateLifecycle(t);
 

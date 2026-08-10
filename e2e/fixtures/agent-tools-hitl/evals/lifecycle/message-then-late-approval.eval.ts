@@ -13,14 +13,14 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * approval-4 + approval-8: a message while an approval is open runs as a normal turn and
+ * owner.approval.message.run-open + owner.approval.response.settle-allow-after-turns: a message while an approval is open runs as a normal turn and
  * changes nothing about the request; a later accepted response still restores
  * the assistant-turn approval batch and runs the tool once.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
   description:
-    "approval-4/approval-8: messages never wedge; the approval stays answerable across turns.",
+    "owner.approval.message.run-open/owner.approval.response.settle-allow-after-turns: messages never wedge; the approval stays answerable across turns.",
   async test(t) {
     gateLifecycle(t);
 
@@ -33,7 +33,7 @@ export default defineEval({
     });
     const trace = traceRequest(parked.events, request);
 
-    // approval-4: the message runs as a normal turn; the request is untouched.
+    // owner.approval.message.run-open: the message runs as a normal turn; the request is untouched.
     const intervening = await t.send(
       "Ignore the pending approval. Reply with exactly AP4-TURN-OK.",
     );
@@ -47,7 +47,7 @@ export default defineEval({
         noRequestLifecycleEvents(events, trace) && exactRequestActionResult(events, trace, null),
     );
 
-    // approval-8: the approval settles after the intervening turn; the tool runs once.
+    // owner.approval.response.settle-allow-after-turns: the approval settles after the intervening turn; the tool runs once.
     const approved = await respondToRequests(t, {
       requestId: request.requestId,
       optionId: "approve",

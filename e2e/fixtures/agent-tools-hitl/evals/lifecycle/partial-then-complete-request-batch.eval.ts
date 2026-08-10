@@ -15,7 +15,7 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * approval-18 + approval-19: one assistant turn creates an approval and a question in the
+ * owner.batch.response.settle-partial + owner.batch.close.fire-continuation: one assistant turn creates an approval and a question in the
  * same assistant-turn input batch. Settling one request leaves the batch
  * pending and runs nothing; settling the last request restores the stored
  * model output once and runs the approved tool exactly once.
@@ -23,7 +23,7 @@ import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
   description:
-    "approval-18/approval-19: batch stays pending on partial settlement; last outcome closes it.",
+    "owner.batch.response.settle-partial/owner.batch.close.fire-continuation: batch stays pending on partial settlement; last outcome closes it.",
   async test(t) {
     gateLifecycle(t);
 
@@ -44,7 +44,7 @@ export default defineEval({
     const approvalTrace = traceRequest(parked.events, approval);
     const questionTrace = traceRequest(parked.events, question);
 
-    // approval-18: settle only the approval; the batch stays open behind the question.
+    // owner.batch.response.settle-partial: settle only the approval; the batch stays open behind the question.
     const partial = await respondToRequests(t, {
       requestId: approval.requestId,
       optionId: "approve",
@@ -62,7 +62,7 @@ export default defineEval({
         noRequestLifecycleEvents(events, questionTrace) &&
         exactRequestActionResult(events, approvalTrace, null),
     );
-    // approval-19: the last request closes the batch; the approved tool runs once.
+    // owner.batch.close.fire-continuation: the last request closes the batch; the approved tool runs once.
     const closed = await respondToRequests(t, {
       requestId: question.requestId,
       optionId: "yes",

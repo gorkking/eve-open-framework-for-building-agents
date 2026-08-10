@@ -13,14 +13,14 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * approval-9 + approval-14: a duplicate response referencing a closed request
+ * owner.approval.response.reject-stale: a duplicate response referencing a closed request
  * is stale — it changes no request, never executes the tool a second time, and
  * still initiates a turn with the stale-attempt context.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
   description:
-    "approval-9/approval-14: responses after closure are stale; no second adjudication or execution.",
+    "owner.approval.response.reject-stale: responses after closure are stale; no second adjudication or execution.",
   async test(t) {
     gateLifecycle(t);
 
@@ -57,7 +57,7 @@ export default defineEval({
         ]),
     );
 
-    // approval-9/approval-14: the same approve in a new delivery is stale.
+    // owner.approval.response.reject-stale: the same approve in a new delivery is stale.
     const stale = await respondToRequests(t, {
       requestId: request.requestId,
       optionId: "approve",

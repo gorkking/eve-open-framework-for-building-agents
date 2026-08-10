@@ -833,30 +833,98 @@ contract:
   actor-scoped (`owner.question.message.run-open-other-actor`); multi-batch
   question dismissal is suppressed rather than per-group.
 
-Remaining stages, each landing alone with its own gate:
+### Consolidation: one interpreter
 
-1. **Data: candidates and generations.** Candidate records
-   (`{requestId, deliveryId}`), limit-prompt generations, challenge
-   `authorizationId`. Pure data; existing suite unchanged.
-2. **Behavior: per-member settlement.** Replace defer-partials with
-   `settle-partial` / `close.fire-continuation`; actor-scoped question
-   supersession; remove runtime text matching (with the docs update).
-   The interpretation function becomes the pure
-   `interpret(groups, routes, delivery)` seam — extracted in the PR that uses
-   it, not staged as a dead module.
-3. **Lifecycle events.** The event family above; fail-closed request creation
-   on the runtime-action and metadata-loss paths (fixes #1201); limit
-   re-prompt closure; authorization deadline as an input.
-4. **Transport and routing.** Auth-hook consolidation; projector routes
-   accumulate per request and close only via settlement or
-   `input.dismissed(route-lost)` (fixes #1608); actor-partitioned delivery
-   coalescing.
-5. **Eval matrix.** The catalog's evals
-   ([`e2e/fixtures/agent-tools-hitl/evals/lifecycle/`](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md)),
-   gated by `EVE_HITL_LIFECYCLE_CONTRACT=1`, keyed by anchor. Expected event
-   sequences are written literally and never computed from runtime code.
-   Coverage dimensions are tags, not a Cartesian product: players, obligation
-   kind, group shape, delivery shape, actor relation, timing.
+The machine above is currently implemented nowhere and enforced everywhere:
+interpretation logic is smeared across ten modules, each owning a fragment of
+the transition table. That dispersion is why both wedges could exist — no
+single seam ever saw the whole state.
+
+| Fragment                                         | Today lives in                                                                                                                                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| batch resolution, defer decisions                | [`harness/input-requests.ts`](../packages/eve/src/harness/input-requests.ts)                                                                                                                             |
+| batch + deferred-input storage                   | [`harness/pending-input-batches.ts`](../packages/eve/src/harness/pending-input-batches.ts)                                                                                                               |
+| stale-response conversion (a second interpreter) | [`harness/stale-input-responses.ts`](../packages/eve/src/harness/stale-input-responses.ts)                                                                                                               |
+| required/dismissable classification              | [`harness/input-request-class.ts`](../packages/eve/src/harness/input-request-class.ts)                                                                                                                   |
+| limit prompt creation + resolution special cases | [`harness/session-limit-enforcement.ts`](../packages/eve/src/harness/session-limit-enforcement.ts), [`harness/session-limit-continuation.ts`](../packages/eve/src/harness/session-limit-continuation.ts) |
+| challenge storage + callback pairing             | [`harness/authorization.ts`](../packages/eve/src/harness/authorization.ts), [`execution/workflow-steps.ts`](../packages/eve/src/execution/workflow-steps.ts)                                             |
+| callback wait scheduling                         | [`execution/workflow-entry.ts`](../packages/eve/src/execution/workflow-entry.ts), window gating in [`execution/session-command-inbox.ts`](../packages/eve/src/execution/session-command-inbox.ts)        |
+| projection routing                               | [`harness/proxy-input-requests.ts`](../packages/eve/src/harness/proxy-input-requests.ts), [`execution/subagent-hitl-proxy.ts`](../packages/eve/src/execution/subagent-hitl-proxy.ts)                     |
+| text matching in the resolution path             | [`channel/resolve-text.ts`](../packages/eve/src/channel/resolve-text.ts) via input-requests                                                                                                              |
+| forced-closure sweeps                            | [`execution/settle-cancelled-turn-step.ts`](../packages/eve/src/execution/settle-cancelled-turn-step.ts)                                                                                                 |
+
+Target shape — one harness-owned package implements the machine; everything
+else is an adapter that feeds it inputs or executes its plans:
+
+```text
+harness/interaction/
+  obligations.ts   one durable store: groups (batches, auth groups, limit
+                   prompts), candidates, generations; the only writer of
+                   obligation state
+  interpret.ts     the pure function: (groups, routes, input) -> plan
+                   where input = delivery | timer | turn outcome | child event
+                   and plan = { transitions, events, turnPlan }
+  projector.ts     routes: project / forward / re-emit / drop
+  events.ts        transition -> wire event emission
+```
+
+Adapters after consolidation:
+
+- **tool-loop**: park = append a group; step start = execute the plan.
+  Replaces `resolvePendingInput`, the stale-conversion pass, the limit
+  special cases, and the deferral _decisions_. The AI SDK constraint that an
+  approval response resolves in isolation becomes an ordered `turnPlan`, not
+  a hidden state key.
+- **workflow-steps**: callback extraction and `authorization.completed`
+  emission become `interpret(Callback)`; `derivePendingState` reads the one
+  store.
+- **workflow-entry**: pure scheduler. The window machinery
+  (`claimAuthorization`, `setAuthorizationWindow`, `nextWithSource`,
+  `awaitAuthorizationResume`) is deleted by the transport consolidation;
+  callbacks arrive through the one command stream and are classified by
+  payload, which the turn step already does.
+- **session-limit-enforcement**: the budget gate opens a `Limit(gen)`
+  obligation in the store; resolution is an interpret row like any other.
+- **proxy modules**: fold into `projector.ts`.
+- **resolve-text**: leaves the runtime path; stays exported for channel
+  adapters.
+
+Deleted outright: `stale-input-responses.ts` (becomes the `reject-stale`
+rows), `input-request-class.ts` (classification is the obligation kind), the
+inbox window machinery, and `deferredStepInput` as a decision mechanism — it
+survives at most as plan persistence across internal steps.
+
+### Stages
+
+Each lands alone with its own gate; after stage 4, every remaining contract
+behavior is a diff to `interpret.ts` and its unit matrix.
+
+1. **Store extraction.** `obligations.ts` unifies pending batches,
+   `pendingAuthorization`, and the limit prompt into one shape, with
+   candidate records and generations. Pure data; existing suite unchanged;
+   read shims for both legacy keys.
+2. **Interpreter extraction.** `interpret.ts` absorbs `resolvePendingInput`,
+   stale conversion, and limit resolution, behavior-preserving; the existing
+   unit matrices move with it. Text matching enters as an explicit,
+   removable rule.
+3. **Auth through the machine.** Challenge parks become AuthGroups in the
+   store; callback extraction becomes `interpret(Callback)`; the deadline
+   becomes a timer input (today it has no producer). Multi-challenge resume
+   falls out of group closure.
+4. **Transport and routing.** Callbacks through the command stream (window
+   machinery deleted; in-flight challenge-URL cost per Compatibility);
+   projector extraction with per-request route accumulation (fixes #1608);
+   actor-partitioned coalescing.
+5. **Behavior completion, inside the interpreter.** Per-member settlement
+   replacing defer-partials; actor-scoped question supersession; text-match
+   removal with its docs update; fail-closed request creation (fixes #1201);
+   limit re-prompt closure.
+6. **Lifecycle events + eval matrix.** `events.ts` emits the event family;
+   the gated evals
+   ([`e2e/fixtures/agent-tools-hitl/evals/lifecycle/`](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md))
+   activate via `EVE_HITL_LIFECYCLE_CONTRACT=1`, keyed by anchor, with
+   expected sequences written literally and never computed from runtime
+   code.
 
 The acceptance gate for the late splice —
 [`tool-loop-generate-approval-resume.integration.test.ts`](../packages/eve/src/harness/tool-loop-generate-approval-resume.integration.test.ts)
@@ -894,62 +962,6 @@ response resumes a disposed child hook and fails the parent.
   ownership.
 - [PR #142](https://github.com/vercel/eve/pull/142): Slack-specific responder
   enforcement.
-
-## Appendix: legacy scenario IDs
-
-Transitional map for the existing eval suite; new work references anchors
-only. Collisions and splits below are findings, not accidents: two legacy IDs
-mapping to one anchor were one behavior; one ID mapping to two anchors was
-two.
-
-| Legacy                   | Anchor                                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------------------------- |
-| approval-1               | owner.approval.response.settle-allow                                                                |
-| approval-2               | owner.approval.response.settle-allow-other-actor                                                    |
-| approval-3               | owner.approval.response.reject-unauthorized                                                         |
-| approval-4, approval-5   | owner.approval.message.run-open                                                                     |
-| approval-6               | owner.approval.message.run-open (option-like text guard)                                            |
-| approval-7               | owner.approval.compound.settle-then-run                                                             |
-| approval-7b              | owner.approval.compound.settle-then-run-siblings-open                                               |
-| approval-8               | owner.approval.response.settle-allow-after-turns                                                    |
-| approval-9, approval-14  | owner.approval.response.reject-stale                                                                |
-| approval-10              | owner.approval.compound.reject-stale-then-run                                                       |
-| approval-11              | owner.approval.response.settle-cancel                                                               |
-| approval-12, approval-13 | owner.approval.response.settle-race                                                                 |
-| approval-15              | owner.approval.response.reject-policy-failed                                                        |
-| approval-15b             | owner.approval.response.reject-invalid                                                              |
-| approval-16              | owner.approval.response.pend-authorization                                                          |
-| approval-17              | owner.approval.response.settle-cancel-pending-candidate                                             |
-| approval-18              | owner.batch.response.settle-partial                                                                 |
-| approval-19              | owner.batch.close.fire-continuation                                                                 |
-| approval-20              | owner.batch.park.append                                                                             |
-| approval-21              | owner.approval.message.no-retroactive-binding                                                       |
-| approval-22              | owner.approval.response.settle-allow-anonymous                                                      |
-| approval-23              | scheduler.delivery.admit-actor-partition                                                            |
-| approval-24              | owner.batch.park.persist-with-runtime-action                                                        |
-| approval-25              | owner.batch.park.fail-closed-metadata                                                               |
-| question-1               | owner.question.response.settle-answer                                                               |
-| question-2               | owner.question.message.dismiss-superseded                                                           |
-| question-3               | owner.question.message.run-open-other-actor                                                         |
-| question-4               | owner.question.compound.settle-then-run                                                             |
-| question-5               | owner.batch.message.dismiss-question-only                                                           |
-| limit-1                  | owner.limit.message.supersede                                                                       |
-| limit-2                  | owner.limit.response.settle-continue                                                                |
-| limit-3                  | owner.limit.response.settle-stop                                                                    |
-| limit-4                  | owner.limit.response.reject-stale                                                                   |
-| auth-1                   | owner.auth.message.run-open                                                                         |
-| auth-2                   | owner.auth.callback.complete                                                                        |
-| auth-3                   | owner.auth.deadline.complete-timed-out, owner.auth.close.complete, owner.auth.callback.reject-stale |
-| proxy-1                  | projector.route.park.project                                                                        |
-| proxy-2                  | projector.route.drop.route-lost                                                                     |
-| proxy-3                  | projector.route.close.project                                                                       |
-| proxy-4                  | projector.route.response.reject-stale-after-drop                                                    |
-| proxy-5                  | projector.route.response.forward-responder                                                          |
-| proxy-6                  | projector.route.response.reject-unauthorized-remote                                                 |
-| cancellation-1           | owner.obligation.turn-cancel.dismiss                                                                |
-| cancellation-2           | owner.obligation.session-end.dismiss                                                                |
-| cancellation-3           | projector.route.drop.route-lost (parent session end)                                                |
-| cancellation-4           | owner.batch.forced-close.no-continuation                                                            |
 
 [#1830]: https://github.com/vercel/eve/pull/1830
 [#1868]: https://github.com/vercel/eve/pull/1868
