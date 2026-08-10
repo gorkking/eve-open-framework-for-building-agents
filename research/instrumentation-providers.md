@@ -1,7 +1,7 @@
 ---
 issue: TBD
 status: proposed
-last_updated: "2026-08-07"
+last_updated: "2026-08-10"
 ---
 
 # Instrumentation providers
@@ -92,7 +92,7 @@ specific to how those events are recorded.
 
 ```mermaid
 flowchart TD
-  H["harness execution"] --> B["lifecycle bus — eve-owned<br>session · turn · step.attempt · action · model.call · tool.call"]
+  H["harness execution"] --> B["lifecycle bus — eve-owned<br>session · turn · step.attempt · action · input · model.call · tool.call"]
   B --> O["otel()"]
   B --> BT["braintrust()"]
   B --> AU["authored provider"]
@@ -126,6 +126,8 @@ export function defineInstrumentation(provider: InstrumentationProvider): Instru
 export function disableInstrumentation(): InstrumentationProvider;
 
 export interface InstrumentationProvider {
+  /** Defaults to metadata. Content adds prompts, responses, and tool payloads. */
+  readonly capture?: "metadata" | "content";
   readonly events?: ProviderEvents;
   /** Once per process. eve accepts no request until it resolves. */
   readonly setup?: (context: ProviderSetupContext) => void | PromiseLike<void>;
@@ -167,6 +169,11 @@ export interface ProviderEvents {
   readonly "action.started"?: Handler<ActionStarted>;
   readonly "action.completed"?: Handler<ActionTerminal>;
   readonly "action.failed"?: Handler<ActionTerminal>;
+
+  // One request for user input, including tool approval. The pair survives
+  // session suspension and a worker change.
+  readonly "input.requested"?: Handler<InputRequested>;
+  readonly "input.resolved"?: Handler<InputResolved>;
 
   // The model SDK's own view of one execution inside one attempt. An ordinary
   // tool call fires these *and* `action.*`, so handling both records it twice.
@@ -228,12 +235,20 @@ which. `tool.call.*` is the SDK's own execution boundary, for when that is
 specifically what you want; `model.call.*` is the other half of that view and
 overlaps nothing.
 
+User input needs its own durable boundary. `input.requested` fires once per
+request, not once per batch, and `input.resolved` carries the normalized outcome
+against the original action and turn even when another worker handles the
+response. The generic pair covers questions and session-limit prompts as well as
+tool approval. An OpenTelemetry provider maps `tool-approval` to a durable
+`agent.approval` child of `agent.action`; the span measures human wait time, while
+the later `ai.toolCall` measures execution after approval.
+
 ### State that outlives the handler
 
 `ctx.state` is what a provider would otherwise hand-roll. eve keys it by provider
 and operation, hands it back on the terminal, and releases it there. For a
-session, turn, step attempt, or action it is serialized, so a `completed` handler
-reads what a `started` handler wrote even in a different process.
+session, turn, step attempt, action, or input request it is serialized, so a
+terminal handler reads what its start handler wrote even in a different process.
 
 This is not hypothetical: eve already keeps exactly this for itself. The store
 that carries session and turn trace context across a step boundary now also holds
@@ -645,9 +660,10 @@ export function braintrust(options: BraintrustOptions = {}): InstrumentationProv
 ```
 
 Redaction is a span processor. eve puts one in front of each OpenTelemetry
-destination, and `recordInputs` and `recordOutputs` say what it strips. The bus
-has no equivalent: a handler is handed the prompts and the tool payloads as they
-are. A provider that records them offers its own switches.
+destination, and `recordInputs` and `recordOutputs` say what it strips. Bus
+providers use `capture`: metadata is the default, while `"content"` adds model
+messages, tool payloads, input prompts, responses, and failure details. eve only
+builds those projections when some provider asks for them.
 
 ## Migration
 
