@@ -17,7 +17,8 @@ const EVE_NEXT_PRODUCTION_ORIGIN_ENV = "EVE_NEXT_PRODUCTION_ORIGIN";
 const EVE_NEXT_PRODUCTION_PORT_ENV = "EVE_NEXT_PRODUCTION_PORT";
 const DEFAULT_EVE_NEXT_PRODUCTION_PORT = 4274;
 const EVE_NAMED_AGENT_ROUTE_PREFIX = "/eve/agents";
-const AGENT_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+const AGENT_NAME_PATTERN = /^[a-z](?:[a-z_-]*[a-z])?$/;
+const MAX_VERCEL_AGENT_NAME_LENGTH = 60;
 
 type ArrayElement<T> = T extends readonly (infer TElement)[] ? TElement : never;
 type NextRewrites = Awaited<ReturnType<NonNullable<NextConfig["rewrites"]>>>;
@@ -309,11 +310,9 @@ async function resolveNextConfig<TConfig extends EveNextConfig>(
 }
 
 function assertValidAgentName(name: string): void {
-  if (!AGENT_NAME_PATTERN.test(name)) {
+  if (name.length > MAX_VERCEL_AGENT_NAME_LENGTH || !AGENT_NAME_PATTERN.test(name)) {
     throw new Error(
-      `eve Next.js agent name ${JSON.stringify(
-        name,
-      )} is invalid. Use lowercase letters, numbers, underscores, or hyphens, starting with a letter or number.`,
+      `eve Next.js agent name ${JSON.stringify(name)} is invalid for a Vercel service. Use 1-${MAX_VERCEL_AGENT_NAME_LENGTH} lowercase letters, underscores, or hyphens, beginning and ending with a letter.`,
     );
   }
 }
@@ -331,7 +330,7 @@ function createDefaultBuildCommand(input: {
   readonly nextRoot: string;
 }): string {
   const eveBinaryPath = toPosixPath(
-    relative(input.agentRoot, resolveEveBinaryPath(input.nextRoot)),
+    relative(input.agentRoot, resolveEveBinaryPath(input.agentRoot)),
   );
   return `node ${quoteShellArg(eveBinaryPath)} build`;
 }

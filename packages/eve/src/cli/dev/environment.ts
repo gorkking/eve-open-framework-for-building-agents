@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseEnv } from "node:util";
 
 import { isObject } from "#shared/guards.js";
@@ -51,7 +51,17 @@ export function getDevelopmentEnvironmentFilePaths(appRoot: string): string[] {
  * reloads so dev-mode file watching can pick up changed values.
  */
 export function loadDevelopmentEnvironmentFiles(appRoot: string): void {
-  getDevelopmentEnvironmentLoader(appRoot).reload();
+  const resolvedAppRoot = resolve(appRoot);
+  const agentsRoot = dirname(resolvedAppRoot);
+  const collectionRoot = dirname(agentsRoot);
+  if (
+    basename(agentsRoot) === "agents" &&
+    existsSync(join(collectionRoot, "package.json")) &&
+    existsSync(join(resolvedAppRoot, "agent"))
+  ) {
+    getDevelopmentEnvironmentLoader(collectionRoot).reload();
+  }
+  getDevelopmentEnvironmentLoader(resolvedAppRoot).reload();
 }
 
 export function stageDevelopmentEnvironmentFiles(appRoot: string): DevelopmentEnvironmentReload {

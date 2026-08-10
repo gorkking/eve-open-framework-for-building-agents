@@ -12,6 +12,10 @@ import {
   isProjectMarkerEntry,
 } from "#discover/filesystem.js";
 import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
+import {
+  resolveAgentCollection,
+  resolveOwningAgentCollection,
+} from "#internal/agent-collection.js";
 
 /**
  * Supported project layouts for filesystem-based agents.
@@ -55,6 +59,26 @@ export async function resolveDiscoveryProject(
 ): Promise<ResolvedDiscoveryProject> {
   const source = options.source ?? createDiskProjectSource();
   const startDirectory = await resolveSearchDirectory(source, startPath);
+
+  if (options.source === undefined) {
+    const collectionChild = await resolveOwningAgentCollection(startDirectory);
+    if (collectionChild !== undefined) {
+      return {
+        agentRoot: join(collectionChild.member.appRoot, "agent"),
+        appRoot: collectionChild.member.appRoot,
+        layout: "nested",
+      };
+    }
+    const collection = await resolveAgentCollection(startDirectory);
+    if (collection !== undefined) {
+      throw new Error(
+        `This directory is an eve agent collection. Run single-agent commands from one of: ${collection.members
+          .map((member) => `agents/${member.name}`)
+          .join(", ")}.`,
+      );
+    }
+  }
+
   let currentDirectory = startDirectory;
 
   while (true) {

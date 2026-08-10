@@ -1,0 +1,80 @@
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("#shared/resolve-eve-binary.js", () => ({
+  resolveEveBinaryPath: (root: string) => join(root, "node_modules", "eve", "bin", "eve.js"),
+}));
+
+import { resolveAgentCollection } from "#internal/agent-collection.js";
+import { buildAgentCollection } from "#internal/vercel/build-agent-collection.js";
+
+async function createCollection(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "eve-collection-build-"));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ private: true, packageManager: "pnpm@10.0.0" }),
+  );
+  await Promise.all([
+    mkdir(join(root, "agents", "support", "agent"), { recursive: true }),
+    mkdir(join(root, "agents", "research", "agent"), { recursive: true }),
+  ]);
+  return root;
+}
+
+describe("buildAgentCollection", () => {
+  it("emits peer services and canonical public routes", async () => {
+    const root = await createCollection();
+    const collection = await resolveAgentCollection(root);
+    expect(collection).toBeDefined();
+
+    const output = await buildAgentCollection(collection!);
+    const config = JSON.parse(await readFile(join(output, "config.json"), "utf8"));
+
+    expect(config.routes).toEqual([
+      {
+        destination: { service: "eve-research", type: "service" },
+        src: "^/eve/agents/research/eve/v1/(.*)$",
+      },
+      {
+        destination: { service: "eve-support", type: "service" },
+        src: "^/eve/agents/support/eve/v1/(.*)$",
+      },
+    ]);
+    expect(config.services["eve-support"]).toEqual({
+      buildCommand:
+        "export EVE_PUBLIC_ROUTE_PREFIX='/eve/agents/support' && node 'node_modules/eve/bin/eve.js' build",
+      framework: "eve",
+      root: "agents/support",
+      routePrefix: "/eve/agents/support",
+      routes: [
+        {
+          src: "^/eve/agents/support/eve/v1/(.*)$",
+          transforms: [{ args: "/eve/v1/$1", op: "set", type: "request.path" }],
+        },
+      ],
+    });
+  });
+
+  it("uses a child package build script", async () => {
+    const root = await createCollection();
+    await writeFile(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "agents/*"\n');
+    await writeFile(
+      join(root, "agents", "support", "package.json"),
+      JSON.stringify({ private: true, scripts: { build: "generate && eve build" } }),
+    );
+    const collection = await resolveAgentCollection(root);
+    const output = await buildAgentCollection(collection!);
+    const config = JSON.parse(await readFile(join(output, "config.json"), "utf8"));
+    expect(config.services["eve-support"].buildCommand).toContain("pnpm run build");
+  });
+
+  it("refuses to assemble an authored graph", async () => {
+    const root = await createCollection();
+    await writeFile(join(root, "vercel.json"), JSON.stringify({ services: {} }));
+    const collection = await resolveAgentCollection(root);
+    await expect(buildAgentCollection(collection!)).rejects.toThrow(/Run `vercel build`/);
+  });
+});

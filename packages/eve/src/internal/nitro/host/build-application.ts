@@ -40,6 +40,7 @@ import type { ApplicationBuildOptions } from "#internal/nitro/host/types.js";
 import { findClosestVercelOutputDirectory } from "#shared/vercel-output-directory.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { resolveDiscoveryProject } from "#discover/project.js";
+import { resolveOwningAgentCollection } from "#internal/agent-collection.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 
 function trimTrailingSlash(path: string): string {
@@ -153,11 +154,15 @@ function normalizeServiceCollection(
 
 /**
  * Resolve the route prefix an eve service is mounted under when it is
- * co-deployed behind a host web service (Next.js, Nuxt, SvelteKit etc.).
+ * co-deployed alongside other services — either behind a host web service
+ * (Next.js, Nuxt, SvelteKit etc.) or, host-lessly, as one of several sibling
+ * eve services in a single project.
  *
- * Any service whose framework is not `eve` is treated as a host that proxies
- * eve's transport routes behind a prefix. A standalone eve deployment (no host
- * service) returns `undefined` so its output stays routable at the root.
+ * The prefix is read from the eve service's own `routePrefix`/`mount`, so a
+ * standalone single-agent deployment (whose service carries no prefix, or that
+ * has no services config at all) still resolves to `undefined` and stays
+ * routable at the root. Only a service explicitly mounted under a non-root
+ * prefix reports one.
  */
 function resolveCoDeployedEveServicePrefix(input: {
   appRoots: readonly string[];
@@ -177,12 +182,10 @@ function resolveCoDeployedEveServicePrefix(input: {
     return undefined;
   }
 
-  let hasHostService = false;
   let servicePrefix: string | undefined;
 
   for (const service of services) {
     if (service.framework !== "eve") {
-      hasHostService = true;
       continue;
     }
 
@@ -199,7 +202,7 @@ function resolveCoDeployedEveServicePrefix(input: {
     }
   }
 
-  return hasHostService ? servicePrefix : undefined;
+  return servicePrefix;
 }
 
 async function resolveCoDeployedEveServicePrefixForVercelFunctionOutput(
@@ -384,6 +387,21 @@ async function buildApplicationInWorkspace(
     prepareProductionApplicationHost(workspace),
   );
   const isVercelBuild = Boolean(process.env.VERCEL);
+  const collectionChild = await resolveOwningAgentCollection(preparedHost.appRoot);
+  const collectionPublicRoutePrefix =
+    !isVercelBuild || collectionChild === undefined
+      ? undefined
+      : `/eve/agents/${collectionChild.member.name}`;
+  if (
+    options.publicRoutePrefix !== undefined &&
+    collectionPublicRoutePrefix !== undefined &&
+    options.publicRoutePrefix !== collectionPublicRoutePrefix
+  ) {
+    throw new Error(
+      `EVE_PUBLIC_ROUTE_PREFIX ${JSON.stringify(options.publicRoutePrefix)} conflicts with collection route ${JSON.stringify(collectionPublicRoutePrefix)}.`,
+    );
+  }
+  const publicRoutePrefix = options.publicRoutePrefix ?? collectionPublicRoutePrefix;
 
   const servicePrefix = isVercelBuild
     ? await measureBuildPhase(profiler, "vercel.service-prefix.resolve", () =>
@@ -397,7 +415,7 @@ async function buildApplicationInWorkspace(
     createProductionApplicationNitro(preparedHost, {
       buildDir: workspace.nitro.buildDir,
       outputDir: workspace.publication.output.stagedDir,
-      publicRoutePrefix: options.publicRoutePrefix,
+      publicRoutePrefix,
     }),
   );
 
@@ -440,7 +458,7 @@ async function buildApplicationInWorkspace(
     if (vercelServiceOutput !== undefined) {
       await measureBuildPhase(profiler, "vercel.service-crons.normalize", () =>
         normalizeVercelServiceCrons({
-          publicRoutePrefix: options.publicRoutePrefix,
+          publicRoutePrefix,
           serviceOutputDirectory: workspace.publication.output.stagedDir,
         }),
       );

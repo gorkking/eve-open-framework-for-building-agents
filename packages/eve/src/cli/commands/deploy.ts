@@ -1,4 +1,8 @@
 import { isEveProject } from "#setup/scaffold/index.js";
+import {
+  resolveAgentCollection,
+  resolveOwningAgentCollection,
+} from "#internal/agent-collection.js";
 
 import { runDeployFlow, type DeployFlowDeps } from "#setup/flows/deploy.js";
 import { createPrompter, type Prompter } from "#setup/prompter.js";
@@ -35,10 +39,27 @@ export async function runDeployCommand(
   appRoot: string,
   dependencies: DeployCommandDependencies = defaultDependencies,
 ): Promise<void> {
-  if (!(await dependencies.isEveProject(appRoot))) {
+  const owningCollection = await resolveOwningAgentCollection(appRoot);
+  if (owningCollection !== undefined) {
+    logger.error(
+      `This agent belongs to the collection at ${owningCollection.collection.root}. Run \`eve deploy\` from the collection root to deploy every peer agent together.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const collection = await resolveAgentCollection(appRoot);
+  if (!(await dependencies.isEveProject(appRoot)) && collection === undefined) {
     logger.error(NOT_AN_AGENT_MESSAGE);
     process.exitCode = 1;
     return;
+  }
+  if (collection?.mode === "authored") {
+    const { validateAuthoredAgentServices } =
+      await import("#internal/vercel/validate-authored-agent-services.js");
+    const validation = await validateAuthoredAgentServices(collection);
+    for (const name of validation.omittedAgentNames) {
+      logger.error(`warning: agents/${name} is not selected by vercel.json#services.`);
+    }
   }
 
   const prompter = dependencies.createPrompter?.() ?? createPrompter();
