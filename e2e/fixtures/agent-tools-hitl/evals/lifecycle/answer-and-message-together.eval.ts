@@ -17,6 +17,7 @@ import { gateLifecycle } from "./shared";
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transition: "owner.question.compound.settle-then-run" },
   description:
     "owner.question.compound.settle-then-run: compound answer+message settles the question, then runs the message.",
   async test(t) {
@@ -46,6 +47,7 @@ export default defineEval({
           type: "responded",
           optionId: "red",
           outcome: "answered",
+          responder: null,
         }) &&
         exactRequestActionResult(events, trace, { status: "completed" }) &&
         exactEventOrder(events, [

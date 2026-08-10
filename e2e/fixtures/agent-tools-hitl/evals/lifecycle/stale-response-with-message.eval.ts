@@ -18,6 +18,12 @@ import { gateLifecycle } from "./shared";
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: {
+    transitions: [
+      "owner.approval.response.settle-deny",
+      "owner.approval.compound.reject-stale-then-run",
+    ],
+  },
   description:
     "owner.approval.compound.reject-stale-then-run: stale response is rejected; the co-delivered message still runs.",
   async test(t) {
@@ -45,6 +51,7 @@ export default defineEval({
           type: "responded",
           optionId: "deny",
           outcome: "denied",
+          responder: null,
         }) && exactRequestActionResult(events, trace, { status: "rejected" }),
     );
 

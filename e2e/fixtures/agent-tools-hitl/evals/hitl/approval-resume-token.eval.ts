@@ -4,6 +4,7 @@ const TOKEN = "approval-resume-token-T8K2";
 
 export default defineEval({
   tags: ["real-model"],
+  metadata: { transition: "owner.approval.response.settle-allow" },
   description: "ToolContext.getToken remains available when an approval-gated tool resumes.",
   async test(t) {
     const parked = await t.send(

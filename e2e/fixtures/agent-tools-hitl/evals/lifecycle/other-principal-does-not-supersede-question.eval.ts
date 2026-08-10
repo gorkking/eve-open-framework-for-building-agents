@@ -5,7 +5,7 @@ import {
   exactRequestActionResult,
   exactRequestTerminal,
   expectFollowUpSessionActive,
-  noRequestLifecycleEvents,
+  noRequestEvents,
   traceRequest,
   verifyFollowUpTurn,
 } from "./lifecycle";
@@ -21,7 +21,9 @@ const RESPONDER_A = {
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "Another principal's message does not supersede the originating actor's question.",
+  metadata: { transition: "owner.question.message.run-open-other-actor" },
+  description:
+    "owner.question.message.run-open-other-actor: another principal's message leaves the originating actor's question open.",
   async test(t) {
     gateLifecycle(t);
     const parked = await sendAs(
@@ -45,7 +47,7 @@ export default defineEval({
     message.event("message.received", { count: 1 });
     message.event("message.completed", { count: 1 });
     message.eventsSatisfy("principal B leaves A's question open", (events) =>
-      noRequestLifecycleEvents(events, trace),
+      noRequestEvents(events, trace),
     );
     message.calledTool("principal-marker", {
       output: /PRINCIPALS current=user:e2e-hitl-b initiator=user:e2e-hitl-a/,

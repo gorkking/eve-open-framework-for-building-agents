@@ -1,20 +1,23 @@
 import { defineEval } from "eve/evals";
 
-import { invokeCallback, sendAs, verifyFollowUp } from "./shared";
+import { authorizationId, gateLifecycle, invokeCallback, sendAs, verifyFollowUp } from "./shared";
 
 const TOKEN = "interactive-auth-token-H6P3";
 
 export default defineEval({
   tags: ["real-model"],
+  metadata: { transition: "owner.auth.callback.complete" },
   description:
-    "Interactive authorization callback resumes the blocked tool and keeps the session active.",
+    "owner.auth.callback.complete: one callback completes the matching challenge and keeps the session active.",
   async test(t) {
+    gateLifecycle(t);
     const parked = await sendAs(
       t,
       'Call auth-probe exactly once with marker "callback-ok". Include its token verbatim.',
       "A",
     );
     parked.event("authorization.required", { count: 1 });
+    const pendingAuthorizationId = authorizationId(parked);
     parked.notEvent("authorization.completed");
     parked.event("session.waiting", { count: 1 });
 
@@ -28,9 +31,13 @@ export default defineEval({
         count: 1,
       },
     ]);
-    resumed.turn.event("authorization.completed", {
-      data: { outcome: "authorized" },
-      count: 1,
+    resumed.turn.eventsSatisfy("completion identifies the challenge that opened", (events) => {
+      const matches = events.filter((event) => {
+        if (event.type !== "authorization.completed") return false;
+        const data = event.data as Record<string, unknown>;
+        return data.authorizationId === pendingAuthorizationId && data.outcome === "authorized";
+      });
+      return matches.length === 1;
     });
     resumed.turn.calledTool("auth-probe", {
       output: { actor: "e2e-hitl-a", marker: "callback-ok", token: TOKEN },

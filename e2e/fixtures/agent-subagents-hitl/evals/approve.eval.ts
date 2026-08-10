@@ -13,7 +13,9 @@ const GOOG_PRICE = "178.92";
  */
 export default defineEval({
   tags: ["real-model"],
-  description: "Subagent tool approval proxied through the parent session.",
+  metadata: { transition: "projector.route.park.project" },
+  description:
+    "projector.route.park.project: a child-owned approval is actionable through the parent session.",
 
   async test(t) {
     await t.send(

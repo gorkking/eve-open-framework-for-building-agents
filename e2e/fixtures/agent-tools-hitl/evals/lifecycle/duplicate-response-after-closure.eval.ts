@@ -19,6 +19,9 @@ import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: {
+    transitions: ["owner.approval.response.settle-allow", "owner.approval.response.reject-stale"],
+  },
   description:
     "owner.approval.response.reject-stale: responses after closure are stale; no second adjudication or execution.",
   async test(t) {
@@ -46,6 +49,7 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestActionResult(events, trace, {
           output: GUARDED_ECHO_TOKEN,

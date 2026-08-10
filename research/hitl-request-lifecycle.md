@@ -493,6 +493,16 @@ unless the entry says the sequence is exact.
   `responder: null`. The fallback never fabricates a verified principal for
   response policy.
 
+#### owner.approval.response.settle-deny
+
+- **Given:** an approval is open.
+- **When:** an actor sends an explicitly correlated Deny response accepted by
+  the response policy.
+- **Then:** the approval settles as denied and the tool does not run. The
+  group's continuation fires only when every sibling is terminal.
+- **Observed:** `input.responded(outcome: denied)` precedes the rejected
+  `action.result` for the tool call.
+
 #### owner.approval.response.settle-allow-after-turns
 
 - **Given:** an approval is the last open member of its group and unrelated
@@ -643,6 +653,15 @@ unless the entry says the sequence is exact.
   response policy.
 - **Observed:** `input.responded(outcome: answered)` closes only that
   question.
+
+#### owner.question.response.reject-stale
+
+- **Given:** a question is no longer open but its owner session is active.
+- **When:** an actor sends a response referencing its request ID.
+- **Then:** eve changes no obligation. The agent initiates a turn with the
+  stale-attempt context.
+- **Observed:** `input.response.rejected(reason: stale)`, then model output,
+  then `session.waiting`; no question result is replayed.
 
 #### owner.question.message.dismiss-superseded
 
@@ -837,6 +856,16 @@ unless the entry says the sequence is exact.
   terminal session event.
 
 ### scheduler
+
+#### scheduler.delivery.admit-arrival-order
+
+- **Given:** deliveries arrive while a turn is active.
+- **When:** the turn reaches a receptive boundary.
+- **Then:** eve admits the buffered deliveries exactly once in durable arrival
+  order. Each delivery is interpreted against the state produced by the
+  preceding one.
+- **Observed:** their `message.received` and resulting transition events retain
+  arrival order.
 
 #### scheduler.delivery.admit-actor-partition
 

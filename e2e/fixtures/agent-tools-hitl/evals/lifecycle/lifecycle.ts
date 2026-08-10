@@ -36,7 +36,7 @@ type TerminalExpectation =
   | {
       readonly optionId: string;
       readonly outcome: RespondedOutcome;
-      readonly responder?: ResponderExpectation | null;
+      readonly responder: ResponderExpectation | null;
       readonly type: "responded";
     }
   | {
@@ -154,7 +154,7 @@ export function exactRequestTerminal(
   const response = asRecord(event.data.response);
   return (
     event.type === "input.responded" &&
-    matchesResponseIdentity(event.data, expected.responder ?? null) &&
+    matchesResponseIdentity(event.data, expected.responder) &&
     event.data.outcome === expected.outcome &&
     response?.requestId === request.requestId &&
     response.optionId === expected.optionId
@@ -164,7 +164,7 @@ export function exactRequestTerminal(
 export function exactRequestRejection(
   events: readonly unknown[],
   request: RequestTrace,
-  reason: "invalid" | "policy-failed" | "stale" | "unauthorized",
+  reason: "candidate-cancelled" | "invalid" | "policy-failed" | "stale" | "unauthorized",
   responder: ResponderExpectation | null = null,
 ): boolean {
   const rejected = requestEvents(events, request.requestId);
@@ -177,11 +177,17 @@ export function exactRequestRejection(
   );
 }
 
-export function noRequestLifecycleEvents(
-  events: readonly unknown[],
-  request: RequestTrace,
-): boolean {
-  return requestEvents(events, request.requestId).length === 0;
+export function noRequestEvents(events: readonly unknown[], request: RequestTrace): boolean {
+  return (
+    requestEvents(events, request.requestId).length === 0 &&
+    events.every((value) => {
+      const event = asEvent(value);
+      if (event?.type !== "input.requested" || !Array.isArray(event.data.requests)) return true;
+      return event.data.requests.every(
+        (candidate) => asRecord(candidate)?.requestId !== request.requestId,
+      );
+    })
+  );
 }
 
 export function exactRequestExposure(events: readonly unknown[], request: RequestTrace): boolean {

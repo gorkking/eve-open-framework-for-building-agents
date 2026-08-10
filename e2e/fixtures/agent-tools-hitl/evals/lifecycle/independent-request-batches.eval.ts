@@ -7,7 +7,7 @@ import {
   exactRequestExposure,
   exactRequestTerminal,
   expectFollowUpSessionActive,
-  noRequestLifecycleEvents,
+  noRequestEvents,
   requireRequest,
   traceRequest,
   verifyFollowUpTurn,
@@ -15,14 +15,16 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * owner.batch.park.append: while an approval batch is open, a later turn creates its own input
+ * owner.batch.park.append: while an ApprovalBatch group is open, a later turn creates its own input
  * batch. Both stay independently addressable: closing the newer question
  * neither touches the older approval nor replays its batch; the approval
  * still settles and runs afterward.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "owner.batch.park.append: later batches coexist with an older open approval batch.",
+  metadata: { transition: "owner.batch.park.append" },
+  description:
+    "owner.batch.park.append: later batches coexist with an older open ApprovalBatch group.",
   async test(t) {
     gateLifecycle(t);
 
@@ -61,11 +63,12 @@ export default defineEval({
           type: "responded",
           optionId: "yes",
           outcome: "answered",
+          responder: null,
         }) &&
-        noRequestLifecycleEvents(events, approvalTrace) &&
+        noRequestEvents(events, approvalTrace) &&
         exactRequestActionResult(events, approvalTrace, null),
     );
-    // The older approval batch still closes and runs.
+    // The older ApprovalBatch group still closes and runs.
     const approved = await respondToRequests(t, {
       requestId: approval.requestId,
       optionId: "approve",
@@ -79,6 +82,7 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestActionResult(events, approvalTrace, {
           output: GUARDED_ECHO_TOKEN,
@@ -99,11 +103,13 @@ export default defineEval({
           type: "responded",
           optionId: "yes",
           outcome: "answered",
+          responder: null,
         }) &&
         exactRequestTerminal(events, approvalTrace, {
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestActionResult(events, approvalTrace, {
           output: GUARDED_ECHO_TOKEN,

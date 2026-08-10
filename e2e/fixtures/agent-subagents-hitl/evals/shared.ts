@@ -1,5 +1,11 @@
 import type { EveEvalContext, EveEvalTurn } from "eve/evals";
 
+export function gateLifecycle(t: EveEvalContext): void {
+  if (process.env.EVE_HITL_LIFECYCLE_CONTRACT !== "1") {
+    t.skip("Projected HITL lifecycle events are not active yet.");
+  }
+}
+
 export async function verifyFollowUp(
   t: EveEvalContext,
   sessionId: string,

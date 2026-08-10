@@ -4,8 +4,12 @@ import { authorizationUrl, gateLifecycle, sendAs, verifyFollowUp } from "./share
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: {
+    transitions: ["owner.auth.deadline.complete-timed-out", "owner.auth.callback.reject-stale"],
+  },
   timeoutMs: 30_000,
-  description: "Authorization deadline closes once; a later callback is stale and cannot run work.",
+  description:
+    "owner.auth.deadline.complete-timed-out / owner.auth.callback.reject-stale: deadline wins once and the late callback is stale.",
   async test(t) {
     gateLifecycle(t);
     const parked = await sendAs(t, "Call auth-timeout-probe exactly once.", "A");

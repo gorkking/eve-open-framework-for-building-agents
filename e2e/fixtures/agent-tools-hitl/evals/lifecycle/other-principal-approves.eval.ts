@@ -21,7 +21,9 @@ const RESPONDER_B = {
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "A second allowed principal settles another actor's approval.",
+  metadata: { transition: "owner.approval.response.settle-allow-other-actor" },
+  description:
+    "owner.approval.response.settle-allow-other-actor: a second allowed principal settles another actor's approval.",
   async test(t) {
     gateLifecycle(t);
     const parked = await sendAs(t, 'Call guarded-echo with note "principal-b-approve".', A);

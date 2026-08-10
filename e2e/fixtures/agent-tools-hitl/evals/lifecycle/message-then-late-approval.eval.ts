@@ -6,7 +6,7 @@ import {
   exactRequestActionResult,
   exactRequestTerminal,
   expectFollowUpSessionActive,
-  noRequestLifecycleEvents,
+  noRequestEvents,
   traceRequest,
   verifyFollowUpTurn,
 } from "./lifecycle";
@@ -15,10 +15,16 @@ import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 /**
  * owner.approval.message.run-open + owner.approval.response.settle-allow-after-turns: a message while an approval is open runs as a normal turn and
  * changes nothing about the request; a later accepted response still restores
- * the assistant-turn approval batch and runs the tool once.
+ * the ApprovalBatch group and runs the tool once.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: {
+    transitions: [
+      "owner.approval.message.run-open",
+      "owner.approval.response.settle-allow-after-turns",
+    ],
+  },
   description:
     "owner.approval.message.run-open/owner.approval.response.settle-allow-after-turns: messages never wedge; the approval stays answerable across turns.",
   async test(t) {
@@ -43,8 +49,7 @@ export default defineEval({
     intervening.event("message.received", { count: 1 });
     intervening.eventsSatisfy(
       "no request lifecycle event for the open approval",
-      (events) =>
-        noRequestLifecycleEvents(events, trace) && exactRequestActionResult(events, trace, null),
+      (events) => noRequestEvents(events, trace) && exactRequestActionResult(events, trace, null),
     );
 
     // owner.approval.response.settle-allow-after-turns: the approval settles after the intervening turn; the tool runs once.
@@ -61,6 +66,7 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: null,
         }) &&
         exactRequestActionResult(events, trace, {
           output: GUARDED_ECHO_TOKEN,

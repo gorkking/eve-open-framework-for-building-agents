@@ -5,7 +5,7 @@ import {
   exactRequestActionResult,
   exactRequestTerminal,
   expectFollowUpSessionActive,
-  noRequestLifecycleEvents,
+  noRequestEvents,
   traceRequest,
   verifyFollowUpTurn,
 } from "./lifecycle";
@@ -21,7 +21,9 @@ const RESPONDER_A = {
 
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "Another principal's message runs without touching the originating approval.",
+  metadata: { transition: "owner.approval.message.run-open" },
+  description:
+    "owner.approval.message.run-open: another principal's message runs without touching the originating approval.",
   async test(t) {
     gateLifecycle(t);
     const parked = await sendAs(t, 'Call guarded-echo with note "principal-b-message".', A);
@@ -42,8 +44,7 @@ export default defineEval({
     message.event("message.completed", { count: 1 });
     message.eventsSatisfy(
       "principal B's message leaves A's approval open",
-      (events) =>
-        noRequestLifecycleEvents(events, trace) && exactRequestActionResult(events, trace, null),
+      (events) => noRequestEvents(events, trace) && exactRequestActionResult(events, trace, null),
     );
     message.calledTool("principal-marker", {
       output: /PRINCIPALS current=user:e2e-hitl-b initiator=user:e2e-hitl-a/,

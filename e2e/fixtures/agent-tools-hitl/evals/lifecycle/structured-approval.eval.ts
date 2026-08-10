@@ -1,6 +1,6 @@
 import { defineEval } from "eve/evals";
 
-import { respondToRequests } from "./delivery";
+import { respondAs, sendAs } from "./delivery";
 import {
   exactEventOrder,
   exactRequestActionResult,
@@ -11,19 +11,27 @@ import {
 } from "./lifecycle";
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
+const A = "Bearer e2e-hitl-principal-a";
+const RESPONDER_A = {
+  authenticator: "e2e-hitl-bearer",
+  issuer: "e2e",
+  principalId: "e2e-hitl-a",
+} as const;
+
 /**
  * owner.approval.response.settle-allow: an accepted Allow response from the originating actor settles the
  * approval, and the tool runs once when that settlement closes its
- * assistant-turn approval batch.
+ * ApprovalBatch group.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
+  metadata: { transition: "owner.approval.response.settle-allow" },
   description:
     "owner.approval.response.settle-allow: structured approve settles the request and runs the tool once.",
   async test(t) {
     gateLifecycle(t);
 
-    const parked = await t.send('Call the guarded-echo tool with note "ap-1".');
+    const parked = await sendAs(t, 'Call the guarded-echo tool with note "ap-1".', A);
     parked.calledTool("guarded-echo", { status: "pending", count: 1 });
     const request = t.requireInputRequest({
       display: "confirmation",
@@ -32,10 +40,7 @@ export default defineEval({
     });
     const trace = traceRequest(parked.events, request);
 
-    const approved = await respondToRequests(t, {
-      requestId: request.requestId,
-      optionId: "approve",
-    });
+    const approved = await respondAs(t, { requestId: request.requestId, optionId: "approve" }, A);
     approved.expectOk();
     expectFollowUpSessionActive(approved, parked.sessionId);
     approved.eventsSatisfy(
@@ -45,6 +50,7 @@ export default defineEval({
           type: "responded",
           optionId: "approve",
           outcome: "allowed",
+          responder: RESPONDER_A,
         }) &&
         exactRequestActionResult(events, trace, {
           output: GUARDED_ECHO_TOKEN,

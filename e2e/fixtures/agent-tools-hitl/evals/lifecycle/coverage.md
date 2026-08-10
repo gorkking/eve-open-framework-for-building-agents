@@ -1,69 +1,79 @@
-# HITL lifecycle scenario coverage
+# HITL transition coverage
 
-Executable form of the normative scenarios in
-`research/hitl-request-lifecycle.md`. Evals here are gated by
-`EVE_HITL_LIFECYCLE_CONTRACT=1` and skip until the behavior and
-lifecycle-event stages land. “Gated” means an acceptance test exists but does
-not execute yet; “partial” names existing evidence that does not prove the full
-scenario; “planned” names the intended tier without claiming coverage.
-Every gated scenario sends another ordinary message through the same session,
-requires its model response, and then requires another `session.waiting`
-boundary with no completion or failure boundary.
+Executable evidence for the transition catalog in
+`research/hitl-request-lifecycle.md`. Each eval declares its catalog identity
+in `metadata.transition` or `metadata.transitions`; descriptions are for
+humans, not identity.
 
-Families: `approval` (human consent for a tool call, including batch, timing,
-and creation mechanics), `question` (`ask_question`), `limit` (session-limit
-prompts), `auth` (connection authorization — OAuth credentials, not consent),
-`proxy` (child-owned requests routed through parents), `cancellation` (turn
-and session closure).
+Evals tagged `hitl-lifecycle` are gated by
+`EVE_HITL_LIFECYCLE_CONTRACT=1` until the interpreter and lifecycle-event
+stages land. **Gated** means executable target-state evidence exists;
+**Partial** means the listed evidence does not prove the whole transition;
+**Planned** names the intended tier without claiming evidence; **Blocked**
+names a missing runtime seam.
 
-| Scenario                                                                                            | Status  | Owner or evidence                                                                  | Missing before activation                                       |
-| --------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| owner.approval.response.settle-allow                                                                | Gated   | `structured-approval.eval.ts`                                                      | Behavior and lifecycle events                                   |
-| owner.approval.response.settle-allow-other-actor                                                    | Gated   | `other-principal-approves.eval.ts`                                                 | Lifecycle events                                                |
-| owner.approval.response.reject-unauthorized                                                         | Blocked | Response-authorizer API                                                            | Unauthorized response policy                                    |
-| owner.approval.message.run-open (other actor)                                                       | Gated   | `other-principal-message.eval.ts`                                                  | Nonblocking messages and lifecycle events                       |
-| owner.approval.message.run-open (originating actor)                                                 | Gated   | `message-then-late-approval.eval.ts`                                               | Nonblocking message behavior                                    |
-| owner.approval.response.settle-allow-after-turns                                                    | Partial | `message-then-late-approval.eval.ts`                                               | Integration-level committed-history ordering                    |
-| owner.approval.message.run-open (option-like text)                                                  | Gated   | `plain-text-does-not-approve.eval.ts`                                              | Structured-only response behavior                               |
-| owner.approval.compound.settle-then-run                                                             | Partial | `approval-and-message-together.eval.ts`                                            | Restored/resumed assistant-output boundaries                    |
-| owner.approval.compound.settle-then-run-siblings-open                                               | Planned | Unit tier in `input-requests.test.ts`                                              | Compound message with an unsettled sibling request              |
-| owner.approval.response.reject-stale                                                                | Gated   | `duplicate-response-after-closure.eval.ts`                                         | Stale-attempt turn context and lifecycle events                 |
-| owner.approval.compound.reject-stale-then-run                                                       | Gated   | `stale-response-with-message.eval.ts`                                              | Compound stale-response behavior                                |
-| owner.approval.response.settle-cancel, owner.approval.response.settle-race                          | Blocked | PR #1368                                                                           | Cancel decision and atomic race                                 |
-| owner.approval.response.settle-race (two responders)                                                | Blocked | Multiplayer fixture and PR #1368                                                   | Two allowed responders racing                                   |
-| owner.approval.response.reject-policy-failed, owner.approval.response.reject-invalid                | Planned | Unit resolver tier                                                                 | Policy failure, timeout, and invalid-value cases                |
-| owner.approval.response.pend-authorization, owner.approval.response.settle-cancel-pending-candidate | Blocked | PR #1368                                                                           | Durable authorization-required candidates                       |
-| owner.batch.response.settle-partial, owner.batch.close.fire-continuation                            | Partial | `partial-then-complete-request-batch.eval.ts`                                      | Committed-history and non-allowed closure variants              |
-| owner.batch.park.append                                                                             | Partial | `independent-request-batches.eval.ts`                                              | Exact question-result non-replay                                |
-| owner.approval.message.no-retroactive-binding                                                       | Planned | Integration arrival-order tier                                                     | Delivery/request-creation race injection                        |
-| owner.approval.response.settle-allow-anonymous                                                      | Partial | `structured-approval.eval.ts` anonymous path                                       | Policy-observed null responder and cross-session origin check   |
-| scheduler.delivery.admit-actor-partition                                                            | Blocked | Multiplayer-stage two-principal fixture                                            | Actor-homogeneous buffered delivery partitioning                |
-| owner.batch.park.persist-with-runtime-action, owner.batch.park.fail-closed-metadata                 | Planned | Tool-loop integration tier                                                         | Runtime-action collision and fail-closed metadata loss          |
-| owner.question.response.settle-answer                                                               | Partial | `../hitl/ask-question-select.eval.ts`                                              | `input.responded(answered)` identity and cardinality            |
-| owner.question.message.dismiss-superseded                                                           | Gated   | `message-supersedes-question.eval.ts`                                              | Owner-declared supersession                                     |
-| owner.question.message.run-open-other-actor                                                         | Gated   | `other-principal-does-not-supersede-question.eval.ts`                              | Non-originating actor behavior                                  |
-| owner.question.compound.settle-then-run                                                             | Gated   | `answer-and-message-together.eval.ts`                                              | Compound answer/message behavior                                |
-| owner.batch.message.dismiss-question-only                                                           | Planned | Unit mixed-batch tier                                                              | Question-only supersession while approval sibling remains open  |
-| owner.limit.message.supersede, owner.limit.response.reject-stale                                    | Gated   | `agent-session-limits/.../session-token-limit-reprompt-lifecycle.eval.ts`          | Re-prompt and stale lifecycle behavior                          |
-| owner.limit.response.settle-continue, owner.limit.response.settle-stop                              | Gated   | `agent-session-limits/.../session-token-limit-response-lifecycle.eval.ts`          | Continue/Stop lifecycle behavior                                |
-| owner.auth.message.run-open                                                                         | Gated   | `../auth/message-while-authorization-open.eval.ts`                                 | Nonblocking authorization scheduling                            |
-| owner.auth.callback.complete                                                                        | Partial | `../auth/authorization-callback.eval.ts`                                           | Other outcomes, candidate mappings, and stable authorization ID |
-| owner.auth.deadline.complete-timed-out                                                              | Gated   | `../auth/authorization-deadline.eval.ts`                                           | Deadline and stale-callback lifecycle                           |
-| owner.auth.close.complete                                                                           | Blocked | Session/turn authorization finalizers                                              | Cancel, completion, failure, and termination mappings           |
-| projector.route.park.project                                                                        | Covered | `subagent-hitl-proxy.integration.test.ts` + `agent-subagents-hitl/approve.eval.ts` | —                                                               |
-| projector.route.drop.route-lost                                                                     | Blocked | Route-disposal lifecycle seam                                                      | Route-loss projection before removal                            |
-| projector.route.close.project                                                                       | Partial | `agent-subagents-hitl/reject.eval.ts`                                              | Projected closure, route cleanup, and sibling preservation      |
-| projector.route.response.reject-stale-after-drop, projector.route.response.forward-responder        | Blocked | Disposed-hook and response-authorizer seams                                        | Closure race and responder-policy projection                    |
-| projector.route.response.reject-unauthorized-remote                                                 | Blocked | Remote interactive-HITL protocol                                                   | Forwarded response proof rejection                              |
-| owner.obligation.turn-cancel.dismiss                                                                | Blocked | Per-turn request collection and active-turn barrier                                | Owner-request cancellation                                      |
-| owner.obligation.session-end.dismiss                                                                | Blocked | Session finalizer with request state                                               | Session-end closure ordering                                    |
-| projector.route.drop.route-lost                                                                     | Blocked | Graceful parent-session termination seam                                           | Parent terminal event and projected route-loss ordering         |
-| owner.batch.forced-close.no-continuation                                                            | Blocked | Same finalizer seams as owner.obligation.turn-cancel.dismiss/2                     | No-restoration proof after forced closure                       |
+Catalog namespaces: `owner.approval`, `owner.question`, `owner.batch`,
+`owner.limit`, `owner.auth`, `owner.obligation`, `scheduler.delivery`, and
+`projector.route`.
 
-Existing evals in `../hitl/` that assert the pre-contract behavior —
-`text-approve`, `unrelated-message-queued`, `authored-always-unrelated-input`,
-`stale-ask-question-selection*` — are superseded by these scenarios and retire
-in the behavior stage.
+| Transition                                              | Status  | Owner or evidence                                                                                              | Missing before activation                                     |
+| ------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| owner.approval.response.settle-allow                    | Gated   | `structured-approval.eval.ts`                                                                                  | Lifecycle events                                              |
+| owner.approval.response.settle-allow-other-actor        | Gated   | `other-principal-approves.eval.ts`                                                                             | Lifecycle events                                              |
+| owner.approval.response.settle-allow-anonymous          | Planned | Interpreter unit matrix + anonymous channel eval                                                               | Policy-observed null responder and cross-session origin check |
+| owner.approval.response.settle-deny                     | Gated   | `stale-response-with-message.eval.ts`; behavioral supplement `../hitl/deny-then-regate.eval.ts`                | Lifecycle events                                              |
+| owner.approval.response.reject-unauthorized             | Blocked | Response-authorizer API                                                                                        | Unauthorized policy result                                    |
+| owner.approval.message.run-open                         | Gated   | `message-then-late-approval.eval.ts`, `other-principal-message.eval.ts`, `plain-text-does-not-approve.eval.ts` | Interpreter behavior + lifecycle events                       |
+| owner.approval.response.settle-allow-after-turns        | Partial | `message-then-late-approval.eval.ts`                                                                           | Integration-level committed-history ordering                  |
+| owner.approval.compound.settle-then-run                 | Partial | `approval-and-message-together.eval.ts`                                                                        | Restored/resumed output boundaries                            |
+| owner.approval.compound.settle-then-run-siblings-open   | Planned | `interaction/interpret.test.ts`                                                                                | Compound message with an open sibling                         |
+| owner.approval.response.reject-stale                    | Gated   | `duplicate-response-after-closure.eval.ts`                                                                     | Stale-attempt events                                          |
+| owner.approval.compound.reject-stale-then-run           | Gated   | `stale-response-with-message.eval.ts`                                                                          | Compound stale-response behavior                              |
+| owner.approval.response.settle-cancel                   | Blocked | PR #1368                                                                                                       | Cancel decision                                               |
+| owner.approval.response.settle-race                     | Blocked | PR #1368 + two-responder race fixture                                                                          | Atomic single winner                                          |
+| owner.approval.response.reject-policy-failed            | Planned | `interaction/interpret.test.ts`                                                                                | Policy throw/timeout result                                   |
+| owner.approval.response.reject-invalid                  | Planned | `interaction/interpret.test.ts`                                                                                | Invalid-value result                                          |
+| owner.approval.response.pend-authorization              | Blocked | PR #1368                                                                                                       | Durable authorization-required candidate                      |
+| owner.approval.response.settle-cancel-pending-candidate | Blocked | PR #1368                                                                                                       | Candidate cancellation + stale callback                       |
+| owner.batch.response.settle-partial                     | Gated   | `partial-then-complete-request-batch.eval.ts`                                                                  | Interpreter behavior + lifecycle events                       |
+| owner.batch.close.fire-continuation                     | Partial | `partial-then-complete-request-batch.eval.ts`                                                                  | Non-allowed closure variants                                  |
+| owner.batch.park.append                                 | Gated   | `independent-request-batches.eval.ts`                                                                          | Interpreter behavior + lifecycle events                       |
+| owner.approval.message.no-retroactive-binding           | Planned | Arrival-order integration tier                                                                                 | Delivery/request-creation race injection                      |
+| scheduler.delivery.admit-arrival-order                  | Gated   | `agent-session-limits/.../session-token-limit-approve.eval.ts`                                                 | Active-turn FIFO admission + lifecycle behavior               |
+| scheduler.delivery.admit-actor-partition                | Blocked | Two-principal fixture exists                                                                                   | Buffered A/B/A admission-order injection                      |
+| owner.batch.park.persist-with-runtime-action            | Planned | Tool-loop integration tier                                                                                     | Runtime-action collision                                      |
+| owner.batch.park.fail-closed-metadata                   | Planned | Tool-loop integration tier                                                                                     | Metadata-loss injection                                       |
+| owner.question.response.settle-answer                   | Partial | `../hitl/ask-question-select.eval.ts`                                                                          | Lifecycle identity/cardinality                                |
+| owner.question.response.reject-stale                    | Gated   | `stale-question-response.eval.ts`                                                                              | Interpreter behavior + lifecycle events                       |
+| owner.question.message.dismiss-superseded               | Gated   | `message-supersedes-question.eval.ts`                                                                          | Owner-declared supersession                                   |
+| owner.question.message.run-open-other-actor             | Gated   | `other-principal-does-not-supersede-question.eval.ts`                                                          | Actor guard                                                   |
+| owner.question.compound.settle-then-run                 | Gated   | `answer-and-message-together.eval.ts`                                                                          | Compound behavior                                             |
+| owner.batch.message.dismiss-question-only               | Planned | `interaction/interpret.test.ts`                                                                                | Mixed-group supersession                                      |
+| owner.limit.message.supersede                           | Gated   | `agent-session-limits/.../session-token-limit-reprompt-lifecycle.eval.ts`                                      | Prompt generation + lifecycle events                          |
+| owner.limit.response.reject-stale                       | Gated   | same                                                                                                           | Stale lifecycle event                                         |
+| owner.limit.response.settle-continue                    | Gated   | `agent-session-limits/.../session-token-limit-response-lifecycle.eval.ts`                                      | Continue lifecycle event                                      |
+| owner.limit.response.settle-stop                        | Gated   | same                                                                                                           | Stop lifecycle event                                          |
+| owner.auth.message.run-open                             | Gated   | `../auth/message-while-authorization-open.eval.ts`                                                             | Single-stream scheduling                                      |
+| owner.auth.callback.complete                            | Partial | `../auth/authorization-callback.eval.ts`                                                                       | Outcomes other than authorized                                |
+| owner.auth.deadline.complete-timed-out                  | Gated   | `../auth/authorization-deadline.eval.ts`                                                                       | Deadline producer + lifecycle event                           |
+| owner.auth.callback.reject-stale                        | Gated   | same                                                                                                           | Stale callback event                                          |
+| owner.auth.close.complete                               | Blocked | Session/turn challenge finalizers                                                                              | Cancel/completion/failure mappings                            |
+| projector.route.park.project                            | Covered | `subagent-hitl-proxy.integration.test.ts` + `agent-subagents-hitl/approve.eval.ts`                             | —                                                             |
+| projector.route.close.project                           | Partial | `agent-subagents-hitl/deny.eval.ts`                                                                            | Route cleanup + sibling preservation                          |
+| projector.route.drop.route-lost                         | Blocked | Projector route-disposal and parent-termination seams                                                          | Dismiss before route removal                                  |
+| projector.route.response.reject-stale-after-drop        | Blocked | Disposed-hook seam                                                                                             | Closure race                                                  |
+| projector.route.response.forward-responder              | Blocked | Response-authorizer seam                                                                                       | Identity-preserving forward                                   |
+| projector.route.response.reject-unauthorized-remote     | Blocked | Remote interactive-HITL protocol                                                                               | Forwarded proof rejection                                     |
+| owner.obligation.turn-cancel.dismiss                    | Blocked | Per-turn obligation collection                                                                                 | Owner-turn cancellation ordering                              |
+| owner.obligation.session-end.dismiss                    | Blocked | Session finalizer                                                                                              | Session-end ordering                                          |
+| owner.batch.forced-close.no-continuation                | Blocked | Same finalizer seams                                                                                           | No-restoration proof                                          |
 
-`../hitl/approval-resume-token.eval.ts` separately proves that
-`ToolContext.getToken()` remains available after approval resume.
+Pre-machine evals that asserted runtime text matching, approval-message
+queueing, stale-question-as-message conversion, or limit-prompt preservation
+have been removed. Their gated replacements above are the only acceptance
+evidence for those transitions.
+
+`../hitl/approval-resume-token.eval.ts` is supplementary evidence that
+`ToolContext.getToken()` remains available after
+`owner.approval.response.settle-allow`; it does not claim lifecycle-event
+coverage.
