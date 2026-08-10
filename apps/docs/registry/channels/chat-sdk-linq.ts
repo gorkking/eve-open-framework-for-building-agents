@@ -1,4 +1,4 @@
-import { createSendblueAdapter } from "chat-adapter-sendblue";
+import { createLinqAdapter } from "@linqapp/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
 import { chatSdkChannel } from "eve/channels/chat-sdk";
@@ -6,7 +6,10 @@ import { chatSdkChannel } from "eve/channels/chat-sdk";
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
   adapters: {
-    sendblue: createSendblueAdapter(),
+    linq: createLinqAdapter({
+      apiKey: process.env.LINQ_API_KEY!,
+      signingSecret: process.env.LINQ_WEBHOOK_SECRET!,
+    }),
   },
   state: createMemoryState(),
   // iMessage and SMS replies are delivered once the turn completes.

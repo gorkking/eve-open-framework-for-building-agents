@@ -1,4 +1,4 @@
-import { createSendblueAdapter } from "chat-adapter-sendblue";
+import { createKapsoAdapter } from "@kapso/chat-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
 import { chatSdkChannel } from "eve/channels/chat-sdk";
@@ -6,10 +6,14 @@ import { chatSdkChannel } from "eve/channels/chat-sdk";
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
   adapters: {
-    sendblue: createSendblueAdapter(),
+    kapso: createKapsoAdapter({
+      kapsoApiKey: process.env.KAPSO_API_KEY!,
+      phoneNumberId: process.env.KAPSO_PHONE_NUMBER_ID!,
+      webhookSecret: process.env.KAPSO_WEBHOOK_SECRET!,
+    }),
   },
   state: createMemoryState(),
-  // iMessage and SMS replies are delivered once the turn completes.
+  // WhatsApp does not support editing an already-sent message.
   streaming: false,
 });
 

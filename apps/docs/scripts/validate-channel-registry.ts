@@ -41,17 +41,37 @@ const setupKindsByCatalogSlug: Readonly<Record<string, string>> = {
 
 const adapterDependenciesByCatalogSlug: Readonly<Record<string, string>> = {
   "chat-sdk-gchat": "@chat-adapter/gchat",
+  "chat-sdk-whatsapp": "@chat-adapter/whatsapp",
+  "chat-sdk-x": "@chat-adapter/x",
+  "chat-sdk-messenger": "@chat-adapter/messenger",
+  "chat-sdk-zernio": "@zernio/chat-sdk-adapter",
   "chat-sdk-velt": "@veltdev/chat-sdk-adapter",
   "chat-sdk-sendblue": "chat-adapter-sendblue",
+  "chat-sdk-novu": "@novu/chat-sdk-adapter",
   "chat-sdk-liveblocks": "@liveblocks/chat-sdk-adapter",
+  "chat-sdk-linq": "@linqapp/chat-sdk-adapter",
+  "chat-sdk-kapso": "@kapso/chat-adapter",
+  "chat-sdk-dial": "@getdial/chat-sdk-adapter",
+  "chat-sdk-agentphone": "@agentphone/chat-sdk-adapter",
+  "chat-sdk-resend": "@resend/chat-sdk-adapter",
 };
 
 const targetSlugsByCatalogSlug: Readonly<Record<string, string>> = {
   "linear-agent": "linear",
   "chat-sdk-gchat": "gchat",
+  "chat-sdk-whatsapp": "whatsapp",
+  "chat-sdk-x": "x",
+  "chat-sdk-messenger": "messenger",
+  "chat-sdk-zernio": "zernio",
   "chat-sdk-velt": "velt",
   "chat-sdk-sendblue": "sendblue",
+  "chat-sdk-novu": "novu",
   "chat-sdk-liveblocks": "liveblocks",
+  "chat-sdk-linq": "linq",
+  "chat-sdk-kapso": "kapso",
+  "chat-sdk-dial": "dial",
+  "chat-sdk-agentphone": "agentphone",
+  "chat-sdk-resend": "resend",
 };
 
 const docsRoot = join(import.meta.dirname, "..");

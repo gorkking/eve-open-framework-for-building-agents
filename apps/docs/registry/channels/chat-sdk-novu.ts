@@ -1,4 +1,4 @@
-import { createSendblueAdapter } from "chat-adapter-sendblue";
+import { createNovuAdapter } from "@novu/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
 import { chatSdkChannel } from "eve/channels/chat-sdk";
@@ -6,11 +6,9 @@ import { chatSdkChannel } from "eve/channels/chat-sdk";
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
   adapters: {
-    sendblue: createSendblueAdapter(),
+    novu: createNovuAdapter(),
   },
   state: createMemoryState(),
-  // iMessage and SMS replies are delivered once the turn completes.
-  streaming: false,
 });
 
 bot.onNewMention(async (thread: Thread, message: Message) => {

@@ -1441,7 +1441,81 @@
         "GOOGLE_CHAT_CREDENTIALS": ""
       }
     },
-
+    {
+      "name": "channel/chat-sdk-whatsapp",
+      "type": "registry:item",
+      "title": "WhatsApp",
+      "description": "Customer messaging through WhatsApp Business Cloud via the Chat SDK.",
+      "dependencies": ["chat", "@chat-adapter/whatsapp", "@chat-adapter/state-memory"],
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-whatsapp.ts",
+          "type": "registry:file",
+          "target": "agent/channels/whatsapp.ts"
+        }
+      ],
+      "envVars": {
+        "WHATSAPP_ACCESS_TOKEN": "",
+        "WHATSAPP_APP_SECRET": "",
+        "WHATSAPP_PHONE_NUMBER_ID": "",
+        "WHATSAPP_VERIFY_TOKEN": ""
+      }
+    },
+    {
+      "name": "channel/chat-sdk-x",
+      "type": "registry:item",
+      "title": "X",
+      "description": "Public mentions and DMs on X via the Chat SDK.",
+      "dependencies": ["chat", "@chat-adapter/x", "@chat-adapter/state-memory"],
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-x.ts",
+          "type": "registry:file",
+          "target": "agent/channels/x.ts"
+        }
+      ],
+      "envVars": {
+        "X_CONSUMER_SECRET": "",
+        "X_USER_ACCESS_TOKEN": ""
+      }
+    },
+    {
+      "name": "channel/chat-sdk-messenger",
+      "type": "registry:item",
+      "title": "Messenger",
+      "description": "Facebook Messenger bots with templates, buttons, and reactions via the Chat SDK.",
+      "dependencies": ["chat", "@chat-adapter/messenger", "@chat-adapter/state-memory"],
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-messenger.ts",
+          "type": "registry:file",
+          "target": "agent/channels/messenger.ts"
+        }
+      ],
+      "envVars": {
+        "FACEBOOK_APP_SECRET": "",
+        "FACEBOOK_PAGE_ACCESS_TOKEN": "",
+        "FACEBOOK_VERIFY_TOKEN": ""
+      }
+    },
+    {
+      "name": "channel/chat-sdk-zernio",
+      "type": "registry:item",
+      "title": "Zernio",
+      "description": "Reach seven social and messaging platforms through one Zernio integration.",
+      "dependencies": ["chat", "@zernio/chat-sdk-adapter", "@chat-adapter/state-memory"],
+      "envVars": {
+        "ZERNIO_API_KEY": "",
+        "ZERNIO_WEBHOOK_SECRET": ""
+      },
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-zernio.ts",
+          "type": "registry:file",
+          "target": "agent/channels/zernio.ts"
+        }
+      ]
+    },
     {
       "name": "channel/chat-sdk-velt",
       "type": "registry:item",
@@ -1479,7 +1553,24 @@
         }
       ]
     },
-
+    {
+      "name": "channel/chat-sdk-novu",
+      "type": "registry:item",
+      "title": "Novu",
+      "description": "Reach Slack, Teams, WhatsApp, Telegram, and email through Novu.",
+      "dependencies": ["chat", "@novu/chat-sdk-adapter", "@chat-adapter/state-memory"],
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-novu.ts",
+          "type": "registry:file",
+          "target": "agent/channels/novu.ts"
+        }
+      ],
+      "envVars": {
+        "NOVU_SECRET_KEY": "",
+        "NOVU_AGENT_IDENTIFIER": ""
+      }
+    },
     {
       "name": "channel/chat-sdk-liveblocks",
       "type": "registry:item",
@@ -1498,7 +1589,43 @@
         }
       ]
     },
-
+    {
+      "name": "channel/chat-sdk-linq",
+      "type": "registry:item",
+      "title": "Linq",
+      "description": "iMessage and SMS conversations, media, and tapbacks through Linq.",
+      "dependencies": ["chat", "@linqapp/chat-sdk-adapter", "@chat-adapter/state-memory"],
+      "envVars": {
+        "LINQ_API_KEY": "",
+        "LINQ_WEBHOOK_SECRET": ""
+      },
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-linq.ts",
+          "type": "registry:file",
+          "target": "agent/channels/linq.ts"
+        }
+      ]
+    },
+    {
+      "name": "channel/chat-sdk-kapso",
+      "type": "registry:item",
+      "title": "Kapso",
+      "description": "Managed WhatsApp conversations, media, buttons, and history through Kapso.",
+      "dependencies": ["chat", "@kapso/chat-adapter", "@chat-adapter/state-memory"],
+      "envVars": {
+        "KAPSO_API_KEY": "",
+        "KAPSO_PHONE_NUMBER_ID": "",
+        "KAPSO_WEBHOOK_SECRET": ""
+      },
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-kapso.ts",
+          "type": "registry:file",
+          "target": "agent/channels/kapso.ts"
+        }
+      ]
+    },
     {
       "name": "channel/photon-imessage",
       "type": "registry:item",
@@ -1517,7 +1644,63 @@
         }
       }
     },
-
+    {
+      "name": "channel/chat-sdk-dial",
+      "type": "registry:item",
+      "title": "Dial",
+      "description": "Give your agent a phone number for SMS, MMS, iMessage, and voice transcripts.",
+      "dependencies": ["chat", "@getdial/chat-sdk-adapter", "@chat-adapter/state-memory"],
+      "envVars": {
+        "DIAL_API_KEY": "",
+        "DIAL_FROM_NUMBER_ID": "",
+        "DIAL_WEBHOOK_SECRET": ""
+      },
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-dial.ts",
+          "type": "registry:file",
+          "target": "agent/channels/dial.ts"
+        }
+      ]
+    },
+    {
+      "name": "channel/chat-sdk-agentphone",
+      "type": "registry:item",
+      "title": "AgentPhone",
+      "description": "SMS, MMS, iMessage, and voice conversations through AgentPhone.",
+      "dependencies": ["chat", "@agentphone/chat-sdk-adapter", "@chat-adapter/state-memory"],
+      "envVars": {
+        "AGENTPHONE_API_KEY": "",
+        "AGENTPHONE_AGENT_ID": "",
+        "AGENTPHONE_WEBHOOK_SECRET": ""
+      },
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-agentphone.ts",
+          "type": "registry:file",
+          "target": "agent/channels/agentphone.ts"
+        }
+      ]
+    },
+    {
+      "name": "channel/chat-sdk-resend",
+      "type": "registry:item",
+      "title": "Resend",
+      "description": "Send and receive threaded email through Resend via the Chat SDK.",
+      "dependencies": ["chat", "@resend/chat-sdk-adapter", "@chat-adapter/state-memory"],
+      "envVars": {
+        "RESEND_API_KEY": "",
+        "RESEND_WEBHOOK_SECRET": "",
+        "RESEND_FROM_ADDRESS": ""
+      },
+      "files": [
+        {
+          "path": "registry/channels/chat-sdk-resend.ts",
+          "type": "registry:file",
+          "target": "agent/channels/resend.ts"
+        }
+      ]
+    },
     {
       "name": "instrumentation/braintrust",
       "type": "registry:item",

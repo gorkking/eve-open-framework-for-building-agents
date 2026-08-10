@@ -1,4 +1,4 @@
-import { createSendblueAdapter } from "chat-adapter-sendblue";
+import { createDialAdapter } from "@getdial/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
 import { chatSdkChannel } from "eve/channels/chat-sdk";
@@ -6,10 +6,14 @@ import { chatSdkChannel } from "eve/channels/chat-sdk";
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
   adapters: {
-    sendblue: createSendblueAdapter(),
+    dial: createDialAdapter({
+      apiKey: process.env.DIAL_API_KEY!,
+      fromNumberId: process.env.DIAL_FROM_NUMBER_ID!,
+      webhookSecret: process.env.DIAL_WEBHOOK_SECRET!,
+    }),
   },
   state: createMemoryState(),
-  // iMessage and SMS replies are delivered once the turn completes.
+  // Phone messages and voice transcripts are delivered as completed replies.
   streaming: false,
 });
 

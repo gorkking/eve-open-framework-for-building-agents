@@ -1,15 +1,14 @@
-import { createSendblueAdapter } from "chat-adapter-sendblue";
+import { createMessengerAdapter } from "@chat-adapter/messenger";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
 import { chatSdkChannel } from "eve/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
-  adapters: {
-    sendblue: createSendblueAdapter(),
-  },
+  // Set FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_APP_SECRET, and FACEBOOK_VERIFY_TOKEN.
+  adapters: { messenger: createMessengerAdapter() },
   state: createMemoryState(),
-  // iMessage and SMS replies are delivered once the turn completes.
+  // Messenger does not support editing an already-sent message.
   streaming: false,
 });
 
