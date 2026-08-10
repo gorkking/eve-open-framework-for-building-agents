@@ -271,7 +271,9 @@ plain reply into a structured response; its input is restricted to the
 verified sender's message and the rendered request — never the agent's ambient
 context, so injected tool output cannot forge consent.
 
-## Lifecycle events
+## API changes
+
+### Stream events
 
 Events are the observable trace of transitions — one vocabulary, not two:
 
@@ -327,6 +329,137 @@ type InputDismissedData = InputLifecycleData & {
 Authorization lifecycle events carry one `authorizationId`, the verified actor
 or null, and the blocked operation identity. `authorization.required`, its
 callback, and `authorization.completed` use that ID.
+
+### Wire compatibility
+
+The contract is implementable without breaking any existing consumer. The
+rules, in order of strictness:
+
+**Unchanged — guaranteed.** No existing event type changes shape or meaning:
+`input.requested`, `message.received`, `session.waiting`, `action.result`,
+`turn.*`, and `session.*` stay byte-compatible. `InputRequest` and
+`InputResponse` wire shapes are unchanged. The HTTP API gains no new required
+field on create, continue, stream, or cancel. Continuation tokens, session
+IDs, and NDJSON framing are untouched.
+
+**Additive — new events and fields only.** All net-new wire schema lands in
+one stage (lifecycle events) behind one stream-version bump. Existing clients
+ignore unknown event types — the default reducer returns state unchanged
+([`message-reducer.ts`](../packages/eve/src/client/message-reducer.ts#L286-L287))
+— so old clients render nothing new but never break. `authorizationId` is an
+optional added field on existing authorization events. `cancelled` is an
+additive `AuthorizationOutcome` value.
+
+**One settlement family.** If PR #1368's settlement events land first,
+`input.responded` is that family generalized to every request kind — not a
+competing event. Exactly one settlement event family may exist on the wire.
+
+### Durable state
+
+**Durable state.** The pending-batch collection shipped in [#1868] with a
+read shim for the legacy singleton key; the remaining state changes (candidate
+records, limit generations, auth groups) ride the documented snapshot
+versioning convention. Legacy `deferredStepInput` content — messages wedged
+behind an approval before the mitigation — releases as an ordinary message
+turn on the first delivery after upgrade.
+
+### Transport
+
+**Transport consolidation — deliberately breaking, scoped.** The dedicated
+authorization hook (`${sessionId}:auth`) is a transitional artifact of the
+removed exclusive wait: callbacks are already payload-discriminated
+(`authorizationCallback`) and classified at the turn step, so the end state
+delivers them through the session's one command stream and deletes the
+window-gating machinery. Cost: challenge URLs minted before the cutover embed
+the old hook token and would 404; ship either a one-release token alias or
+accept the break for in-flight challenges under the pre-1.0 policy.
+
+### Behavior break
+
+**Deliberately breaking, behavior not wire.** Runtime text matching is
+removed: plain `approve` stops settling approvals through the resolution path
+(`owner.approval.message.run-open`). `resolveTextToResponses` remains exported
+for channel adapters that render prompts as text and own their reply mapping.
+Documented behavior change (`docs/tools/human-in-the-loop.md`), shipped with
+its docs update in the same stage.
+
+## Data flow
+
+Every label below names one construct; target-state constructs are marked.
+
+| Label          | Construct                                                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| channel POST   | `POST /eve/v1/session/:id` in the [eve channel](../packages/eve/src/public/channels/eve.ts)                                            |
+| callback route | [`handleConnectionCallbackRequest`](../packages/eve/src/runtime/connections/callback-route.ts)                                         |
+| inbox          | [`SessionCommandInbox`](../packages/eve/src/execution/session-command-inbox.ts)                                                        |
+| driver         | [`runDriverLoop`](../packages/eve/src/execution/workflow-entry.ts)                                                                     |
+| turn step      | [`turnStep`](../packages/eve/src/execution/workflow-steps.ts)                                                                          |
+| interpreter    | `interaction/interpret.ts` (target; today split across `resolvePendingInput`, stale conversion, limit resolution, callback extraction) |
+| store          | `interaction/obligations.ts` (target; today `pending-input-batches`, `pendingAuthorization`, the limit-prompt batch)                   |
+| executor       | tool-loop transcript assembly, tool execution, model calls                                                                             |
+
+### Call graph
+
+Arrows are calls; annotations are the data crossing the edge.
+
+```text
+channel POST ──channel auth──▶ resumeHook ──DeliverPayload──────────▶ inbox
+callback route ──param projection──▶ resumeHook ──authorizationCallback──▶ inbox   (stage 4)
+inbox ──SessionInboxPayload──▶ driver ──admit / dispatch──▶ turn step
+turn step ──(store.read(), delivery)──▶ interpreter ──plan──▶ turn step
+plan.transitions ──▶ store            (the only writer of obligation state)
+plan.events ──────▶ events.emit ──▶ stream
+plan.turnPlan ────▶ executor          (restore output | run tools | model turn)
+turn outcome ──new requests / challenges──▶ store.append ──▶ events.emit(input.requested)
+```
+
+The driver never sees obligation state; the interpreter never performs a side
+effect; the store never decides. Today each of those sentences is false in at
+least one module — see [Consolidation](#consolidation-one-interpreter).
+
+### Canonical walks
+
+Data at each step for the three flows that historically wedged or clobbered.
+
+**Message while an approval is open** (`owner.approval.message.run-open`):
+
+```text
+delivery         = Message(actor B, "what's the status?")
+store.read()     = groups: [Batch{ A1: open }]
+interpret        ⊢ no correlated candidate; not limit-gated
+plan.transitions = []                          // A1 untouched
+plan.events      = [message.received]
+plan.turnPlan    = [model-turn(message)]       // model runs WITHOUT the withheld output
+store after      = groups: [Batch{ A1: open }] // still answerable
+```
+
+**Late accepted response** (`owner.approval.response.settle-allow-after-turns`):
+
+```text
+delivery         = Responses(actor A, [{ requestId: A1, optionId: allow }])
+store.read()     = groups: [Batch{ A1: open }, withheldOutput W]
+interpret        ⊢ candidate c = {A1, deliveryId}; policy accepts; A1 is the last open member
+plan.transitions = [settle(A1, allowed), close(Batch)]
+plan.events      = [input.responded(A1, c, responder A)]
+plan.turnPlan    = [restore W, run tool(call-1) once, resume model]
+store after      = groups: []
+```
+
+**Authorization callback** (`owner.auth.callback.complete`):
+
+```text
+delivery         = Callback("weather", { code })
+store.read()     = groups: [AuthGroup{ C1: open }]
+interpret        ⊢ C1 matches; completes(authorized); last member closes the group
+plan.transitions = [complete(C1, authorized), close(AuthGroup)]
+plan.events      = [authorization.completed(C1)]
+plan.turnPlan    = [re-drive blocked turn with the callback result]
+store after      = groups: []
+```
+
+A stale variant of any walk changes exactly one line: `interpret` finds no
+open obligation, `plan.transitions = []`, and `plan.events` carries the
+rejection — the turn still runs with the stale-attempt context.
 
 ## Transition catalog
 
@@ -769,53 +902,6 @@ unless the entry says the sequence is exact.
 - **Observed:** the parent re-emits
   `input.response.rejected(scope: projection, reason: unauthorized)`; no
   terminal request event.
-
-## Compatibility
-
-The contract is implementable without breaking any existing consumer. The
-rules, in order of strictness:
-
-**Unchanged — guaranteed.** No existing event type changes shape or meaning:
-`input.requested`, `message.received`, `session.waiting`, `action.result`,
-`turn.*`, and `session.*` stay byte-compatible. `InputRequest` and
-`InputResponse` wire shapes are unchanged. The HTTP API gains no new required
-field on create, continue, stream, or cancel. Continuation tokens, session
-IDs, and NDJSON framing are untouched.
-
-**Additive — new events and fields only.** All net-new wire schema lands in
-one stage (lifecycle events) behind one stream-version bump. Existing clients
-ignore unknown event types — the default reducer returns state unchanged
-([`message-reducer.ts`](../packages/eve/src/client/message-reducer.ts#L286-L287))
-— so old clients render nothing new but never break. `authorizationId` is an
-optional added field on existing authorization events. `cancelled` is an
-additive `AuthorizationOutcome` value.
-
-**One settlement family.** If PR #1368's settlement events land first,
-`input.responded` is that family generalized to every request kind — not a
-competing event. Exactly one settlement event family may exist on the wire.
-
-**Durable state.** The pending-batch collection shipped in [#1868] with a
-read shim for the legacy singleton key; the remaining state changes (candidate
-records, limit generations, auth groups) ride the documented snapshot
-versioning convention. Legacy `deferredStepInput` content — messages wedged
-behind an approval before the mitigation — releases as an ordinary message
-turn on the first delivery after upgrade.
-
-**Transport consolidation — deliberately breaking, scoped.** The dedicated
-authorization hook (`${sessionId}:auth`) is a transitional artifact of the
-removed exclusive wait: callbacks are already payload-discriminated
-(`authorizationCallback`) and classified at the turn step, so the end state
-delivers them through the session's one command stream and deletes the
-window-gating machinery. Cost: challenge URLs minted before the cutover embed
-the old hook token and would 404; ship either a one-release token alias or
-accept the break for in-flight challenges under the pre-1.0 policy.
-
-**Deliberately breaking, behavior not wire.** Runtime text matching is
-removed: plain `approve` stops settling approvals through the resolution path
-(`owner.approval.message.run-open`). `resolveTextToResponses` remains exported
-for channel adapters that render prompts as text and own their reply mapping.
-Documented behavior change (`docs/tools/human-in-the-loop.md`), shipped with
-its docs update in the same stage.
 
 ## Implementation state and staging
 
