@@ -10,13 +10,14 @@ import {
 import { gateLifecycle } from "./shared";
 
 /**
- * question-2: a message from the question's originating actor supersedes the
+ * owner.question.message.dismiss-superseded: a message from the question's originating actor supersedes the
  * question — dismissed, then the message runs as a normal turn. The typed
  * text is handled semantically by the agent, never matched by the runtime.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "question-2: the originating actor's message supersedes their open question.",
+  description:
+    "owner.question.message.dismiss-superseded: the originating actor's message supersedes their open question.",
   async test(t) {
     gateLifecycle(t);
 

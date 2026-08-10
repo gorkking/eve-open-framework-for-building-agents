@@ -15,14 +15,14 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * approval-20: while an approval batch is open, a later turn creates its own input
+ * owner.batch.park.append: while an approval batch is open, a later turn creates its own input
  * batch. Both stay independently addressable: closing the newer question
  * neither touches the older approval nor replays its batch; the approval
  * still settles and runs afterward.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "approval-20: later batches coexist with an older open approval batch.",
+  description: "owner.batch.park.append: later batches coexist with an older open approval batch.",
   async test(t) {
     gateLifecycle(t);
 

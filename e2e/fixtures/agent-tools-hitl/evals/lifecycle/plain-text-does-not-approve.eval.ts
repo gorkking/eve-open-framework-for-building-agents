@@ -13,13 +13,14 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * approval-6: plain text is never a response. Typing "approve" does not settle the
+ * owner.approval.message.run-open: plain text is never a response. Typing "approve" does not settle the
  * approval; it runs as a message turn, and the request stays answerable
  * through a structured response.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "approval-6: typed 'approve' is a message; only structured responses settle.",
+  description:
+    "owner.approval.message.run-open: typed 'approve' is a message; only structured responses settle.",
   async test(t) {
     gateLifecycle(t);
 

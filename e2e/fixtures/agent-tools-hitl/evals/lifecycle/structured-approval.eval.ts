@@ -12,13 +12,14 @@ import {
 import { gateLifecycle, GUARDED_ECHO_TOKEN } from "./shared";
 
 /**
- * approval-1: an accepted Allow response from the originating actor settles the
+ * owner.approval.response.settle-allow: an accepted Allow response from the originating actor settles the
  * approval, and the tool runs once when that settlement closes its
  * assistant-turn approval batch.
  */
 export default defineEval({
   tags: ["real-model", "hitl-lifecycle"],
-  description: "approval-1: structured approve settles the request and runs the tool once.",
+  description:
+    "owner.approval.response.settle-allow: structured approve settles the request and runs the tool once.",
   async test(t) {
     gateLifecycle(t);
 
