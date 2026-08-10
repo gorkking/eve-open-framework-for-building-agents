@@ -9,7 +9,8 @@ export const { bot, channel, send } = chatSdkChannel({
     liveblocks: createLiveblocksAdapter({
       apiKey: process.env.LIVEBLOCKS_SECRET_KEY!,
       webhookSecret: process.env.LIVEBLOCKS_WEBHOOK_SECRET!,
-      botUserId: "my-agent",
+      // Replace with a real user ID from your app's Liveblocks authentication.
+      botUserId: "your-bot-user-id",
       botUserName: "My Agent",
     }),
   },

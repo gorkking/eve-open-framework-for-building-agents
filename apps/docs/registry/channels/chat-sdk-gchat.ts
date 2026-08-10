@@ -5,6 +5,8 @@ import { chatSdkChannel } from "eve/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
+  // Google Chat requires signed webhook verification. Before deploying, set
+  // GOOGLE_CHAT_PROJECT_NUMBER or configure the adapter's endpointUrl.
   adapters: { gchat: createGoogleChatAdapter() },
   state: createMemoryState(),
 });

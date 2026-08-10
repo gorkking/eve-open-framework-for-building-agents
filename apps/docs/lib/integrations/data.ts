@@ -355,6 +355,8 @@ import { chatSdkChannel } from "eve/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
+  // Google Chat requires signed webhook verification. Before deploying, set
+  // GOOGLE_CHAT_PROJECT_NUMBER or configure the adapter's endpointUrl.
   adapters: { gchat: createGoogleChatAdapter() },
   state: createMemoryState(),
 });
@@ -371,8 +373,8 @@ bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
 export default channel;
 \`\`\`
 
-Credentials come from the \`createGoogleChatAdapter\` config or the adapter's environment variables; see the [Google Chat adapter docs](https://chat-sdk.dev/adapters/official/gchat).`,
-    configure: `The adapter mounts its webhook at \`/eve/v1/gchat\`. Point your Google Chat app's HTTP endpoint at it. The adapter owns provider auth, verification, and delivery, while eve owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+Google Chat requires signed webhook verification: replace \`endpointUrl\` with your deployed \`/eve/v1/gchat\` URL, configure that URL as the Chat app's HTTP endpoint and authentication audience, and provide the adapter's Google credentials. By default Google Chat delivers @mentions; receiving every message in a space requires Workspace Events and Pub/Sub. See the [Google Chat adapter docs](https://chat-sdk.dev/adapters/official/gchat).`,
+    configure: `The adapter mounts its webhook at \`/eve/v1/gchat\`. Replace the placeholder \`endpointUrl\` in the generated file with that public URL, then configure the same URL and HTTP-endpoint authentication audience in your Google Chat app. The adapter rejects unsigned or incorrectly configured webhooks. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
   },
   "chat-sdk-velt": {
     logo: "velt",
@@ -408,7 +410,8 @@ export const { bot, channel, send } = chatSdkChannel({
     velt: createVeltAdapter({
       apiKey: process.env.VELT_API_KEY!,
       webhookSecret: process.env.VELT_WEBHOOK_SECRET!,
-      botUserId: "my-agent",
+      // Replace with the Velt user ID for the bot account you create.
+      botUserId: "your-bot-user-id",
       botUserName: "My Agent",
     }),
   },
@@ -428,7 +431,7 @@ export default channel;
 \`\`\`
 
 See the [Velt adapter documentation](https://chat-sdk.dev/adapters/vendor-official/velt) for supported events, capabilities, and credentials.`,
-    configure: `Create a Velt bot user and webhook, set \`VELT_API_KEY\` and \`VELT_WEBHOOK_SECRET\`, then send comment events to \`/eve/v1/velt\`. The adapter maps documents to channels, annotations to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Create a Velt bot user and replace \`your-bot-user-id\` with its real Velt user ID. Set \`VELT_API_KEY\` and \`VELT_WEBHOOK_SECRET\`, then configure a Velt webhook for comment events at \`/eve/v1/velt\`. The adapter maps documents to channels, annotations to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-sendblue": {
     logo: "sendblue",
@@ -506,7 +509,8 @@ export const { bot, channel, send } = chatSdkChannel({
     liveblocks: createLiveblocksAdapter({
       apiKey: process.env.LIVEBLOCKS_SECRET_KEY!,
       webhookSecret: process.env.LIVEBLOCKS_WEBHOOK_SECRET!,
-      botUserId: "my-agent",
+      // Replace with a real user ID from your app's Liveblocks authentication.
+      botUserId: "your-bot-user-id",
       botUserName: "My Agent",
     }),
   },
@@ -526,51 +530,7 @@ export default channel;
 \`\`\`
 
 See the [Liveblocks adapter documentation](https://chat-sdk.dev/adapters/vendor-official/liveblocks) for supported events, capabilities, and credentials.`,
-    configure: `Create a Liveblocks webhook, set \`LIVEBLOCKS_SECRET_KEY\` and \`LIVEBLOCKS_WEBHOOK_SECRET\`, and send comment events to \`/eve/v1/liveblocks\`. The adapter maps rooms to channels, comment threads to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
-  },
-  "chat-sdk-lark": {
-    logo: "lark",
-    docsHref: "/docs/channels/chat-sdk",
-    badge: "Provider official",
-    keywords: ["chat sdk", "lark", "feishu", "bytedance", "cardkit", "messaging"],
-    install: `Add this Chat SDK channel from eve's registry. This writes \`agent/channels/lark.ts\` and installs Chat SDK and its adapter dependencies:
-
-\`\`\`bash
-eve add channel/chat-sdk-lark
-\`\`\``,
-    quickStart: `Create \`agent/channels/lark.ts\`:
-
-\`\`\`ts
-// agent/channels/lark.ts
-import { createLarkAdapter } from "@larksuite/vercel-chat-adapter";
-import { createMemoryState } from "@chat-adapter/state-memory";
-import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "eve/channels/chat-sdk";
-
-export const { bot, channel, send } = chatSdkChannel({
-  userName: "My Agent",
-  adapters: {
-    lark: createLarkAdapter(),
-  },
-  state: createMemoryState(),
-});
-
-bot.onNewMention(async (thread: Thread, message: Message) => {
-  await thread.subscribe();
-  await send(message.text, { thread });
-});
-
-bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
-  await send(message.text, { thread });
-});
-
-await bot.initialize();
-
-export default channel;
-\`\`\`
-
-See the [Lark / Feishu adapter documentation](https://chat-sdk.dev/adapters/vendor-official/lark) for all supported events and credentials.`,
-    configure: `Create a Lark or Feishu app and set \`LARK_APP_ID\` and \`LARK_APP_SECRET\`. The adapter uses Lark’s WebSocket long connection rather than an HTTP webhook, so call \`bot.initialize()\` and run eve in a long-lived Node.js process. This is a vendor-official Chat SDK adapter built on the official Lark Node SDK. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Replace \`your-bot-user-id\` with a real user ID from the Liveblocks authentication your app issues; it determines the author of bot comments and must match the identity Liveblocks sees. Set \`LIVEBLOCKS_SECRET_KEY\` and \`LIVEBLOCKS_WEBHOOK_SECRET\`, then configure comment webhooks at \`/eve/v1/liveblocks\`. The adapter maps rooms to channels, comment threads to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for eve session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
 };
 const extensionPresentations: Record<string, ExtensionPresentation> = {

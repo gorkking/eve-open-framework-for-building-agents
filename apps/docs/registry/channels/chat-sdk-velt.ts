@@ -9,7 +9,8 @@ export const { bot, channel, send } = chatSdkChannel({
     velt: createVeltAdapter({
       apiKey: process.env.VELT_API_KEY!,
       webhookSecret: process.env.VELT_WEBHOOK_SECRET!,
-      botUserId: "my-agent",
+      // Replace with the Velt user ID for the bot account you create.
+      botUserId: "your-bot-user-id",
       botUserName: "My Agent",
     }),
   },

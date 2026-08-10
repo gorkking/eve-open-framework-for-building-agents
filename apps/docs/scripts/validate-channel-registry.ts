@@ -44,7 +44,6 @@ const adapterDependenciesByCatalogSlug: Readonly<Record<string, string>> = {
   "chat-sdk-velt": "@veltdev/chat-sdk-adapter",
   "chat-sdk-sendblue": "chat-adapter-sendblue",
   "chat-sdk-liveblocks": "@liveblocks/chat-sdk-adapter",
-  "chat-sdk-lark": "@larksuite/vercel-chat-adapter",
 };
 
 const targetSlugsByCatalogSlug: Readonly<Record<string, string>> = {
@@ -53,7 +52,6 @@ const targetSlugsByCatalogSlug: Readonly<Record<string, string>> = {
   "chat-sdk-velt": "velt",
   "chat-sdk-sendblue": "sendblue",
   "chat-sdk-liveblocks": "liveblocks",
-  "chat-sdk-lark": "lark",
 };
 
 const docsRoot = join(import.meta.dirname, "..");

@@ -1519,25 +1519,6 @@
     },
 
     {
-      "name": "channel/chat-sdk-lark",
-      "type": "registry:item",
-      "title": "Lark / Feishu",
-      "description": "Lark and Feishu chats with native card streaming via the Chat SDK.",
-      "dependencies": ["chat", "@larksuite/vercel-chat-adapter", "@chat-adapter/state-memory"],
-      "envVars": {
-        "LARK_APP_ID": "",
-        "LARK_APP_SECRET": ""
-      },
-      "files": [
-        {
-          "path": "registry/channels/chat-sdk-lark.ts",
-          "type": "registry:file",
-          "target": "agent/channels/lark.ts"
-        }
-      ]
-    },
-
-    {
       "name": "instrumentation/braintrust",
       "type": "registry:item",
       "title": "Braintrust",
