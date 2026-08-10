@@ -37,9 +37,9 @@ const developmentEnvironmentLoaders = new Map<string, DevelopmentEnvironmentLoad
  * application root, ordered from highest to lowest precedence.
  */
 export function getDevelopmentEnvironmentFilePaths(appRoot: string): string[] {
-  const resolvedAppRoot = resolve(appRoot);
-
-  return DEVELOPMENT_ENV_FILE_NAMES.map((fileName) => join(resolvedAppRoot, fileName));
+  return [...resolveDevelopmentEnvironmentRoots(appRoot)]
+    .reverse()
+    .flatMap((root) => DEVELOPMENT_ENV_FILE_NAMES.map((fileName) => join(root, fileName)));
 }
 
 /**
@@ -51,17 +51,7 @@ export function getDevelopmentEnvironmentFilePaths(appRoot: string): string[] {
  * reloads so dev-mode file watching can pick up changed values.
  */
 export function loadDevelopmentEnvironmentFiles(appRoot: string): void {
-  const resolvedAppRoot = resolve(appRoot);
-  const agentsRoot = dirname(resolvedAppRoot);
-  const collectionRoot = dirname(agentsRoot);
-  if (
-    basename(agentsRoot) === "agents" &&
-    existsSync(join(collectionRoot, "package.json")) &&
-    existsSync(join(resolvedAppRoot, "agent"))
-  ) {
-    getDevelopmentEnvironmentLoader(collectionRoot).reload();
-  }
-  getDevelopmentEnvironmentLoader(resolvedAppRoot).reload();
+  getDevelopmentEnvironmentLoader(appRoot).reload();
 }
 
 export function stageDevelopmentEnvironmentFiles(appRoot: string): DevelopmentEnvironmentReload {
@@ -72,7 +62,7 @@ export function readDevelopmentEnvironmentHostValues(
   appRoot: string,
 ): Readonly<Record<string, string | null>> {
   const values: Record<string, string | null> = {};
-  const fileValues = readDevelopmentEnvironmentValues(resolve(appRoot));
+  const fileValues = readDevelopmentEnvironmentValues(resolveDevelopmentEnvironmentRoots(appRoot));
 
   for (const key of [...fileValues.keys()].sort((left, right) => left.localeCompare(right))) {
     values[key] = process.env[key] ?? null;
@@ -89,18 +79,22 @@ function getDevelopmentEnvironmentLoader(appRoot: string): DevelopmentEnvironmen
     return existingLoader;
   }
 
-  const loader = createDevelopmentEnvironmentLoader(resolvedAppRoot);
+  const loader = createDevelopmentEnvironmentLoader(
+    resolveDevelopmentEnvironmentRoots(resolvedAppRoot),
+  );
   developmentEnvironmentLoaders.set(resolvedAppRoot, loader);
   return loader;
 }
 
-function createDevelopmentEnvironmentLoader(appRoot: string): DevelopmentEnvironmentLoader {
+function createDevelopmentEnvironmentLoader(
+  environmentRoots: readonly string[],
+): DevelopmentEnvironmentLoader {
   const protectedKeys = new Set(Object.keys(process.env));
   const managedValues = new Map<string, string>();
 
   const stageReload = (): DevelopmentEnvironmentReload => {
     const previousManagedValues = new Map(managedValues);
-    const nextValues = readDevelopmentEnvironmentValues(appRoot);
+    const nextValues = readDevelopmentEnvironmentValues(environmentRoots);
     const affectedKeys = new Set([...managedValues.keys(), ...nextValues.keys()]);
     const previousEnvironment = new Map(
       [...affectedKeys].map((key) => [key, process.env[key]] as const),
@@ -172,23 +166,32 @@ function applyDevelopmentEnvironmentValues(input: {
   }
 }
 
-function readDevelopmentEnvironmentValues(appRoot: string): Map<string, string> {
+function resolveDevelopmentEnvironmentRoots(appRoot: string): readonly string[] {
+  const resolvedAppRoot = resolve(appRoot);
+  const agentsRoot = dirname(resolvedAppRoot);
+  const collectionRoot = dirname(agentsRoot);
+  return basename(agentsRoot) === "agents" &&
+    existsSync(join(collectionRoot, "package.json")) &&
+    existsSync(join(resolvedAppRoot, "agent"))
+    ? [collectionRoot, resolvedAppRoot]
+    : [resolvedAppRoot];
+}
+
+function readDevelopmentEnvironmentValues(
+  environmentRoots: readonly string[],
+): Map<string, string> {
   const values = new Map<string, string>();
 
-  for (const fileName of [...DEVELOPMENT_ENV_FILE_NAMES].reverse()) {
-    try {
-      const parsedValues = parseEnv(readFileSync(join(appRoot, fileName), "utf8"));
+  for (const environmentRoot of environmentRoots) {
+    for (const fileName of [...DEVELOPMENT_ENV_FILE_NAMES].reverse()) {
+      try {
+        const parsedValues = parseEnv(readFileSync(join(environmentRoot, fileName), "utf8"));
 
-      for (const [key, value] of Object.entries(parsedValues)) {
-        if (value === undefined) {
-          continue;
+        for (const [key, value] of Object.entries(parsedValues)) {
+          if (value !== undefined) values.set(key, value);
         }
-
-        values.set(key, value);
-      }
-    } catch (error) {
-      if (!isMissingEnvironmentFileError(error)) {
-        throw error;
+      } catch (error) {
+        if (!isMissingEnvironmentFileError(error)) throw error;
       }
     }
   }

@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 import { EVE_ROUTE_PREFIX } from "#protocol/routes.js";
 import { resolveEveBinaryPath } from "#shared/resolve-eve-binary.js";
 import { resolveEveDestinationPrefix } from "./server.js";
+import { assertValidVercelServiceName } from "#internal/vercel/vercel-service-name.js";
 import { ensureEveVercelOutputConfig } from "./vercel-output-config.js";
 
 /**
@@ -17,8 +18,6 @@ const EVE_NEXT_PRODUCTION_ORIGIN_ENV = "EVE_NEXT_PRODUCTION_ORIGIN";
 const EVE_NEXT_PRODUCTION_PORT_ENV = "EVE_NEXT_PRODUCTION_PORT";
 const DEFAULT_EVE_NEXT_PRODUCTION_PORT = 4274;
 const EVE_NAMED_AGENT_ROUTE_PREFIX = "/eve/agents";
-const AGENT_NAME_PATTERN = /^[a-z](?:[a-z_-]*[a-z])?$/;
-const MAX_VERCEL_AGENT_NAME_LENGTH = 60;
 
 type ArrayElement<T> = T extends readonly (infer TElement)[] ? TElement : never;
 type NextRewrites = Awaited<ReturnType<NonNullable<NextConfig["rewrites"]>>>;
@@ -310,11 +309,7 @@ async function resolveNextConfig<TConfig extends EveNextConfig>(
 }
 
 function assertValidAgentName(name: string): void {
-  if (name.length > MAX_VERCEL_AGENT_NAME_LENGTH || !AGENT_NAME_PATTERN.test(name)) {
-    throw new Error(
-      `eve Next.js agent name ${JSON.stringify(name)} is invalid for a Vercel service. Use 1-${MAX_VERCEL_AGENT_NAME_LENGTH} lowercase letters, underscores, or hyphens, beginning and ending with a letter.`,
-    );
-  }
+  assertValidVercelServiceName(`eve-${name}`, "Generated eve Next.js agent name");
 }
 
 function quoteShellArg(value: string): string {

@@ -1,8 +1,5 @@
 import { isEveProject } from "#setup/scaffold/index.js";
-import {
-  resolveAgentCollection,
-  resolveOwningAgentCollection,
-} from "#internal/agent-collection.js";
+import { resolveCollectionCommandTarget } from "#cli/commands/collection-target.js";
 
 import { runDeployFlow, type DeployFlowDeps } from "#setup/flows/deploy.js";
 import { createPrompter, type Prompter } from "#setup/prompter.js";
@@ -39,24 +36,23 @@ export async function runDeployCommand(
   appRoot: string,
   dependencies: DeployCommandDependencies = defaultDependencies,
 ): Promise<void> {
-  const owningCollection = await resolveOwningAgentCollection(appRoot);
-  if (owningCollection !== undefined) {
+  const collectionTarget = await resolveCollectionCommandTarget(appRoot);
+  if (collectionTarget?.kind === "member") {
     logger.error(
-      `This agent belongs to the collection at ${owningCollection.collection.root}. Run \`eve deploy\` from the collection root to deploy every peer agent together.`,
+      `This agent belongs to the collection at ${collectionTarget.collection.root}. Run \`eve deploy\` from the collection root to deploy every peer agent together.`,
     );
     process.exitCode = 1;
     return;
   }
-  const collection = await resolveAgentCollection(appRoot);
-  if (!(await dependencies.isEveProject(appRoot)) && collection === undefined) {
+  if (!(await dependencies.isEveProject(appRoot)) && collectionTarget === undefined) {
     logger.error(NOT_AN_AGENT_MESSAGE);
     process.exitCode = 1;
     return;
   }
-  if (collection?.mode === "authored") {
+  if (collectionTarget?.kind === "collection") {
     const { validateAuthoredAgentServices } =
       await import("#internal/vercel/validate-authored-agent-services.js");
-    const validation = await validateAuthoredAgentServices(collection);
+    const validation = await validateAuthoredAgentServices(collectionTarget.collection);
     for (const name of validation.omittedAgentNames) {
       logger.error(`warning: agents/${name} is not selected by vercel.json#services.`);
     }

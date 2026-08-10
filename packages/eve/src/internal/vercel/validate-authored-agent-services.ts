@@ -1,6 +1,7 @@
 import { relative, resolve } from "node:path";
 
 import type { AgentCollection } from "#internal/agent-collection.js";
+import { resolveAgentCollectionDeploymentMode } from "#internal/vercel/agent-collection-deployment.js";
 import {
   createEveRequestPathRoute,
   createEveServiceRouteSrc,
@@ -22,9 +23,13 @@ function toPosixPath(path: string): string {
 }
 
 function sameRequestPathRoute(route: VercelRouteConfig, expected: VercelRouteConfig): boolean {
+  if (route.src !== expected.src || route.transforms?.length !== 1) return false;
+  const transform = route.transforms[0];
+  const expectedTransform = expected.transforms?.[0];
   return (
-    route.src === expected.src &&
-    JSON.stringify(route.transforms) === JSON.stringify(expected.transforms)
+    transform?.args === expectedTransform?.args &&
+    transform?.op === expectedTransform?.op &&
+    transform?.type === expectedTransform?.type
   );
 }
 
@@ -59,7 +64,9 @@ function resolveServiceForMember(input: {
 export async function validateAuthoredAgentServices(
   collection: AgentCollection,
 ): Promise<AuthoredAgentServicesValidation> {
-  if (collection.mode !== "authored") return { omittedAgentNames: [] };
+  if ((await resolveAgentCollectionDeploymentMode(collection)) !== "authored") {
+    return { omittedAgentNames: [] };
+  }
   const config = await readVercelJsonFile(`${collection.root}/vercel.json`);
   if (config.services === undefined) {
     throw new Error(

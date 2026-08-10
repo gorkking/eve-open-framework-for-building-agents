@@ -2,20 +2,24 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
+  compileEveVercelService,
   createEveServiceName,
   createEveServiceRouteSrc,
-  compileEveVercelService,
-  createServiceConfigRecord,
+} from "#internal/vercel/eve-service-contribution.js";
+import {
   findConfiguredEveServiceEntry,
-  hasServices,
   insertEveServiceRequestPathRoute,
   insertEveServiceRoutes,
-  isRecord,
   resolveServicePrefix,
   type MutableGeneratedVercelServiceConfig,
+} from "#internal/vercel/vercel-service-config-operations.js";
+import {
+  createServiceConfigRecord,
+  hasServices,
+  isRecord,
   type VercelServiceConfig,
   type VercelServicesConfig,
-} from "#internal/vercel/service-config-codegen.js";
+} from "#internal/vercel/vercel-services-config.js";
 import {
   findClosestLinkedVercelDirectory,
   findClosestVercelOutputDirectory,

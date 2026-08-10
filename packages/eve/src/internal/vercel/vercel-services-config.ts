@@ -52,6 +52,8 @@ export type VercelServicesCollection =
   | readonly VercelNamedServiceConfig[];
 
 export interface VercelServicesConfig {
+  readonly experimentalServices?: unknown;
+  readonly experimentalServicesV2?: unknown;
   readonly routes?: readonly VercelRouteConfig[];
   readonly services?: VercelServicesCollection;
   readonly [key: string]: unknown;

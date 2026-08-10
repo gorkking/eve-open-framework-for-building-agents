@@ -1,8 +1,5 @@
 import { isEveProject } from "#setup/scaffold/index.js";
-import {
-  resolveAgentCollection,
-  resolveOwningAgentCollection,
-} from "#internal/agent-collection.js";
+import { resolveCollectionCommandTarget } from "#cli/commands/collection-target.js";
 
 import { runLinkFlow, type LinkFlowDeps } from "#setup/flows/link.js";
 import { createPrompter, type Prompter } from "#setup/prompter.js";
@@ -40,18 +37,15 @@ export async function runLinkCommand(
   appRoot: string,
   dependencies: LinkCommandDependencies = defaultDependencies,
 ): Promise<void> {
-  const owningCollection = await resolveOwningAgentCollection(appRoot);
-  if (owningCollection !== undefined) {
+  const collectionTarget = await resolveCollectionCommandTarget(appRoot);
+  if (collectionTarget?.kind === "member") {
     logger.error(
-      `This agent belongs to the collection at ${owningCollection.collection.root}. Run \`eve link\` from the collection root.`,
+      `This agent belongs to the collection at ${collectionTarget.collection.root}. Run \`eve link\` from the collection root.`,
     );
     process.exitCode = 1;
     return;
   }
-  if (
-    !(await dependencies.isEveProject(appRoot)) &&
-    (await resolveAgentCollection(appRoot)) === undefined
-  ) {
+  if (!(await dependencies.isEveProject(appRoot)) && collectionTarget === undefined) {
     logger.error(NOT_AN_AGENT_MESSAGE);
     process.exitCode = 1;
     return;

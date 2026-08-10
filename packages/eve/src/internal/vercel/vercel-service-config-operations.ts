@@ -11,26 +11,6 @@ import {
   type VercelServiceConfig,
 } from "#internal/vercel/vercel-services-config.js";
 
-export {
-  compileEveVercelService,
-  createEvePublicRoute,
-  createEveRequestPathRoute,
-  createEveServiceName,
-  createEveServiceRouteSrc,
-  type EveVercelAgentTarget,
-  type EveVercelBuildTarget,
-  type EveVercelServiceContribution,
-} from "#internal/vercel/eve-service-contribution.js";
-export {
-  createServiceConfigRecord,
-  hasServices,
-  isRecord,
-  type GeneratedVercelServiceConfig,
-  type VercelRouteConfig,
-  type VercelServiceConfig,
-  type VercelServicesConfig,
-} from "#internal/vercel/vercel-services-config.js";
-
 export type MutableGeneratedVercelServiceConfig = {
   -readonly [Key in keyof GeneratedVercelServiceConfig]: GeneratedVercelServiceConfig[Key];
 };

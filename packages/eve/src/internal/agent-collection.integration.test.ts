@@ -23,19 +23,12 @@ describe("resolveAgentCollection", () => {
   it("discovers strict direct children in deterministic order", async () => {
     const root = await createCollection();
     await expect(resolveAgentCollection(root)).resolves.toMatchObject({
-      mode: "inferred",
       members: [
         { name: "research", appRoot: join(root, "agents", "research") },
         { name: "support", appRoot: join(root, "agents", "support") },
       ],
       root,
     });
-  });
-
-  it("recognizes an authored Vercel service graph", async () => {
-    const root = await createCollection();
-    await writeFile(join(root, "vercel.json"), JSON.stringify({ services: {} }));
-    await expect(resolveAgentCollection(root)).resolves.toMatchObject({ mode: "authored" });
   });
 
   it("rejects root-agent coexistence", async () => {

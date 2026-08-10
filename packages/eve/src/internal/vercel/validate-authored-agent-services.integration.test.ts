@@ -62,6 +62,32 @@ describe("validateAuthoredAgentServices", () => {
     await expect(validateAuthoredAgentServices(collection!)).rejects.toThrow(/request.path route/);
   });
 
+  it("accepts a canonical transform regardless of JSON object key order", async () => {
+    const root = await createCollection({
+      services: {
+        "customer-care": {
+          ...supportService(),
+          routes: [
+            {
+              transforms: [{ type: "request.path", args: "/eve/v1/$1", op: "set" }],
+              src: "^/eve/agents/support/eve/v1/(.*)$",
+            },
+          ],
+        },
+      },
+      rewrites: [
+        {
+          source: "/eve/agents/support/eve/v1/(.*)",
+          destination: { service: "customer-care" },
+        },
+      ],
+    });
+    const collection = await resolveAgentCollection(root);
+    await expect(validateAuthoredAgentServices(collection!)).resolves.toEqual({
+      omittedAgentNames: ["research"],
+    });
+  });
+
   it("rejects a missing public rewrite", async () => {
     const root = await createCollection({ services: { "customer-care": supportService() } });
     const collection = await resolveAgentCollection(root);

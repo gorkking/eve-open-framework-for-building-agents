@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import type { AgentCollection, AgentCollectionMember } from "#internal/agent-collection.js";
+import { resolveAgentCollectionDeploymentMode } from "#internal/vercel/agent-collection-deployment.js";
 import { compileEveVercelService } from "#internal/vercel/eve-service-contribution.js";
 import { resolveEveBinaryPath } from "#shared/resolve-eve-binary.js";
 import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
@@ -59,7 +60,7 @@ async function resolveMemberBuildCommand(
 
 /** Emit the inferred Vercel Services project for a strict hostless collection. */
 export async function buildAgentCollection(collection: AgentCollection): Promise<string> {
-  if (collection.mode === "authored") {
+  if ((await resolveAgentCollectionDeploymentMode(collection)) === "authored") {
     throw new Error(
       "This project defines its Vercel service graph in vercel.json. Run `vercel build` to build the complete project, or run `eve build` from an individual agent directory.",
     );
