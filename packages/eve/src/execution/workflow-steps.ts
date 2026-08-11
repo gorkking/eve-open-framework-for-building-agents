@@ -291,23 +291,14 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
   } else {
     const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
-    await Promise.all([
-      refreshDynamicSessionSubagentsForRuntimeRevision({
-        ctx,
-        resolvers: dynamicSubagentResolvers,
-        event: refreshEvent,
-        messages: initialSession.history,
-        persistentSessions: persistentSubagentSessions,
-        runtimeRevision: dynamicRuntimeRevision,
-      }),
-      refreshDynamicSessionToolsForRuntimeRevision({
-        ctx,
-        resolvers: dynamicToolResolvers,
-        event: refreshEvent,
-        messages: initialSession.history,
-        runtimeRevision: dynamicRuntimeRevision,
-      }),
-    ]);
+    await refreshDynamicSessionSubagentsForRuntimeRevision({
+      ctx,
+      resolvers: dynamicSubagentResolvers,
+      event: refreshEvent,
+      messages: initialSession.history,
+      persistentSessions: persistentSubagentSessions,
+      runtimeRevision: dynamicRuntimeRevision,
+    });
   }
 
   const writer = input.parentWritable.getWriter();
@@ -376,6 +367,16 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // or the pending batch would re-park and later re-dispatch.
     throwIfTurnAborted(input.abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
+      if (sessionStarted) {
+        await refreshDynamicSessionToolsForRuntimeRevision({
+          ctx,
+          resolvers: dynamicToolResolvers,
+          event: createSessionStartedEvent({ runtime: runtimeIdentity }),
+          messages: enrichedSession.history,
+          runtimeRevision: dynamicRuntimeRevision,
+        });
+      }
+
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
         input: resolved,

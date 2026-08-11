@@ -448,9 +448,9 @@ function createResolver(
   };
 }
 
-function createCtx(): ContextContainer {
+function createCtx(sessionId = "test-session"): ContextContainer {
   const ctx = new ContextContainer();
-  ctx.set(SessionIdKey, "test-session");
+  ctx.set(SessionIdKey, sessionId);
   return ctx;
 }
 
@@ -561,6 +561,149 @@ describe("dispatchDynamicToolEvent", () => {
     });
 
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("rebuilds a missing approval callback after a same-revision cold start", async () => {
+    const ctx = createCtx();
+    const stepId = `test-step-${++stepCounter}`;
+    const stableStepId = `test-step-${++stepCounter}`;
+    testRegistry.set(stepId, () => ({ ok: true }));
+    testRegistry.set(stableStepId, () => ({ ok: true }));
+    let approvalStepFnName: string | undefined;
+    const handler = vi.fn(() => {
+      const entry = defineTool({
+        description: "approval policy",
+        inputSchema: { type: "object" },
+        approval: () => "not-applicable" as const,
+        execute: async (): Promise<unknown> => ({ ok: true }),
+      });
+      Object.assign(entry, {
+        __executeStepFn: { stepId },
+        __closureVars: {},
+      });
+      return { governed: entry };
+    });
+    const resolver = createResolver("governed", ["session.started"], handler);
+    const stableHandler = vi.fn(() => {
+      const entry = defineTool({
+        description: "stable tool",
+        inputSchema: { type: "object" },
+        execute: async (): Promise<unknown> => ({ ok: true }),
+      });
+      Object.assign(entry, {
+        __executeStepFn: { stepId: stableStepId },
+        __closureVars: {},
+      });
+      return { stable: entry };
+    });
+    const stableResolver = createResolver("stable", ["session.started"], stableHandler);
+
+    try {
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver, stableResolver],
+        messages: [],
+        event: makeEvent("session.started"),
+      });
+      ctx.set(
+        SessionDynamicToolMetadataKey,
+        (ctx.get(SessionDynamicToolMetadataKey) ?? []).map(
+          ({ requiresLiveDefinition: _legacyFlag, ...legacyEntry }) => legacyEntry,
+        ),
+      );
+      ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
+
+      approvalStepFnName = ctx.get(SessionDynamicToolMetadataKey)?.[0]?.approvalStepFnName;
+      expect(approvalStepFnName).toBe("eve:dynamic-tool-approval:governed:governed");
+      ctx.clearVirtualContext();
+
+      await refreshDynamicSessionToolsForRuntimeRevision({
+        ctx,
+        resolvers: [resolver, stableResolver],
+        messages: [],
+        event: createSessionStartedEvent(),
+        runtimeRevision: "deployment:dpl_current",
+      });
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(stableHandler).toHaveBeenCalledOnce();
+      expect(ctx.get(SessionDynamicToolMetadataKey)?.map((entry) => entry.name)).toEqual([
+        "governed",
+        "stable",
+      ]);
+      const tool = buildDynamicTools(ctx)[0]!;
+      expect(tool.approval!(createApprovalContext({ toolName: tool.name }))).toBe("not-applicable");
+    } finally {
+      testRegistry.delete(stepId);
+      testRegistry.delete(stableStepId);
+      if (approvalStepFnName !== undefined) testRegistry.delete(approvalStepFnName);
+    }
+  });
+
+  it("keeps replay callbacks isolated between sessions", async () => {
+    const sessionIds = ["session-a", "session-b"] as const;
+    const resolver = createResolver("governed", ["session.started"], (_event, resolveCtx) => {
+      const sessionId = (resolveCtx as { session: { id: string } }).session.id;
+      return {
+        governed: defineTool({
+          description: "session policy",
+          inputSchema: { type: "object" },
+          approval: () => (sessionId === "session-a" ? "not-applicable" : "user-approval"),
+          execute: async (): Promise<unknown> => ({ sessionId }),
+        }),
+      };
+    });
+
+    const contexts = sessionIds.map((sessionId) => createCtx(sessionId));
+    for (const ctx of contexts) {
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("session.started"),
+      });
+    }
+
+    const sessionATool = buildDynamicTools(contexts[0]!)[0]!;
+    const sessionBTool = buildDynamicTools(contexts[1]!)[0]!;
+    expect(sessionATool.approval!(createApprovalContext({ toolName: sessionATool.name }))).toBe(
+      "not-applicable",
+    );
+    expect(sessionBTool.approval!(createApprovalContext({ toolName: sessionBTool.name }))).toBe(
+      "user-approval",
+    );
+  });
+
+  it("preserves metadata and retries when cold hydration fails", async () => {
+    const ctx = createCtx();
+    const handler = vi
+      .fn()
+      .mockImplementationOnce(() => ({ tool: createFrameworkTool("live tool") }))
+      .mockRejectedValue(new Error("temporary resolver failure"));
+    const resolver = createResolver("live", ["session.started"], handler);
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
+    const originalMetadata = ctx.get(SessionDynamicToolMetadataKey);
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      ctx.clearVirtualContext();
+      await refreshDynamicSessionToolsForRuntimeRevision({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: createSessionStartedEvent(),
+        runtimeRevision: "deployment:dpl_current",
+      });
+      expect(ctx.get(SessionDynamicToolMetadataKey)).toEqual(originalMetadata);
+    }
+
+    expect(handler).toHaveBeenCalledTimes(3);
   });
 
   it("clears removed session resolvers on a new runtime revision", async () => {
@@ -1056,6 +1199,13 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     // Simulate step boundary — virtual context cleared, durable survives
     ctx.clearVirtualContext();
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_current",
+    });
 
     const replayedTools = buildDynamicTools(ctx);
     expect(replayedTools).toHaveLength(1);
@@ -1114,6 +1264,13 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(metadata).toHaveLength(2);
 
     ctx.clearVirtualContext();
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [frameworkResolver, authoredResolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_current",
+    });
 
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(2);
@@ -1134,6 +1291,13 @@ describe("framework dynamic tools (no bundler transform)", () => {
     });
 
     ctx.clearVirtualContext();
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_current",
+    });
 
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(1);
@@ -1191,6 +1355,13 @@ describe("framework dynamic tools (no bundler transform)", () => {
     });
 
     ctx.clearVirtualContext();
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_current",
+    });
 
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(1);
@@ -1230,6 +1401,13 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(metadata?.[0]?.outputSchema).toEqual(outputSchema);
 
     ctx.clearVirtualContext();
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_current",
+    });
 
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(1);
@@ -1272,7 +1450,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
       event: makeEvent("session.started"),
     });
 
-    ctx.clearVirtualContext();
     let tools = buildDynamicTools(ctx);
     const result1 = await tools[0]!.execute!({}, executeOptions);
     expect(result1).toEqual({ version: 1 });
@@ -1285,7 +1462,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
       event: makeEvent("session.started"),
     });
 
-    ctx.clearVirtualContext();
     tools = buildDynamicTools(ctx);
     expect(tools[0]!.description).toBe("v2");
     const result2 = await tools[0]!.execute!({}, executeOptions);
