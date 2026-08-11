@@ -90,19 +90,31 @@ export interface RuntimeModelCatalogLoader {
   ): Promise<{ slug: string; limits: CompiledRuntimeModelLimits } | null>;
 }
 
-/** Resolves the app-local cache path used for AI Gateway model metadata. */
-export function resolveRuntimeModelCatalogCachePath(appRoot: string): string {
+/** Resolves the app-local cache path used for AI Gateway model metadata during compilation. */
+export function resolveCompiledRuntimeModelCatalogCachePath(appRoot: string): string {
   return join(appRoot, ".eve", "cache", "model-catalog.json");
 }
 
-/** Creates a loader that caches the AI Gateway model catalog in memory and on disk. */
-export function createRuntimeModelCatalogLoader(appRoot: string): RuntimeModelCatalogLoader {
+/** Creates a compile-time loader that caches the model catalog in memory and on disk. */
+export function createCompiledRuntimeModelCatalogLoader(
+  appRoot: string,
+): RuntimeModelCatalogLoader {
+  return createModelCatalogLoader(appRoot);
+}
+
+/** Creates an execution-local model catalog loader without filesystem access. */
+export function createRuntimeModelCatalogLoader(): RuntimeModelCatalogLoader {
+  return createModelCatalogLoader();
+}
+
+function createModelCatalogLoader(appRoot?: string): RuntimeModelCatalogLoader {
   let cachedCatalogPromise: Promise<CompiledRuntimeModelCatalogCache | null> | null = null;
   let fetchedCatalogError: unknown = null;
   let fetchedCatalogPromise: Promise<CompiledRuntimeModelCatalogCache> | null = null;
 
   const getCachedCatalog = async (): Promise<CompiledRuntimeModelCatalogCache | null> => {
-    cachedCatalogPromise ??= readModelCatalogCache(appRoot);
+    cachedCatalogPromise ??=
+      appRoot === undefined ? Promise.resolve(null) : readModelCatalogCache(appRoot);
     return await cachedCatalogPromise;
   };
 
@@ -115,7 +127,9 @@ export function createRuntimeModelCatalogLoader(appRoot: string): RuntimeModelCa
       return await fetchedCatalogPromise;
     }
 
-    fetchedCatalogPromise = fetchAndPersistModelCatalog(appRoot).then((catalog) => {
+    fetchedCatalogPromise = (
+      appRoot === undefined ? fetchModelCatalog() : fetchAndPersistModelCatalog(appRoot)
+    ).then((catalog) => {
       cachedCatalogPromise = Promise.resolve(catalog);
       return catalog;
     });
@@ -197,25 +211,25 @@ export function createRuntimeModelCatalogLoader(appRoot: string): RuntimeModelCa
   };
 }
 
-const runtimeModelCatalogLoaders = new Map<string, RuntimeModelCatalogLoader>();
-
-/** Returns the process-cached model catalog loader for one application root. */
-export function getRuntimeModelCatalogLoader(appRoot: string): RuntimeModelCatalogLoader {
-  const existing = runtimeModelCatalogLoaders.get(appRoot);
-  if (existing !== undefined) {
-    return existing;
-  }
-
-  const loader = createRuntimeModelCatalogLoader(appRoot);
-  runtimeModelCatalogLoaders.set(appRoot, loader);
-  return loader;
-}
-
 type CompiledRuntimeModelCatalogCache = z.infer<typeof compiledRuntimeModelCatalogCacheSchema>;
 
 async function fetchAndPersistModelCatalog(
   appRoot: string,
 ): Promise<CompiledRuntimeModelCatalogCache> {
+  const cacheArtifact = await fetchModelCatalog();
+
+  try {
+    const cachePath = resolveCompiledRuntimeModelCatalogCachePath(appRoot);
+    await mkdir(join(appRoot, ".eve", "cache"), { recursive: true });
+    await writeFile(cachePath, `${JSON.stringify(cacheArtifact, null, 2)}\n`, "utf8");
+  } catch {
+    // Cache persistence is best-effort; the fetched data is still usable.
+  }
+
+  return cacheArtifact;
+}
+
+async function fetchModelCatalog(): Promise<CompiledRuntimeModelCatalogCache> {
   const response = await vercelGatewayFetch(AI_GATEWAY_MODELS_CATALOG_URL);
 
   if (!response.ok) {
@@ -238,14 +252,6 @@ async function fetchAndPersistModelCatalog(
     version: COMPILED_RUNTIME_MODEL_CATALOG_CACHE_VERSION,
   };
 
-  try {
-    const cachePath = resolveRuntimeModelCatalogCachePath(appRoot);
-    await mkdir(join(appRoot, ".eve", "cache"), { recursive: true });
-    await writeFile(cachePath, `${JSON.stringify(cacheArtifact, null, 2)}\n`, "utf8");
-  } catch {
-    // Cache persistence is best-effort; the fetched data is still usable.
-  }
-
   return cacheArtifact;
 }
 
@@ -253,7 +259,7 @@ async function readModelCatalogCache(
   appRoot: string,
 ): Promise<CompiledRuntimeModelCatalogCache | null> {
   try {
-    const cacheText = await readFile(resolveRuntimeModelCatalogCachePath(appRoot), "utf8");
+    const cacheText = await readFile(resolveCompiledRuntimeModelCatalogCachePath(appRoot), "utf8");
     const parsed = compiledRuntimeModelCatalogCacheSchema.safeParse(JSON.parse(cacheText));
     return parsed.success ? parsed.data : null;
   } catch (error) {

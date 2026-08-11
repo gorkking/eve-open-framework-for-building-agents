@@ -1,15 +1,21 @@
 import { defineEval } from "eve/evals";
 import { equals } from "eve/evals/expect";
 
-/** Dynamic selections resolve omitted context-window metadata through the runtime catalog. */
+/** Dynamic selections resolve and reuse omitted context-window metadata at runtime. */
 export default defineEval({
-  description: "Dynamic model smoke: runtime catalog metadata resolution.",
+  description: "Dynamic model smoke: runtime catalog metadata resolution and reuse.",
   async test(t) {
     const known = await t.send(
       '[model: catalog] Reply with exactly the text "catalog ping" and nothing else.',
     );
     known.expectOk();
     known.messageIncludes("catalog ping");
+
+    const cached = await t.send(
+      '[model: catalog] Reply with exactly the text "cached ping" and nothing else.',
+    );
+    cached.expectOk();
+    cached.messageIncludes("cached ping");
 
     const unknown = await t.send(
       "[model: catalog-unknown] This turn must fail before model execution.",

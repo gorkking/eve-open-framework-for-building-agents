@@ -1,9 +1,9 @@
 import { buildAdapterContext } from "#channel/adapter-context.js";
 import { callAdapterEventHandler, defaultDeliverResult } from "#channel/adapter.js";
 import type { DeliverPayload, SessionAuthContext } from "#channel/types.js";
-import { getRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import { dispatchStreamEventHooks } from "#context/hook-lifecycle.js";
 import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-lifecycle.js";
+import { createStateCachedRuntimeModelCatalogLoader } from "#context/dynamic-model-metadata-cache.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
 import {
@@ -168,7 +168,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     modelCatalog:
       effectiveAgent.turnAgent.dynamicModel === undefined
         ? undefined
-        : getRuntimeModelCatalogLoader(bundle.resolvedAgent.metadata.appRoot),
+        : createStateCachedRuntimeModelCatalogLoader({ ctx }),
     nodeId: bundle.nodeId,
   };
 
