@@ -2,13 +2,17 @@ import type { Telemetry } from "ai";
 
 import type {
   InstrumentationAttemptScope,
-  InstrumentationAttemptStartedEvent,
+  InstrumentationStepAttemptStartedEvent,
+  InstrumentationContentPart,
   InstrumentationContextRunner,
   InstrumentationHooks,
   InstrumentationModelCallCompletedEvent,
   InstrumentationModelCallStartedEvent,
+  InstrumentationOperationRef,
   InstrumentationToolCallCompletedEvent,
   InstrumentationToolCallStartedEvent,
+  InstrumentationToolOutput,
+  InstrumentationUsage,
 } from "#harness/instrumentation-lifecycle.js";
 
 type TelemetryEvent<TKey extends keyof Telemetry> = Parameters<NonNullable<Telemetry[TKey]>>[0];
@@ -17,8 +21,9 @@ interface AttemptState {
   readonly modelIds: Map<string, string>;
   readonly scope: InstrumentationAttemptScope;
   readonly toolIds: Map<string, string>;
-  operationStart?: Readonly<TelemetryEvent<"onStart">>;
-  stepStart?: Readonly<TelemetryEvent<"onStepStart">>;
+  operation?: InstrumentationOperationRef;
+  // Only the number is kept: it disambiguates call identities within an attempt.
+  stepNumber?: number;
 }
 
 /** Creates one provider-neutral AI SDK bridge for one actual model attempt. */
@@ -35,18 +40,22 @@ export function createAiSdkHookBridge(
 
   return {
     onStart(event) {
-      state.operationStart = snapshot(event);
+      state.operation = Object.freeze({
+        modelId: event.modelId,
+        operationId: event.operationId,
+        provider: event.provider,
+      });
     },
     async onStepStart(event) {
-      state.stepStart = snapshot(event);
-      const started = toAttemptStarted(state);
+      state.stepNumber = event.stepNumber;
+      const started = toStepAttemptStarted(state);
       if (started !== undefined) await hooks.publish(started);
     },
     async onLanguageModelCallStart(event) {
       const id = createModelCallIdentity(state, event.callId);
       state.modelIds.set(event.callId, id);
       const started = toModelCallStarted(state, id, event);
-      await hooks.before("model.call", started);
+      await hooks.publish(started);
     },
     executeLanguageModelCall({ callId, execute }) {
       const id = state.modelIds.get(callId);
@@ -59,24 +68,26 @@ export function createAiSdkHookBridge(
       if (id === undefined) return;
       state.modelIds.delete(event.callId);
       const completed = toModelCallCompleted(state, id, event);
-      await hooks.after("model.call", completed);
+      await hooks.publish(completed);
     },
     async onStepEnd(event) {
       // Step results carry provider metadata (e.g. Vercel AI Gateway cost)
       // that the per-call telemetry events don't. Publish it for providers
       // that know what to do with it; skip when there is none.
       if (event.providerMetadata === undefined) return;
-      await hooks.publish({
-        providerMetadata: event.providerMetadata,
-        scope: state.scope,
-        type: "attempt.metadata",
-      });
+      await hooks.publish(
+        Object.freeze({
+          providerMetadata: event.providerMetadata,
+          scope: state.scope,
+          type: "step.attempt.metadata",
+        }),
+      );
     },
     async onToolExecutionStart(event) {
       const id = createToolCallIdentity(state, event.toolCall.toolCallId);
       state.toolIds.set(event.toolCall.toolCallId, id);
       const started = toToolCallStarted(state, id, event);
-      await hooks.before("tool.call", started);
+      await hooks.publish(started);
     },
     executeTool({ toolCallId, execute }) {
       const id = state.toolIds.get(toolCallId);
@@ -88,23 +99,23 @@ export function createAiSdkHookBridge(
       if (id === undefined) return;
       state.toolIds.delete(toolCallId);
       const completed = toToolCallCompleted(state, id, event);
-      await hooks.after("tool.call", completed);
+      await hooks.publish(completed);
     },
     async onAbort(event) {
-      await failOpenOperations(event);
+      await failOpenOperations(event.reason);
     },
-    async onError(error) {
-      await failOpenOperations(error);
+    async onError(event) {
+      await failOpenOperations((event as { readonly error: unknown }).error);
     },
   };
 
   async function failOpenOperations(error: unknown): Promise<void> {
     const pending: Promise<void>[] = [];
     for (const id of state.modelIds.values()) {
-      pending.push(hooks.after("model.call", { error, id, scope, type: "model.call.failed" }));
+      pending.push(hooks.publish(Object.freeze({ error, id, scope, type: "model.call.failed" })));
     }
     for (const id of state.toolIds.values()) {
-      pending.push(hooks.after("tool.call", { error, id, scope, type: "tool.call.failed" }));
+      pending.push(hooks.publish(Object.freeze({ error, id, scope, type: "tool.call.failed" })));
     }
     state.modelIds.clear();
     state.toolIds.clear();
@@ -114,22 +125,19 @@ export function createAiSdkHookBridge(
 
 const directRunInContext: InstrumentationContextRunner = (_operation, execute) => execute();
 
-function snapshot<T extends object>(event: T): Readonly<T> {
-  return Object.freeze({ ...event });
-}
-
-function toAttemptStarted(state: AttemptState): InstrumentationAttemptStartedEvent | undefined {
-  if (state.operationStart === undefined || state.stepStart === undefined) return undefined;
-  return {
-    operation: state.operationStart,
+function toStepAttemptStarted(
+  state: AttemptState,
+): InstrumentationStepAttemptStartedEvent | undefined {
+  if (state.operation === undefined || state.stepNumber === undefined) return undefined;
+  return Object.freeze({
+    operation: state.operation,
     scope: state.scope,
-    step: state.stepStart,
-    type: "attempt.started",
-  };
+    type: "step.attempt.started",
+  });
 }
 
 function createModelCallIdentity(state: AttemptState, callId: string): string {
-  return `${state.scope.attemptId}:model:${callId}:${state.stepStart?.stepNumber ?? 0}`;
+  return `${state.scope.attemptId}:model:${callId}:${state.stepNumber ?? 0}`;
 }
 
 function toModelCallStarted(
@@ -137,12 +145,16 @@ function toModelCallStarted(
   id: string,
   source: TelemetryEvent<"onLanguageModelCallStart">,
 ): InstrumentationModelCallStartedEvent {
-  return {
+  return Object.freeze({
     id,
+    input: Object.freeze({
+      instructions: source.instructions,
+      messages: Object.freeze([...source.messages]),
+    }),
+    model: Object.freeze({ modelId: source.modelId, provider: source.provider }),
     scope: state.scope,
-    source: snapshot(source),
     type: "model.call.started",
-  };
+  });
 }
 
 function toModelCallCompleted(
@@ -150,16 +162,79 @@ function toModelCallCompleted(
   id: string,
   source: TelemetryEvent<"onLanguageModelCallEnd">,
 ): InstrumentationModelCallCompletedEvent {
-  return {
+  return Object.freeze({
+    content: toContentParts(source.content),
+    finishReason: source.finishReason,
     id,
     scope: state.scope,
-    source: snapshot(source),
     type: "model.call.completed",
-  };
+    usage: toUsage(source.usage),
+  });
+}
+
+function toUsage(usage: TelemetryEvent<"onLanguageModelCallEnd">["usage"]): InstrumentationUsage {
+  return Object.freeze({
+    inputTokenDetails: Object.freeze({
+      cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens,
+      cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens,
+    }),
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  });
+}
+
+/** Drops kinds eve does not record; see {@link InstrumentationContentPart}. */
+function toContentParts(
+  content: TelemetryEvent<"onLanguageModelCallEnd">["content"],
+): readonly InstrumentationContentPart[] {
+  const parts: InstrumentationContentPart[] = [];
+  for (const part of content) {
+    switch (part.type) {
+      case "text":
+      case "reasoning":
+        parts.push(Object.freeze({ text: part.text, type: part.type }));
+        break;
+      case "tool-call":
+        parts.push(
+          Object.freeze({
+            callId: part.toolCallId,
+            input: part.input,
+            toolName: part.toolName,
+            type: "tool-call",
+          }),
+        );
+        break;
+      case "tool-result":
+        parts.push(
+          Object.freeze({
+            callId: part.toolCallId,
+            input: part.input,
+            output: part.output,
+            toolName: part.toolName,
+            type: "tool-result",
+          }),
+        );
+        break;
+      case "tool-error":
+        parts.push(
+          Object.freeze({
+            callId: part.toolCallId,
+            error: part.error,
+            input: part.input,
+            toolName: part.toolName,
+            type: "tool-error",
+          }),
+        );
+        break;
+      default:
+        break;
+    }
+  }
+  return Object.freeze(parts);
 }
 
 function createToolCallIdentity(state: AttemptState, toolCallId: string): string {
-  return `${state.scope.attemptId}:tool:${toolCallId}:${state.stepStart?.stepNumber ?? 0}`;
+  return `${state.scope.attemptId}:tool:${toolCallId}:${state.stepNumber ?? 0}`;
 }
 
 function toToolCallStarted(
@@ -167,12 +242,14 @@ function toToolCallStarted(
   id: string,
   source: TelemetryEvent<"onToolExecutionStart">,
 ): InstrumentationToolCallStartedEvent {
-  return {
+  return Object.freeze({
+    callId: source.toolCall.toolCallId,
     id,
+    input: source.toolCall.input,
     scope: state.scope,
-    source: snapshot(source),
+    toolName: source.toolCall.toolName,
     type: "tool.call.started",
-  };
+  });
 }
 
 function toToolCallCompleted(
@@ -180,10 +257,18 @@ function toToolCallCompleted(
   id: string,
   source: TelemetryEvent<"onToolExecutionEnd">,
 ): InstrumentationToolCallCompletedEvent {
-  return {
+  return Object.freeze({
     id,
+    output: toToolOutput(source.toolOutput),
     scope: state.scope,
-    source: snapshot(source),
     type: "tool.call.completed",
-  };
+  });
+}
+
+function toToolOutput(
+  toolOutput: TelemetryEvent<"onToolExecutionEnd">["toolOutput"],
+): InstrumentationToolOutput {
+  return toolOutput.type === "tool-result"
+    ? Object.freeze({ output: toolOutput.output, type: "result" })
+    : Object.freeze({ error: toolOutput.error, type: "error" });
 }

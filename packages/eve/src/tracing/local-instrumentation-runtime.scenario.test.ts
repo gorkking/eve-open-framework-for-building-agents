@@ -71,7 +71,7 @@ describe("local instrumentation runtime", () => {
       ]);
       await Reflect.apply(bridge.onStepStart!, bridge, [{ callId: "call-1", stepNumber: 0 }]);
       await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
-        { callId: "call-1", modelId: "model-1", provider: "test", tools: undefined },
+        { callId: "call-1", messages: [], modelId: "model-1", provider: "test", tools: undefined },
       ]);
       await bridge.executeLanguageModelCall!({
         callId: "call-1",
@@ -117,7 +117,7 @@ describe("local instrumentation runtime", () => {
           toolOutput: { output: { temperature: 72 }, type: "tool-result" },
         },
       ]);
-      await runtime.hooks.publish({ scope, type: "attempt.completed" });
+      await runtime.hooks.publish({ scope, type: "step.attempt.completed" });
       await runtime.hooks.publish({
         sessionId: "session-1",
         turnId: "turn-1",

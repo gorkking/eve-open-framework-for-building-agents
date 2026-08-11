@@ -8,12 +8,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
-import {
-  createAgentOtelInstrumentation,
-  SESSION_WINDOW_TURN_LIMIT,
-} from "#tracing/agent-otel-provider.js";
+import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
-import { InMemoryAgentTraceStateStore } from "#tracing/agent-trace-state.js";
+import {
+  InMemoryAgentTraceStateStore,
+  SESSION_WINDOW_TURN_LIMIT,
+} from "#tracing/agent-trace-state.js";
 import {
   createInstrumentationHooks,
   type InstrumentationAttemptScope,
@@ -49,10 +49,13 @@ function createRuntime(stateStore = new InMemoryAgentTraceStateStore()): TestRun
 
 async function emitAttempt(input: {
   readonly attemptIndex?: number;
+  readonly attemptError?: Error;
   readonly hooks: InstrumentationHooks;
   readonly runInContext: InstrumentationContextRunner;
   readonly providerMetadata?: Readonly<Record<string, unknown>>;
   readonly sessionId: string;
+  readonly skipModelTerminal?: boolean;
+  readonly skipToolTerminal?: boolean;
   readonly toolError?: Error;
   readonly turnAlreadyStarted?: boolean;
   readonly turnId: string;
@@ -98,38 +101,40 @@ async function emitAttempt(input: {
     },
   ]);
   await bridge.executeLanguageModelCall!({ callId: "call-1", execute: async () => undefined });
-  await Reflect.apply(bridge.onLanguageModelCallEnd!, bridge, [
-    {
-      callId: "call-1",
-      content: [
-        { type: "reasoning", text: "thinking about weather" },
-        { type: "text", text: "Checking the weather." },
-        {
-          input: { query: "weather today" },
-          providerExecuted: true,
-          toolCallId: "search-1",
-          toolName: "web_search",
-          type: "tool-call",
+  if (input.skipModelTerminal !== true) {
+    await Reflect.apply(bridge.onLanguageModelCallEnd!, bridge, [
+      {
+        callId: "call-1",
+        content: [
+          { type: "reasoning", text: "thinking about weather" },
+          { type: "text", text: "Checking the weather." },
+          {
+            input: { query: "weather today" },
+            providerExecuted: true,
+            toolCallId: "search-1",
+            toolName: "web_search",
+            type: "tool-call",
+          },
+          {
+            input: { query: "weather today" },
+            output: { results: ["sunny"] },
+            providerExecuted: true,
+            toolCallId: "search-1",
+            toolName: "web_search",
+            type: "tool-result",
+          },
+        ],
+        finishReason: "tool-calls",
+        performance: { responseTimeMs: 10 },
+        responseId: "response-1",
+        usage: {
+          inputTokenDetails: { cacheReadTokens: 4, cacheWriteTokens: 2 },
+          inputTokens: 10,
+          outputTokens: 5,
         },
-        {
-          input: { query: "weather today" },
-          output: { results: ["sunny"] },
-          providerExecuted: true,
-          toolCallId: "search-1",
-          toolName: "web_search",
-          type: "tool-result",
-        },
-      ],
-      finishReason: "tool-calls",
-      performance: { responseTimeMs: 10 },
-      responseId: "response-1",
-      usage: {
-        inputTokenDetails: { cacheReadTokens: 4, cacheWriteTokens: 2 },
-        inputTokens: 10,
-        outputTokens: 5,
       },
-    },
-  ]);
+    ]);
+  }
   await Reflect.apply(bridge.onToolExecutionStart!, bridge, [
     {
       callId: "call-1",
@@ -141,28 +146,34 @@ async function emitAttempt(input: {
     execute: async () => undefined,
     toolCallId: "tool-1",
   });
-  await Reflect.apply(bridge.onToolExecutionEnd!, bridge, [
-    {
-      callId: "call-1",
-      messages: [],
-      toolCall: { input: {}, toolCallId: "tool-1", toolName: "weather" },
-      toolExecutionMs: 1,
-      toolOutput:
-        input.toolError === undefined
-          ? { output: { temperature: 72 }, type: "tool-result" }
-          : { error: input.toolError, type: "tool-error" },
-    },
-  ]);
+  if (input.skipToolTerminal !== true) {
+    await Reflect.apply(bridge.onToolExecutionEnd!, bridge, [
+      {
+        callId: "call-1",
+        messages: [],
+        toolCall: { input: {}, toolCallId: "tool-1", toolName: "weather" },
+        toolExecutionMs: 1,
+        toolOutput:
+          input.toolError === undefined
+            ? { output: { temperature: 72 }, type: "tool-result" }
+            : { error: input.toolError, type: "tool-error" },
+      },
+    ]);
+  }
 
   if (input.providerMetadata !== undefined) {
     await input.hooks.publish({
       providerMetadata: input.providerMetadata,
       scope,
-      type: "attempt.metadata",
+      type: "step.attempt.metadata",
     });
   }
 
-  await input.hooks.publish({ scope, type: "attempt.completed" });
+  await input.hooks.publish(
+    input.attemptError === undefined
+      ? { scope, type: "step.attempt.completed" }
+      : { error: input.attemptError, scope, type: "step.attempt.failed" },
+  );
   await input.hooks.publish({
     sessionId: input.sessionId,
     turnId: input.turnId,
@@ -248,6 +259,7 @@ describe("createAgentOtelInstrumentation", () => {
     expect(session.attributes).toMatchObject({
       "agent.session.id": "session-1",
       "agent.session.window": 0,
+      "agent.trace.schema.version": 1,
     });
     expect(turn.parentSpanContext?.spanId).toBe(session.spanContext().spanId);
     expect(step.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
@@ -284,6 +296,54 @@ describe("createAgentOtelInstrumentation", () => {
     });
   });
 
+  it("ends model and tool spans still open when the step attempt terminates", async () => {
+    const runtime = createRuntime();
+    await emitAttempt({
+      hooks: runtime.hooks,
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      skipModelTerminal: true,
+      skipToolTerminal: true,
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const spans = runtime.exporter.getFinishedSpans();
+    expect(byName(spans, "ai.streamText.doStream")).toHaveLength(1);
+    expect(byName(spans, "agent.action")).toHaveLength(1);
+    expect(byName(spans, "ai.toolCall")).toHaveLength(1);
+    expect(byName(spans, "agent.step")).toHaveLength(1);
+  });
+
+  it("records a failed attempt on model, tool, and action spans still open", async () => {
+    const runtime = createRuntime();
+    const error = new Error("attempt failed");
+    await emitAttempt({
+      attemptError: error,
+      hooks: runtime.hooks,
+      runInContext: runtime.runInContext,
+      sessionId: "session-1",
+      skipModelTerminal: true,
+      skipToolTerminal: true,
+      turnId: "turn-1",
+      turnSequence: 0,
+    });
+    await runtime.provider.forceFlush();
+
+    const spans = runtime.exporter.getFinishedSpans();
+    for (const name of ["ai.streamText.doStream", "agent.action", "ai.toolCall"]) {
+      const span = byName(spans, name)[0]!;
+      expect(span.status).toEqual({ code: SpanStatusCode.ERROR, message: error.message });
+      expect(span.events).toContainEqual(
+        expect.objectContaining({
+          attributes: expect.objectContaining({ "exception.message": error.message }),
+          name: "exception",
+        }),
+      );
+    }
+  });
+
   it("captures model and tool inputs/outputs on the operation spans", async () => {
     const runtime = createRuntime();
     await emitAttempt({
@@ -311,10 +371,10 @@ describe("createAgentOtelInstrumentation", () => {
     // Provider-executed tools never reach the tool loop; their calls and
     // results are captured off the model response content.
     expect(model.attributes["ai.response.tool_calls"]).toBe(
-      '[{"input":{"query":"weather today"},"toolName":"web_search"}]',
+      '[{"callId":"search-1","input":{"query":"weather today"},"toolName":"web_search"}]',
     );
     expect(model.attributes["ai.response.tool_results"]).toBe(
-      '[{"input":{"query":"weather today"},"output":{"results":["sunny"]},"toolName":"web_search"}]',
+      '[{"callId":"search-1","input":{"query":"weather today"},"output":{"results":["sunny"]},"toolName":"web_search"}]',
     );
     expect(tool.attributes["gen_ai.tool.call.arguments"]).toBe('{"secret":"value"}');
     expect(tool.attributes["gen_ai.tool.call.result"]).toBe('{"temperature":72}');

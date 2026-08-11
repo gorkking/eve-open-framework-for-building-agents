@@ -15,8 +15,6 @@ describe("createInstrumentationHandleEvent", () => {
   it("publishes native lifecycle transitions after durable handling", async () => {
     const order: string[] = [];
     const hooks: InstrumentationHooks = {
-      after: async () => {},
-      before: async () => {},
       publish: async (event) => {
         order.push(`lifecycle:${event.type}`);
       },
@@ -69,8 +67,6 @@ describe("createInstrumentationHandleEvent", () => {
     expect(
       createInstrumentationHandleEvent({
         hooks: {
-          after: async () => {},
-          before: async () => {},
           publish: async () => {},
         },
         sessionId: "session-1",
@@ -83,8 +79,6 @@ describe("createInstrumentationHandleEvent", () => {
     const handleEvent = createInstrumentationHandleEvent({
       handleEvent: async () => {},
       hooks: {
-        after: async () => {},
-        before: async () => {},
         publish: async (event) => {
           events.push(event);
         },
@@ -109,8 +103,6 @@ describe("createInstrumentationHandleEvent", () => {
     const handleEvent = createInstrumentationHandleEvent({
       handleEvent: async () => {},
       hooks: {
-        after: async () => {},
-        before: async () => {},
         publish: async (event) => {
           events.push(event);
         },

@@ -1,10 +1,14 @@
-import type { Telemetry } from "ai";
-
 import { createLogger, formatError } from "#internal/logging.js";
 
-type TelemetryEvent<TKey extends keyof Telemetry> = Parameters<NonNullable<Telemetry[TKey]>>[0];
-
-/** Stable eve identity for one actual model attempt. */
+/**
+ * Stable eve identity for one actual model attempt.
+ *
+ * A step retried three times produces three of these, all sharing `stepIndex`
+ * and separated by `attemptIndex` — which is why the events carrying this
+ * scope are named `step.attempt.*` and not `step.*`. The protocol's `step.*`
+ * and the `events["step.started"]` resolver hook fire once per step; these
+ * fire once per attempt.
+ */
 export interface InstrumentationAttemptScope {
   readonly attemptId: string;
   readonly attemptIndex: number;
@@ -15,11 +19,129 @@ export interface InstrumentationAttemptScope {
   readonly turnId: string;
 }
 
-export interface InstrumentationAttemptStartedEvent {
-  readonly type: "attempt.started";
+/** The model SDK operation an attempt runs through. */
+export interface InstrumentationOperationRef {
+  readonly modelId: string;
+  readonly operationId: string;
+  readonly provider: string;
+}
+
+export interface InstrumentationModelRef {
+  readonly modelId: string;
+  readonly provider: string;
+}
+
+/** Token usage for one model call. A field is absent when the provider omits it. */
+export interface InstrumentationUsage {
+  readonly inputTokenDetails?: {
+    readonly cacheReadTokens?: number;
+    readonly cacheWriteTokens?: number;
+  };
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
+/** Final model input for one call. Message shape stays opaque to this layer. */
+export interface InstrumentationModelInput {
+  readonly instructions?: unknown;
+  readonly messages: readonly unknown[];
+}
+
+/**
+ * The model response parts eve records. A kind outside this union is dropped
+ * when the bridge maps a response, so widening the union is what makes a new
+ * kind reachable by a provider.
+ */
+export type InstrumentationContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "reasoning"; readonly text: string }
+  | {
+      readonly type: "tool-call";
+      readonly callId: string;
+      readonly input: unknown;
+      readonly toolName: string;
+    }
+  | {
+      readonly type: "tool-result";
+      readonly callId: string;
+      readonly input: unknown;
+      readonly output: unknown;
+      readonly toolName: string;
+    }
+  | {
+      readonly type: "tool-error";
+      readonly callId: string;
+      readonly error: unknown;
+      readonly input: unknown;
+      readonly toolName: string;
+    };
+
+/** How one tool execution ended. */
+export type InstrumentationToolOutput =
+  | { readonly type: "result"; readonly output: unknown }
+  | { readonly type: "error"; readonly error: unknown };
+
+/** Framework-owned reason an agent suspended for user input. */
+export type InstrumentationInputKind = "question" | "session-limit" | "tool-approval";
+
+export interface InstrumentationInputOption {
+  readonly description?: string;
+  readonly id: string;
+  readonly label: string;
+  readonly style?: "danger" | "default" | "primary";
+}
+
+/** User-facing input request content projected without runtime-owned types. */
+export interface InstrumentationInputRequest {
+  readonly allowFreeform?: boolean;
+  readonly display?: "confirmation" | "select" | "text";
+  readonly options?: readonly InstrumentationInputOption[];
+  readonly prompt: string;
+}
+
+/** User response content projected without runtime-owned types. */
+export interface InstrumentationInputResponse {
+  readonly optionId?: string;
+  readonly text?: string;
+}
+
+export type InstrumentationInputOutcome =
+  | "answered"
+  | "approved"
+  | "cancelled"
+  | "denied"
+  | "failed"
+  | "ignored"
+  | "invalid";
+
+export interface InstrumentationInputRequestedEvent {
+  readonly type: "input.requested";
+  readonly action: {
+    readonly callId: string;
+    readonly name: string;
+  };
+  readonly id: string;
+  readonly kind: InstrumentationInputKind;
+  readonly request: InstrumentationInputRequest;
+  readonly requestId: string;
   readonly scope: InstrumentationAttemptScope;
-  readonly operation: TelemetryEvent<"onStart">;
-  readonly step: TelemetryEvent<"onStepStart">;
+}
+
+export interface InstrumentationInputResolvedEvent {
+  readonly type: "input.resolved";
+  readonly error?: unknown;
+  readonly id: string;
+  readonly kind: InstrumentationInputKind;
+  readonly outcome: InstrumentationInputOutcome;
+  readonly requestId: string;
+  readonly response?: InstrumentationInputResponse;
+  readonly scope: InstrumentationAttemptScope;
+}
+
+export interface InstrumentationStepAttemptStartedEvent {
+  readonly type: "step.attempt.started";
+  readonly operation: InstrumentationOperationRef;
+  readonly scope: InstrumentationAttemptScope;
 }
 
 export interface InstrumentationSessionStartedEvent {
@@ -48,12 +170,29 @@ export interface InstrumentationParentLineage {
   readonly turnId: string;
 }
 
-export interface InstrumentationSessionTransitionEvent {
-  readonly type: "session.completed" | "session.failed" | "session.waiting";
-  readonly error?: unknown;
+/**
+ * A session transition that carries no failure.
+ *
+ * `session.waiting` sits here rather than with the failed shape because it is
+ * not terminal: the session suspends awaiting input or approval and may resume
+ * with a new turn.
+ */
+export interface InstrumentationSessionSettledEvent {
+  readonly type: "session.completed" | "session.waiting";
   readonly sessionId: string;
   readonly turnId?: string;
 }
+
+export interface InstrumentationSessionFailedEvent {
+  readonly type: "session.failed";
+  readonly error: unknown;
+  readonly sessionId: string;
+  readonly turnId?: string;
+}
+
+export type InstrumentationSessionTransitionEvent =
+  | InstrumentationSessionSettledEvent
+  | InstrumentationSessionFailedEvent;
 
 export interface InstrumentationTurnStartedEvent {
   readonly type: "turn.started";
@@ -72,19 +211,19 @@ export interface InstrumentationTurnTerminalEvent {
   readonly turnId: string;
 }
 
-export interface InstrumentationAttemptTerminalEvent {
-  readonly type: "attempt.completed" | "attempt.failed";
+export interface InstrumentationStepAttemptTerminalEvent {
+  readonly type: "step.attempt.completed" | "step.attempt.failed";
   readonly error?: unknown;
   readonly scope: InstrumentationAttemptScope;
 }
 
 /**
- * Provider metadata for one completed step, as reported by the AI SDK
+ * Provider metadata for one completed attempt, as reported by the AI SDK
  * (`StepResult.providerMetadata`). Carries Vercel AI Gateway cost data when
  * the request went through the gateway; absent for other providers.
  */
-export interface InstrumentationAttemptMetadataEvent {
-  readonly type: "attempt.metadata";
+export interface InstrumentationStepAttemptMetadataEvent {
+  readonly type: "step.attempt.metadata";
   readonly scope: InstrumentationAttemptScope;
   readonly providerMetadata: Readonly<Record<string, unknown>>;
 }
@@ -92,15 +231,18 @@ export interface InstrumentationAttemptMetadataEvent {
 export interface InstrumentationModelCallStartedEvent {
   readonly type: "model.call.started";
   readonly id: string;
+  readonly input: InstrumentationModelInput;
+  readonly model: InstrumentationModelRef;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onLanguageModelCallStart">;
 }
 
 export interface InstrumentationModelCallCompletedEvent {
   readonly type: "model.call.completed";
+  readonly content: readonly InstrumentationContentPart[];
+  readonly finishReason: string;
   readonly id: string;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onLanguageModelCallEnd">;
+  readonly usage: InstrumentationUsage;
 }
 
 export interface InstrumentationModelCallFailedEvent {
@@ -116,16 +258,18 @@ export type InstrumentationModelCallTerminalEvent =
 
 export interface InstrumentationToolCallStartedEvent {
   readonly type: "tool.call.started";
+  readonly callId: string;
   readonly id: string;
+  readonly input: unknown;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onToolExecutionStart">;
+  readonly toolName: string;
 }
 
 export interface InstrumentationToolCallCompletedEvent {
   readonly type: "tool.call.completed";
   readonly id: string;
+  readonly output: InstrumentationToolOutput;
   readonly scope: InstrumentationAttemptScope;
-  readonly source: TelemetryEvent<"onToolExecutionEnd">;
 }
 
 export interface InstrumentationToolCallFailedEvent {
@@ -139,78 +283,58 @@ export type InstrumentationToolCallTerminalEvent =
   | InstrumentationToolCallCompletedEvent
   | InstrumentationToolCallFailedEvent;
 
-export interface RelatedLifecycleHook<TStart, TTerminal> {
-  readonly before?: (event: TStart) => unknown | PromiseLike<unknown>;
-  readonly after?: (event: TTerminal, state: unknown) => void | PromiseLike<void>;
-}
+/**
+ * The AI SDK can omit a model terminal when an incomplete stream closes. A
+ * provider that correlates starts with terminals must scope that state to the
+ * attempt and release anything still open when the step attempt terminates.
+ */
+export type InstrumentationEventHandler<TEvent> = (event: TEvent) => void | PromiseLike<void>;
 
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
   readonly events?: {
-    readonly "model.call"?: RelatedLifecycleHook<
-      InstrumentationModelCallStartedEvent,
-      InstrumentationModelCallTerminalEvent
-    >;
-    readonly "attempt.started"?: (
-      event: InstrumentationAttemptStartedEvent,
-    ) => void | PromiseLike<void>;
-    readonly "attempt.completed"?: (
-      event: InstrumentationAttemptTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "attempt.failed"?: (
-      event: InstrumentationAttemptTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "attempt.metadata"?: (
-      event: InstrumentationAttemptMetadataEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.completed"?: (
-      event: InstrumentationSessionTransitionEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.failed"?: (
-      event: InstrumentationSessionTransitionEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.started"?: (
-      event: InstrumentationSessionStartedEvent,
-    ) => void | PromiseLike<void>;
-    readonly "session.waiting"?: (
-      event: InstrumentationSessionTransitionEvent,
-    ) => void | PromiseLike<void>;
-    readonly "tool.call"?: RelatedLifecycleHook<
-      InstrumentationToolCallStartedEvent,
-      InstrumentationToolCallTerminalEvent
-    >;
-    readonly "turn.cancelled"?: (
-      event: InstrumentationTurnTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "turn.completed"?: (
-      event: InstrumentationTurnTerminalEvent,
-    ) => void | PromiseLike<void>;
-    readonly "turn.failed"?: (event: InstrumentationTurnTerminalEvent) => void | PromiseLike<void>;
-    readonly "turn.started"?: (event: InstrumentationTurnStartedEvent) => void | PromiseLike<void>;
+    readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
+    readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptTerminalEvent>;
+    readonly "step.attempt.failed"?: InstrumentationEventHandler<InstrumentationStepAttemptTerminalEvent>;
+    readonly "step.attempt.metadata"?: InstrumentationEventHandler<InstrumentationStepAttemptMetadataEvent>;
+    readonly "model.call.started"?: InstrumentationEventHandler<InstrumentationModelCallStartedEvent>;
+    readonly "model.call.completed"?: InstrumentationEventHandler<InstrumentationModelCallCompletedEvent>;
+    readonly "model.call.failed"?: InstrumentationEventHandler<InstrumentationModelCallFailedEvent>;
+    readonly "input.requested"?: InstrumentationEventHandler<InstrumentationInputRequestedEvent>;
+    readonly "input.resolved"?: InstrumentationEventHandler<InstrumentationInputResolvedEvent>;
+    readonly "session.completed"?: InstrumentationEventHandler<InstrumentationSessionSettledEvent>;
+    readonly "session.failed"?: InstrumentationEventHandler<InstrumentationSessionFailedEvent>;
+    readonly "session.started"?: InstrumentationEventHandler<InstrumentationSessionStartedEvent>;
+    readonly "session.waiting"?: InstrumentationEventHandler<InstrumentationSessionSettledEvent>;
+    readonly "tool.call.started"?: InstrumentationEventHandler<InstrumentationToolCallStartedEvent>;
+    readonly "tool.call.completed"?: InstrumentationEventHandler<InstrumentationToolCallCompletedEvent>;
+    readonly "tool.call.failed"?: InstrumentationEventHandler<InstrumentationToolCallFailedEvent>;
+    readonly "turn.cancelled"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.completed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
 }
 
-export interface InstrumentationRelatedEventMap {
-  readonly "model.call": {
-    readonly start: InstrumentationModelCallStartedEvent;
-    readonly terminal: InstrumentationModelCallTerminalEvent;
-  };
-  readonly "tool.call": {
-    readonly start: InstrumentationToolCallStartedEvent;
-    readonly terminal: InstrumentationToolCallTerminalEvent;
-  };
-}
-
-export type InstrumentationRelatedEventName = keyof InstrumentationRelatedEventMap;
+/** Events that carry an operation `id`, pairing a start with its terminal. */
+export type InstrumentationCorrelatedEvent =
+  | InstrumentationInputRequestedEvent
+  | InstrumentationInputResolvedEvent
+  | InstrumentationModelCallStartedEvent
+  | InstrumentationModelCallTerminalEvent
+  | InstrumentationToolCallStartedEvent
+  | InstrumentationToolCallTerminalEvent;
 
 export type InstrumentationPointEvent =
-  | InstrumentationAttemptStartedEvent
-  | InstrumentationAttemptMetadataEvent
-  | InstrumentationAttemptTerminalEvent
+  | InstrumentationStepAttemptStartedEvent
+  | InstrumentationStepAttemptMetadataEvent
+  | InstrumentationStepAttemptTerminalEvent
   | InstrumentationSessionStartedEvent
   | InstrumentationSessionTransitionEvent
   | InstrumentationTurnStartedEvent
   | InstrumentationTurnTerminalEvent;
+
+export type InstrumentationEvent = InstrumentationCorrelatedEvent | InstrumentationPointEvent;
 
 /** Trusted framework operation for activating context around AI SDK execution. */
 export type InstrumentationContextRunner = <T>(
@@ -233,15 +357,7 @@ export type InstrumentationExecutionOperation =
 
 /** Provider-neutral hook operations consumed by the AI SDK bridge. */
 export interface InstrumentationHooks {
-  after<TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["terminal"],
-  ): Promise<void>;
-  before<TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["start"],
-  ): Promise<void>;
-  publish(event: InstrumentationPointEvent): Promise<void>;
+  publish(event: InstrumentationEvent): Promise<void>;
 }
 
 const log = createLogger("harness.instrumentation-lifecycle");
@@ -250,71 +366,20 @@ const log = createLogger("harness.instrumentation-lifecycle");
 export function createInstrumentationHooks(
   providers: readonly InstrumentationProviderDefinition[],
 ): InstrumentationHooks {
-  const relatedState = new WeakMap<InstrumentationAttemptScope, Map<string, unknown>>();
-
-  const publish = async (event: InstrumentationPointEvent): Promise<void> => {
+  const publish = async (event: InstrumentationEvent): Promise<void> => {
     for (const provider of providers) {
       const handler = provider.events?.[event.type];
       if (handler === undefined) continue;
       try {
-        await (handler as (value: typeof event) => void | PromiseLike<void>)(event);
+        await (handler as InstrumentationEventHandler<InstrumentationEvent>)(event);
       } catch (error) {
-        warn(event.type, error);
+        log.warn("instrumentation provider failed", {
+          boundary: event.type,
+          error: formatError(error),
+        });
       }
     }
   };
 
-  const before = async <TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["start"],
-  ): Promise<void> => {
-    const attemptState = relatedState.get(event.scope) ?? new Map<string, unknown>();
-    relatedState.set(event.scope, attemptState);
-    for (const [providerIndex, provider] of providers.entries()) {
-      const handler = provider.events?.[name]?.before;
-      if (handler === undefined) continue;
-      try {
-        const state = await (handler as (value: typeof event) => unknown)(event);
-        attemptState.set(relatedStateKey(providerIndex, event.id), state);
-      } catch (error) {
-        warn(`${name}.before`, error);
-      }
-    }
-  };
-
-  const after = async <TKey extends InstrumentationRelatedEventName>(
-    name: TKey,
-    event: InstrumentationRelatedEventMap[TKey]["terminal"],
-  ): Promise<void> => {
-    const attemptState = relatedState.get(event.scope);
-    for (const [providerIndex, provider] of providers.entries()) {
-      const handler = provider.events?.[name]?.after;
-      const stateKey = relatedStateKey(providerIndex, event.id);
-      if (handler === undefined || !attemptState?.has(stateKey)) continue;
-      const state = attemptState.get(stateKey);
-      attemptState.delete(stateKey);
-      try {
-        await (handler as (value: typeof event, state: unknown) => void | PromiseLike<void>)(
-          event,
-          state,
-        );
-      } catch (error) {
-        warn(`${name}.after`, error);
-      }
-    }
-  };
-
-  const warn = (boundary: string, error: unknown): void => {
-    log.warn("instrumentation provider failed", { boundary, error: formatError(error) });
-  };
-
-  return {
-    after,
-    before,
-    publish,
-  };
-}
-
-function relatedStateKey(providerIndex: number, operationId: string): string {
-  return `${providerIndex}:${operationId}`;
+  return { publish };
 }
