@@ -3,6 +3,7 @@ import { equals } from "eve/evals/expect";
 
 /** Dynamic selections resolve and reuse omitted context-window metadata at runtime. */
 export default defineEval({
+  tags: ["real-model"],
   description: "Dynamic model smoke: runtime catalog metadata resolution and reuse.",
   async test(t) {
     const known = await t.send(
