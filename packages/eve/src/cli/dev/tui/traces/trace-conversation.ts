@@ -563,7 +563,10 @@ function unwrapJsonString(raw: string | undefined): string | undefined {
 }
 
 function isModelSpan(span: LocalTraceSpan): boolean {
-  return span.name.startsWith("ai.") && span.name.includes("do");
+  return (
+    (span.name.startsWith("ai.") && span.name.includes("do")) ||
+    span.attributes["gen_ai.operation.name"] === "chat"
+  );
 }
 
 /** Extracts tool names from the `ai.response.tool_calls` JSON array. */

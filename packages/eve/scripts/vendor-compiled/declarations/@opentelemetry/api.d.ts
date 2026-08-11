@@ -1,14 +1,21 @@
+export interface TraceState {
+  get(key: string): string | undefined;
+  serialize(): string;
+  set(key: string, value: string): TraceState;
+  unset(key: string): TraceState;
+}
+
 export interface SpanContext {
   isRemote?: boolean;
   spanId: string;
   traceFlags: number;
   traceId: string;
-  traceState?: unknown;
+  traceState?: TraceState;
 }
 
 export interface Span {
   addEvent(name: string, attributes?: Attributes, timestamp?: number): this;
-  end(): void;
+  end(endTime?: number): void;
   recordException(
     exception: Error | string | { message?: string; name?: string; stack?: string },
   ): void;
@@ -17,12 +24,18 @@ export interface Span {
   spanContext(): SpanContext;
 }
 
+export interface Link {
+  context: SpanContext;
+  attributes?: Attributes;
+}
+
 export interface Tracer {
   startSpan(
     name: string,
     options?: {
       attributes?: Attributes | undefined;
       kind?: SpanKind | undefined;
+      links?: Link[] | undefined;
       root?: boolean | undefined;
       startTime?: number | undefined;
     },
@@ -75,6 +88,7 @@ export declare const propagation: {
 
 export declare const trace: {
   getActiveSpan(): Span | undefined;
+  getSpan(context: Context): Span | undefined;
   getTracer(name: string, version?: string): Tracer;
   getTracerProvider(): unknown;
   setSpan(context: Context, span: Span): Context;

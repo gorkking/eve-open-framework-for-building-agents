@@ -10,6 +10,7 @@ import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
 import type { OtelPipeline } from "#tracing/otel-declaration.js";
 
 const REGISTRATION_SPAN_NAME = "eve.otel.registration";
+const REPLAY_DEDUPLICATION_LIMIT = 100_000;
 
 class RegistrationMarkerPropagator {
   #injected = false;
@@ -35,7 +36,11 @@ class RegistrationMarkerPropagator {
 
 /** Keeps eve's ownership check out of every authored destination. */
 class PrivateSpanFilteringProcessor implements SpanProcessor {
+  private readonly endedSpans = new Set<string>();
+  private readonly forwardedSpans = new Set<string>();
+  private readonly pendingByParent = new Map<string, unknown[]>();
   private readonly processors: readonly SpanProcessor[];
+  private readonly startedSpans = new Set<string>();
 
   constructor(processors: readonly SpanProcessor[]) {
     this.processors = processors;
@@ -47,16 +52,44 @@ class PrivateSpanFilteringProcessor implements SpanProcessor {
 
   onEnd(span: unknown): void {
     if (isRegistrationSpan(span)) return;
-    for (const processor of this.processors) processor.onEnd(span);
+    const identity = spanIdentity(span);
+    if (identity !== undefined) {
+      if (this.endedSpans.has(identity)) return;
+      if (this.endedSpans.size >= REPLAY_DEDUPLICATION_LIMIT) {
+        const oldest = this.endedSpans.values().next().value;
+        if (oldest !== undefined) this.endedSpans.delete(oldest);
+      }
+      this.endedSpans.add(identity);
+    }
+    const parent = parentIdentity(span);
+    if (parent !== undefined && this.startedSpans.has(parent) && !this.forwardedSpans.has(parent)) {
+      const pending = this.pendingByParent.get(parent) ?? [];
+      pending.push(span);
+      this.pendingByParent.set(parent, pending);
+      return;
+    }
+    this.forward(span, identity);
   }
 
   onStart(span: unknown, parentContext: unknown): void {
     if (isRegistrationSpan(span)) return;
+    const identity = spanIdentity(span);
+    if (identity !== undefined) addBounded(this.startedSpans, identity);
     for (const processor of this.processors) processor.onStart(span, parentContext);
   }
 
   async shutdown(): Promise<void> {
     await Promise.all(this.processors.map((processor) => processor.shutdown()));
+  }
+
+  private forward(span: unknown, identity: string | undefined): void {
+    for (const processor of this.processors) processor.onEnd(span);
+    if (identity === undefined) return;
+    addBounded(this.forwardedSpans, identity);
+    const children = this.pendingByParent.get(identity);
+    if (children === undefined) return;
+    this.pendingByParent.delete(identity);
+    for (const child of children) this.forward(child, spanIdentity(child));
   }
 }
 
@@ -179,6 +212,41 @@ function isRegistrationSpan(span: unknown): boolean {
     "name" in span &&
     span.name === REGISTRATION_SPAN_NAME
   );
+}
+
+function spanIdentity(span: unknown): string | undefined {
+  if (
+    typeof span !== "object" ||
+    span === null ||
+    !("spanContext" in span) ||
+    typeof span.spanContext !== "function"
+  ) {
+    return undefined;
+  }
+  const context = span.spanContext() as { readonly spanId?: unknown; readonly traceId?: unknown };
+  return typeof context.traceId === "string" && typeof context.spanId === "string"
+    ? `${context.traceId}:${context.spanId}`
+    : undefined;
+}
+
+function parentIdentity(span: unknown): string | undefined {
+  if (typeof span !== "object" || span === null || !("parentSpanContext" in span)) {
+    return undefined;
+  }
+  const parent = span.parentSpanContext as
+    | { readonly spanId?: unknown; readonly traceId?: unknown }
+    | undefined;
+  return typeof parent?.traceId === "string" && typeof parent.spanId === "string"
+    ? `${parent.traceId}:${parent.spanId}`
+    : undefined;
+}
+
+function addBounded(values: Set<string>, value: string): void {
+  if (values.size >= REPLAY_DEDUPLICATION_LIMIT) {
+    const oldest = values.values().next().value;
+    if (oldest !== undefined) values.delete(oldest);
+  }
+  values.add(value);
 }
 
 function isSpanProcessor(processor: SpanProcessorOrName): processor is SpanProcessor {

@@ -92,6 +92,68 @@ describe("registerOtelPipeline", () => {
     expect(configuration.spanProcessors[0]).toBe("auto");
   });
 
+  it("exports only the first terminal for a replay-stable span", () => {
+    const downstream = {
+      forceFlush: vi.fn(async () => {}),
+      onEnd: vi.fn(),
+      onStart: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+    };
+    registerOTel.mockImplementation(() => undefined);
+
+    expect(() =>
+      registerOtelPipeline({
+        pipeline: { spanProcessors: [downstream] },
+        serviceName: "weather",
+      }),
+    ).toThrow();
+
+    const processor = (
+      registerOTel.mock.calls.at(-1)?.[0] as {
+        spanProcessors: { onEnd(span: unknown): void }[];
+      }
+    ).spanProcessors[0]!;
+    const first = replaySpan("first");
+    const losingReplay = replaySpan("losing replay");
+    processor.onEnd(first);
+    processor.onEnd(losingReplay);
+
+    expect(downstream.onEnd).toHaveBeenCalledExactlyOnceWith(first);
+  });
+
+  it("holds a physical child until its started parent completes", () => {
+    const downstream = {
+      forceFlush: vi.fn(async () => {}),
+      onEnd: vi.fn(),
+      onStart: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+    };
+    registerOTel.mockImplementation(() => undefined);
+    expect(() =>
+      registerOtelPipeline({
+        pipeline: { spanProcessors: [downstream] },
+        serviceName: "weather",
+      }),
+    ).toThrow();
+    const processor = (
+      registerOTel.mock.calls.at(-1)?.[0] as {
+        spanProcessors: {
+          onEnd(span: unknown): void;
+          onStart(span: unknown, parentContext: unknown): void;
+        }[];
+      }
+    ).spanProcessors[0]!;
+    const parent = physicalSpan("2");
+    const child = physicalSpan("3", "2");
+    processor.onStart(parent, {});
+    processor.onStart(child, {});
+    processor.onEnd(child);
+    expect(downstream.onEnd).not.toHaveBeenCalled();
+
+    processor.onEnd(parent);
+    expect(downstream.onEnd.mock.calls).toEqual([[parent], [child]]);
+  });
+
   it("throws when the registration never reached a processor", () => {
     registerOTel.mockImplementation(() => undefined);
 
@@ -100,3 +162,19 @@ describe("registerOtelPipeline", () => {
     ).toThrow(/another runtime already owns/u);
   });
 });
+
+function replaySpan(marker: string) {
+  return {
+    marker,
+    spanContext: () => ({ spanId: "2".repeat(16), traceId: "1".repeat(32) }),
+  };
+}
+
+function physicalSpan(spanId: string, parentSpanId?: string) {
+  const traceId = "1".repeat(32);
+  return {
+    parentSpanContext:
+      parentSpanId === undefined ? undefined : { spanId: parentSpanId.repeat(16), traceId },
+    spanContext: () => ({ spanId: spanId.repeat(16), traceId }),
+  };
+}
