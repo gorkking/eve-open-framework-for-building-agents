@@ -165,8 +165,8 @@ rejected; edited messages do not route.
   are out of scope.
 - Branch registration is user-facing; deployment URLs are cached route data,
   never the primary registration input.
-- v's existing URL registration remains application-specific prior art. It
-  uses `eve/client` directly; this proposal uses native remote sessions.
+- URL registration is outside this proposal. Registered aliases route through
+  native remote sessions rather than a client-side final-text relay.
 - Full remote event delivery, including authorization and input events, is the
   intended routing contract. The first implementation may identify a narrow
   event-forwarding gap, but must not establish final-text-only relay as the
