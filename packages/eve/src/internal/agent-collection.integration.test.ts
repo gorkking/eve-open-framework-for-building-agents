@@ -57,6 +57,18 @@ describe("resolveAgentCollection", () => {
     });
   });
 
+  it("does not treat an unowned agents/<name> path as a marker-free project", async () => {
+    const source = createMemoryProjectSource({
+      files: {
+        "/memory/project/agents/support/agent/instructions.md": "Support users.",
+      },
+    });
+
+    await expect(
+      resolveDiscoveryProject("/memory/project/agents/support", { source }),
+    ).rejects.toThrow(/Could not resolve an eve agent root/);
+  });
+
   it("uses the same collection semantics through an in-memory project source", async () => {
     const source = createMemoryProjectSource({
       files: {

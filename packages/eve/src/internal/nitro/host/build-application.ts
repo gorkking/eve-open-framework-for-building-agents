@@ -42,6 +42,7 @@ import { toErrorMessage } from "#shared/errors.js";
 import { resolveDiscoveryProject } from "#discover/project.js";
 import { resolveEveProjectContext } from "#internal/project-context.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
+import { parseJsonObject, type JsonObject } from "#shared/json.js";
 
 function trimTrailingSlash(path: string): string {
   return path.replace(/[\\/]+$/, "");
@@ -98,8 +99,12 @@ async function writeOptionalApplicationBuildProfile(input: {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function optionalJsonObject(value: unknown): JsonObject | undefined {
+  try {
+    return parseJsonObject(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeEntrypoint(rootDir: string, entrypoint: unknown): string | null {
@@ -110,7 +115,7 @@ function normalizeEntrypoint(rootDir: string, entrypoint: unknown): string | nul
   return resolve(rootDir, entrypoint);
 }
 
-function normalizeServiceRoot(rootDir: string, service: Record<string, unknown>): string | null {
+function normalizeServiceRoot(rootDir: string, service: JsonObject): string | null {
   if (typeof service.root === "string" && service.root.trim().length > 0) {
     return resolve(rootDir, service.root);
   }
@@ -118,7 +123,7 @@ function normalizeServiceRoot(rootDir: string, service: Record<string, unknown>)
   return normalizeEntrypoint(rootDir, service.entrypoint);
 }
 
-function normalizeServicePrefix(service: Record<string, unknown>): string {
+function normalizeServicePrefix(service: JsonObject): string {
   if (typeof service.routePrefix === "string") {
     return service.routePrefix.trim();
   }
@@ -127,29 +132,21 @@ function normalizeServicePrefix(service: Record<string, unknown>): string {
     return service.mount.trim();
   }
 
-  if (
-    isRecord(service.mount) &&
-    typeof service.mount.path === "string" &&
-    service.mount.path.trim().length > 0
-  ) {
-    return service.mount.path.trim();
+  const mount = optionalJsonObject(service.mount);
+  if (typeof mount?.path === "string" && mount.path.trim().length > 0) {
+    return mount.path.trim();
   }
 
   return "";
 }
 
-function normalizeServiceCollection(
-  value: unknown,
-): readonly Record<string, unknown>[] | undefined {
-  if (isRecord(value)) {
-    return Object.values(value).filter(isRecord);
-  }
-
-  if (Array.isArray(value)) {
-    return value.filter(isRecord);
-  }
-
-  return undefined;
+function normalizeServiceCollection(value: unknown): readonly JsonObject[] | undefined {
+  const entries = Array.isArray(value) ? value : Object.values(optionalJsonObject(value) ?? {});
+  const services = entries.flatMap((entry) => {
+    const service = optionalJsonObject(entry);
+    return service === undefined ? [] : [service];
+  });
+  return services.length === 0 && value === undefined ? undefined : services;
 }
 
 /**
@@ -169,14 +166,13 @@ function resolveCoDeployedEveServicePrefix(input: {
   configRoot: string;
   config: unknown;
 }): string | undefined {
-  if (!isRecord(input.config)) {
-    return undefined;
-  }
+  const config = optionalJsonObject(input.config);
+  if (config === undefined) return undefined;
 
   const services =
-    normalizeServiceCollection(input.config.experimentalServices) ??
-    normalizeServiceCollection(input.config.experimentalServicesV2) ??
-    normalizeServiceCollection(input.config.services);
+    normalizeServiceCollection(config.experimentalServices) ??
+    normalizeServiceCollection(config.experimentalServicesV2) ??
+    normalizeServiceCollection(config.services);
 
   if (services === undefined) {
     return undefined;
@@ -279,13 +275,9 @@ async function resolveVercelOutputConfigRoot(outputDirectory: string): Promise<s
       await readFile(join(projectRoot, ".vercel", "project.json"), "utf8"),
     ) as unknown;
 
-    if (
-      isRecord(projectConfig) &&
-      isRecord(projectConfig.settings) &&
-      typeof projectConfig.settings.rootDirectory === "string" &&
-      projectConfig.settings.rootDirectory.trim().length > 0
-    ) {
-      return resolve(projectRoot, projectConfig.settings.rootDirectory);
+    const settings = optionalJsonObject(optionalJsonObject(projectConfig)?.settings);
+    if (typeof settings?.rootDirectory === "string" && settings.rootDirectory.trim().length > 0) {
+      return resolve(projectRoot, settings.rootDirectory);
     }
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {

@@ -1,4 +1,5 @@
-import { join, relative } from "node:path";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 import {
   EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY_ENV,
@@ -9,6 +10,12 @@ import {
   EVE_PUBLIC_ROUTE_PREFIX_ENV,
   normalizePublicRoutePrefix,
 } from "#shared/public-route-prefix.js";
+import { quoteVercelShellArgument, toVercelRelativePath } from "#internal/vercel/build-command.js";
+import {
+  assertValidVercelServiceName,
+  isValidVercelServiceName,
+  MAX_VERCEL_SERVICE_NAME_LENGTH,
+} from "#internal/vercel/vercel-service-name.js";
 import type {
   GeneratedVercelServiceConfig,
   VercelRouteConfig,
@@ -43,17 +50,25 @@ export interface EveVercelServiceContribution {
   readonly serviceName: string;
 }
 
-function toRelativePath(fromRoot: string, toRoot: string): string {
-  const path = relative(fromRoot, toRoot).replaceAll("\\", "/");
-  return path.length === 0 ? "." : path;
+function createServiceNameHash(value: string): string {
+  return [...createHash("sha256").update(value).digest().subarray(0, 10)]
+    .map((byte) => String.fromCharCode(97 + (byte % 26)))
+    .join("");
 }
 
-function quoteShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
+/** Derive a stable Vercel service identifier without restricting the public agent name. */
 export function createEveServiceName(name: string | undefined): string {
-  return name === undefined ? "eve" : `eve-${name}`;
+  if (name === undefined) return "eve";
+  const directName = `eve-${name}`;
+  if (isValidVercelServiceName(directName)) return directName;
+
+  const suffix = createServiceNameHash(name);
+  const readableName = name.replace(/[^a-z_-]+/g, "-").replace(/^[^a-z]+|[^a-z]+$/g, "") || "agent";
+  const readableLength = MAX_VERCEL_SERVICE_NAME_LENGTH - "eve--".length - suffix.length;
+  const readable = readableName.slice(0, readableLength).replace(/[^a-z]+$/g, "") || "agent";
+  const serviceName = `eve-${readable}-${suffix}`;
+  assertValidVercelServiceName(serviceName, "Generated eve service name");
+  return serviceName;
 }
 
 export function createEveServiceRouteSrc(publicRoutePrefix: string): string {
@@ -77,7 +92,7 @@ function createDirectBuildCommand(agent: EveVercelAgentTarget): string {
   const prefix = normalizePublicRoutePrefix(agent.publicRoutePrefix);
   return prefix === undefined
     ? agent.buildCommand
-    : `export ${EVE_PUBLIC_ROUTE_PREFIX_ENV}=${quoteShellArgument(prefix)} && ${agent.buildCommand}`;
+    : `export ${EVE_PUBLIC_ROUTE_PREFIX_ENV}=${quoteVercelShellArgument(prefix)} && ${agent.buildCommand}`;
 }
 
 function createIsolatedBuild(input: {
@@ -92,11 +107,11 @@ function createIsolatedBuild(input: {
   const prefixExport =
     prefix === undefined
       ? ""
-      : ` && export ${EVE_PUBLIC_ROUTE_PREFIX_ENV}=${quoteShellArgument(prefix)}`;
+      : ` && export ${EVE_PUBLIC_ROUTE_PREFIX_ENV}=${quoteVercelShellArgument(prefix)}`;
 
   return {
-    buildCommand: `cd ${quoteShellArgument(toRelativePath(rootDirectory, input.agent.appRoot))} && export ${EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY_ENV}=${quoteShellArgument(toRelativePath(input.agent.appRoot, outputDirectory))} && export ${EVE_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY_ENV}=${quoteShellArgument(toRelativePath(input.agent.appRoot, input.hostOutputDirectory))}${prefixExport} && ${input.agent.buildCommand}`,
-    root: toRelativePath(input.projectRoot, rootDirectory),
+    buildCommand: `cd ${quoteVercelShellArgument(toVercelRelativePath(rootDirectory, input.agent.appRoot))} && export ${EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY_ENV}=${quoteVercelShellArgument(toVercelRelativePath(input.agent.appRoot, outputDirectory))} && export ${EVE_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY_ENV}=${quoteVercelShellArgument(toVercelRelativePath(input.agent.appRoot, input.hostOutputDirectory))}${prefixExport} && ${input.agent.buildCommand}`,
+    root: toVercelRelativePath(input.projectRoot, rootDirectory),
     rootDirectory,
   };
 }

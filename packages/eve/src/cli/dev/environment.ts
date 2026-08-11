@@ -22,6 +22,7 @@ function isMissingEnvironmentFileError(error: unknown): error is NodeJS.ErrnoExc
 }
 
 interface DevelopmentEnvironmentLoader {
+  readonly environmentRoots: readonly string[];
   reload(): void;
   stageReload(): DevelopmentEnvironmentReload;
 }
@@ -32,14 +33,13 @@ export interface DevelopmentEnvironmentReload {
 }
 
 const developmentEnvironmentLoaders = new Map<string, DevelopmentEnvironmentLoader>();
-const developmentEnvironmentRoots = new Map<string, readonly string[]>();
 
 /**
  * Returns the local development environment files eve loads from an
  * application root, ordered from highest to lowest precedence.
  */
 export function getDevelopmentEnvironmentFilePaths(appRoot: string): string[] {
-  return [...resolveDevelopmentEnvironmentRoots(appRoot)]
+  return [...getDevelopmentEnvironmentLoader(appRoot).environmentRoots]
     .reverse()
     .flatMap((root) => DEVELOPMENT_ENV_FILE_NAMES.map((fileName) => join(root, fileName)));
 }
@@ -55,12 +55,11 @@ export function getDevelopmentEnvironmentFilePaths(appRoot: string): string[] {
 export async function loadDevelopmentEnvironmentFiles(appRoot: string): Promise<void> {
   const resolvedAppRoot = resolve(appRoot);
   const context = await resolveEveProjectContext(resolvedAppRoot);
-  const roots =
+  const environmentRoots =
     context.kind === "collection-member"
       ? [context.collection.root, resolvedAppRoot]
       : [resolvedAppRoot];
-  developmentEnvironmentRoots.set(resolvedAppRoot, roots);
-  getDevelopmentEnvironmentLoader(resolvedAppRoot).reload();
+  getDevelopmentEnvironmentLoader(resolvedAppRoot, environmentRoots).reload();
 }
 
 export function stageDevelopmentEnvironmentFiles(appRoot: string): DevelopmentEnvironmentReload {
@@ -71,7 +70,9 @@ export function readDevelopmentEnvironmentHostValues(
   appRoot: string,
 ): Readonly<Record<string, string | null>> {
   const values: Record<string, string | null> = {};
-  const fileValues = readDevelopmentEnvironmentValues(resolveDevelopmentEnvironmentRoots(appRoot));
+  const fileValues = readDevelopmentEnvironmentValues(
+    getDevelopmentEnvironmentLoader(appRoot).environmentRoots,
+  );
 
   for (const key of [...fileValues.keys()].sort((left, right) => left.localeCompare(right))) {
     values[key] = process.env[key] ?? null;
@@ -80,17 +81,24 @@ export function readDevelopmentEnvironmentHostValues(
   return values;
 }
 
-function getDevelopmentEnvironmentLoader(appRoot: string): DevelopmentEnvironmentLoader {
+function getDevelopmentEnvironmentLoader(
+  appRoot: string,
+  environmentRoots?: readonly string[],
+): DevelopmentEnvironmentLoader {
   const resolvedAppRoot = resolve(appRoot);
   const existingLoader = developmentEnvironmentLoaders.get(resolvedAppRoot);
+  if (existingLoader !== undefined && environmentRoots === undefined) return existingLoader;
 
-  if (existingLoader !== undefined) {
+  const resolvedEnvironmentRoots = environmentRoots ?? [resolvedAppRoot];
+  if (
+    existingLoader !== undefined &&
+    existingLoader.environmentRoots.length === resolvedEnvironmentRoots.length &&
+    existingLoader.environmentRoots.every((root, index) => root === resolvedEnvironmentRoots[index])
+  ) {
     return existingLoader;
   }
 
-  const loader = createDevelopmentEnvironmentLoader(
-    resolveDevelopmentEnvironmentRoots(resolvedAppRoot),
-  );
+  const loader = createDevelopmentEnvironmentLoader(resolvedEnvironmentRoots);
   developmentEnvironmentLoaders.set(resolvedAppRoot, loader);
   return loader;
 }
@@ -141,6 +149,7 @@ function createDevelopmentEnvironmentLoader(
   };
 
   return {
+    environmentRoots,
     reload() {
       stageReload().commit();
     },
@@ -173,11 +182,6 @@ function applyDevelopmentEnvironmentValues(input: {
     process.env[key] = value;
     input.managedValues.set(key, value);
   }
-}
-
-function resolveDevelopmentEnvironmentRoots(appRoot: string): readonly string[] {
-  const resolvedAppRoot = resolve(appRoot);
-  return developmentEnvironmentRoots.get(resolvedAppRoot) ?? [resolvedAppRoot];
 }
 
 function readDevelopmentEnvironmentValues(

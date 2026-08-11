@@ -5,7 +5,6 @@ import {
   type EveVercelAgentTarget,
 } from "#internal/vercel/eve-service-contribution.js";
 import {
-  isRecord,
   type GeneratedVercelServiceConfig,
   type VercelRouteConfig,
   type VercelServiceConfig,
@@ -23,7 +22,7 @@ export function resolveServicePrefix(service: VercelServiceConfig | undefined): 
     return service.mount.trim();
   }
   if (
-    isRecord(service?.mount) &&
+    typeof service?.mount === "object" &&
     typeof service.mount.path === "string" &&
     service.mount.path.trim().length > 0
   ) {
@@ -63,7 +62,7 @@ function isEveServiceRoute(
   const destination = route.destination;
   return (
     route.src === routeSrc &&
-    isRecord(destination) &&
+    typeof destination === "object" &&
     destination.type === "service" &&
     destination.service === serviceName
   );

@@ -8,8 +8,8 @@ import {
 } from "#internal/vercel/eve-service-contribution.js";
 import {
   createServiceConfigRecord,
-  isRecord,
   readVercelJsonFile,
+  type VercelRewriteConfig,
   type VercelRouteConfig,
   type VercelServiceConfig,
 } from "#internal/vercel/vercel-services-config.js";
@@ -33,11 +33,14 @@ function sameRequestPathRoute(route: VercelRouteConfig, expected: VercelRouteCon
   );
 }
 
-function isCanonicalRewrite(route: unknown, source: string, serviceName: string): boolean {
+function isCanonicalRewrite(
+  route: VercelRewriteConfig,
+  source: string,
+  serviceName: string,
+): boolean {
   return (
-    isRecord(route) &&
     route.source === source &&
-    isRecord(route.destination) &&
+    typeof route.destination === "object" &&
     route.destination.service === serviceName
   );
 }
@@ -74,7 +77,7 @@ export async function validateAuthoredAgentServices(
     );
   }
   const services = createServiceConfigRecord(config.services);
-  const rewrites = Array.isArray(config.rewrites) ? config.rewrites : [];
+  const rewrites = config.rewrites ?? [];
   const omittedAgentNames: string[] = [];
 
   for (const member of collection.members) {

@@ -395,6 +395,22 @@ describe("withEve", () => {
     );
   });
 
+  it("accepts digit-bearing public agent names", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const config = await withEve<TestConfig>({}, { agents: { support2: "./agents/support" } })(
+      "phase-production-build",
+      { defaultConfig: {} },
+    );
+
+    await expect(config.rewrites?.()).resolves.toEqual(
+      expect.objectContaining({
+        beforeFiles: expect.arrayContaining([
+          expect.objectContaining({ source: "/eve/agents/support2/eve/v1/:path+" }),
+        ]),
+      }),
+    );
+  });
+
   it("rejects eveRoot when named agents are configured", () => {
     expect(() =>
       withEve<TestConfig>(

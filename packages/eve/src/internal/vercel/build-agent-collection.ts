@@ -1,60 +1,32 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
 import type { AgentCollection, AgentCollectionMember } from "#internal/agent-collection.js";
+import { quoteVercelShellArgument, toVercelRelativePath } from "#internal/vercel/build-command.js";
 import { resolveAgentCollectionDeploymentMode } from "#internal/vercel/agent-collection-deployment.js";
 import { compileEveVercelService } from "#internal/vercel/eve-service-contribution.js";
 import { resolveEveBinaryPath } from "#shared/resolve-eve-binary.js";
 import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
+import { parseJsonObject } from "#shared/json.js";
 
 const VERCEL_BUILD_OUTPUT_VERSION = 3;
 
-function quoteShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function toPosixRelative(from: string, to: string): string {
-  return relative(from, to).replaceAll("\\", "/") || ".";
-}
-
 async function hasBuildScript(member: AgentCollectionMember): Promise<boolean> {
   if (member.packageJsonPath === undefined) return false;
-  const value = JSON.parse(await readFile(member.packageJsonPath, "utf8")) as unknown;
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "scripts" in value &&
-    typeof value.scripts === "object" &&
-    value.scripts !== null &&
-    !Array.isArray(value.scripts) &&
-    "build" in value.scripts &&
-    typeof value.scripts.build === "string"
-  );
-}
-
-function runBuildScriptCommand(packageManager: PackageManagerKind): string {
-  switch (packageManager) {
-    case "bun":
-      return "bun run build";
-    case "npm":
-      return "npm run build";
-    case "pnpm":
-      return "pnpm run build";
-    case "yarn":
-      return "yarn run build";
-  }
+  const packageJson = parseJsonObject(JSON.parse(await readFile(member.packageJsonPath, "utf8")));
+  if (packageJson.scripts === undefined) return false;
+  const scripts = parseJsonObject(packageJson.scripts);
+  return typeof scripts.build === "string";
 }
 
 async function resolveMemberBuildCommand(
-  collection: AgentCollection,
   member: AgentCollectionMember,
+  packageManager: PackageManagerKind,
 ): Promise<string> {
-  const packageManager = await detectPackageManager(collection.root);
-  if (await hasBuildScript(member)) return runBuildScriptCommand(packageManager.kind);
+  if (await hasBuildScript(member)) return `${packageManager} run build`;
 
-  return `node ${quoteShellArgument(
-    toPosixRelative(member.appRoot, resolveEveBinaryPath(member.appRoot)),
+  return `node ${quoteVercelShellArgument(
+    toVercelRelativePath(member.appRoot, resolveEveBinaryPath(member.appRoot)),
   )} build`;
 }
 
@@ -66,19 +38,20 @@ export async function buildAgentCollection(collection: AgentCollection): Promise
     );
   }
 
+  const packageManager = await detectPackageManager(collection.root);
   const contributions = await Promise.all(
     collection.members.map(async (member) =>
       compileEveVercelService({
         agent: {
           appRoot: member.appRoot,
-          buildCommand: await resolveMemberBuildCommand(collection, member),
+          buildCommand: await resolveMemberBuildCommand(member, packageManager.kind),
           name: member.name,
           publicRoutePrefix: `/eve/agents/${member.name}`,
         },
         target: {
           kind: "direct",
           projectRoot: collection.root,
-          root: toPosixRelative(collection.root, member.appRoot),
+          root: toVercelRelativePath(collection.root, member.appRoot),
         },
       }),
     ),

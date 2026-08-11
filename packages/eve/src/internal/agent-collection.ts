@@ -1,11 +1,11 @@
 import { basename, dirname, join, resolve } from "node:path";
 
 import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
+import { assertValidPublicAgentName } from "#internal/agent-name.js";
 import { detectPackageManager } from "#setup/package-manager.js";
 import { packageManagerWorkspaceClaimsProject } from "#setup/scaffold/workspace-root.js";
 
 const AGENTS_DIRECTORY = "agents";
-const PUBLIC_AGENT_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/;
 
 export interface AgentCollectionMember {
   readonly appRoot: string;
@@ -48,11 +48,7 @@ export async function resolveAgentCollection(
     source.kind === "disk" ? await detectPackageManager(collectionRoot) : undefined;
   const members: AgentCollectionMember[] = [];
   for (const entry of directories) {
-    if (!PUBLIC_AGENT_NAME_PATTERN.test(entry.name)) {
-      throw new Error(
-        `Agent collection member ${JSON.stringify(entry.name)} has an invalid public identity. Use lowercase letters, numbers, hyphens, or underscores, beginning and ending with a letter or number.`,
-      );
-    }
+    assertValidPublicAgentName(entry.name, "Agent collection member");
     const appRoot = join(agentsRoot, entry.name);
     if ((await source.stat(join(appRoot, "agent"))) !== "directory") {
       const flatHint =

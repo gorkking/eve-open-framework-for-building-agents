@@ -58,6 +58,23 @@ describe("buildAgentCollection", () => {
     });
   });
 
+  it("keeps digit-bearing public names while encoding the generated service name", async () => {
+    const root = await createCollection();
+    await mkdir(join(root, "agents", "support2", "agent"), { recursive: true });
+    const collection = await resolveAgentCollection(root);
+    const output = await buildAgentCollection(collection!);
+    const config = JSON.parse(await readFile(join(output, "config.json"), "utf8"));
+    const supportServiceName = Object.keys(config.services).find((name) =>
+      name.startsWith("eve-support-"),
+    );
+
+    expect(supportServiceName).toMatch(/^eve-support-[a-z]+$/);
+    expect(config.routes).toContainEqual({
+      destination: { service: supportServiceName, type: "service" },
+      src: "^/eve/agents/support2/eve/v1/(.*)$",
+    });
+  });
+
   it("uses a child package build script", async () => {
     const root = await createCollection();
     await writeFile(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "agents/*"\n');

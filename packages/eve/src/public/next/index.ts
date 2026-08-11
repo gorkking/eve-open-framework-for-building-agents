@@ -1,11 +1,12 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import type { NextConfig } from "next";
 
+import { assertValidPublicAgentName } from "#internal/agent-name.js";
+import { quoteVercelShellArgument, toVercelRelativePath } from "#internal/vercel/build-command.js";
 import { EVE_ROUTE_PREFIX } from "#protocol/routes.js";
 import { resolveEveBinaryPath } from "#shared/resolve-eve-binary.js";
 import { resolveEveDestinationPrefix } from "./server.js";
-import { assertValidVercelServiceName } from "#internal/vercel/vercel-service-name.js";
 import { ensureEveVercelOutputConfig } from "./vercel-output-config.js";
 
 /**
@@ -309,25 +310,18 @@ async function resolveNextConfig<TConfig extends EveNextConfig>(
 }
 
 function assertValidAgentName(name: string): void {
-  assertValidVercelServiceName(`eve-${name}`, "Generated eve Next.js agent name");
-}
-
-function quoteShellArg(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function toPosixPath(path: string): string {
-  return path.replaceAll("\\", "/");
+  assertValidPublicAgentName(name, "eve Next.js agent name");
 }
 
 function createDefaultBuildCommand(input: {
   readonly agentRoot: string;
   readonly nextRoot: string;
 }): string {
-  const eveBinaryPath = toPosixPath(
-    relative(input.agentRoot, resolveEveBinaryPath(input.agentRoot)),
+  const eveBinaryPath = toVercelRelativePath(
+    input.agentRoot,
+    resolveEveBinaryPath(input.agentRoot),
   );
-  return `node ${quoteShellArg(eveBinaryPath)} build`;
+  return `node ${quoteVercelShellArgument(eveBinaryPath)} build`;
 }
 
 function normalizeAgentsConfig(
