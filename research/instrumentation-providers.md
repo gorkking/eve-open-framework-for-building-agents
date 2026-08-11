@@ -236,10 +236,12 @@ specifically what you want; `model.call.*` is the other half of that view and
 overlaps nothing.
 
 The terminal event carries the action verdict rather than leaving each provider
-to infer it from output. Completed actions include normalized subagent usage;
-failed actions distinguish runtime failure, rejection, cancellation, and
-abandonment and keep a stable error code separate from the content-bearing error
-object. OTel maps those fields, but they originate on the provider-neutral bus.
+to infer it from output. It also records when the parent workflow accepted that
+individual result, before a parallel batch waits for slower siblings. Completed
+actions include normalized subagent usage; failed actions distinguish runtime
+failure, rejection, cancellation, and abandonment and keep a stable error code
+separate from the content-bearing error object. OTel maps those fields, but they
+originate on the provider-neutral bus.
 
 User input needs its own durable boundary. `input.requested` fires once per
 request, not once per batch, and `input.resolved` carries the normalized outcome
@@ -396,6 +398,12 @@ tracer provider and primes it, letting that span carry the id its descendants
 already parented to. An author cannot supply that generator — it is eve's, keyed
 to eve's state — which is why `idGenerator` is absent from `OtelOptions` despite
 being something a process can only have one of.
+
+That persisted action context is also the distributed parent for remote agents.
+The caller sends it as a standard W3C `traceparent` header when creating the
+remote session, and an updated eve receiver seeds the remote run from it. Old
+receivers ignore the header, and persistent-session continuations keep the trace
+chosen at creation rather than being reparented on every message.
 
 ```typescript
 // ---------------------------------------------------------------------------
