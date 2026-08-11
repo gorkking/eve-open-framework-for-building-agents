@@ -92,7 +92,7 @@ specific to how those events are recorded.
 
 ```mermaid
 flowchart TD
-  H["harness execution"] --> B["lifecycle bus — eve-owned<br>session · turn · step.attempt · action · input · model.call · tool.call"]
+  H["harness execution"] --> B["lifecycle bus — eve-owned<br>channel.delivery · session · turn · step.attempt · action · input · model.call · tool.call"]
   B --> O["otel()"]
   B --> BT["braintrust()"]
   B --> AU["authored provider"]
@@ -144,6 +144,11 @@ export interface ProviderSetupContext {
 }
 
 export interface ProviderEvents {
+  readonly "channel.delivery.started"?: Handler<ChannelDeliveryStarted>;
+  readonly "channel.delivery.completed"?: Handler<ChannelDeliveryTerminal>;
+  readonly "channel.delivery.failed"?: Handler<ChannelDeliveryTerminal>;
+  readonly "channel.delivery.cancelled"?: Handler<ChannelDeliveryTerminal>;
+
   readonly "session.started"?: Handler<SessionStarted>;
   readonly "session.completed"?: Handler<SessionTerminal>;
   readonly "session.failed"?: Handler<SessionTerminal>;
@@ -221,6 +226,21 @@ times dispatches three `step.attempt.started` against that one. The span is
 still `agent.step`, because a span is one attempt and the `agent.step.attempt`
 attribute on it says which.
 
+`channel.delivery.*` is the durable inbound boundary above a turn. Each accepted
+channel send or response gets an opaque delivery id that survives session
+creation, inbox persistence, coalescing, active-turn buffering, and descendant
+routing. One turn may process several deliveries, and an adapter may consume a
+delivery without starting a turn. The terminal therefore carries optional turn
+identity rather than deriving delivery identity from the turn.
+
+OTel maps the pair to an `agent.channel.delivery` consumer span under the durable
+session window. A short-lived HTTP server span is a link, not the parent: request
+acknowledgement and durable processing have different lifetimes and may have
+different sampling contexts. Content capture projects only eve-known message,
+context, input-response, and output-schema fields; arbitrary adapter payload is
+never exposed. Outbound platform sends are separate operations and do not delay
+the inbound delivery terminal.
+
 `action.*` is the addition. eve's protocol already treats an action as the unit
 — a tool call is one kind, alongside a skill load and a subagent — but the bus
 carries only `tool.call`, so the OTel provider builds `agent.action` out of it
@@ -255,17 +275,18 @@ the later `ai.toolCall` measures execution after approval.
 
 `ctx.state` is what a provider would otherwise hand-roll. eve keys it by provider
 and operation, hands it back on the terminal, and releases it there. For a
-session, turn, step attempt, action, or input request it is serialized, so a
-terminal handler reads what its start handler wrote even in a different process.
+channel delivery, session, turn, step attempt, action, or input request it is
+serialized, so a terminal handler reads what its start handler wrote even in a
+different process.
 
 This is not hypothetical: eve already keeps exactly this for itself. The store
-that carries session and turn trace context across a step boundary now also holds
-a pre-allocated span id and a start time, so the worker that settles a turn can
-emit a span the descendants of an earlier worker already parented to — which is
-what turned `agent.turn` from a zero-duration marker into a span with a real
-duration. `agent.session` stays a marker because an idle session never closes. A
-provider outside eve has neither the store nor the option to degrade its own
-output instead.
+that carries session, channel delivery, and turn trace context across a step
+boundary now also holds a pre-allocated span id and a start time, so the worker
+that settles a turn can emit a span the descendants of an earlier worker already
+parented to — which is what turned `agent.turn` from a zero-duration marker into
+a span with a real duration. `agent.session` stays a marker because an idle
+session never closes. A provider outside eve has neither the store nor the option
+to degrade its own output instead.
 
 ### One provider cannot stop the others
 
