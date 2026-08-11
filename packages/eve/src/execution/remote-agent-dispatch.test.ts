@@ -4,6 +4,7 @@ import type { SessionAuthContext } from "#channel/types.js";
 import {
   cancelRemoteAgentTurn,
   continueRemoteAgentSession,
+  createRemoteAgentSession,
   isRetryableRemoteAgentCancelError,
   isRetryableRemoteAgentContinueError,
   resolveRemoteAgentForAction,
@@ -66,6 +67,58 @@ describe("resolveRemoteAgentForAction", () => {
     });
     await expect(resolved.auth?.()).resolves.toEqual({
       headers: { authorization: "Bearer selected" },
+    });
+  });
+});
+
+describe("createRemoteAgentSession", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the standard remote create-session transport for a caller-owned callback", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, sessionId: "remote-session", status: "accepted" }), {
+        status: 202,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      createRemoteAgentSession({
+        remote: createRemoteAgent(),
+        request: {
+          callback: {
+            callId: "route-call",
+            subagentName: "preview",
+            token: "route-inbox",
+            url: "https://caller.example.com/eve/v1/callback/route-inbox",
+          },
+          capabilities: {},
+          message: "Investigate the failure.",
+          mode: "conversation",
+        },
+      }),
+    ).resolves.toEqual({ sessionId: "remote-session" });
+
+    expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/eve/v1/session", {
+      body: JSON.stringify({
+        callback: {
+          callId: "route-call",
+          subagentName: "preview",
+          token: "route-inbox",
+          url: "https://caller.example.com/eve/v1/callback/route-inbox",
+        },
+        capabilities: {},
+        message: "Investigate the failure.",
+        mode: "conversation",
+      }),
+      headers: {
+        authorization: "Bearer remote-token",
+        "content-type": "application/json",
+        "x-static": "yes",
+      },
+      method: "POST",
     });
   });
 });

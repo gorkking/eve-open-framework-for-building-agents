@@ -28,9 +28,28 @@ const CreateSessionResponseSchema = z.object({
   status: z.literal("accepted"),
 });
 
-type RemoteAgentSessionCoordinates = {
+export interface RemoteAgentSessionCoordinates {
   readonly sessionId: string;
-};
+}
+
+/**
+ * Framework-owned create-session request for a remote eve agent. Kept separate
+ * from model subagent actions so other durable callers can use the same remote
+ * protocol without reimplementing request validation or credentials.
+ */
+export interface RemoteAgentSessionRequest {
+  readonly callback: {
+    readonly callId: string;
+    readonly subagentName: string;
+    readonly token: string;
+    readonly url: string;
+  };
+  readonly capabilities: {};
+  readonly forwardedPrincipal?: ForwardedPrincipal;
+  readonly message: string;
+  readonly mode: "conversation" | "task";
+  readonly outputSchema?: object;
+}
 
 class RemoteAgentCancelRequestError extends Error {
   readonly retryable: boolean;
@@ -104,9 +123,26 @@ export async function startRemoteAgentSession(input: {
     requestBody.forwardedPrincipal = forwardedPrincipal;
   }
 
+  return await createRemoteAgentSession({
+    remote: input.remote,
+    request: requestBody,
+  });
+}
+
+/**
+ * Starts a remote eve session using the standard remote-agent transport.
+ *
+ * Model subagent dispatch builds its request through
+ * {@link startRemoteAgentSession}; durable channel routing can use this lower
+ * layer after it has constructed its own callback ownership.
+ */
+export async function createRemoteAgentSession(input: {
+  readonly remote: ResolvedRuntimeRemoteAgentNode;
+  readonly request: RemoteAgentSessionRequest;
+}): Promise<RemoteAgentSessionCoordinates> {
   const headers = await resolveRemoteAgentRequestHeaders(input.remote);
   const response = await fetch(createRemoteAgentSessionUrl(input.remote), {
-    body: JSON.stringify(requestBody),
+    body: JSON.stringify(input.request),
     headers: {
       "content-type": "application/json",
       ...headers,
@@ -116,7 +152,7 @@ export async function startRemoteAgentSession(input: {
 
   if (!response.ok) {
     throw new Error(
-      `Remote agent "${input.action.remoteAgentName}" create-session request failed with HTTP ${response.status}.`,
+      `Remote agent "${input.remote.name}" create-session request failed with HTTP ${response.status}.`,
     );
   }
 
@@ -125,15 +161,13 @@ export async function startRemoteAgentSession(input: {
     body = await response.json();
   } catch {
     throw new Error(
-      `Remote agent "${input.action.remoteAgentName}" create-session response was not valid JSON.`,
+      `Remote agent "${input.remote.name}" create-session response was not valid JSON.`,
     );
   }
 
   const parsed = CreateSessionResponseSchema.safeParse(body);
   if (!parsed.success) {
-    throw new Error(
-      `Remote agent "${input.action.remoteAgentName}" create-session response was invalid.`,
-    );
+    throw new Error(`Remote agent "${input.remote.name}" create-session response was invalid.`);
   }
 
   return { sessionId: parsed.data.sessionId };
