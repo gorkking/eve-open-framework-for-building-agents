@@ -57,12 +57,10 @@ interface ToolSpanState extends SpanState {
 }
 
 export interface AgentOtelInstrumentationInput {
-  /**
-   * Capture model prompts/responses and tool call inputs/outputs as span
-   * attributes. Content stays on the local machine — this provider only
-   * wires the dev-time local spool — but can be turned off per project.
-   */
-  readonly captureContent?: boolean;
+  /** Whether any destination requested model prompts and tool inputs. */
+  readonly recordInputs?: boolean;
+  /** Whether any destination requested model responses and tool outputs. */
+  readonly recordOutputs?: boolean;
   readonly frameworkVersion: string;
   readonly idGenerator: AgentSpanIdGenerator;
   readonly stateStore: AgentTraceStateStore;
@@ -79,7 +77,8 @@ export interface AgentOtelInstrumentation {
 export function createAgentOtelInstrumentation(
   input: AgentOtelInstrumentationInput,
 ): AgentOtelInstrumentation {
-  const captureContent = input.captureContent ?? true;
+  const recordInputs = input.recordInputs ?? true;
+  const recordOutputs = input.recordOutputs ?? true;
   const executionContexts = new WeakMap<
     InstrumentationAttemptScope,
     { readonly models: Map<string, Context>; readonly tools: Map<string, Context> }
@@ -270,7 +269,7 @@ export function createAgentOtelInstrumentation(
       },
       attempt.operation.context,
     );
-    if (captureContent) {
+    if (recordInputs) {
       const messages = messagesContentAttribute(event.input.messages);
       if (messages !== undefined) span.setAttribute("ai.prompt.messages", messages);
       const system = systemPromptAttribute(event.input.instructions);
@@ -291,7 +290,7 @@ export function createAgentOtelInstrumentation(
       setUsage(state.span, event.usage);
       const attempt = steps.get(event.scope);
       if (attempt !== undefined) setUsage(attempt.step.span, event.usage);
-      if (captureContent) {
+      if (recordOutputs) {
         state.span.setAttribute("ai.response.finish_reason", event.finishReason);
         const reasoning = textContentAttribute(
           event.content
@@ -377,7 +376,7 @@ export function createAgentOtelInstrumentation(
       },
       actionContext,
     );
-    if (captureContent) {
+    if (recordInputs) {
       const args = contentAttribute(event.input, false);
       if (args !== undefined) toolSpan.setAttribute("gen_ai.tool.call.arguments", args);
     }
@@ -400,7 +399,7 @@ export function createAgentOtelInstrumentation(
     } else if (event.output.type === "error") {
       recordError(state.toolSpan, event.output.error);
       recordError(state.span, event.output.error);
-    } else if (captureContent) {
+    } else if (recordOutputs) {
       const result = contentAttribute(event.output.output, false);
       if (result !== undefined) state.toolSpan.setAttribute("gen_ai.tool.call.result", result);
     }
@@ -499,6 +498,7 @@ export function createAgentOtelInstrumentation(
 
   return {
     hook: {
+      name: "eve.otel",
       events: {
         "step.attempt.completed": onStepTerminal,
         "step.attempt.failed": onStepTerminal,

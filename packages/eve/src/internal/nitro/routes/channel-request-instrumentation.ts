@@ -8,7 +8,7 @@ import {
   type TextMapGetter,
   trace,
 } from "#compiled/@opentelemetry/api/index.js";
-import { getInstrumentationConfig } from "#harness/instrumentation-config.js";
+import { getInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
 import { recordErrorOnSpan } from "#internal/logging.js";
 
 /**
@@ -70,7 +70,7 @@ export async function traceChannelRequest<T extends Response>(
   input: TraceChannelRequestInput,
   handler: (span: Span | undefined) => Promise<T>,
 ): Promise<T> {
-  if (getInstrumentationConfig()?.traceChannelRequests !== true) {
+  if (getInstrumentationRuntime()?.otelSettings?.traceChannelRequests !== true) {
     return await handler(undefined);
   }
 

@@ -1,4 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const RUNTIME_GLOBAL_KEY = Symbol.for("eve.instrumentation-runtime");
+
+beforeEach(() => {
+  delete (globalThis as Record<symbol, unknown>)[RUNTIME_GLOBAL_KEY];
+});
 
 /**
  * Regression coverage for the instrumentation-config chunk-isolation failure.
@@ -59,6 +65,28 @@ describe("instrumentation-config chunk-isolation regression", () => {
     const secondRef = (globalThis as Record<symbol, unknown>)[globalKey];
 
     expect(secondRef).toBe(firstRef);
+  });
+
+  it("installs harness telemetry settings on the instrumentation runtime", async () => {
+    const { registerInstrumentationConfig } = await import("#harness/instrumentation-config.js");
+    const { getInstrumentationRuntime } = await import("#harness/instrumentation-runtime.js");
+
+    await registerInstrumentationConfig(
+      {
+        functionId: "weather",
+        recordInputs: true,
+        recordOutputs: false,
+        traceChannelRequests: true,
+      },
+      { agentName: "test-agent" },
+    );
+
+    expect(getInstrumentationRuntime()?.otelSettings).toEqual({
+      functionId: "weather",
+      recordInputs: true,
+      recordOutputs: false,
+      traceChannelRequests: true,
+    });
   });
 
   it("invokes the setup callback with the supplied context", async () => {

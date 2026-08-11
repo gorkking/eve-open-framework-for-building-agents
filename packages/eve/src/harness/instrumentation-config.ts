@@ -2,6 +2,8 @@ import type {
   InstrumentationDefinition,
   InstrumentationSetupContext,
 } from "#public/instrumentation/index.js";
+import { createInstrumentationHooks } from "#harness/instrumentation-lifecycle.js";
+import { registerInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
 
 /**
  * Process-global store for the authored instrumentation config.
@@ -36,14 +38,24 @@ const globalContainer = globalThis as typeof globalThis & InstrumentationConfigG
  *
  * @internal — not part of the public API.
  */
-export function registerInstrumentationConfig(
+export async function registerInstrumentationConfig(
   config: InstrumentationDefinition,
   context: InstrumentationSetupContext,
-): void {
-  if (config.setup !== undefined) {
-    config.setup(context);
-  }
+): Promise<void> {
   globalContainer[INSTRUMENTATION_CONFIG_GLOBAL_KEY] = config;
+  registerInstrumentationRuntime({
+    forceFlush: async () => undefined,
+    hooks: createInstrumentationHooks([]),
+    otelSettings: {
+      functionId: config.functionId,
+      recordInputs: config.recordInputs,
+      recordOutputs: config.recordOutputs,
+      traceChannelRequests: config.traceChannelRequests === true,
+    },
+    runInContext: (_operation, execute) => execute(),
+    shutdown: async () => undefined,
+  });
+  await config.setup?.(context);
 }
 
 /**

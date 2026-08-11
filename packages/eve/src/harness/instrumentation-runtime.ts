@@ -2,6 +2,7 @@ import type {
   InstrumentationContextRunner,
   InstrumentationHooks,
 } from "#harness/instrumentation-lifecycle.js";
+import type { OtelHarnessSettings } from "#tracing/otel-declaration.js";
 
 const INSTRUMENTATION_RUNTIME_KEY = Symbol.for("eve.instrumentation-runtime");
 
@@ -9,7 +10,9 @@ const INSTRUMENTATION_RUNTIME_KEY = Symbol.for("eve.instrumentation-runtime");
 export interface InstrumentationRuntime {
   readonly forceFlush: () => Promise<void>;
   readonly hooks: InstrumentationHooks;
+  otelSettings: OtelHarnessSettings | undefined;
   readonly runInContext: InstrumentationContextRunner;
+  readonly shutdown: () => Promise<void>;
 }
 
 /** Instrumentation capabilities consumed inside one harness execution. */
@@ -26,7 +29,11 @@ export function registerInstrumentationRuntime(
   runtime: InstrumentationRuntime,
 ): InstrumentationRuntime {
   const existing = globalRuntime[INSTRUMENTATION_RUNTIME_KEY];
-  if (existing !== undefined) return existing;
+  if (existing !== undefined) {
+    // A legacy config may reload without taking ownership from the installed runtime.
+    existing.otelSettings = runtime.otelSettings;
+    return existing;
+  }
   globalRuntime[INSTRUMENTATION_RUNTIME_KEY] = runtime;
   return runtime;
 }

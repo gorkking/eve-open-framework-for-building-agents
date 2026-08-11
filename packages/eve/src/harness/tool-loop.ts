@@ -55,7 +55,6 @@ import {
   createSessionWaitingEvent,
   type UnstampedMessageStreamEvent,
 } from "#protocol/message.js";
-import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
 import { resolveAgentsAnnouncement } from "#harness/handles/prompt.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
@@ -137,6 +136,8 @@ import {
   dropStaleSessionLimitContinuationResponses,
 } from "#harness/stale-input-responses.js";
 import { getInstrumentationConfig } from "#harness/instrumentation-config.js";
+import { getInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
+import type { OtelHarnessSettings } from "#tracing/otel-declaration.js";
 import { normalizeUserContent, resolveAssistantStepText } from "#harness/messages.js";
 import { normalizeProviderToolHistory } from "#harness/provider-tool-history.js";
 import {
@@ -223,7 +224,7 @@ import {
 /**
  * Builds the `telemetry` value for the AI SDK from authored settings.
  *
- * Custom context (authored `InstrumentationDefinition.events` plus
+ * Custom context (authored instrumentation events plus
  * eve-specific identifiers such as `eve.session.id`) is flowed through
  * {@link buildTelemetryRuntimeContext} because AI SDK v7 surfaces
  * per-call attributes via `runtimeContext`, not a dedicated metadata field on
@@ -269,12 +270,12 @@ const MODEL_CALL_MAX_ATTEMPTS = 3;
 const MODEL_CALL_RETRY_BASE_DELAY_MS = 500;
 
 function enrichTelemetry(
-  authored: InstrumentationDefinition | undefined,
+  settings: OtelHarnessSettings | undefined,
   agentName: string | undefined,
   runtimeContext?: Readonly<Record<string, unknown>>,
   bridgeIntegration?: Telemetry,
 ): TelemetryOptions | undefined {
-  if (authored === undefined && bridgeIntegration === undefined) {
+  if (settings === undefined && bridgeIntegration === undefined) {
     return undefined;
   }
 
@@ -286,17 +287,17 @@ function enrichTelemetry(
   }
 
   return {
-    functionId: authored?.functionId ?? agentName,
+    functionId: settings?.functionId ?? agentName,
     includeRuntimeContext,
     integrations:
       bridgeIntegration === undefined
         ? undefined
-        : authored === undefined
+        : getInstrumentationConfig() === undefined
           ? [bridgeIntegration]
           : [bridgeIntegration, createOtelIntegration()],
     isEnabled: true,
-    recordInputs: authored?.recordInputs ?? true,
-    recordOutputs: authored?.recordOutputs ?? true,
+    recordInputs: settings?.recordInputs ?? true,
+    recordOutputs: settings?.recordOutputs ?? true,
   };
 }
 
@@ -525,11 +526,12 @@ function buildHarnessToolsWithDynamicSubagents(
 
 export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
   const baseEmit = config.handleEvent;
-  const telemetryConfig = getInstrumentationConfig();
-  if (telemetryConfig !== undefined) {
+  const otelSettings = getInstrumentationRuntime()?.otelSettings;
+  const authoredConfig = getInstrumentationConfig();
+  if (otelSettings !== undefined) {
     ensureOtelIntegration();
   }
-  const tracer = telemetryConfig !== undefined ? trace.getTracer("eve") : undefined;
+  const tracer = otelSettings !== undefined ? trace.getTracer("eve") : undefined;
   const agentName = config.runtimeIdentity?.agentName;
 
   async function runStep(
@@ -542,7 +544,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // restore the parent from session state via resolveStepOtelContext.
     let turnSpan: Span | undefined;
     if (tracer && hasStepInput(input)) {
-      const functionId = telemetryConfig?.functionId ?? agentName;
+      const functionId = otelSettings?.functionId ?? agentName;
       const attributes: Record<string, string> = {
         "eve.version": eveVersion,
         "eve.environment": environment,
@@ -674,7 +676,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             resolveModel: config.resolveModel,
             runtimeIdentity: config.runtimeIdentity,
             session,
-            telemetry: enrichTelemetry(telemetryConfig, agentName) ?? undefined,
+            telemetry: enrichTelemetry(otelSettings, agentName) ?? undefined,
           });
 
           session = {
@@ -930,7 +932,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       resolveModel: config.resolveModel,
       runtimeIdentity: config.runtimeIdentity,
       session,
-      telemetry: enrichTelemetry(telemetryConfig, agentName) ?? undefined,
+      telemetry: enrichTelemetry(otelSettings, agentName) ?? undefined,
     }));
 
     const approvedTools = getApprovedTools(session);
@@ -1002,7 +1004,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         instructions,
         telemetryRuntimeContext: buildTelemetryRuntimeContext({
           eveVersion,
-          authored: telemetryConfig,
+          authored: authoredConfig,
           emissionState,
           environment,
           modelInput: {
@@ -1124,7 +1126,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           : {
               attemptId: `${session.sessionId}:${instrumentationTurnId}:${emissionState.stepIndex}:${opts.attemptIndex}`,
               attemptIndex: opts.attemptIndex,
-              functionId: telemetryConfig?.functionId ?? agentName,
+              functionId: otelSettings?.functionId ?? agentName,
               rootSessionId: parent?.rootSessionId ?? session.sessionId,
               sessionId: session.sessionId,
               stepIndex: emissionState.stepIndex,
@@ -1170,7 +1172,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         runtimeContext: telemetryRuntimeContext,
         stopWhen: isStepCount(1),
         telemetry: enrichTelemetry(
-          telemetryConfig,
+          otelSettings,
           agentName,
           telemetryRuntimeContext,
           bridgeIntegration,

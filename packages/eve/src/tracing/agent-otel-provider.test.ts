@@ -459,7 +459,8 @@ describe("createAgentOtelInstrumentation", () => {
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
     const agentOtel = createAgentOtelInstrumentation({
-      captureContent: false,
+      recordInputs: false,
+      recordOutputs: false,
       frameworkVersion: "test",
       idGenerator,
       stateStore: new InMemoryAgentTraceStateStore(),

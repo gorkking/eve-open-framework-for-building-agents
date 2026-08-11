@@ -328,6 +328,7 @@
     "@eve/catalog": "workspace:*",
     "@nuxt/kit": "^4.0.0",
     "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/core": "catalog:",
     "@opentelemetry/otlp-transformer": "0.214.0",
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@photon-ai/chat-adapter-imessage": "3.2.0",

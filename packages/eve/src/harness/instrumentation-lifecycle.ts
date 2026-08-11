@@ -292,6 +292,7 @@ export type InstrumentationEventHandler<TEvent> = (event: TEvent) => void | Prom
 
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
+  readonly name?: string;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
     readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptTerminalEvent>;
@@ -314,6 +315,8 @@ export interface InstrumentationProviderDefinition {
     readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
     readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
+  readonly flush?: () => void | PromiseLike<void>;
+  readonly shutdown?: () => void | PromiseLike<void>;
 }
 
 /** Events that carry an operation `id`, pairing a start with its terminal. */

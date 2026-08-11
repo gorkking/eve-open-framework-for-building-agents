@@ -30,7 +30,11 @@ export interface Tracer {
   ): Span;
 }
 
-export interface Context {}
+export interface Context {
+  setValue(key: symbol, value: unknown): Context;
+}
+
+export declare function createContextKey(description: string): symbol;
 
 export declare const ROOT_CONTEXT: Context;
 
@@ -38,6 +42,11 @@ export declare enum SpanStatusCode {
   UNSET = 0,
   OK = 1,
   ERROR = 2,
+}
+
+export declare enum TraceFlags {
+  NONE = 0,
+  SAMPLED = 1,
 }
 
 export declare const context: {
@@ -55,13 +64,19 @@ export interface TextMapGetter<Carrier = unknown> {
   keys(carrier: Carrier): string[];
 }
 
+export interface TextMapSetter<Carrier = unknown> {
+  set(carrier: Carrier, key: string, value: string): void;
+}
+
 export declare const propagation: {
   extract<Carrier>(context: Context, carrier: Carrier, getter: TextMapGetter<Carrier>): Context;
+  inject<Carrier>(context: Context, carrier: Carrier, setter: TextMapSetter<Carrier>): void;
 };
 
 export declare const trace: {
   getActiveSpan(): Span | undefined;
   getTracer(name: string, version?: string): Tracer;
+  getTracerProvider(): unknown;
   setSpan(context: Context, span: Span): Context;
   wrapSpanContext(spanContext: SpanContext): Span;
 };

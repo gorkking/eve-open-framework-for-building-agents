@@ -391,7 +391,7 @@ function createInstrumentationPluginSource(input: {
     `import { registerInstrumentationConfig } from ${stringifyEsmImportSpecifier(input.registerConfigPath)};`,
     "",
     "if (instrumentationModule.default != null) {",
-    `  registerInstrumentationConfig(instrumentationModule.default, { agentName: ${JSON.stringify(input.agentName)} });`,
+    `  await registerInstrumentationConfig(instrumentationModule.default, { agentName: ${JSON.stringify(input.agentName)} });`,
     "}",
     "",
     "// Default export satisfies the Nitro plugin contract so this file",
