@@ -179,3 +179,12 @@ export async function resolveAgentWorkspace(
 
   return { members, root: workspaceRoot };
 }
+
+/** Load a collection that the caller has already identified as collection-shaped. */
+export async function loadAgentCollection(root: string): Promise<AgentCollection> {
+  const collection = await resolveAgentCollection(root);
+  if (collection === undefined) {
+    throw new Error("An eve agent collection requires an agents/ directory.");
+  }
+  return collection;
+}

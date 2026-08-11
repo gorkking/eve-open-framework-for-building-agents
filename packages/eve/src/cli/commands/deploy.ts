@@ -1,4 +1,5 @@
 import { isEveProject } from "#setup/scaffold/index.js";
+import { resolveEveProjectContext } from "#internal/project-context.js";
 
 import { runDeployFlow, type DeployFlowDeps } from "#setup/flows/deploy.js";
 import { createPrompter, type Prompter } from "#setup/prompter.js";
@@ -35,12 +36,19 @@ export async function runDeployCommand(
   appRoot: string,
   dependencies: DeployCommandDependencies = defaultDependencies,
 ): Promise<void> {
-  if (!(await dependencies.isEveProject(appRoot))) {
+  const projectContext = await resolveEveProjectContext(appRoot);
+  if (projectContext.kind === "collection-member") {
+    logger.error(
+      `This agent belongs to the collection at ${projectContext.collection.root}. Run \`eve deploy\` from the collection root to deploy every peer agent together.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (!(await dependencies.isEveProject(appRoot)) && projectContext.kind === "standalone") {
     logger.error(NOT_AN_AGENT_MESSAGE);
     process.exitCode = 1;
     return;
   }
-
   const prompter = dependencies.createPrompter?.() ?? createPrompter();
   prompter.intro("Deploy your eve agent to Vercel");
   try {
