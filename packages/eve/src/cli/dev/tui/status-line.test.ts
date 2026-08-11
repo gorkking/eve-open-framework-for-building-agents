@@ -64,13 +64,12 @@ describe("buildStatusLine", () => {
 
   it("does not claim an endpoint for a runtime-selected model", () => {
     const line = buildStatusLine({
-      model: "dynamic",
       endpoint: { kind: "dynamic" },
       theme: plain,
       width: 120,
     });
 
-    expect(line).toBe("dynamic");
+    expect(line).toBeUndefined();
   });
 
   it("folds the reasoning level and Fast mode marker into the model segment", () => {

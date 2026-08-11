@@ -15,6 +15,7 @@ import type {
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import {
   type VercelEveAgentSummary,
+  type VercelEveAgentEntry,
   type VercelEveChannelEntry,
   type VercelEveConnectionEntry,
   type VercelEveInstructionsEntry,
@@ -38,16 +39,19 @@ export function buildVercelAgentSummary(input: {
   generatorVersion?: string;
 }): VercelEveAgentSummary {
   const { manifest } = input;
+  const agent: {
+    -readonly [K in keyof VercelEveAgentEntry]: VercelEveAgentEntry[K];
+  } = {
+    name: manifest.config.name,
+    description: manifest.config.description,
+  };
+  if (manifest.config.model !== undefined) agent.modelId = manifest.config.model.id;
 
   return {
     kind: VERCEL_EVE_AGENT_SUMMARY_KIND,
     schemaVersion: VERCEL_EVE_AGENT_SUMMARY_VERSION,
     generatorVersion: input.generatorVersion ?? resolveInstalledPackageInfo().version,
-    agent: {
-      name: manifest.config.name,
-      description: manifest.config.description,
-      modelId: manifest.config.model.id,
-    },
+    agent,
     instructions: manifest.instructions ? toInstructionsEntry(manifest.instructions) : null,
     schedules: manifest.schedules.map(toScheduleEntry),
     tools: manifest.tools.map(toToolEntry),

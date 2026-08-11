@@ -131,6 +131,24 @@ function makeSubagent(name: string): CompiledSubagentNode {
 }
 
 describe("buildVercelAgentSummary", () => {
+  it("omits a model id for a dynamic model resolver", () => {
+    const manifest = createCompiledAgentManifest({
+      agentRoot: AGENT_ROOT,
+      appRoot: APP_ROOT,
+      config: {
+        dynamicModel: {
+          eventNames: ["step.started"],
+          logicalPath: "agent.ts",
+          sourceId: "agent.ts",
+          sourceKind: "module",
+        },
+        name: "test-agent",
+      },
+    });
+
+    expect(buildVercelAgentSummary({ manifest }).agent).not.toHaveProperty("modelId");
+  });
+
   it("produces the public summary shape from a compiled manifest", () => {
     const subagent = makeSubagent("research");
     const subagentEdge: CompiledSubagentEdge = {

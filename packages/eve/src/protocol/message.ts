@@ -117,8 +117,8 @@ export interface RuntimeIdentity {
     readonly gitBranch?: string;
     readonly gitSha?: string;
   };
-  /** Configured model id; dynamic-model agents report `dynamic`. */
-  readonly modelId: string;
+  /** Configured model id, absent when the agent selects its model dynamically. */
+  readonly modelId?: string;
 }
 
 /**

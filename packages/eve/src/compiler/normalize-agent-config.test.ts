@@ -44,7 +44,7 @@ describe("compileAgentConfig", () => {
     const modelCatalog = createModelCatalog();
     const compiled = await compileAgentConfig(manifest, { modelCatalog });
 
-    expect(compiled.model).toEqual({ id: "dynamic", routing: { kind: "dynamic" } });
+    expect(compiled).not.toHaveProperty("model");
     expect(compiled.dynamicModel).toEqual({
       contextWindowTokens: 256_000,
       eventNames: ["session.started", "step.started"],

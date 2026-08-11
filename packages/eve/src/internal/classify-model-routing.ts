@@ -1,6 +1,6 @@
 import type { LanguageModel } from "ai";
 
-import type { ModelRouting } from "#shared/agent-definition.js";
+import type { StaticModelRouting } from "#shared/agent-definition.js";
 import type { JsonObject } from "#shared/json.js";
 
 const GATEWAY_PROVIDER = "gateway";
@@ -28,9 +28,9 @@ const GATEWAY_PROVIDER = "gateway";
 export function classifyModelRouting(
   model: string | LanguageModel,
   providerOptions?: Record<string, JsonObject>,
-): ModelRouting {
+): StaticModelRouting {
   if (typeof model === "string") {
-    const routing: ModelRouting = { kind: "gateway", target: gatewayTarget(model) };
+    const routing: StaticModelRouting = { kind: "gateway", target: gatewayTarget(model) };
     const byok = readByokProvider(providerOptions);
     if (byok !== undefined) routing.byok = byok;
     return routing;
@@ -45,7 +45,7 @@ export function classifyModelRouting(
   const topLevelProvider = model.provider.split(".")[0]!;
 
   if (topLevelProvider === GATEWAY_PROVIDER) {
-    const routing: ModelRouting = { kind: "gateway", target: gatewayTarget(modelId) };
+    const routing: StaticModelRouting = { kind: "gateway", target: gatewayTarget(modelId) };
     const byok = readByokProvider(providerOptions);
     if (byok !== undefined) routing.byok = byok;
     return routing;

@@ -26,7 +26,7 @@ import type {
   InternalAgentModelDefinition,
   InternalAgentCompactionDefinition,
   AgentBuildDefinition,
-  ModelRouting,
+  StaticModelRouting,
 } from "#shared/agent-definition.js";
 import type { InternalToolDefinition } from "#shared/tool-definition.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
@@ -46,7 +46,7 @@ export const ROOT_COMPILED_AGENT_NODE_ID = "__root__";
 /**
  * Current compiled manifest schema version.
  */
-export const COMPILED_AGENT_MANIFEST_VERSION = 39;
+export const COMPILED_AGENT_MANIFEST_VERSION = 40;
 
 /**
  * Compiled channel entry preserved in the compiled manifest.
@@ -95,14 +95,14 @@ interface DisabledCompiledChannelEntry {
 /**
  * Serializable runtime model reference preserved in the compiled manifest.
  *
- * Carries {@link ModelRouting} — decided at compile time from the authored model
+ * Carries {@link StaticModelRouting} — decided at compile time from the authored model
  * value — so consumers (the dev server's `/eve/v1/info`, the TUI) can tell how
  * the model is reached without re-resolving it. Runtime model resolution uses
  * the routing-free {@link InternalAgentModelDefinition}; routing is a
  * compiled-output concern only.
  */
 export type CompiledRuntimeModelReference = InternalAgentModelDefinition & {
-  routing: ModelRouting;
+  routing: StaticModelRouting;
 };
 
 /** Dynamic model resolver configuration preserved in the compiled manifest. */
@@ -128,11 +128,15 @@ type CompiledAgentCompactionDefinition = Omit<InternalAgentCompactionDefinition,
 /**
  * Normalized additive agent configuration preserved in the compiled manifest.
  */
-export type CompiledAgentDefinition = Omit<InternalAgentDefinition, "model" | "compaction"> & {
-  model: CompiledRuntimeModelReference;
+type CompiledAgentDefinitionBase = Omit<InternalAgentDefinition, "model" | "compaction"> & {
   compaction?: CompiledAgentCompactionDefinition;
-  dynamicModel?: CompiledDynamicModelDefinition;
 };
+
+export type CompiledAgentDefinition = CompiledAgentDefinitionBase &
+  (
+    | { model: CompiledRuntimeModelReference; dynamicModel?: never }
+    | { model?: never; dynamicModel: CompiledDynamicModelDefinition }
+  );
 
 /**
  * Normalized authored instructions prompt preserved in the compiled
@@ -360,8 +364,7 @@ const compiledChannelEntrySchema = z.union([
   disabledCompiledChannelEntrySchema,
 ]) as unknown as z.ZodType<CompiledChannelEntry>;
 
-const modelRoutingSchema = z.union([
-  z.object({ kind: z.literal("dynamic") }).strict(),
+const staticModelRoutingSchema = z.union([
   z
     .object({
       kind: z.literal("gateway"),
@@ -375,7 +378,7 @@ const modelRoutingSchema = z.union([
       provider: z.string(),
     })
     .strict(),
-]) satisfies z.ZodType<ModelRouting>;
+]) satisfies z.ZodType<StaticModelRouting>;
 
 const compiledRuntimeModelReferenceSchema: z.ZodType<CompiledRuntimeModelReference> = z
   .object({
@@ -383,7 +386,7 @@ const compiledRuntimeModelReferenceSchema: z.ZodType<CompiledRuntimeModelReferen
     id: z.string(),
     source: moduleSourceRefSchema.optional(),
     providerOptions: z.record(z.string(), jsonObjectSchema).optional(),
-    routing: modelRoutingSchema,
+    routing: staticModelRoutingSchema,
   })
   .strict();
 
@@ -425,29 +428,40 @@ const compiledWorkflowToolDefinitionSchema: z.ZodType<CompiledWorkflowToolDefini
   })
   .strict();
 
-const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z
-  .object({
-    build: compiledAgentBuildDefinitionSchema.optional(),
-    compaction: compiledAgentCompactionDefinitionSchema.optional(),
-    description: z.string().optional(),
-    dynamicModel: compiledDynamicModelDefinitionSchema.optional(),
-    experimental: z
-      .object({
-        subagentPersistentSessions: z.boolean().optional(),
-        workflow: compiledAgentWorkflowDefinitionSchema.optional(),
-      })
-      .strict()
-      .optional(),
-    model: compiledRuntimeModelReferenceSchema,
-    name: z.string(),
-    outputSchema: jsonObjectSchema.optional(),
-    reasoning: z
-      .enum(["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"])
-      .optional(),
-    source: moduleSourceRefSchema.optional(),
-    limits: compiledAgentLimitsDefinitionSchema.optional(),
-  })
-  .strict();
+const compiledAgentConfigBaseShape = {
+  build: compiledAgentBuildDefinitionSchema.optional(),
+  compaction: compiledAgentCompactionDefinitionSchema.optional(),
+  description: z.string().optional(),
+  experimental: z
+    .object({
+      subagentPersistentSessions: z.boolean().optional(),
+      workflow: compiledAgentWorkflowDefinitionSchema.optional(),
+    })
+    .strict()
+    .optional(),
+  name: z.string(),
+  outputSchema: jsonObjectSchema.optional(),
+  reasoning: z
+    .enum(["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"])
+    .optional(),
+  source: moduleSourceRefSchema.optional(),
+  limits: compiledAgentLimitsDefinitionSchema.optional(),
+};
+
+const compiledAgentConfigSchema: z.ZodType<CompiledAgentDefinition> = z.union([
+  z
+    .object({
+      ...compiledAgentConfigBaseShape,
+      model: compiledRuntimeModelReferenceSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...compiledAgentConfigBaseShape,
+      dynamicModel: compiledDynamicModelDefinitionSchema,
+    })
+    .strict(),
+]);
 
 const compiledInstructionsSchema: z.ZodType<CompiledInstructionsDefinition> = z
   .object({
@@ -805,12 +819,17 @@ export function createCompiledAgentNodeManifest(input: {
   readonly tools?: readonly CompiledToolDefinition[];
   readonly workspaceResourceRoot?: CompiledWorkspaceResourceRoot;
 }): CompiledAgentNodeManifest {
+  const configVariant =
+    input.config.model === undefined
+      ? { dynamicModel: cloneCompiledDynamicModelDefinition(input.config.dynamicModel) }
+      : { model: cloneCompiledRuntimeModelReference(input.config.model) };
   const node: CompiledAgentNodeManifest = {
     agentRoot: input.agentRoot,
     appRoot: input.appRoot,
     channels: [...(input.channels ?? [])],
     connections: [...(input.connections ?? [])],
     config: {
+      ...configVariant,
       build:
         input.config.build === undefined
           ? undefined
@@ -828,10 +847,6 @@ export function createCompiledAgentNodeManifest(input: {
         thresholdPercent: input.config.compaction?.thresholdPercent,
       },
       description: input.config.description,
-      dynamicModel:
-        input.config.dynamicModel === undefined
-          ? undefined
-          : cloneCompiledDynamicModelDefinition(input.config.dynamicModel),
       experimental:
         input.config.experimental === undefined
           ? undefined
@@ -844,7 +859,6 @@ export function createCompiledAgentNodeManifest(input: {
                       world: input.config.experimental.workflow.world,
                     },
             },
-      model: cloneCompiledRuntimeModelReference(input.config.model),
       name: input.config.name,
       outputSchema: input.config.outputSchema,
       reasoning: input.config.reasoning,
@@ -1012,10 +1026,7 @@ function cloneCompiledDynamicModelDefinition(
   return clone;
 }
 
-function cloneModelRouting(routing: ModelRouting): ModelRouting {
-  if (routing.kind === "dynamic") {
-    return { kind: "dynamic" };
-  }
+function cloneModelRouting(routing: StaticModelRouting): StaticModelRouting {
   if (routing.kind === "external") {
     return { kind: "external", provider: routing.provider };
   }

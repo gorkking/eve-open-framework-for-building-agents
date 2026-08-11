@@ -562,9 +562,8 @@ function hasModelSettingsChanges(patch: AgentModelSettingsPatch): boolean {
 }
 
 /**
- * Reads the model the runtime is currently serving. That's the compiled
- * `config.model.id`, the same field `eve info` reports. Returns null when the
- * app hasn't compiled yet.
+ * Reads the statically configured model the runtime is currently serving.
+ * Returns null when the app hasn't compiled yet or selects its model dynamically.
  */
 async function readCurrentAgentModel(appRoot: string): Promise<CurrentAgentModel> {
   try {

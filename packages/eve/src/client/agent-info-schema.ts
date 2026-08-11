@@ -129,7 +129,7 @@ export const AgentInfoResultSchema = z.object({
     description: z.string().optional(),
     model: z.object({
       contextWindowTokens: z.number().optional(),
-      id: z.string(),
+      id: z.string().optional(),
       providerOptions: z.unknown().optional(),
       // An unrecognized future effort level degrades to absent, not a parse failure.
       reasoning: z

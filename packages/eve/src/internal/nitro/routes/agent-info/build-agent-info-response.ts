@@ -27,6 +27,8 @@ import { WORKFLOW_TOOL_NAME } from "#shared/workflow-sandbox.js";
 import type { AgentReasoningDefinition, ModelRouting } from "#shared/agent-definition.js";
 import type { ModelEndpointStatus } from "#shared/model-endpoint-status.js";
 
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
 export interface AgentInfoSource {
   readonly exportName?: string;
   readonly logicalPath: string;
@@ -170,7 +172,7 @@ export interface AgentInfoResponse {
     readonly description?: string;
     readonly model: {
       readonly contextWindowTokens?: number;
-      readonly id: string;
+      readonly id?: string;
       readonly providerOptions?: unknown;
       /** The agent's authored reasoning effort, forwarded to the model call. */
       readonly reasoning?: AgentReasoningDefinition;
@@ -221,6 +223,16 @@ export function buildAgentInfoResponse(
 ): AgentInfoResponse {
   const agent = data.agent;
   const tools = buildToolInfo(agent, getRootDelegationToolNames(data.manifest));
+  const model = agent.config.model;
+  const modelInfo: Mutable<AgentInfoResponse["agent"]["model"]> = {
+    contextWindowTokens:
+      agent.config.dynamicModel?.contextWindowTokens ?? model?.contextWindowTokens,
+    providerOptions: agent.config.dynamicModel?.providerOptions ?? model?.providerOptions,
+    reasoning: agent.config.reasoning,
+    source: model?.source ? toSource(model.source) : undefined,
+    routing: agent.config.dynamicModel === undefined ? undefined : { kind: "dynamic" },
+  };
+  if (model !== undefined) modelInfo.id = model.id;
 
   return {
     agent: {
@@ -228,15 +240,7 @@ export function buildAgentInfoResponse(
       appRoot: agent.metadata.appRoot,
       configSource: agent.config.source ? toSource(agent.config.source) : undefined,
       description: agent.config.description,
-      model: {
-        contextWindowTokens:
-          agent.config.dynamicModel?.contextWindowTokens ?? agent.config.model.contextWindowTokens,
-        id: agent.config.model.id,
-        providerOptions:
-          agent.config.dynamicModel?.providerOptions ?? agent.config.model.providerOptions,
-        reasoning: agent.config.reasoning,
-        source: agent.config.model.source ? toSource(agent.config.model.source) : undefined,
-      },
+      model: modelInfo,
       name: agent.config.name,
       outputSchema: agent.config.outputSchema,
     },

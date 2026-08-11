@@ -33,7 +33,7 @@ export type RuntimeDynamicModelReference = Readonly<
 /**
  * Minimal runtime-owned agent shape prepared for one harness turn.
  */
-export interface RuntimeTurnAgent {
+interface RuntimeTurnAgentBase {
   readonly availableSkills?: readonly AvailableSkillDescription[];
   readonly id: string;
   readonly instructions: readonly string[];
@@ -43,14 +43,18 @@ export interface RuntimeTurnAgent {
    * When omitted, the harness uses the active turn model for compaction.
    */
   readonly compactionModel?: RuntimeModelReference;
-  readonly dynamicModel?: RuntimeDynamicModelReference;
-  readonly model: RuntimeModelReference;
   readonly nodeId?: string;
   readonly outputSchema?: ResolvedAgent["config"]["outputSchema"];
   readonly reasoning?: ResolvedAgent["config"]["reasoning"];
   readonly tools: readonly PreparedRuntimeTool[];
   readonly workspaceSpec: WorkspaceRuntimeSpec;
 }
+
+export type RuntimeTurnAgent = RuntimeTurnAgentBase &
+  (
+    | { readonly model: RuntimeModelReference; readonly dynamicModel?: never }
+    | { readonly model?: never; readonly dynamicModel: RuntimeDynamicModelReference }
+  );
 
 /**
  * Static system prompt for the bootstrap runtime path.
@@ -81,7 +85,12 @@ export function createResolvedRuntimeTurnAgent(input: {
     hasAuthoredAgentTool: input.tools.some((tool) => tool.name === AGENT_TOOL_NAME),
     nodeId: input.nodeId,
   });
+  const modelVariant =
+    agent.config.model === undefined
+      ? { dynamicModel: agent.config.dynamicModel }
+      : { model: agent.config.model };
   return {
+    ...modelVariant,
     availableSkills: agent.skills.map((skill) => ({
       description: skill.description,
       name: skill.name,
@@ -96,8 +105,6 @@ export function createResolvedRuntimeTurnAgent(input: {
       workspaceSpec: agent.workspaceSpec,
     }),
     compactionModel: agent.config.compaction?.model,
-    dynamicModel: agent.config.dynamicModel,
-    model: agent.config.model,
     nodeId: input.nodeId,
     outputSchema: agent.config.outputSchema,
     reasoning: agent.config.reasoning,

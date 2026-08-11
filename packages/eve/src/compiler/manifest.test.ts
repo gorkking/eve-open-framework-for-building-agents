@@ -172,7 +172,6 @@ describe("compiledAgentManifestSchema", () => {
           sourceId: "agent-config",
           sourceKind: "module",
         },
-        model: { id: "dynamic", routing: { kind: "dynamic" } },
         name: "app",
       },
     });
@@ -187,7 +186,23 @@ describe("compiledAgentManifestSchema", () => {
       sourceId: "agent-config",
       sourceKind: "module",
     });
-    expect(parsed.config.model).toEqual({ id: "dynamic", routing: { kind: "dynamic" } });
+    expect(parsed.config).not.toHaveProperty("model");
+
+    expect(
+      compiledAgentManifestSchema.safeParse({
+        ...manifest,
+        config: {
+          ...manifest.config,
+          model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      compiledAgentManifestSchema.safeParse({
+        ...manifest,
+        config: { name: manifest.config.name },
+      }).success,
+    ).toBe(false);
   });
 
   it("preserves uncapped (false) session token limits", () => {

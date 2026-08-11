@@ -10,6 +10,7 @@ import type { AgentInfoManifestData } from "#internal/nitro/routes/agent-info/lo
 import type { ResolvedChannelDefinition } from "#runtime/types.js";
 import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
 import { WORKFLOW_TOOL_NAME } from "#shared/workflow-sandbox.js";
+import type { ModelRouting } from "#shared/agent-definition.js";
 import type {
   AgentInfoFrameworkChannelEntry,
   AgentInfoResponse,
@@ -28,6 +29,8 @@ import {
   resolveModelEndpointStatus,
 } from "#internal/resolve-model-endpoint-status.js";
 
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
 export function buildAgentInfoResponseFromManifest(
   data: AgentInfoManifestData,
   input: {
@@ -36,6 +39,8 @@ export function buildAgentInfoResponseFromManifest(
   },
 ): AgentInfoResponse {
   const manifest = data.manifest;
+  const model = manifest.config.model;
+  const routing: ModelRouting = model?.routing ?? { kind: "dynamic" };
   const authoredChannels = manifest.channels.filter((channel) => channel.kind === "channel");
   const disabledFrameworkChannels = manifest.channels
     .filter((channel) => channel.kind === "disabled")
@@ -66,6 +71,16 @@ export function buildAgentInfoResponseFromManifest(
     (channel) =>
       !authoredChannelNames.has(channel.name) && !disabledFrameworkChannelNames.has(channel.name),
   );
+  const modelInfo: Mutable<AgentInfoResponse["agent"]["model"]> = {
+    contextWindowTokens:
+      manifest.config.dynamicModel?.contextWindowTokens ?? model?.contextWindowTokens,
+    providerOptions: manifest.config.dynamicModel?.providerOptions ?? model?.providerOptions,
+    reasoning: manifest.config.reasoning,
+    source: model?.source ? toSource(model.source) : undefined,
+    routing,
+    endpoint: resolveModelEndpointStatus(routing, input.gatewayCredentials),
+  };
+  if (model !== undefined) modelInfo.id = model.id;
   const frameworkToolInfo = buildFrameworkToolInfo({
     authoredToolNames,
     delegationToolNames: getRootDelegationToolNames(manifest),
@@ -86,21 +101,7 @@ export function buildAgentInfoResponseFromManifest(
       appRoot: manifest.appRoot,
       configSource: manifest.config.source ? toSource(manifest.config.source) : undefined,
       description: manifest.config.description,
-      model: {
-        contextWindowTokens:
-          manifest.config.dynamicModel?.contextWindowTokens ??
-          manifest.config.model.contextWindowTokens,
-        id: manifest.config.model.id,
-        providerOptions:
-          manifest.config.dynamicModel?.providerOptions ?? manifest.config.model.providerOptions,
-        reasoning: manifest.config.reasoning,
-        source: manifest.config.model.source ? toSource(manifest.config.model.source) : undefined,
-        routing: manifest.config.model.routing,
-        endpoint: resolveModelEndpointStatus(
-          manifest.config.model.routing,
-          input.gatewayCredentials,
-        ),
-      },
+      model: modelInfo,
       name: manifest.config.name,
       outputSchema: manifest.config.outputSchema,
     },

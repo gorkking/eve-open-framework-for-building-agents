@@ -11,7 +11,6 @@ import { toErrorMessage } from "#shared/errors.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import {
-  DYNAMIC_MODEL_ID,
   isDynamicModelDefinition,
   type PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
@@ -57,7 +56,7 @@ export async function compileAgentConfig(
   );
   const dynamicModel = isDynamicModelDefinition(definition.model);
   const model = dynamicModel
-    ? normalizeDynamicModelReference()
+    ? undefined
     : await normalizeAuthoredModelReference({
         modelCatalog: context.modelCatalog,
         purpose: "the primary compaction trigger model",
@@ -81,7 +80,7 @@ export async function compileAgentConfig(
     description?: string;
     dynamicModel?: CompiledAgentDefinition["dynamicModel"];
     experimental?: CompiledAgentDefinition["experimental"];
-    model: CompiledRuntimeModelReference;
+    model?: CompiledRuntimeModelReference;
     name: string;
     outputSchema?: JsonObject;
     reasoning?: CompiledAgentDefinition["reasoning"];
@@ -89,9 +88,12 @@ export async function compileAgentConfig(
     limits?: CompiledAgentDefinition["limits"];
   } = {
     compaction,
-    model,
     name: manifest.agentId,
   };
+
+  if (model !== undefined) {
+    compiledConfig.model = model;
+  }
 
   if (definition.description !== undefined) {
     compiledConfig.description = definition.description;
@@ -174,14 +176,7 @@ export async function compileAgentConfig(
     compaction.thresholdPercent = definition.compaction.thresholdPercent;
   }
 
-  return compiledConfig;
-}
-
-function normalizeDynamicModelReference(): CompiledRuntimeModelReference {
-  return {
-    id: DYNAMIC_MODEL_ID,
-    routing: { kind: "dynamic" },
-  };
+  return compiledConfig as CompiledAgentDefinition;
 }
 
 function normalizeExperimentalDefinition(

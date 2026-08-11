@@ -118,14 +118,6 @@ function typeOnlyFixtures(): void {
     }),
   });
 
-  defineDynamic({
-    // @ts-expect-error defineDynamic does not accept a fallback.
-    fallback: "anthropic/claude-sonnet-5",
-    events: {
-      "session.started": () => "anthropic/claude-sonnet-5",
-    },
-  });
-
   // @ts-expect-error Dynamic subagents require a parent-facing description.
   defineDynamic({
     events: {

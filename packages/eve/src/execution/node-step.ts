@@ -10,7 +10,6 @@ import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { getInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
 import { createLogger } from "#internal/logging.js";
 import type { RuntimeIdentity } from "#protocol/message.js";
-import { DYNAMIC_MODEL_ID } from "#shared/agent-definition.js";
 import { UNSPECIFIED_INPUT_SCHEMA } from "#shared/tool-schema.js";
 import type { RunMode } from "#shared/run-mode.js";
 import {
@@ -132,12 +131,17 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
 export function buildRuntimeIdentity(node: ResolvedRuntimeAgentNode): RuntimeIdentity {
   const packageInfo = resolveInstalledPackageInfo();
 
-  const identity: RuntimeIdentity = {
+  const identity: {
+    agentId: string;
+    agentName?: string;
+    eveVersion: string;
+    modelId?: string;
+  } = {
     agentId: node.turnAgent.id,
     agentName: node.agent.config?.name,
     eveVersion: packageInfo.version,
-    modelId: node.turnAgent.dynamicModel === undefined ? node.turnAgent.model.id : DYNAMIC_MODEL_ID,
   };
+  if (node.turnAgent.model !== undefined) identity.modelId = node.turnAgent.model.id;
 
   const gitSha = process.env.VERCEL_GIT_COMMIT_SHA?.trim();
   const gitBranch = process.env.VERCEL_GIT_COMMIT_REF?.trim();

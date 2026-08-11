@@ -35,18 +35,15 @@ export type AgentReasoningDefinition = NonNullable<CallSettings["reasoning"]>;
  * - `external`: a direct provider instance (e.g. `anthropic(...)`) that bypasses
  *   the gateway and talks to the provider's own endpoint. `provider` is the AI
  *   SDK provider name (e.g. `"anthropic"`).
- * - `dynamic`: selected only at runtime, so no single compile-time route exists.
- *
  * This is a routing fact, not a model-existence check; it does not assert the
  * model id names a real model.
  */
-export type ModelRouting =
+export type StaticModelRouting =
   | { kind: "gateway"; target: string; byok?: string }
-  | { kind: "external"; provider: string }
-  | { kind: "dynamic" };
+  | { kind: "external"; provider: string };
 
-/** Compile-time model id used when the runtime must obtain a dynamic selection. */
-export const DYNAMIC_MODEL_ID = "dynamic";
+/** Model routing reported by inspection surfaces before a dynamic selection exists. */
+export type ModelRouting = StaticModelRouting | { kind: "dynamic" };
 
 export type InternalAgentModelDefinition = {
   id: string;

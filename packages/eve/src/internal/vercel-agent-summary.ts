@@ -65,7 +65,7 @@ export type VercelEveChannelType = "slack" | "http" | "webhook" | "unknown";
 export interface VercelEveAgentEntry {
   readonly name: string;
   readonly description?: string;
-  readonly modelId: string;
+  readonly modelId?: string;
 }
 
 /**

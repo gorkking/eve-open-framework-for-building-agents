@@ -261,21 +261,6 @@ describe("normalizeToolDefinition", () => {
     expect(entry.eventNames).toEqual(["session.started"]);
   });
 
-  it("rejects a defineDynamic tool export carrying a fallback", () => {
-    const dynamicTools = {
-      ...defineDynamic({
-        events: {
-          "session.started": async () => ({}),
-        },
-      }),
-      fallback: "not-supported-here",
-    };
-
-    expect(() => normalizeToolDefinition(dynamicTools, FAILURE_MESSAGE)).toThrow(
-      'defineDynamic does not support "fallback"',
-    );
-  });
-
   it("handles defineDynamic with multiple events", () => {
     const dynamicTools = defineDynamic({
       events: {

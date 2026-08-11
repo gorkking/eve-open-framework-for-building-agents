@@ -156,14 +156,18 @@ function createResolvedAgentConfig(manifest: CompiledAgentNodeManifest): Resolve
     compaction?: ResolvedAgent["config"]["compaction"];
     dynamicModel?: ResolvedAgent["config"]["dynamicModel"];
     experimental?: ResolvedAgent["config"]["experimental"];
-    model: ResolvedAgent["config"]["model"];
+    model?: ResolvedAgent["config"]["model"];
     name: string;
     outputSchema?: ResolvedAgent["config"]["outputSchema"];
     reasoning?: ResolvedAgent["config"]["reasoning"];
     source?: ResolvedAgent["config"]["source"];
     limits?: ResolvedAgent["config"]["limits"];
   } = {
-    model:
+    name: manifest.config.name,
+  };
+
+  if (manifest.config.model !== undefined) {
+    config.model =
       manifest.config.model.source === undefined
         ? {
             id: manifest.config.model.id,
@@ -180,9 +184,8 @@ function createResolvedAgentConfig(manifest: CompiledAgentNodeManifest): Resolve
               logicalPath: manifest.config.model.source.logicalPath,
               sourceId: manifest.config.model.source.sourceId,
             },
-          },
-    name: manifest.config.name,
-  };
+          };
+  }
 
   if (manifest.config.compaction !== undefined) {
     const compaction: {
@@ -257,5 +260,5 @@ function createResolvedAgentConfig(manifest: CompiledAgentNodeManifest): Resolve
     };
   }
 
-  return config;
+  return config as ResolvedAgent["config"];
 }

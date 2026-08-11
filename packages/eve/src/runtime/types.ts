@@ -321,11 +321,16 @@ export interface ResolvedDynamicSubagentDefinition extends Readonly<ModuleSource
 /**
  * Runtime-owned additive agent configuration resolved from `agent.ts`.
  */
+type ResolvedAgentDefinitionBase = Omit<InternalAgentDefinition, "build" | "model" | "source"> & {
+  source?: Readonly<NonNullable<InternalAgentDefinition["source"]>>;
+};
+
 export type ResolvedAgentDefinition = Readonly<
-  Omit<InternalAgentDefinition, "build" | "source"> & {
-    dynamicModel?: RuntimeDynamicModelReference;
-    source?: Readonly<NonNullable<InternalAgentDefinition["source"]>>;
-  }
+  ResolvedAgentDefinitionBase &
+    (
+      | { model: InternalAgentDefinition["model"]; dynamicModel?: never }
+      | { model?: never; dynamicModel: RuntimeDynamicModelReference }
+    )
 >;
 
 /**

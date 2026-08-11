@@ -33,6 +33,7 @@ import {
 import { createRuntimeActionRequestFromToolCall } from "#harness/runtime-actions.js";
 import { isInvalidToolCall } from "#harness/tool-call-input-errors.js";
 import type { RuntimeToolResultActionResult } from "#runtime/actions/types.js";
+import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { HarnessEmitFn, HarnessSession, ToolLoopHarnessConfig } from "#harness/types.js";
 import { contextStorage } from "#context/container.js";
 import { isAuthorizationSignal, isPendingAuthorizationToolOutput } from "#harness/authorization.js";
@@ -82,6 +83,7 @@ interface StepHooksInput {
    */
   readonly emitStepStarted?: boolean;
   readonly marker: AnthropicCacheMarker | undefined;
+  readonly modelReference: RuntimeModelReference;
   readonly session: HarnessSession;
 }
 
@@ -137,7 +139,6 @@ interface StepHooks {
  * results via `stepResult` after the agent finishes.
  */
 export function buildStepHooks(input: StepHooksInput): StepHooks {
-  const session = input.session;
   const emit = input.emit;
 
   let resolveStep: (step: HarnessStepResult) => void;
@@ -171,7 +172,7 @@ export function buildStepHooks(input: StepHooksInput): StepHooks {
 
     if (input.cachePath.kind === "gateway-auto") {
       stepResult.providerOptions = mergeGatewayAutoCaching(
-        session.agent.modelReference.providerOptions,
+        input.modelReference.providerOptions,
       ) as NonNullable<typeof stepResult.providerOptions>;
     }
 

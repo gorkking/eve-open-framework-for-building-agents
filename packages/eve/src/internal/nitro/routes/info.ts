@@ -14,9 +14,10 @@ async function createAgentInfoPayload(input: NitroArtifactsConfig) {
     compiledArtifactsSource: resolveAgentInfoCompiledArtifactsSource(input),
   });
 
+  const routing: ModelRouting = data.manifest.config.model?.routing ?? { kind: "dynamic" };
   return buildAgentInfoResponseFromManifest(data, {
     mode: input.kind,
-    gatewayCredentials: await resolveGatewayCredentialPresence(data.manifest.config.model.routing),
+    gatewayCredentials: await resolveGatewayCredentialPresence(routing),
   });
 }
 

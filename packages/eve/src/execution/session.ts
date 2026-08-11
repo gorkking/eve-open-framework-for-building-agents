@@ -1,6 +1,11 @@
 import type { DurableSession } from "#execution/durable-session-store.js";
 import { formatAvailableSkillsSection } from "#execution/skills/instructions.js";
-import type { HarnessSession, SessionLimits, SessionToolDefinition } from "#harness/types.js";
+import type {
+  HarnessSession,
+  SessionAgent,
+  SessionLimits,
+  SessionToolDefinition,
+} from "#harness/types.js";
 import type { RuntimeTurnAgent } from "#runtime/agent/bootstrap.js";
 
 const DEFAULT_COMPACTION_RECENT_WINDOW_SIZE = 10;
@@ -79,16 +84,9 @@ export function createSession(input: CreateSessionInput): HarnessSession {
   const session: {
     -readonly [K in keyof HarnessSession]: HarnessSession[K];
   } = {
-    agent: {
-      compactionModelReference: turnAgent.compactionModel,
-      modelReference: turnAgent.model,
-      reasoning: turnAgent.reasoning,
-      requiresDynamicModelSelection: turnAgent.dynamicModel === undefined ? undefined : true,
-      system: createSessionSystemPrompt({ turnAgent }),
-      tools,
-    },
+    agent: createSessionAgent(turnAgent, tools),
     compaction: createCompactionConfig({
-      contextWindowTokens: turnAgent.model.contextWindowTokens,
+      contextWindowTokens: turnAgent.model?.contextWindowTokens,
       thresholdPercent: input.compactionOverrides?.thresholdPercent,
     }),
     continuationToken: input.continuationToken,
@@ -127,16 +125,9 @@ export function refreshSessionFromTurnAgent(input: {
 }): HarnessSession {
   return {
     ...input.session,
-    agent: {
-      compactionModelReference: input.turnAgent.compactionModel,
-      modelReference: input.turnAgent.model,
-      reasoning: input.turnAgent.reasoning,
-      requiresDynamicModelSelection: input.turnAgent.dynamicModel === undefined ? undefined : true,
-      system: createSessionSystemPrompt({ turnAgent: input.turnAgent }),
-      tools: createSessionToolDefinitions(input.turnAgent),
-    },
+    agent: createSessionAgent(input.turnAgent, createSessionToolDefinitions(input.turnAgent)),
     compaction: createCompactionConfig({
-      contextWindowTokens: input.turnAgent.model.contextWindowTokens,
+      contextWindowTokens: input.turnAgent.model?.contextWindowTokens,
       lastKnownInputTokens: input.session.compaction.lastKnownInputTokens,
       lastKnownPromptMessageCount: input.session.compaction.lastKnownPromptMessageCount,
       thresholdPercent: input.compactionOverrides?.thresholdPercent,
@@ -244,16 +235,9 @@ export function hydrateDurableSession(input: {
   const session: {
     -readonly [K in keyof HarnessSession]: HarnessSession[K];
   } = {
-    agent: {
-      compactionModelReference: turnAgent.compactionModel,
-      modelReference: turnAgent.model,
-      reasoning: turnAgent.reasoning,
-      requiresDynamicModelSelection: turnAgent.dynamicModel === undefined ? undefined : true,
-      system: durable.agent.system,
-      tools,
-    },
+    agent: createSessionAgent(turnAgent, tools, durable.agent.system),
     compaction: createCompactionConfig({
-      contextWindowTokens: turnAgent.model.contextWindowTokens,
+      contextWindowTokens: turnAgent.model?.contextWindowTokens,
       lastKnownInputTokens: durable.compaction?.lastKnownInputTokens,
       lastKnownPromptMessageCount: durable.compaction?.lastKnownPromptMessageCount,
       thresholdPercent: input.compactionOverrides?.thresholdPercent,
@@ -288,6 +272,22 @@ export function hydrateDurableSession(input: {
     session.workflowMaxSubagents = durable.workflowMaxSubagents;
   }
   return session;
+}
+
+function createSessionAgent(
+  turnAgent: RuntimeTurnAgent,
+  tools: readonly SessionToolDefinition[],
+  system = createSessionSystemPrompt({ turnAgent }),
+): SessionAgent {
+  const base = {
+    compactionModelReference: turnAgent.compactionModel,
+    reasoning: turnAgent.reasoning,
+    system,
+    tools,
+  };
+  return turnAgent.model === undefined
+    ? { ...base, requiresDynamicModelSelection: true }
+    : { ...base, modelReference: turnAgent.model };
 }
 
 function createSessionToolDefinitions(turnAgent: RuntimeTurnAgent): SessionToolDefinition[] {

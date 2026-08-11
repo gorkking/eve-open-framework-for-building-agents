@@ -11,7 +11,11 @@ import {
   refreshSessionFromTurnAgent,
 } from "#execution/session.js";
 
-function createTestTurnAgent(overrides?: Partial<RuntimeTurnAgent>): RuntimeTurnAgent {
+function createTestTurnAgent(
+  overrides?: Partial<Omit<RuntimeTurnAgent, "dynamicModel" | "model">> & {
+    readonly model?: NonNullable<RuntimeTurnAgent["model"]>;
+  },
+): RuntimeTurnAgent {
   return {
     id: "test-agent",
     instructions: ["You are a helpful assistant.", "Be concise."],
@@ -73,6 +77,28 @@ describe("createCompactionConfig", () => {
 });
 
 describe("createSession", () => {
+  it("starts a dynamic session without a synthetic model reference", () => {
+    const session = createSession({
+      continuationToken: "root-token",
+      sessionId: "sess-root",
+      turnAgent: {
+        dynamicModel: {
+          eventNames: ["step.started"],
+          logicalPath: "agent.ts",
+          sourceId: "agent-config",
+          sourceKind: "module",
+        },
+        id: "test-agent",
+        instructions: ["You are a helpful assistant."],
+        tools: [],
+        workspaceSpec: { rootEntries: [] },
+      },
+    });
+
+    expect(session.agent.requiresDynamicModelSelection).toBe(true);
+    expect(session.agent).not.toHaveProperty("modelReference");
+  });
+
   it("creates a session with correct agent configuration", () => {
     const outputSchema = { properties: { title: { type: "string" } }, type: "object" } as const;
     const session = createSession({

@@ -150,7 +150,7 @@ export function collectModuleRefsForManifest(
     moduleSourceRefs.set(manifest.config.source.sourceId, manifest.config.source);
   }
 
-  if (manifest.config.model.source !== undefined) {
+  if (manifest.config.model?.source !== undefined) {
     moduleSourceRefs.set(manifest.config.model.source.sourceId, manifest.config.model.source);
   }
 

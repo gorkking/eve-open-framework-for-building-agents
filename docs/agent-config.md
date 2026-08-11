@@ -84,8 +84,8 @@ selection object, or a promise of one of those values.
   `modelContextWindowTokens`, eve resolves it from the AI Gateway model catalog
   at runtime. Models outside the catalog must provide it at one of those levels.
 
-Runtime identity and build metadata report a dynamic agent's model as
-`dynamic`, because no concrete model is selected until runtime.
+Runtime identity and build metadata omit the model id because no concrete
+model is selected until runtime.
 
 ## Reasoning effort
 

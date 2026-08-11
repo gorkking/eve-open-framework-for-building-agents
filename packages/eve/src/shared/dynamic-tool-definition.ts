@@ -142,13 +142,6 @@ export type DynamicEvents<TResult = unknown> = {
   ) => TResult | Promise<TResult>;
 };
 
-export type DynamicEventsWithFallback<TResult = unknown> = {
-  readonly [K in DynamicToolEventName]?: (
-    event: unknown,
-    ctx: DynamicResolveContext,
-  ) => Exclude<TResult, undefined> | Promise<Exclude<TResult, undefined>>;
-};
-
 /**
  * Marker discriminator for a `defineDynamic({ events })` export.
  */
@@ -156,21 +149,12 @@ export const DYNAMIC_SENTINEL_KIND = "eve:dynamic" as const;
 
 /**
  * Return value of `defineDynamic`: the runtime shape of a dynamic export,
- * stamped with a sentinel kind the compiler/normalizer detects. `TFallback`
- * remains only for compatibility with the shared non-agent authoring surface;
- * dynamic agent model definitions do not accept it.
+ * stamped with a sentinel kind the compiler/normalizer detects.
  */
-export type DynamicSentinel<TResult = unknown, TFallback = never> = {
+export type DynamicSentinel<TResult = unknown> = {
   readonly kind: typeof DYNAMIC_SENTINEL_KIND;
   readonly events: DynamicEvents<TResult>;
-} & ([TFallback] extends [never] ? object : { readonly fallback: TFallback });
-
-export function rejectDynamicSentinelFallback(sentinel: DynamicSentinel, message: string): void {
-  if (!("fallback" in sentinel)) {
-    return;
-  }
-  throw new Error(`${message} defineDynamic does not support "fallback".`);
-}
+};
 
 export function isDynamicSentinel(value: unknown): value is DynamicSentinel {
   return (

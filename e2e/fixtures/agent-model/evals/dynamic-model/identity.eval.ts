@@ -1,17 +1,20 @@
 import { defineEval } from "eve/evals";
 
-/** The resolver always selects a model, and runtime identity stays model-agnostic. */
+/** Runtime identity does not invent a model id before the resolver runs. */
 export default defineEval({
-  description: "Dynamic model smoke: runtime identity reports dynamic selection.",
+  description: "Dynamic model smoke: runtime identity omits unresolved model ids.",
   async test(t) {
     await t.send('Reply with exactly the text "dynamic ping" and nothing else.');
 
     t.succeeded();
     t.messageIncludes("dynamic ping");
     t.usedNoTools();
-    t.eventsSatisfy("runtime identity reports a dynamic model", (events) =>
+    t.eventsSatisfy("runtime identity omits an unresolved model id", (events) =>
       events.some(
-        (event) => event.type === "session.started" && event.data.runtime?.modelId === "dynamic",
+        (event) =>
+          event.type === "session.started" &&
+          event.data.runtime !== undefined &&
+          !Object.hasOwn(event.data.runtime, "modelId"),
       ),
     );
   },

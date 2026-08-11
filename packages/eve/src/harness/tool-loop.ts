@@ -355,14 +355,17 @@ async function resolveActiveRuntimeModel(input: {
   readonly session: HarnessSession;
 }): Promise<{
   readonly model: LanguageModel;
+  readonly modelReference: RuntimeModelReference;
   readonly session: HarnessSession;
 }> {
   if (input.ctx === undefined) {
     if (input.session.agent.requiresDynamicModelSelection === true) {
       throw new Error("Dynamic model selection requires an active runtime context.");
     }
+    const modelReference = requireSessionModelReference(input.session);
     return {
-      model: await input.config.resolveModel(input.session.agent.modelReference),
+      model: await input.config.resolveModel(modelReference),
+      modelReference,
       session: input.session,
     };
   }
@@ -373,8 +376,10 @@ async function resolveActiveRuntimeModel(input: {
     if (input.session.agent.requiresDynamicModelSelection === true) {
       throw new Error("Dynamic model resolver did not select a model for this step.");
     }
+    const modelReference = requireSessionModelReference(input.session);
     return {
-      model: await input.config.resolveModel(input.session.agent.modelReference),
+      model: await input.config.resolveModel(modelReference),
+      modelReference,
       session: input.session,
     };
   }
@@ -384,8 +389,17 @@ async function resolveActiveRuntimeModel(input: {
       selected.model !== undefined
         ? selected.model
         : await input.config.resolveModel(selected.reference),
+    modelReference: selected.reference,
     session: updateSessionModelReference(input.session, selected.reference),
   };
+}
+
+function requireSessionModelReference(session: HarnessSession): RuntimeModelReference {
+  const modelReference = session.agent.modelReference;
+  if (modelReference === undefined) {
+    throw new Error("Session has no configured model.");
+  }
+  return modelReference;
 }
 
 function updateSessionModelReference(
@@ -412,7 +426,7 @@ function updateSessionModelReference(
 function updateCompactionThresholdForModelReference(input: {
   readonly compaction: CompactionConfig;
   readonly modelReference: RuntimeModelReference;
-  readonly priorReference: RuntimeModelReference;
+  readonly priorReference?: RuntimeModelReference;
 }): CompactionConfig {
   if (input.modelReference.contextWindowTokens === undefined) {
     return input.compaction;
@@ -420,7 +434,7 @@ function updateCompactionThresholdForModelReference(input: {
 
   const thresholdPercent =
     input.compaction.thresholdPercent ??
-    (input.priorReference.contextWindowTokens === undefined
+    (input.priorReference?.contextWindowTokens === undefined
       ? undefined
       : input.compaction.threshold / input.priorReference.contextWindowTokens);
   if (thresholdPercent === undefined) {
@@ -633,6 +647,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             force: true,
             messages: [...session.history],
             model: resolvedModel.model,
+            modelReference: resolvedModel.modelReference,
             onCompaction: config.onCompaction,
             resolveModel: config.resolveModel,
             runtimeIdentity: config.runtimeIdentity,
@@ -825,6 +840,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     });
     session = resolvedModel.session;
     const model = resolvedModel.model;
+    const modelReference = resolvedModel.modelReference;
     const cachePath = detectPromptCachePath(model);
     const marker = cachePath.kind === "anthropic-direct" ? getAnthropicCacheMarker() : undefined;
 
@@ -840,6 +856,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       emissionState,
       messages,
       model,
+      modelReference,
       onCompaction: config.onCompaction,
       resolveModel: config.resolveModel,
       runtimeIdentity: config.runtimeIdentity,
@@ -976,7 +993,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         approvedTools,
         capabilities: config.capabilities,
         disabledProviderTools: opts.disabledProviderTools,
-        modelReference: session.agent.modelReference,
+        modelReference,
         tools: advertisedHarnessTools,
         webSearchProvider: config.webSearchProvider,
       });
@@ -1059,6 +1076,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         emissionState,
         emitStepStarted: opts.suppressStepStartedEmission !== true,
         marker,
+        modelReference,
         session,
       });
 
@@ -2639,6 +2657,7 @@ async function maybeCompact(input: {
   readonly force?: boolean;
   readonly messages: ModelMessage[];
   readonly model: LanguageModel;
+  readonly modelReference: RuntimeModelReference;
   readonly onCompaction?: ToolLoopHarnessConfig["onCompaction"];
   readonly resolveModel: ToolLoopHarnessConfig["resolveModel"];
   readonly runtimeIdentity?: ToolLoopHarnessConfig["runtimeIdentity"];
@@ -2656,7 +2675,7 @@ async function maybeCompact(input: {
   const compaction = await resolveCompactionModel({
     compactionModelReference: session.agent.compactionModelReference,
     model: input.model,
-    modelReference: session.agent.modelReference,
+    modelReference: input.modelReference,
     resolveModel: input.resolveModel,
   });
 

@@ -41,20 +41,30 @@ export interface CompactionConfig {
 /**
  * Serializable agent configuration stored on the session.
  */
-export interface SessionAgent {
+interface SessionAgentBase {
   /**
    * Optional model used only for compaction summaries.
    *
    * When omitted, the harness uses the active turn model for compaction.
    */
   readonly compactionModelReference?: RuntimeModelReference;
-  /** Whether the session requires a runtime model selection before each model call. */
-  readonly requiresDynamicModelSelection?: true;
-  readonly modelReference: RuntimeModelReference;
   readonly reasoning?: AgentReasoningDefinition;
   readonly system: string;
   readonly tools: readonly SessionToolDefinition[];
 }
+
+export type SessionAgent = SessionAgentBase &
+  (
+    | {
+        /** The most recent runtime selection, absent before the first selection. */
+        readonly modelReference?: RuntimeModelReference;
+        readonly requiresDynamicModelSelection: true;
+      }
+    | {
+        readonly modelReference: RuntimeModelReference;
+        readonly requiresDynamicModelSelection?: never;
+      }
+  );
 
 /**
  * Serializable session state passed between harness and runtime.

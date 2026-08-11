@@ -110,7 +110,7 @@ describe("runtime model resolution", () => {
       },
     });
 
-    const resolvedModel = await resolveRuntimeModelReference(bundle.turnAgent.model, {
+    const resolvedModel = await resolveRuntimeModelReference(bundle.turnAgent.model!, {
       moduleMap: bundle.moduleMap,
       nodeId: bundle.nodeId,
     });
@@ -173,7 +173,7 @@ describe("runtime model resolution", () => {
       compiledArtifactsSource,
       nodeId: "subagents/researcher",
     });
-    const resolvedModel = await resolveRuntimeModelReference(childBundle.turnAgent.model, {
+    const resolvedModel = await resolveRuntimeModelReference(childBundle.turnAgent.model!, {
       moduleMap: childBundle.moduleMap,
       nodeId: childBundle.nodeId,
     });

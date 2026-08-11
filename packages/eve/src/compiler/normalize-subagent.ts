@@ -304,11 +304,6 @@ function normalizeDynamicSubagentDefinition(
   }
 
   const record = expectObjectRecord(value, message);
-  if (Object.hasOwn(record, "fallback")) {
-    throw new Error(
-      `${message} Dynamic subagent definitions do not support "fallback". Return defineAgent(...) or defineRemoteAgent(...) from an event handler instead.`,
-    );
-  }
   expectOnlyKnownKeys(record, ["build", "events", "kind"], message);
 
   const build =

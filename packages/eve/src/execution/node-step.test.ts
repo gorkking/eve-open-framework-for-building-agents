@@ -181,7 +181,11 @@ function createEmptyToolRegistry(): RuntimeToolRegistry {
   };
 }
 
-function createTestTurnAgent(overrides?: Partial<RuntimeTurnAgent>): RuntimeTurnAgent {
+function createTestTurnAgent(
+  overrides?: Partial<Omit<RuntimeTurnAgent, "dynamicModel" | "model">> & {
+    readonly model?: NonNullable<RuntimeTurnAgent["model"]>;
+  },
+): RuntimeTurnAgent {
   return {
     id: "test-agent",
     instructions: ["You are a test agent."],
@@ -238,20 +242,21 @@ function createNoopRuntime(): Runtime {
 }
 
 describe("buildRuntimeIdentity", () => {
-  it("reports a runtime-selected model without a synthetic fallback id", () => {
-    const node = createTestNode(
-      createTestTurnAgent({
-        dynamicModel: {
-          eventNames: ["session.started"],
-          logicalPath: "agent.ts",
-          sourceId: "agent-config",
-          sourceKind: "module",
-        },
-        model: { id: "dynamic" },
-      }),
-    );
+  it("omits a model id before a dynamic model is selected", () => {
+    const node = createTestNode({
+      dynamicModel: {
+        eventNames: ["session.started"],
+        logicalPath: "agent.ts",
+        sourceId: "agent-config",
+        sourceKind: "module",
+      },
+      id: "test-agent",
+      instructions: ["You are a test agent."],
+      tools: [],
+      workspaceSpec: { rootEntries: [] },
+    });
 
-    expect(buildRuntimeIdentity(node).modelId).toBe("dynamic");
+    expect(buildRuntimeIdentity(node)).not.toHaveProperty("modelId");
   });
 });
 

@@ -53,21 +53,6 @@ describe("normalizeAgentDefinition", () => {
     ).toThrow("Dynamic model definitions must include at least one event handler.");
   });
 
-  it("rejects fallback on a dynamic model", () => {
-    expect(() =>
-      normalizeAgentDefinition(
-        {
-          model: {
-            fallback: "openai/gpt-5.5",
-            events: { "session.started": () => "openai/gpt-5.5-mini" },
-            kind: "eve:dynamic",
-          },
-        },
-        FAILURE_MESSAGE,
-      ),
-    ).toThrow(`${FAILURE_MESSAGE} Unknown key "fallback".`);
-  });
-
   it("rejects a dynamic compaction model", () => {
     expect(() =>
       normalizeAgentDefinition(

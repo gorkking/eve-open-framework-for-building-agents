@@ -16,11 +16,7 @@ import {
   serializeOutputSchema,
   type ToolSchemaSource,
 } from "#shared/tool-schema.js";
-import {
-  isDynamicSentinel,
-  rejectDynamicSentinelFallback,
-  type DynamicToolEventName,
-} from "#shared/dynamic-tool-definition.js";
+import { isDynamicSentinel, type DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
 
 /**
  * Canonical normalized shape of one authored tool default export.
@@ -59,7 +55,6 @@ type NormalizedToolEntry =
  */
 export function normalizeToolDefinition(value: unknown, message: string): NormalizedToolEntry {
   if (isDynamicSentinel(value)) {
-    rejectDynamicSentinelFallback(value, message);
     return {
       kind: "dynamic-tool",
       eventNames: Object.keys(value.events) as DynamicToolEventName[],
