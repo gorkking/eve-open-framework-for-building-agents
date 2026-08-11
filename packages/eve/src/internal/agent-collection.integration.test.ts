@@ -10,6 +10,7 @@ import {
   resolveAgentCollection,
   resolveOwningAgentCollection,
 } from "#internal/agent-collection.js";
+import { resolveEveProjectContext } from "#internal/project-context.js";
 
 async function createCollection(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "eve-collection-"));
@@ -47,6 +48,15 @@ describe("resolveAgentCollection", () => {
     await expect(resolveAgentCollection(root)).rejects.toThrow(/Move flat authored files/);
   });
 
+  it("keeps nested named agents discoverable without child package files", async () => {
+    const root = await createCollection();
+    await expect(resolveDiscoveryProject(join(root, "agents", "support"))).resolves.toEqual({
+      agentRoot: join(root, "agents", "support", "agent"),
+      appRoot: join(root, "agents", "support"),
+      layout: "nested",
+    });
+  });
+
   it("uses the same collection semantics through an in-memory project source", async () => {
     const source = createMemoryProjectSource({
       files: {
@@ -61,6 +71,50 @@ describe("resolveAgentCollection", () => {
       agentRoot: "/memory/project/agents/support/agent",
       appRoot: "/memory/project/agents/support",
       layout: "nested",
+    });
+  });
+
+  it("gives host frameworks precedence over collection-shaped agent directories", async () => {
+    const root = await createCollection();
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { next: "16.0.0" }, private: true }),
+    );
+
+    await expect(resolveEveProjectContext(root)).resolves.toEqual({
+      appRoot: root,
+      kind: "standalone",
+    });
+    const supportRoot = join(root, "agents", "support");
+    await expect(resolveEveProjectContext(supportRoot)).resolves.toEqual({
+      appRoot: supportRoot,
+      kind: "standalone",
+    });
+    await expect(resolveDiscoveryProject(supportRoot)).resolves.toEqual({
+      agentRoot: join(supportRoot, "agent"),
+      appRoot: supportRoot,
+      layout: "nested",
+    });
+  });
+
+  it("does not validate flat host-framework agents as collection members", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eve-host-agents-"));
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { next: "16.0.0" }, private: true }),
+    );
+    const supportRoot = join(root, "agents", "support");
+    await mkdir(supportRoot, { recursive: true });
+    await writeFile(join(supportRoot, "agent.ts"), "export default {};\n");
+
+    await expect(resolveEveProjectContext(supportRoot)).resolves.toEqual({
+      appRoot: supportRoot,
+      kind: "standalone",
+    });
+    await expect(resolveDiscoveryProject(supportRoot)).resolves.toEqual({
+      agentRoot: supportRoot,
+      appRoot: supportRoot,
+      layout: "flat",
     });
   });
 

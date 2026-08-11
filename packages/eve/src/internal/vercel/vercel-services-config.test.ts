@@ -21,7 +21,15 @@ describe("parseVercelServicesConfig", () => {
     [{ services: null }, /services must be a JSON object or named service array/],
     [{ services: { eve: null } }, /service "eve" must contain a JSON object/],
     [{ services: [{}] }, /must have a non-empty name/],
+    [{ services: { eve: { framework: 42 } } }, /framework must be a string/],
+    [{ services: { eve: { mount: false } } }, /mount must be a string or JSON object/],
+    [{ services: { eve: { routes: {} } } }, /routes must be an array/],
+    [
+      { services: { eve: { routes: [{ transforms: [{ args: 42 }] }] } } },
+      /transforms\[0\]\.args must be a string/,
+    ],
     [{ routes: {} }, /routes must be an array/],
+    [{ routes: [{ destination: 42 }] }, /destination must be a string or JSON object/],
     [{ rewrites: {} }, /rewrites must be an array/],
   ])("rejects malformed configuration %#", (value, expected) => {
     expect(() => parseVercelServicesConfig(value, "vercel.json")).toThrow(expected);

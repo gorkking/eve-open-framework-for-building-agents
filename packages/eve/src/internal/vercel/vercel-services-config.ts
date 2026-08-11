@@ -11,17 +11,18 @@ export interface VercelServiceRouteDestination {
   readonly type?: string;
 }
 
-export interface VercelRequestPathTransform {
-  readonly args: string;
-  readonly op: "set";
-  readonly type: "request.path";
+export interface VercelRouteTransform {
+  readonly args?: string;
+  readonly op?: string;
+  readonly type?: string;
+  readonly [key: string]: unknown;
 }
 
 export interface VercelRouteConfig {
   readonly destination?: string | VercelServiceRouteDestination;
   readonly handle?: string;
   readonly src?: string;
-  readonly transforms?: readonly VercelRequestPathTransform[];
+  readonly transforms?: readonly VercelRouteTransform[];
   readonly [key: string]: unknown;
 }
 
@@ -60,9 +61,79 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function parseOptionalString(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${path} must be a string.`);
+  return value;
+}
+
+function parseRouteTransform(value: unknown, path: string): VercelRouteTransform {
+  if (!isRecord(value)) throw new Error(`${path} must contain a JSON object.`);
+  return {
+    ...value,
+    args: parseOptionalString(value.args, `${path}.args`),
+    op: parseOptionalString(value.op, `${path}.op`),
+    type: parseOptionalString(value.type, `${path}.type`),
+  };
+}
+
+function parseRoute(value: unknown, path: string): VercelRouteConfig {
+  if (!isRecord(value)) throw new Error(`${path} must contain a JSON object.`);
+  const destination = value.destination;
+  if (destination !== undefined && typeof destination !== "string" && !isRecord(destination)) {
+    throw new Error(`${path}.destination must be a string or JSON object.`);
+  }
+  const transforms = value.transforms;
+  if (transforms !== undefined && !Array.isArray(transforms)) {
+    throw new Error(`${path}.transforms must be an array.`);
+  }
+  return {
+    ...value,
+    destination:
+      destination === undefined || typeof destination === "string"
+        ? destination
+        : {
+            ...destination,
+            service: parseOptionalString(destination.service, `${path}.destination.service`),
+            type: parseOptionalString(destination.type, `${path}.destination.type`),
+          },
+    handle: parseOptionalString(value.handle, `${path}.handle`),
+    src: parseOptionalString(value.src, `${path}.src`),
+    transforms: transforms?.map((transform, index) =>
+      parseRouteTransform(transform, `${path}.transforms[${index}]`),
+    ),
+  };
+}
+
+function parseRoutes(value: unknown, path: string): readonly VercelRouteConfig[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array.`);
+  return value.map((route, index) => parseRoute(route, `${path}[${index}]`));
+}
+
+function parseMount(value: unknown, path: string): string | VercelServiceMount | undefined {
+  if (value === undefined || typeof value === "string") return value;
+  if (!isRecord(value)) throw new Error(`${path} must be a string or JSON object.`);
+  return {
+    ...value,
+    path: parseOptionalString(value.path, `${path}.path`),
+    subdomain: parseOptionalString(value.subdomain, `${path}.subdomain`),
+  };
+}
+
 function parseServiceConfig(value: unknown, path: string): VercelServiceConfig {
   if (!isRecord(value)) throw new Error(`${path} must contain a JSON object.`);
-  return value as VercelServiceConfig;
+  return {
+    ...value,
+    buildCommand: parseOptionalString(value.buildCommand, `${path}.buildCommand`),
+    entrypoint: parseOptionalString(value.entrypoint, `${path}.entrypoint`),
+    framework: parseOptionalString(value.framework, `${path}.framework`),
+    mount: parseMount(value.mount, `${path}.mount`),
+    routes: parseRoutes(value.routes, `${path}.routes`),
+    routePrefix: parseOptionalString(value.routePrefix, `${path}.routePrefix`),
+    root: parseOptionalString(value.root, `${path}.root`),
+    type: parseOptionalString(value.type, `${path}.type`),
+  };
 }
 
 function parseServices(value: unknown, fileName: string): VercelServicesCollection | undefined {
@@ -76,7 +147,7 @@ function parseServices(value: unknown, fileName: string): VercelServicesCollecti
         throw new Error(`${fileName} services[${index}] must have a non-empty name.`);
       }
       const { name, ...config } = service;
-      return { ...config, name } as VercelServiceConfig & { readonly name: string };
+      return { ...parseServiceConfig(config, `${fileName} services[${index}]`), name };
     });
   }
   if (!isRecord(value)) {
@@ -94,15 +165,15 @@ function parseServices(value: unknown, fileName: string): VercelServicesCollecti
 export function parseVercelServicesConfig(value: unknown, fileName: string): VercelServicesConfig {
   if (!isRecord(value)) throw new Error(`${fileName} must contain a JSON object.`);
   const services = parseServices(value.services, fileName);
-  if (value.routes !== undefined && !Array.isArray(value.routes)) {
-    throw new Error(`${fileName} routes must be an array.`);
-  }
+  const routes = parseRoutes(value.routes, `${fileName} routes`);
   if (value.rewrites !== undefined && !Array.isArray(value.rewrites)) {
     throw new Error(`${fileName} rewrites must be an array.`);
   }
-  const config: Record<string, unknown> = { ...value };
-  if (services !== undefined) config.services = services;
-  return config as VercelServicesConfig;
+  return {
+    ...value,
+    routes,
+    services,
+  };
 }
 
 function isNamedServiceArray(

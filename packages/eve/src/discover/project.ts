@@ -12,10 +12,6 @@ import {
   isProjectMarkerEntry,
 } from "#discover/filesystem.js";
 import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
-import {
-  resolveAgentCollection,
-  resolveOwningAgentCollection,
-} from "#internal/agent-collection.js";
 
 /**
  * Supported project layouts for filesystem-based agents.
@@ -63,23 +59,6 @@ export async function resolveDiscoveryProject(
   let currentDirectory = startDirectory;
 
   while (true) {
-    const collectionChild = await resolveOwningAgentCollection(currentDirectory, { source });
-    if (collectionChild !== undefined) {
-      return {
-        agentRoot: join(collectionChild.member.appRoot, "agent"),
-        appRoot: collectionChild.member.appRoot,
-        layout: "nested",
-      };
-    }
-    const collection = await resolveAgentCollection(currentDirectory, { source });
-    if (collection !== undefined) {
-      throw new Error(
-        `This directory is an eve agent collection. Run single-agent commands from one of: ${collection.members
-          .map((member) => `agents/${member.name}`)
-          .join(", ")}.`,
-      );
-    }
-
     const nestedProjectFromAgentDirectory = await tryResolveNestedProjectFromAgentDirectory(
       source,
       currentDirectory,
@@ -145,7 +124,8 @@ async function tryResolveNestedProjectFromAgentDirectory(
 
   const parentDirectory = dirname(directoryPath);
 
-  if (!(await hasProjectMarkers(source, parentDirectory))) {
+  const isNamedAgentRoot = basename(dirname(parentDirectory)) === "agents";
+  if (!isNamedAgentRoot && !(await hasProjectMarkers(source, parentDirectory))) {
     return null;
   }
 
@@ -160,7 +140,8 @@ async function tryResolveNestedProjectFromAppRoot(
   source: ProjectSource,
   directoryPath: string,
 ): Promise<ResolvedDiscoveryProject | null> {
-  if (!(await hasProjectMarkers(source, directoryPath))) {
+  const isNamedAgentRoot = basename(dirname(directoryPath)) === "agents";
+  if (!isNamedAgentRoot && !(await hasProjectMarkers(source, directoryPath))) {
     return null;
   }
 
