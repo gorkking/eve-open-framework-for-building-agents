@@ -8,6 +8,7 @@ import {
   takeInstrumentationActionScopes,
   type InstrumentationStateOwner,
 } from "#harness/instrumentation-state.js";
+import { withoutInstrumentationContent } from "#harness/instrumentation-content.js";
 import { createLogger, formatError } from "#internal/logging.js";
 
 import type {
@@ -35,6 +36,8 @@ export function createInstrumentationDispatcher(
   const handlerTimeoutMs = options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS;
   const groups = normalizeDispatchGroups(input);
   const snapshots = new WeakMap<object, unknown>();
+  const providers = [...groups.serialBefore, ...groups.parallel, ...groups.serialAfter];
+  const capturesContent = providers.some((provider) => provider.capture === "content");
 
   const publish = async (event: InstrumentationEvent): Promise<void> => {
     const snapshot = snapshotInstrumentationEvent(event, snapshots);
@@ -57,18 +60,32 @@ export function createInstrumentationDispatcher(
       }
     }
 
+    let stripped: InstrumentationEvent | undefined;
+    const visibleEvent = (provider: InstrumentationProviderDefinition): InstrumentationEvent => {
+      if (provider.capture === "content") return snapshot;
+      stripped ??= withoutInstrumentationContent(snapshot);
+      return stripped;
+    };
+
     try {
       try {
         for (const provider of groups.serialBefore) {
-          await dispatchToProvider(provider, snapshot, handlerTimeoutMs);
+          await dispatchToProvider(provider, snapshot, handlerTimeoutMs, () =>
+            visibleEvent(provider),
+          );
         }
 
         if (groups.parallel.length === 1) {
-          await dispatchToProvider(groups.parallel[0]!, snapshot, handlerTimeoutMs);
+          const provider = groups.parallel[0]!;
+          await dispatchToProvider(provider, snapshot, handlerTimeoutMs, () =>
+            visibleEvent(provider),
+          );
         } else if (groups.parallel.length > 1) {
           const results = await Promise.allSettled(
             groups.parallel.map((provider) =>
-              dispatchToProvider(provider, snapshot, handlerTimeoutMs),
+              dispatchToProvider(provider, snapshot, handlerTimeoutMs, () =>
+                visibleEvent(provider),
+              ),
             ),
           );
           const rejected = results.find(
@@ -78,7 +95,9 @@ export function createInstrumentationDispatcher(
         }
       } finally {
         for (const provider of groups.serialAfter) {
-          await dispatchToProvider(provider, snapshot, handlerTimeoutMs);
+          await dispatchToProvider(provider, snapshot, handlerTimeoutMs, () =>
+            visibleEvent(provider),
+          );
         }
       }
     } finally {
@@ -86,7 +105,7 @@ export function createInstrumentationDispatcher(
     }
   };
 
-  return { publish };
+  return { capturesContent, publish };
 }
 
 function snapshotInstrumentationEvent(
@@ -151,6 +170,7 @@ async function dispatchToProvider(
   provider: InstrumentationProviderDefinition,
   event: InstrumentationEvent,
   handlerTimeoutMs: number,
+  visibleEvent: () => InstrumentationEvent,
 ): Promise<void> {
   const startedBoundary = event.type.endsWith(".started") || event.type === "input.requested";
   const owner = stateOwner(event);
@@ -162,7 +182,8 @@ async function dispatchToProvider(
   const state = instrumentationStateSlot(stateNamespace, event.idempotencyKey, owner);
   try {
     const settled = await withTimeout(
-      () => (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, { state }),
+      () =>
+        (handler as InstrumentationEventHandler<InstrumentationEvent>)(visibleEvent(), { state }),
       handlerTimeoutMs,
       () => {
         state.revoke();

@@ -14,6 +14,7 @@ import {
   type InstrumentationAttemptScope,
   type InstrumentationModelCallStartedEvent,
   type InstrumentationProviderDefinition,
+  type InstrumentationToolCallCompletedEvent,
 } from "#harness/instrumentation-lifecycle.js";
 import {
   findInstrumentationActionScopeForCall,
@@ -817,5 +818,212 @@ describe("provider dispatch groups", () => {
       await publication;
     });
     expect(order).toEqual(["first:start", "first:end", "second"]);
+  });
+});
+
+describe("capture", () => {
+  it("reports content capture only when some provider asked for it", () => {
+    expect(createInstrumentationHooks([{ name: "quiet" }]).capturesContent).toBe(false);
+    expect(
+      createInstrumentationHooks([{ capture: "metadata", name: "quiet" }, { name: "also-quiet" }])
+        .capturesContent,
+    ).toBe(false);
+    expect(
+      createInstrumentationHooks([{ name: "quiet" }, { capture: "content", name: "loud" }])
+        .capturesContent,
+    ).toBe(true);
+    expect(
+      createInstrumentationHooks({
+        parallel: [{ capture: "content", name: "loud" }],
+      }).capturesContent,
+    ).toBe(true);
+  });
+
+  it("allows only structural provider metadata by default", async () => {
+    const metadataOnly = vi.fn();
+    const wantsContent = vi.fn();
+    const hooks = createInstrumentationHooks([
+      { events: { "step.attempt.metadata": metadataOnly }, name: "metadata" },
+      {
+        capture: "content",
+        events: { "step.attempt.metadata": wantsContent },
+        name: "content",
+      },
+    ]);
+    const providerMetadata = {
+      gateway: {
+        cost: "0.01",
+        generationId: "generation-1",
+        groundingSegments: ["private result"],
+      },
+      google: { searchQueries: ["private query"], thoughtSignature: "private signature" },
+    };
+
+    await hooks.publish({
+      idempotencyKey: attemptIdempotencyKey(scope),
+      providerMetadata,
+      scope,
+      type: "step.attempt.metadata",
+    });
+
+    const visible = metadataOnly.mock.calls[0]?.[0];
+    expect(visible.providerMetadata).toEqual({
+      gateway: { cost: "0.01", generationId: "generation-1" },
+    });
+    expect(Object.isFrozen(visible)).toBe(true);
+    expect(Object.isFrozen(visible.providerMetadata)).toBe(true);
+    expect(Object.isFrozen(visible.providerMetadata.gateway)).toBe(true);
+    expect(wantsContent.mock.calls[0]?.[0].providerMetadata).toEqual(providerMetadata);
+    expect(wantsContent.mock.calls[0]?.[0].providerMetadata).not.toBe(providerMetadata);
+    expect(Object.isFrozen(wantsContent.mock.calls[0]?.[0].providerMetadata)).toBe(true);
+  });
+
+  it("withholds failure details from metadata providers", async () => {
+    const metadataOnly = vi.fn();
+    const wantsContent = vi.fn();
+    const hooks = createInstrumentationHooks([
+      { events: { "action.failed": metadataOnly }, name: "metadata" },
+      { capture: "content", events: { "action.failed": wantsContent }, name: "content" },
+    ]);
+    const error = { output: "private tool output", requestBody: "private request" };
+    const actionScope = { ...scope };
+
+    await hooks.publish({
+      error,
+      errorCode: "SUBAGENT_EXECUTION_FAILED",
+      idempotencyKey: actionIdempotencyKey(scope.sessionId, scope.turnId, "call-1"),
+      outcome: "failed",
+      scope: actionScope,
+      type: "action.failed",
+    });
+
+    expect(metadataOnly.mock.calls[0]?.[0]).toMatchObject({
+      error: undefined,
+      errorCode: "SUBAGENT_EXECUTION_FAILED",
+      outcome: "failed",
+      type: "action.failed",
+    });
+    expect(Object.isFrozen(metadataOnly.mock.calls[0]?.[0])).toBe(true);
+    expect(wantsContent.mock.calls[0]?.[0].error).toEqual(error);
+    expect(wantsContent.mock.calls[0]?.[0].error).not.toBe(error);
+    expect(Object.isFrozen(wantsContent.mock.calls[0]?.[0].error)).toBe(true);
+  });
+
+  it("keeps action outcome and usage when output content is withheld", async () => {
+    const metadataOnly = vi.fn();
+    const hooks = createInstrumentationHooks([
+      { events: { "action.completed": metadataOnly }, name: "metadata" },
+    ]);
+    await hooks.publish({
+      acceptedAtMs: 1_234,
+      idempotencyKey: actionIdempotencyKey(scope.sessionId, scope.turnId, "call-1"),
+      outcome: "completed",
+      output: { output: "private result", type: "result" },
+      scope,
+      type: "action.completed",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+
+    expect(metadataOnly.mock.calls[0]?.[0]).toMatchObject({
+      acceptedAtMs: 1_234,
+      outcome: "completed",
+      output: { type: "result" },
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+  });
+
+  it("withholds input request and response content from metadata providers", async () => {
+    const metadataEvents: unknown[] = [];
+    const contentEvents: unknown[] = [];
+    const hooks = createInstrumentationHooks([
+      {
+        events: {
+          "input.requested": (event) => void metadataEvents.push(event),
+          "input.resolved": (event) => void metadataEvents.push(event),
+        },
+        name: "metadata",
+      },
+      {
+        capture: "content",
+        events: {
+          "input.requested": (event) => void contentEvents.push(event),
+          "input.resolved": (event) => void contentEvents.push(event),
+        },
+        name: "content",
+      },
+    ]);
+    const idempotencyKey = inputIdempotencyKey(scope.sessionId, scope.turnId, "request-1");
+
+    await hooks.publish({
+      action: { callId: "call-1", name: "weather" },
+      idempotencyKey,
+      kind: "tool-approval",
+      request: { prompt: "Approve private input?" },
+      requestId: "request-1",
+      scope,
+      type: "input.requested",
+    });
+    await hooks.publish({
+      idempotencyKey,
+      kind: "tool-approval",
+      outcome: "denied",
+      requestId: "request-1",
+      response: { optionId: "deny", text: "private reason" },
+      scope,
+      type: "input.resolved",
+    });
+
+    expect(metadataEvents).toMatchObject([
+      { request: undefined, type: "input.requested" },
+      { response: undefined, type: "input.resolved" },
+    ]);
+    expect(contentEvents).toMatchObject([
+      { request: { prompt: "Approve private input?" }, type: "input.requested" },
+      {
+        response: { optionId: "deny", text: "private reason" },
+        type: "input.resolved",
+      },
+    ]);
+  });
+
+  it("freezes one stripped projection shared by metadata providers", async () => {
+    const observed = vi.fn();
+    const content = vi.fn();
+    const mutator = vi.fn((event: InstrumentationToolCallCompletedEvent) => {
+      expect(Reflect.set(event, "finishReason", "corrupted")).toBe(false);
+      expect(Reflect.set(event.output, "type", "error")).toBe(false);
+    });
+    const hooks = createInstrumentationHooks({
+      parallel: [
+        { events: { "tool.call.completed": mutator }, name: "first" },
+        { events: { "tool.call.completed": observed }, name: "second" },
+        {
+          capture: "content",
+          events: { "tool.call.completed": content },
+          name: "content",
+        },
+      ],
+    });
+
+    const event = {
+      idempotencyKey: toolCallIdempotencyKey(scope, "call-1", 0),
+      output: { output: "private", type: "result" },
+      scope,
+      type: "tool.call.completed",
+    } as const;
+    await hooks.publish(event);
+
+    expect(observed.mock.calls[0]?.[0].output).toEqual({ type: "result" });
+    expect(observed.mock.calls[0]?.[0]).toBe(mutator.mock.calls[0]?.[0]);
+    expect(Object.isFrozen(observed.mock.calls[0]?.[0])).toBe(true);
+    expect(Object.isFrozen(observed.mock.calls[0]?.[0].output)).toBe(true);
+    const contentEvent = content.mock.calls[0]?.[0];
+    expect(contentEvent).not.toBe(event);
+    expect(contentEvent).toEqual(event);
+    expect(contentEvent.output).toEqual({ output: "private", type: "result" });
+    expect(Object.isFrozen(contentEvent)).toBe(true);
+    expect(Object.isFrozen(contentEvent.output)).toBe(true);
+    expect(Object.isFrozen(contentEvent.scope)).toBe(true);
+    expect(Object.isFrozen(event)).toBe(false);
   });
 });

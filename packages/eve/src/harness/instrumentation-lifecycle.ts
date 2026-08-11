@@ -88,10 +88,30 @@ export type InstrumentationActionKind =
   | "subagent-call"
   | "tool-call";
 
-/** How one action ended. */
+/**
+ * How one action ended.
+ *
+ * `type` survives a provider that declined content, so whether the tool errored
+ * is answerable without seeing what it returned.
+ */
 export type InstrumentationActionOutput =
-  | { readonly type: "result"; readonly output: unknown }
-  | { readonly type: "error"; readonly error: unknown };
+  | { readonly type: "result"; readonly output?: unknown }
+  | { readonly type: "error"; readonly error?: unknown };
+
+/**
+ * How much of an event a provider is handed.
+ *
+ * `"metadata"` — the default — is structure, identity, usage, and timing: every
+ * field except what the conversation actually said. `"content"` adds the
+ * prompt, the response, tool arguments, and tool results.
+ *
+ * Declared per provider rather than per process, because two consumers of one
+ * bus rarely have the same retention path. Content is built at all only when
+ * some provider asked for it, and a provider that did not ask never receives
+ * it — which is the same guarantee a destination that declines content gets,
+ * one layer lower and without an OpenTelemetry pipeline to route it through.
+ */
+export type InstrumentationCapture = "content" | "metadata";
 
 /**
  * Every event carries an `idempotencyKey` naming the operation it is about: a
@@ -175,7 +195,8 @@ export interface InstrumentationInputRequestedEvent {
   };
   readonly idempotencyKey: string;
   readonly kind: InstrumentationInputKind;
-  readonly request: InstrumentationInputRequest;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly request?: InstrumentationInputRequest;
   readonly requestId: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -187,6 +208,7 @@ export interface InstrumentationInputResolvedEvent {
   readonly kind: InstrumentationInputKind;
   readonly outcome: InstrumentationInputOutcome;
   readonly requestId: string;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
   readonly response?: InstrumentationInputResponse;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -246,7 +268,8 @@ export interface InstrumentationSessionSettledEvent {
 
 export interface InstrumentationSessionFailedEvent {
   readonly type: "session.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId?: string;
@@ -283,7 +306,8 @@ export interface InstrumentationTurnSettledEvent {
 
 export interface InstrumentationTurnFailedEvent {
   readonly type: "turn.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId: string;
@@ -301,7 +325,8 @@ export interface InstrumentationStepAttemptCompletedEvent {
 
 export interface InstrumentationStepAttemptFailedEvent {
   readonly type: "step.attempt.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -325,14 +350,16 @@ export interface InstrumentationStepAttemptMetadataEvent {
 export interface InstrumentationModelCallStartedEvent {
   readonly type: "model.call.started";
   readonly idempotencyKey: string;
-  readonly input: InstrumentationModelInput;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly input?: InstrumentationModelInput;
   readonly model: InstrumentationModelRef;
   readonly scope: InstrumentationAttemptScope;
 }
 
 export interface InstrumentationModelCallCompletedEvent {
   readonly type: "model.call.completed";
-  readonly content: readonly InstrumentationContentPart[];
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly content?: readonly InstrumentationContentPart[];
   readonly finishReason: string;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
@@ -341,7 +368,8 @@ export interface InstrumentationModelCallCompletedEvent {
 
 export interface InstrumentationModelCallFailedEvent {
   readonly type: "model.call.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -370,7 +398,8 @@ export interface InstrumentationToolCallCompletedEvent {
 
 export interface InstrumentationToolCallFailedEvent {
   readonly type: "tool.call.failed";
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -388,7 +417,8 @@ export interface InstrumentationActionStartedEvent {
   readonly type: "action.started";
   readonly callId: string;
   readonly idempotencyKey: string;
-  readonly input: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly input?: unknown;
   readonly kind: InstrumentationActionKind;
   readonly name: string;
   readonly scope: InstrumentationAttemptScope;
@@ -414,7 +444,8 @@ export interface InstrumentationActionCompletedEvent {
 export interface InstrumentationActionFailedEvent {
   readonly type: "action.failed";
   readonly acceptedAtMs?: number;
-  readonly error: unknown;
+  /** Content. Absent unless this provider declared `capture: "content"`. */
+  readonly error?: unknown;
   readonly errorCode?: string;
   readonly idempotencyKey: string;
   readonly outcome: Exclude<InstrumentationActionOutcome, "completed">;
@@ -447,6 +478,8 @@ export interface InstrumentationProviderDefinition {
   readonly name: string;
   /** Durable state identity, separate from the human-readable log name. */
   readonly stateNamespace?: string;
+  /** Defaults to `"metadata"`. See {@link InstrumentationCapture}. */
+  readonly capture?: InstrumentationCapture;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
     readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptCompletedEvent>;
@@ -535,6 +568,14 @@ export type InstrumentationExecutionOperation =
 
 /** Provider-neutral hook operations consumed by the AI SDK bridge. */
 export interface InstrumentationHooks {
+  /**
+   * Whether any registered provider declared `capture: "content"`.
+   *
+   * False means nothing downstream can read what was said, so the publisher
+   * should not serialize it in the first place. This is the only way the
+   * projection is skipped rather than merely withheld.
+   */
+  readonly capturesContent: boolean;
   publish(event: InstrumentationEvent): Promise<void>;
 }
 

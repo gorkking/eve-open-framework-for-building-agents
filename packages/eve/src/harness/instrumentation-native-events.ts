@@ -94,12 +94,14 @@ async function publishInputStarts(
         }),
         idempotencyKey,
         kind: request.kind,
-        request: Object.freeze({
-          allowFreeform: request.allowFreeform,
-          display: request.display,
-          options: request.options,
-          prompt: request.prompt,
-        }),
+        request: hooks.capturesContent
+          ? Object.freeze({
+              allowFreeform: request.allowFreeform,
+              display: request.display,
+              options: request.options,
+              prompt: request.prompt,
+            })
+          : undefined,
         requestId: request.requestId,
         scope,
         type: "input.requested",
@@ -129,7 +131,7 @@ export async function publishInputResolutions(input: {
         outcome: resolved.outcome,
         requestId: resolved.request.requestId,
         response:
-          resolved.response === undefined
+          !input.hooks.capturesContent || resolved.response === undefined
             ? undefined
             : Object.freeze({
                 optionId: resolved.response.optionId,
@@ -160,7 +162,7 @@ async function publishActionStarts(
       Object.freeze({
         callId: action.callId,
         idempotencyKey,
-        input: action.input,
+        input: hooks.capturesContent ? action.input : undefined,
         kind: action.kind,
         name: actionName(action),
         scope,
@@ -190,7 +192,11 @@ async function publishActionTerminal(
         ],
         idempotencyKey,
         outcome: "completed",
-        output: Object.freeze({ output: event.data.result.output, type: "result" }),
+        output: Object.freeze(
+          hooks.capturesContent
+            ? { output: event.data.result.output, type: "result" }
+            : { type: "result" },
+        ),
         scope,
         type: "action.completed",
         usage: actionUsage(event.data.result),

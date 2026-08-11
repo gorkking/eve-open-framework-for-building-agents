@@ -10290,7 +10290,7 @@ describe("createToolLoopHarness", () => {
       });
       const started = vi.fn();
       const hooks = createInstrumentationHooks([
-        { events: { "action.started": started }, name: "action" },
+        { events: { "action.started": started }, name: "actions" },
       ]);
       const { emit } = createEventCollector();
       const runStep = createToolLoopHarness(
