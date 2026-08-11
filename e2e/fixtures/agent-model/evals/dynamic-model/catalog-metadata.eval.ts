@@ -24,7 +24,7 @@ export default defineEval({
     unknown.eventsSatisfy("reports missing model catalog metadata", (events) =>
       events.some(
         (event) =>
-          event.type === "turn.failed" &&
+          event.type === "session.failed" &&
           event.data.message.includes("does not have known AI Gateway context window metadata"),
       ),
     );
