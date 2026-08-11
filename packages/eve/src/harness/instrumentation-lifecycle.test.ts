@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
+  actionIdempotencyKey,
   attemptIdempotencyKey,
   createInstrumentationHooks,
   inputIdempotencyKey,
@@ -14,7 +15,11 @@ import {
   type InstrumentationModelCallStartedEvent,
   type InstrumentationProviderDefinition,
 } from "#harness/instrumentation-lifecycle.js";
-import { instrumentationStateSlot } from "#harness/instrumentation-state.js";
+import {
+  findInstrumentationActionScopeForCall,
+  instrumentationStateSlot,
+  rememberInstrumentationActionScope,
+} from "#harness/instrumentation-state.js";
 
 const { logWarn } = vi.hoisted(() => ({ logWarn: vi.fn() }));
 vi.mock("#internal/logging.js", () => ({
@@ -227,6 +232,73 @@ describe("provider state lifecycle", () => {
         type: "step.attempt.completed",
       });
       expect(instrumentationStateSlot("removed", modelKey).get()).toBeUndefined();
+    });
+  });
+
+  it("keeps action state past the originating attempt", async () => {
+    const actionKey = actionIdempotencyKey(scope.sessionId, scope.turnId, "call-1");
+    const hooks = createInstrumentationHooks([
+      {
+        events: { "action.started": (_event, ctx) => ctx.state.set("open") },
+        name: "sink",
+      },
+    ]);
+    await contextStorage.run(new ContextContainer(), async () => {
+      await hooks.publish({
+        callId: "call-1",
+        idempotencyKey: actionKey,
+        input: {},
+        kind: "tool-call",
+        name: "tool",
+        scope,
+        type: "action.started",
+      });
+      await hooks.publish({
+        idempotencyKey: attemptIdempotencyKey(scope),
+        scope,
+        type: "step.attempt.completed",
+      });
+      expect(instrumentationStateSlot("sink", actionKey).get()).toBe("open");
+    });
+  });
+
+  it("terminalizes and releases pending actions when a turn is cancelled", async () => {
+    const actionKey = actionIdempotencyKey(scope.sessionId, scope.turnId, "call-1");
+    const failed = vi.fn();
+    const hooks = createInstrumentationHooks([
+      {
+        events: {
+          "action.failed": failed,
+          "action.started": (_event, ctx) => ctx.state.set("open"),
+        },
+        name: "sink",
+      },
+    ]);
+    await contextStorage.run(new ContextContainer(), async () => {
+      rememberInstrumentationActionScope(actionKey, scope);
+      await hooks.publish({
+        callId: "call-1",
+        idempotencyKey: actionKey,
+        input: {},
+        kind: "tool-call",
+        name: "tool",
+        scope,
+        type: "action.started",
+      });
+      await hooks.publish({
+        idempotencyKey: turnIdempotencyKey(scope.sessionId, scope.turnId),
+        sessionId: scope.sessionId,
+        turnId: scope.turnId,
+        type: "turn.cancelled",
+      });
+      expect(instrumentationStateSlot("sink", actionKey).get()).toBeUndefined();
+      expect(findInstrumentationActionScopeForCall(scope.sessionId, "call-1")).toBeUndefined();
+    });
+    expect(failed).toHaveBeenCalledOnce();
+    expect(failed.mock.calls[0]?.[0]).toMatchObject({
+      errorCode: "ACTION_CANCELLED",
+      outcome: "cancelled",
+      type: "action.failed",
     });
   });
 });

@@ -3296,6 +3296,7 @@ describe("createToolLoopHarness", () => {
     // which mis-routed the resume through the fresh-turn lifecycle path.
     const emission = getHarnessEmissionState(result.session.state);
     expect(emission.turnId).toBe("turn_0");
+    expect(emission.stepIndex).toBe(1);
     expect(emission.sessionStarted).toBe(true);
     expect(isHarnessBetweenTurns(result.session)).toBe(false);
   });
@@ -10241,6 +10242,60 @@ describe("createToolLoopHarness", () => {
         expect.objectContaining({
           scope: expect.objectContaining({ attemptIndex: 0 }),
           type: "step.attempt.completed",
+        }),
+        expect.anything(),
+      );
+    });
+
+    it("publishes a delegation action when the AI SDK skips execution callbacks", async () => {
+      setupMockAgent({
+        finishReason: "tool-calls",
+        response: {
+          messages: [
+            {
+              content: [
+                {
+                  input: { message: "research this" },
+                  toolCallId: "call-delegate",
+                  toolName: "delegate",
+                  type: "tool-call",
+                },
+              ],
+              role: "assistant",
+            },
+          ],
+        },
+        text: "",
+        toolCalls: [
+          {
+            input: { message: "research this" },
+            toolCallId: "call-delegate",
+            toolName: "delegate",
+            type: "tool-call",
+          },
+        ],
+        toolResults: [],
+      });
+      const started = vi.fn();
+      const hooks = createInstrumentationHooks([
+        { events: { "action.started": started }, name: "test" },
+      ]);
+      const { emit } = createEventCollector();
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", emit, {
+          instrumentation: { hooks, runInContext: (_operation, execute) => execute() },
+          tools: createDelegationToolMap(),
+        }),
+      );
+
+      await runStep(createTestSession(), { message: "delegate" });
+
+      expect(started).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          callId: "call-delegate",
+          kind: "subagent-call",
+          name: "delegate",
+          type: "action.started",
         }),
         expect.anything(),
       );

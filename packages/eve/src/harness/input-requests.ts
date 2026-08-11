@@ -28,6 +28,7 @@ import type { HarnessSession, StepInput } from "#harness/types.js";
 
 export { getApprovedTools, clearPendingSessionLimitPrompt };
 export type { RejectedActionBatch };
+export type { ResolvedInputBatch } from "#harness/input-request-resolution.js";
 export {
   appendPendingInputBatch,
   consumeDeferredStepInput,

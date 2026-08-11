@@ -3,19 +3,27 @@ import { describe, expect, it } from "vitest";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
+  actionIdempotencyKey,
+  type InstrumentationAttemptScope,
+} from "#harness/instrumentation-lifecycle.js";
+import {
   abandonInstrumentationState,
   instrumentationStateSlot,
   isInstrumentationStateAbandoned,
   preserveSerializedInstrumentationState,
+  rememberInstrumentationActionScope,
   releaseAllInstrumentationAttemptState,
   releaseAllInstrumentationState,
+  takeInstrumentationActionScopeForCall,
 } from "#harness/instrumentation-state.js";
 
 describe("instrumentation state", () => {
   it("survives a serialized step boundary", async () => {
     const context = new ContextContainer();
     contextStorage.run(context, () => {
-      instrumentationStateSlot("sink", "model:1", "attempt-1").set({ rowId: "row-1" });
+      instrumentationStateSlot("sink", "model:1", { attemptId: "attempt-1" }).set({
+        rowId: "row-1",
+      });
     });
     const restored = await deserializeContext(await serializeContext(context));
     contextStorage.run(restored, () => {
@@ -31,6 +39,37 @@ describe("instrumentation state", () => {
       expect(instrumentationStateSlot("a", "turn:1").get()).toBe("a-1");
       expect(instrumentationStateSlot("b", "turn:1").get()).toBe("b-1");
       expect(instrumentationStateSlot("a", "turn:2").get()).toBe("a-2");
+    });
+  });
+
+  it("correlates same-turn actions with their stored attempt scopes", () => {
+    const first: InstrumentationAttemptScope = {
+      attemptId: "session-1:turn-1:0:0",
+      attemptIndex: 0,
+      sessionId: "session-1",
+      stepIndex: 0,
+      turnId: "turn-1",
+    };
+    const second: InstrumentationAttemptScope = {
+      ...first,
+      attemptId: "session-1:turn-1:1:0",
+      stepIndex: 1,
+    };
+    const firstKey = actionIdempotencyKey(first.sessionId, first.turnId, "call-1");
+    const secondKey = actionIdempotencyKey(second.sessionId, second.turnId, "call-2");
+
+    contextStorage.run(new ContextContainer(), () => {
+      rememberInstrumentationActionScope(firstKey, first);
+      rememberInstrumentationActionScope(secondKey, second);
+
+      expect(takeInstrumentationActionScopeForCall(second.sessionId, "call-2")).toEqual({
+        idempotencyKey: secondKey,
+        scope: second,
+      });
+      expect(takeInstrumentationActionScopeForCall(first.sessionId, "call-1")).toEqual({
+        idempotencyKey: firstKey,
+        scope: first,
+      });
     });
   });
 
@@ -72,8 +111,8 @@ describe("instrumentation state", () => {
 
   it("releases exact and attempt-owned state", () => {
     contextStorage.run(new ContextContainer(), () => {
-      instrumentationStateSlot("sink", "model:1", "attempt-1").set("one");
-      instrumentationStateSlot("sink", "model:2", "attempt-2").set("two");
+      instrumentationStateSlot("sink", "model:1", { attemptId: "attempt-1" }).set("one");
+      instrumentationStateSlot("sink", "model:2", { attemptId: "attempt-2" }).set("two");
       releaseAllInstrumentationState("model:2");
       releaseAllInstrumentationAttemptState("attempt-1");
       expect(instrumentationStateSlot("sink", "model:1").get()).toBeUndefined();
@@ -96,7 +135,7 @@ describe("instrumentation state", () => {
   it("persists abandonment across serialization", async () => {
     const context = new ContextContainer();
     contextStorage.run(context, () => {
-      abandonInstrumentationState("sink", "model:1", "attempt-1");
+      abandonInstrumentationState("sink", "model:1", { attemptId: "attempt-1" });
     });
     const restored = await deserializeContext(await serializeContext(context));
     contextStorage.run(restored, () => {

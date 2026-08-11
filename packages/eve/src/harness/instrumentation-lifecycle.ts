@@ -77,12 +77,31 @@ export type InstrumentationContentPart =
       readonly toolName: string;
     };
 
-/** How one tool execution ended. */
-export type InstrumentationToolOutput =
+/**
+ * What eve dispatched an action as. The model sees every action as a tool, so
+ * this is the only thing that separates a subagent or remote-agent call from an
+ * ordinary tool in a trace.
+ */
+export type InstrumentationActionKind =
+  | "load-skill"
+  | "remote-agent-call"
+  | "subagent-call"
+  | "tool-call";
+
+/** How one action ended. */
+export type InstrumentationActionOutput =
   | { readonly type: "result"; readonly output: unknown }
   | { readonly type: "error"; readonly error: unknown };
 
-/** Replay-stable row identity for every lifecycle operation. */
+/**
+ * Every event carries an `idempotencyKey` naming the operation it is about: a
+ * start and its terminal share one, and two operations never collide.
+ *
+ * Every part is identity eve reconstructs on replay — session and turn ids,
+ * `scope.attemptId` (itself `session:turn:step:attempt`), AI SDK step number,
+ * and durable runtime-action call ids. A provider writing rows can use the key
+ * as its row id and be idempotent by construction.
+ */
 export function sessionIdempotencyKey(sessionId: string): string {
   return `session:${sessionId}`;
 }
@@ -172,6 +191,11 @@ export interface InstrumentationInputResolvedEvent {
   readonly scope: InstrumentationAttemptScope;
 }
 
+/** Runtime action call IDs are durable and unique within one session. */
+export function actionIdempotencyKey(sessionId: string, turnId: string, callId: string): string {
+  return `action:${sessionId}:${turnId}:${callId}`;
+}
+
 export interface InstrumentationStepAttemptStartedEvent {
   readonly type: "step.attempt.started";
   readonly idempotencyKey: string;
@@ -243,6 +267,13 @@ export interface InstrumentationTurnStartedEvent {
   readonly turnId: string;
 }
 
+/**
+ * A turn that ended without a failure.
+ *
+ * `turn.cancelled` sits here rather than with the failed shape because
+ * cancellation is not an error: the harness settles a cancelled turn as
+ * `turn.cancelled` → `session.waiting`, with no failure surfaced anywhere.
+ */
 export interface InstrumentationTurnSettledEvent {
   readonly type: "turn.cancelled" | "turn.completed";
   readonly idempotencyKey: string;
@@ -319,6 +350,8 @@ export type InstrumentationModelCallTerminalEvent =
   | InstrumentationModelCallCompletedEvent
   | InstrumentationModelCallFailedEvent;
 
+export type InstrumentationToolOutput = InstrumentationActionOutput;
+
 export interface InstrumentationToolCallStartedEvent {
   readonly type: "tool.call.started";
   readonly callId: string;
@@ -346,14 +379,63 @@ export type InstrumentationToolCallTerminalEvent =
   | InstrumentationToolCallCompletedEvent
   | InstrumentationToolCallFailedEvent;
 
+/**
+ * One thing the agent did on the model's behalf. `kind` is what separates a
+ * subagent or remote-agent call from an ordinary tool; `name` is the name the
+ * model called, which is the tool name for every kind.
+ */
+export interface InstrumentationActionStartedEvent {
+  readonly type: "action.started";
+  readonly callId: string;
+  readonly idempotencyKey: string;
+  readonly input: unknown;
+  readonly kind: InstrumentationActionKind;
+  readonly name: string;
+  readonly scope: InstrumentationAttemptScope;
+}
+
+export type InstrumentationActionOutcome =
+  | "abandoned"
+  | "cancelled"
+  | "completed"
+  | "failed"
+  | "rejected";
+
+export interface InstrumentationActionCompletedEvent {
+  readonly type: "action.completed";
+  readonly acceptedAtMs?: number;
+  readonly idempotencyKey: string;
+  readonly outcome: "completed";
+  readonly output: InstrumentationActionOutput;
+  readonly scope: InstrumentationAttemptScope;
+  readonly usage?: InstrumentationUsage;
+}
+
+export interface InstrumentationActionFailedEvent {
+  readonly type: "action.failed";
+  readonly acceptedAtMs?: number;
+  readonly error: unknown;
+  readonly errorCode?: string;
+  readonly idempotencyKey: string;
+  readonly outcome: Exclude<InstrumentationActionOutcome, "completed">;
+  readonly scope: InstrumentationAttemptScope;
+}
+
+export type InstrumentationActionTerminalEvent =
+  | InstrumentationActionCompletedEvent
+  | InstrumentationActionFailedEvent;
+
+/** The second argument to every handler. */
 export interface InstrumentationHandlerContext {
+  /** Durable state scoped to this provider and this operation. */
   readonly state: InstrumentationStateSlot;
 }
 
 /**
  * The AI SDK can omit a model terminal when an incomplete stream closes. A
- * provider that correlates starts with terminals must scope that state to the
- * attempt and release anything still open when the step attempt terminates.
+ * handler can use `ctx.state` for durable correlation when a terminal arrives,
+ * but providers must scope live resources to the attempt and release anything
+ * still open when the step attempt terminates.
  */
 export type InstrumentationEventHandler<TEvent> = (
   event: TEvent,
@@ -377,6 +459,9 @@ export interface InstrumentationProviderDefinition {
     readonly "session.failed"?: InstrumentationEventHandler<InstrumentationSessionFailedEvent>;
     readonly "session.started"?: InstrumentationEventHandler<InstrumentationSessionStartedEvent>;
     readonly "session.waiting"?: InstrumentationEventHandler<InstrumentationSessionSettledEvent>;
+    readonly "action.started"?: InstrumentationEventHandler<InstrumentationActionStartedEvent>;
+    readonly "action.completed"?: InstrumentationEventHandler<InstrumentationActionCompletedEvent>;
+    readonly "action.failed"?: InstrumentationEventHandler<InstrumentationActionFailedEvent>;
     readonly "tool.call.started"?: InstrumentationEventHandler<InstrumentationToolCallStartedEvent>;
     readonly "tool.call.completed"?: InstrumentationEventHandler<InstrumentationToolCallCompletedEvent>;
     readonly "tool.call.failed"?: InstrumentationEventHandler<InstrumentationToolCallFailedEvent>;
@@ -385,7 +470,9 @@ export interface InstrumentationProviderDefinition {
     readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnFailedEvent>;
     readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
+  /** Drains anything buffered. Driven by the runtime, not by the bus. */
   readonly flush?: () => void | PromiseLike<void>;
+  /** Releases resources when the process is going away. */
   readonly shutdown?: () => void | PromiseLike<void>;
 }
 
@@ -407,6 +494,8 @@ export type InstrumentationHooksInput =
 export type InstrumentationCorrelatedEvent =
   | InstrumentationInputRequestedEvent
   | InstrumentationInputResolvedEvent
+  | InstrumentationActionStartedEvent
+  | InstrumentationActionTerminalEvent
   | InstrumentationModelCallStartedEvent
   | InstrumentationModelCallTerminalEvent
   | InstrumentationToolCallStartedEvent
@@ -434,12 +523,12 @@ export type InstrumentationExecutionOperation =
   | {
       readonly idempotencyKey: string;
       readonly scope: InstrumentationAttemptScope;
-      readonly type: "model.call";
+      readonly type: "tool.call";
     }
   | {
       readonly idempotencyKey: string;
       readonly scope: InstrumentationAttemptScope;
-      readonly type: "tool.call";
+      readonly type: "model.call";
     };
 
 /** Provider-neutral hook operations consumed by the AI SDK bridge. */

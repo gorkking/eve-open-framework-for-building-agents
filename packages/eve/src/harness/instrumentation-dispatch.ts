@@ -4,17 +4,25 @@ import {
   isInstrumentationStateAbandoned,
   releaseAllInstrumentationAttemptState,
   releaseAllInstrumentationState,
+  releaseAllInstrumentationTurnState,
+  takeInstrumentationActionScopes,
+  type InstrumentationStateOwner,
 } from "#harness/instrumentation-state.js";
 import { createLogger, formatError } from "#internal/logging.js";
 
 import type {
   CreateInstrumentationHooksOptions,
+  InstrumentationActionFailedEvent,
   InstrumentationDispatchGroups,
   InstrumentationEvent,
   InstrumentationEventHandler,
   InstrumentationHooks,
   InstrumentationHooksInput,
   InstrumentationProviderDefinition,
+  InstrumentationSessionFailedEvent,
+  InstrumentationSessionSettledEvent,
+  InstrumentationTurnFailedEvent,
+  InstrumentationTurnSettledEvent,
 } from "#harness/instrumentation-lifecycle.js";
 
 const log = createLogger("harness.instrumentation-dispatch");
@@ -30,6 +38,25 @@ export function createInstrumentationDispatcher(
 
   const publish = async (event: InstrumentationEvent): Promise<void> => {
     const snapshot = snapshotInstrumentationEvent(event, snapshots);
+    const cleanupSession =
+      snapshot.type === "session.completed" || snapshot.type === "session.failed";
+    const cleanupTurn = snapshot.type === "turn.cancelled" || snapshot.type === "turn.failed";
+    if (cleanupSession || cleanupTurn) {
+      const pendingActions = takeInstrumentationActionScopes(
+        snapshot.sessionId,
+        cleanupTurn ? snapshot.turnId : undefined,
+      );
+      const failure = terminalActionFailure(snapshot);
+      for (const action of pendingActions) {
+        await publish({
+          ...failure,
+          idempotencyKey: action.idempotencyKey,
+          scope: action.scope,
+          type: "action.failed",
+        });
+      }
+    }
+
     try {
       try {
         for (const provider of groups.serialBefore) {
@@ -126,20 +153,19 @@ async function dispatchToProvider(
   handlerTimeoutMs: number,
 ): Promise<void> {
   const startedBoundary = event.type.endsWith(".started") || event.type === "input.requested";
-  const attemptId = stateAttemptId(event);
+  const owner = stateOwner(event);
   const providerName = provider.name;
   if (isInstrumentationStateAbandoned(providerName, event.idempotencyKey)) return;
   const handler = provider.events?.[event.type];
   if (handler === undefined) return;
-  const state = instrumentationStateSlot(providerName, event.idempotencyKey, attemptId);
+  const state = instrumentationStateSlot(providerName, event.idempotencyKey, owner);
   try {
     const settled = await withTimeout(
       () => (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, { state }),
       handlerTimeoutMs,
       () => {
         state.revoke();
-        if (startedBoundary)
-          abandonInstrumentationState(providerName, event.idempotencyKey, attemptId);
+        if (startedBoundary) abandonInstrumentationState(providerName, event.idempotencyKey, owner);
       },
     );
     if (!settled) {
@@ -181,13 +207,17 @@ async function withTimeout(
   }
 }
 
-function stateAttemptId(event: InstrumentationEvent): string | undefined {
-  if (!("scope" in event)) return undefined;
+/** Model and SDK tool children are scoped to an attempt; durable pairs are not. */
+function stateOwner(event: InstrumentationEvent): InstrumentationStateOwner {
+  if (!("scope" in event)) return {};
+  if (event.type.startsWith("action.") || event.type.startsWith("input.")) {
+    return { sessionId: event.scope.sessionId, turnId: event.scope.turnId };
+  }
   return event.type.startsWith("model.call.") ||
     event.type.startsWith("tool.call.") ||
     event.type.startsWith("step.attempt.")
-    ? event.scope.attemptId
-    : undefined;
+    ? { attemptId: event.scope.attemptId }
+    : {};
 }
 
 function releaseTerminalState(event: InstrumentationEvent): void {
@@ -195,6 +225,36 @@ function releaseTerminalState(event: InstrumentationEvent): void {
   if (event.type === "step.attempt.completed" || event.type === "step.attempt.failed") {
     releaseAllInstrumentationAttemptState(event.scope.attemptId);
   }
+  if (event.type === "session.completed" || event.type === "session.failed") {
+    releaseAllInstrumentationTurnState(event.sessionId);
+  }
+  if (event.type === "turn.cancelled" || event.type === "turn.failed") {
+    releaseAllInstrumentationTurnState(event.sessionId, event.turnId);
+  }
+}
+
+function terminalActionFailure(
+  event:
+    | InstrumentationSessionFailedEvent
+    | InstrumentationSessionSettledEvent
+    | InstrumentationTurnFailedEvent
+    | InstrumentationTurnSettledEvent,
+): Pick<InstrumentationActionFailedEvent, "error" | "errorCode" | "outcome"> {
+  if (event.type === "session.failed" || event.type === "turn.failed") {
+    return { error: event.error, outcome: "failed" };
+  }
+  if (event.type === "turn.cancelled") {
+    return {
+      error: new Error("The action was cancelled with its turn."),
+      errorCode: "ACTION_CANCELLED",
+      outcome: "cancelled",
+    };
+  }
+  return {
+    error: new Error("The session completed before the action settled."),
+    errorCode: "ACTION_ABANDONED",
+    outcome: "abandoned",
+  };
 }
 
 function isTerminal(type: InstrumentationEvent["type"]): boolean {

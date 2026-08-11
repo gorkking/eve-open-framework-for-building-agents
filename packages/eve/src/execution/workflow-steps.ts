@@ -30,6 +30,7 @@ import {
   setHarnessEmissionState,
 } from "#harness/emission.js";
 import { preserveSerializedInstrumentationState } from "#harness/instrumentation-state.js";
+import { RuntimeActionSettlementTimesKey } from "#harness/runtime-action-settlement-state.js";
 import { preserveSerializedAgentTraceState } from "#tracing/agent-trace-context-store.js";
 import { matchAuthorizationCallbacks } from "#execution/authorization-callback-match.js";
 import { readTurnSleepDurationMs } from "#harness/turn-sleep.js";
@@ -245,6 +246,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     resolved = results.length === 0 ? undefined : results.reduce(coalesceTurnInputs);
   } else if (input.input?.kind === "runtime-action-result") {
     recordSubagentUsageSpans(input.input.results);
+    if (input.input.acceptedAtMsByCallId !== undefined) {
+      ctx.set(RuntimeActionSettlementTimesKey, input.input.acceptedAtMsByCallId);
+    }
     resolved = { runtimeActionResults: input.input.results };
   }
 
