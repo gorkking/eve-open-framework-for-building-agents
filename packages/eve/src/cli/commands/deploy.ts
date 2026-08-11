@@ -1,6 +1,5 @@
 import { isEveProject } from "#setup/scaffold/index.js";
 import { resolveEveProjectContext } from "#internal/project-context.js";
-import { validateAuthoredAgentServices } from "#internal/vercel/validate-authored-agent-services.js";
 
 import { runDeployFlow, type DeployFlowDeps } from "#setup/flows/deploy.js";
 import { createPrompter, type Prompter } from "#setup/prompter.js";
@@ -50,13 +49,6 @@ export async function runDeployCommand(
     process.exitCode = 1;
     return;
   }
-  if (projectContext.kind === "collection") {
-    const validation = await validateAuthoredAgentServices(projectContext.collection);
-    for (const name of validation.omittedAgentNames) {
-      logger.error(`warning: agents/${name} is not selected by vercel.json#services.`);
-    }
-  }
-
   const prompter = dependencies.createPrompter?.() ?? createPrompter();
   prompter.intro("Deploy your eve agent to Vercel");
   try {

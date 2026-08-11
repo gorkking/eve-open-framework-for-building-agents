@@ -27,12 +27,6 @@ export interface VercelRouteConfig {
   readonly [key: string]: unknown;
 }
 
-export interface VercelRewriteConfig {
-  readonly destination?: string | VercelServiceRouteDestination;
-  readonly source?: string;
-  readonly [key: string]: unknown;
-}
-
 export interface VercelServiceConfig {
   readonly buildCommand?: string;
   readonly entrypoint?: string;
@@ -58,7 +52,6 @@ export type VercelServicesCollection =
 export interface VercelServicesConfig {
   readonly experimentalServices?: JsonValue;
   readonly experimentalServicesV2?: JsonValue;
-  readonly rewrites?: readonly VercelRewriteConfig[];
   readonly routes?: readonly VercelRouteConfig[];
   readonly services?: VercelServicesCollection;
   readonly [key: string]: unknown;
@@ -96,38 +89,13 @@ function parseDestination(
   };
 }
 
-function parseRouteTransform(value: JsonValue, path: string): VercelRouteTransform {
-  const transform = objectValue(value, path);
-  return {
-    ...transform,
-    args: optionalString(transform.args, `${path}.args`),
-    op: optionalString(transform.op, `${path}.op`),
-    type: optionalString(transform.type, `${path}.type`),
-  };
-}
-
 function parseRoute(value: JsonValue, path: string): VercelRouteConfig {
   const route = objectValue(value, path);
-  if (route.transforms !== undefined && !Array.isArray(route.transforms)) {
-    throw new Error(`${path}.transforms must be an array.`);
-  }
   return {
     ...route,
     destination: parseDestination(route.destination, `${path}.destination`),
     handle: optionalString(route.handle, `${path}.handle`),
     src: optionalString(route.src, `${path}.src`),
-    transforms: route.transforms?.map((transform, index) =>
-      parseRouteTransform(transform, `${path}.transforms[${index}]`),
-    ),
-  };
-}
-
-function parseRewrite(value: JsonValue, path: string): VercelRewriteConfig {
-  const rewrite = objectValue(value, path);
-  return {
-    ...rewrite,
-    destination: parseDestination(rewrite.destination, `${path}.destination`),
-    source: optionalString(rewrite.source, `${path}.source`),
   };
 }
 
@@ -217,7 +185,6 @@ export function parseVercelServicesConfig(value: unknown, fileName: string): Ver
 
   return {
     ...config,
-    rewrites: parseArray(config.rewrites, `${fileName} rewrites`, parseRewrite),
     routes: parseArray(config.routes, `${fileName} routes`, parseRoute),
     services: parseServices(config.services, fileName),
   };

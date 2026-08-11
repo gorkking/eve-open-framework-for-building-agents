@@ -5,14 +5,9 @@ import {
   type EveVercelAgentTarget,
 } from "#internal/vercel/eve-service-contribution.js";
 import {
-  type GeneratedVercelServiceConfig,
   type VercelRouteConfig,
   type VercelServiceConfig,
 } from "#internal/vercel/vercel-services-config.js";
-
-export type MutableGeneratedVercelServiceConfig = {
-  -readonly [Key in keyof GeneratedVercelServiceConfig]: GeneratedVercelServiceConfig[Key];
-};
 
 export function resolveServicePrefix(service: VercelServiceConfig | undefined): string | undefined {
   if (typeof service?.routePrefix === "string" && service.routePrefix.trim().length > 0) {

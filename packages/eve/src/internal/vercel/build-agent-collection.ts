@@ -2,9 +2,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AgentCollection, AgentCollectionMember } from "#internal/agent-collection.js";
+import { assembleEveVercelServices } from "#internal/vercel/assemble-eve-services.js";
 import { quoteVercelShellArgument, toVercelRelativePath } from "#internal/vercel/build-command.js";
 import { resolveAgentCollectionDeploymentMode } from "#internal/vercel/agent-collection-deployment.js";
-import { compileEveVercelService } from "#internal/vercel/eve-service-contribution.js";
 import { resolveEveBinaryPath } from "#shared/resolve-eve-binary.js";
 import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
 import { parseJsonObject } from "#shared/json.js";
@@ -39,23 +39,22 @@ export async function buildAgentCollection(collection: AgentCollection): Promise
   }
 
   const packageManager = await detectPackageManager(collection.root);
-  const contributions = await Promise.all(
-    collection.members.map(async (member) =>
-      compileEveVercelService({
-        agent: {
-          appRoot: member.appRoot,
-          buildCommand: await resolveMemberBuildCommand(member, packageManager.kind),
-          name: member.name,
-          publicRoutePrefix: `/eve/agents/${member.name}`,
-        },
-        target: {
-          kind: "direct",
-          projectRoot: collection.root,
-          root: toVercelRelativePath(collection.root, member.appRoot),
-        },
-      }),
-    ),
+  const agents = await Promise.all(
+    collection.members.map(async (member) => ({
+      agent: {
+        appRoot: member.appRoot,
+        buildCommand: await resolveMemberBuildCommand(member, packageManager.kind),
+        name: member.name,
+        publicRoutePrefix: `/eve/agents/${member.name}`,
+      },
+      target: {
+        kind: "direct" as const,
+        projectRoot: collection.root,
+        root: toVercelRelativePath(collection.root, member.appRoot),
+      },
+    })),
   );
+  const assembled = assembleEveVercelServices({ agents });
 
   const outputDirectory = join(collection.root, ".vercel", "output");
   await rm(outputDirectory, { force: true, recursive: true });
@@ -65,10 +64,8 @@ export async function buildAgentCollection(collection: AgentCollection): Promise
     `${JSON.stringify(
       {
         version: VERCEL_BUILD_OUTPUT_VERSION,
-        routes: contributions.map((contribution) => contribution.publicRoute),
-        services: Object.fromEntries(
-          contributions.map((contribution) => [contribution.serviceName, contribution.service]),
-        ),
+        routes: assembled.routes,
+        services: assembled.services,
       },
       null,
       2,

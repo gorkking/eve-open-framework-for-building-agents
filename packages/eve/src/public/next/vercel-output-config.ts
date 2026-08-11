@@ -1,17 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import {
-  compileEveVercelService,
-  createEveServiceName,
-  createEveServiceRouteSrc,
-} from "#internal/vercel/eve-service-contribution.js";
+import { assembleEveVercelServices } from "#internal/vercel/assemble-eve-services.js";
 import {
   findConfiguredEveServiceEntry,
-  insertEveServiceRequestPathRoute,
-  insertEveServiceRoutes,
   resolveServicePrefix,
-  type MutableGeneratedVercelServiceConfig,
 } from "#internal/vercel/vercel-service-config-operations.js";
 import {
   createServiceConfigRecord,
@@ -169,60 +162,25 @@ export async function ensureEveVercelOutputConfig(input: {
     };
   }
 
-  const services: Record<string, VercelServiceConfig> = {
-    ...existingServices,
-  };
-  const eveRoutes: {
-    routeSrc: string;
-    serviceName: string;
-  }[] = [];
-
-  for (const agent of input.agents) {
-    const configuredEveServiceEntry = findConfiguredEveServiceEntry(existingServices, agent);
-    const serviceName = configuredEveServiceEntry?.name ?? createEveServiceName(agent.name);
-    const routeSrc = createEveServiceRouteSrc(agent.publicRoutePrefix);
-
-    if (configuredEveServiceEntry === undefined) {
-      const generatedService = compileEveVercelService({
-        agent,
-        target: {
-          hostOutputDirectory: dirname(outputConfigPath),
-          kind: "isolated",
-          projectRoot: input.nextRoot,
-        },
-      });
-      await mkdir(generatedService.rootDirectory, { recursive: true });
-      const serviceConfig: MutableGeneratedVercelServiceConfig = {
-        ...generatedService.service,
-        routes: insertEveServiceRequestPathRoute(undefined, routeSrc),
-      };
-
-      if (agent.publicRoutePrefix.length > 0) {
-        serviceConfig.routePrefix = agent.publicRoutePrefix;
-      }
-
-      services[serviceName] = serviceConfig;
-    } else {
-      services[serviceName] = {
-        ...configuredEveServiceEntry.service,
-        routes: insertEveServiceRequestPathRoute(
-          configuredEveServiceEntry.service.routes,
-          routeSrc,
-        ),
-      };
-    }
-
-    eveRoutes.push({
-      routeSrc,
-      serviceName,
-    });
-  }
+  const assembled = assembleEveVercelServices({
+    agents: input.agents.map((agent) => ({
+      agent,
+      target: {
+        hostOutputDirectory: dirname(outputConfigPath),
+        kind: "isolated",
+        projectRoot: input.nextRoot,
+      },
+    })),
+    routes: existingConfig.routes,
+    services: existingServices,
+  });
+  await Promise.all(assembled.rootDirectories.map((root) => mkdir(root, { recursive: true })));
 
   const { services: _services, ...configWithoutLegacyServices } = existingConfig;
   const vercelConfig: VercelOutputConfig = {
     ...configWithoutLegacyServices,
-    routes: insertEveServiceRoutes(existingConfig.routes ?? [], eveRoutes),
-    services,
+    routes: assembled.routes,
+    services: assembled.services,
     version: VERCEL_BUILD_OUTPUT_VERSION,
   };
 
