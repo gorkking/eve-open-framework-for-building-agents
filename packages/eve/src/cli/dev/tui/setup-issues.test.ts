@@ -131,6 +131,12 @@ describe("BOOT_DETECTIONS", () => {
     expect(await detectSetupIssues(context({ info }))).toEqual([]);
   });
 
+  it("stays quiet when model routing is selected dynamically", async () => {
+    const info = infoWithRouting({ kind: "dynamic" }, { kind: "dynamic" });
+
+    expect(await detectSetupIssues(context({ info }))).toEqual([]);
+  });
+
   it("stays quiet when the runtime resolved linked-project OIDC", async () => {
     const info = infoWithRouting(
       { kind: "gateway", target: "openai" },

@@ -13,8 +13,10 @@
  * - `gateway` + `connected: false`: routed through the gateway with neither a
  *   gateway API key nor an OIDC token. This is the "no provider connected" state
  *   that gates the "provider required" setup prompt.
+ * - `dynamic`: the route depends on the runtime model selection.
  */
 export type ModelEndpointStatus =
+  | { kind: "dynamic" }
   | { kind: "external"; provider: string }
   | { kind: "gateway"; connected: true; credential: "api-key" | "oidc" }
   | { kind: "gateway"; connected: false };

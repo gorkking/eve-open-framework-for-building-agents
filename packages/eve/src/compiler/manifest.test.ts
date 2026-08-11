@@ -170,7 +170,7 @@ describe("compiledAgentManifestSchema", () => {
           sourceId: "agent-config",
           sourceKind: "module",
         },
-        model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
+        model: { id: "dynamic", routing: { kind: "dynamic" } },
         name: "app",
       },
     });
@@ -183,6 +183,7 @@ describe("compiledAgentManifestSchema", () => {
       sourceId: "agent-config",
       sourceKind: "module",
     });
+    expect(parsed.config.model).toEqual({ id: "dynamic", routing: { kind: "dynamic" } });
   });
 
   it("preserves uncapped (false) session token limits", () => {

@@ -9,7 +9,6 @@ import {
   TurnDynamicModelReferenceKey,
   type LiveDynamicModelSelection,
 } from "#context/keys.js";
-import { createLogger } from "#internal/logging.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type {
   RuntimeDynamicModelReference,
@@ -24,8 +23,6 @@ import {
 } from "#runtime/agent/resolve-model.js";
 import { toErrorMessage } from "#shared/errors.js";
 import type { DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
-
-const log = createLogger("dynamic-models");
 
 const ALLOWED_DYNAMIC_MODEL_EVENTS = new Set<DynamicToolEventName>([
   "session.started",
@@ -77,7 +74,7 @@ export async function dispatchDynamicModelEvent(input: {
   readonly ctx: AlsContext;
   readonly dynamicModel: RuntimeDynamicModelReference | undefined;
   readonly event: UnstampedMessageStreamEvent;
-  readonly fallback: RuntimeModelReference;
+  readonly defaults: RuntimeModelReference;
   readonly messages: readonly ModelMessage[];
   readonly scope: RuntimeModelResolutionScope;
 }): Promise<void> {
@@ -93,49 +90,41 @@ export async function dispatchDynamicModelEvent(input: {
     const handler = definition.events[input.event.type];
 
     if (handler === undefined) {
-      setSelectionForEvent(input.ctx, input.event.type, null);
-      return;
+      throw new Error("the configured event handler is missing");
     }
 
     const rawResult = await handler(input.event, buildResolveContext(input.ctx, input.messages));
-    const selection =
-      rawResult === null || rawResult === undefined
-        ? null
-        : normalizeDynamicRuntimeModelResult({
-            fallback: input.fallback,
-            result: rawResult,
-          });
+    if (rawResult === null || rawResult === undefined) {
+      throw new Error("the handler did not return a model");
+    }
+    const selection = normalizeDynamicRuntimeModelResult({
+      defaults: input.defaults,
+      result: rawResult,
+    });
 
-    if (
-      selection !== null &&
-      input.event.type !== "step.started" &&
-      selection.model !== undefined
-    ) {
-      log.error(
-        `Dynamic model resolver (${input.event.type}) returned a provider object, but session- and turn-scoped model selections must be serializable. Return a model id string for this scope, or use "step.started".`,
+    if (input.event.type !== "step.started" && selection.model !== undefined) {
+      throw new Error(
+        "session- and turn-scoped selections must return a serializable model id string; return live provider objects only from step.started",
       );
-      setSelectionForEvent(input.ctx, input.event.type, null);
-      return;
     }
 
     setSelectionForEvent(input.ctx, input.event.type, selection);
   } catch (error) {
-    log.error(`Dynamic model resolver (${input.event.type}) threw - skipping.`, {
-      error: toErrorMessage(error),
-    });
-    setSelectionForEvent(input.ctx, input.event.type, null);
+    throw new Error(
+      `Dynamic model resolver (${input.event.type}) failed: ${toErrorMessage(error)}`,
+    );
   }
 }
 
 function setSelectionForEvent(
   ctx: AlsContext,
   eventType: DynamicToolEventName,
-  selection: ResolvedRuntimeModelSelection | null,
+  selection: ResolvedRuntimeModelSelection,
 ): void {
   if (eventType === "step.started") {
     // In mock mode drop the live instance so the mock adapter keeps precedence.
     const stored =
-      selection !== null && selection.model !== undefined && shouldMockAuthoredRuntimeModels()
+      selection.model !== undefined && shouldMockAuthoredRuntimeModels()
         ? { reference: selection.reference }
         : selection;
     ctx.setVirtualContext(LiveStepDynamicModelSelectionKey, stored);
@@ -144,5 +133,5 @@ function setSelectionForEvent(
 
   const durableKey = durableKeyForEvent(eventType);
   if (durableKey === undefined) return;
-  ctx.set(durableKey, selection?.reference ?? null);
+  ctx.set(durableKey, selection.reference);
 }

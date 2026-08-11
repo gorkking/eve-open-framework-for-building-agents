@@ -93,7 +93,9 @@ async function loadSourceBackedRuntimeModelReference(
   }
 
   if (isDynamicModelDefinition(model)) {
-    return model.fallback;
+    throw new Error(
+      `Expected the authored agent config export "${reference.source.exportName ?? "default"}" from "${reference.source.logicalPath}" to provide a static runtime model.`,
+    );
   }
 
   return model;
@@ -133,17 +135,17 @@ export async function loadDynamicRuntimeModelDefinition(input: {
 }
 
 export function normalizeDynamicRuntimeModelResult(input: {
-  readonly fallback: RuntimeModelReference;
-  readonly result: NonNullable<PublicAgentDynamicModelResult>;
+  readonly defaults: RuntimeModelReference;
+  readonly result: PublicAgentDynamicModelResult;
 }): ResolvedRuntimeModelSelection {
   const selection = normalizeDynamicModelSelection(input.result);
   validateDynamicModelSelection(selection);
   const providerOptions =
     selection.modelOptions?.providerOptions === undefined
-      ? input.fallback.providerOptions
+      ? input.defaults.providerOptions
       : parseProviderOptionsRecord(selection.modelOptions.providerOptions);
-  // Never inherited from the fallback: a different model's window is not a safe guess.
-  const contextWindowTokens = selection.modelContextWindowTokens;
+  const contextWindowTokens =
+    selection.modelContextWindowTokens ?? input.defaults.contextWindowTokens;
 
   if (typeof selection.model === "string") {
     const id = formatLanguageModelGatewayId(selection.model);
@@ -192,7 +194,7 @@ function validateDynamicModelSelection(selection: PublicAgentModelSelectionDefin
 }
 
 function normalizeDynamicModelSelection(
-  result: NonNullable<PublicAgentDynamicModelResult>,
+  result: PublicAgentDynamicModelResult,
 ): PublicAgentModelSelectionDefinition {
   if (isModelSelectionDefinition(result)) {
     return result;

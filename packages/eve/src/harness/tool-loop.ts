@@ -358,20 +358,24 @@ async function resolveActiveRuntimeModel(input: {
   readonly session: HarnessSession;
 }> {
   if (input.ctx === undefined) {
+    if (input.session.agent.dynamicModelDefaults !== undefined) {
+      throw new Error("Dynamic model selection requires an active runtime context.");
+    }
     return {
       model: await input.config.resolveModel(input.session.agent.modelReference),
       session: input.session,
     };
   }
 
-  const fallback =
-    input.session.agent.dynamicModelDefaultReference ?? input.session.agent.modelReference;
   const selected = getActiveDynamicModelSelection(input.ctx);
 
   if (selected === null) {
+    if (input.session.agent.dynamicModelDefaults !== undefined) {
+      throw new Error("Dynamic model resolver did not select a model for this step.");
+    }
     return {
-      model: await input.config.resolveModel(fallback),
-      session: updateSessionModelReference(input.session, fallback),
+      model: await input.config.resolveModel(input.session.agent.modelReference),
+      session: input.session,
     };
   }
 
@@ -389,7 +393,7 @@ function updateSessionModelReference(
   modelReference: RuntimeModelReference,
 ): HarnessSession {
   // Rescale from the reference the current threshold was computed against;
-  // rescaling from the static fallback would compound the threshold per step.
+  // Rescaling from the initial defaults would compound the threshold per step.
   const priorReference = session.agent.modelReference;
   return {
     ...session,
@@ -806,7 +810,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           stepIndex: emissionState.stepIndex,
           turnId: emissionState.turnId,
         }),
-        fallback: session.agent.dynamicModelDefaultReference ?? session.agent.modelReference,
+        defaults: session.agent.dynamicModelDefaults ?? session.agent.modelReference,
         messages,
       });
     }

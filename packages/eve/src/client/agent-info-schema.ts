@@ -10,11 +10,13 @@ const source = z.object({
 const entry = source.extend({ name: z.string() });
 
 const modelRouting = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("dynamic") }),
   z.object({ kind: z.literal("gateway"), target: z.string(), byok: z.string().optional() }),
   z.object({ kind: z.literal("external"), provider: z.string() }),
 ]);
 
 const modelEndpoint = z.union([
+  z.object({ kind: z.literal("dynamic") }),
   z.object({ kind: z.literal("external"), provider: z.string() }),
   z.object({
     kind: z.literal("gateway"),

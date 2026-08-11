@@ -101,6 +101,31 @@ describe("definition helper exact inputs", () => {
 });
 
 function typeOnlyFixtures(): void {
+  defineAgent({
+    model: defineDynamic({
+      events: {
+        "session.started": () => "anthropic/claude-sonnet-5",
+      },
+    }),
+  });
+
+  defineAgent({
+    // @ts-expect-error Dynamic model resolvers must return a model.
+    model: defineDynamic({
+      events: {
+        "session.started": () => null,
+      },
+    }),
+  });
+
+  defineDynamic({
+    // @ts-expect-error defineDynamic does not accept a fallback.
+    fallback: "anthropic/claude-sonnet-5",
+    events: {
+      "session.started": () => "anthropic/claude-sonnet-5",
+    },
+  });
+
   // @ts-expect-error Dynamic subagents require a parent-facing description.
   defineDynamic({
     events: {

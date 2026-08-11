@@ -7,19 +7,18 @@ description: "Resolve models, subagents, tools, skills, and instructions at runt
 
 ## Dynamic models
 
-The `model` field in `agent.ts` accepts `defineDynamic({ fallback, events })`.
-Resolvers run at `session.started`, `turn.started`, or `step.started`
-(precedence: step > turn > session > `fallback`); `null` leaves a scope unset
-and failures degrade to the next scope. Prefer `session.started` — prompt
-caches are per model, so switching mid-session re-ingests the conversation at
-uncached prices. See
+The `model` field in `agent.ts` accepts `defineDynamic({ events })`. Every
+configured handler must return a model; `null`, `undefined`, an invalid
+selection, or a thrown error fails the run. Resolvers run at `session.started`,
+`turn.started`, or `step.started` (precedence: step > turn > session). Prefer
+`session.started` — prompt caches are per model, so switching mid-session
+re-ingests the conversation at uncached prices. See
 [agent configuration](../agent-config#choose-the-model-dynamically) for the
 full contract.
 
-The agent always needs exactly one model, so the compiled fallback anchors
-build-time metadata. Tools, skills, instructions, and subagents default by
-authoring a static entry (or returning `null`), so `fallback` on their
-`defineDynamic` export is a build error.
+Dynamic model definitions do not accept a `fallback`; choose the default model
+inside the handler. Tools, skills, instructions, and subagents can still return
+`null` when a capability should be omitted.
 
 ## Dynamic subagents
 

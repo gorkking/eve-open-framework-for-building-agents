@@ -12,7 +12,11 @@ import { ROOT_RUNTIME_AGENT_NODE_ID, type ResolvedRuntimeAgentNode } from "#runt
 import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
 import type { RuntimeToolRegistry } from "#runtime/tools/registry.js";
 import { createRuntimeToolRegistry } from "#runtime/tools/registry.js";
-import { createExecutionNodeStep, createNodeHarnessTools } from "#execution/node-step.js";
+import {
+  buildRuntimeIdentity,
+  createExecutionNodeStep,
+  createNodeHarnessTools,
+} from "#execution/node-step.js";
 import { createSession } from "#execution/session.js";
 import { createStubSandboxRegistry } from "#internal/testing/stub-sandbox-registry.js";
 import { toInputSchema } from "#shared/tool-schema.js";
@@ -232,6 +236,24 @@ function createNoopRuntime(): Runtime {
     resolveContinuation: vi.fn(),
   };
 }
+
+describe("buildRuntimeIdentity", () => {
+  it("reports a runtime-selected model without a synthetic fallback id", () => {
+    const node = createTestNode(
+      createTestTurnAgent({
+        dynamicModel: {
+          eventNames: ["session.started"],
+          logicalPath: "agent.ts",
+          sourceId: "agent-config",
+          sourceKind: "module",
+        },
+        model: { id: "dynamic" },
+      }),
+    );
+
+    expect(buildRuntimeIdentity(node).modelId).toBe("dynamic");
+  });
+});
 
 describe("createNodeHarnessTools", () => {
   it("guides the model to split large tasks across parallel agent calls", () => {

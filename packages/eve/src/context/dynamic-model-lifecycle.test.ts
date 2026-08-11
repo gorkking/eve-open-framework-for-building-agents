@@ -24,7 +24,7 @@ const DYNAMIC_MODEL_SOURCE: RuntimeDynamicModelReference = {
   sourceKind: "module",
 };
 
-const FALLBACK = { contextWindowTokens: 256_000, id: "openai/gpt-5.5" };
+const DEFAULTS = { contextWindowTokens: 256_000, id: "dynamic" };
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -36,7 +36,6 @@ describe("dynamic model lifecycle", () => {
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "session.started": () => ({
               model: "openai/gpt-5.5-mini",
@@ -51,7 +50,7 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createSessionStartedEvent(),
-      fallback: FALLBACK,
+      defaults: DEFAULTS,
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -65,12 +64,11 @@ describe("dynamic model lifecycle", () => {
     });
   });
 
-  it("does not inherit the fallback context window for a different model", async () => {
+  it("inherits authored context-window defaults", async () => {
     const ctx = new ContextContainer();
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "session.started": () => "openai/gpt-5.5-mini",
           },
@@ -82,21 +80,20 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createSessionStartedEvent(),
-      fallback: FALLBACK,
+      defaults: DEFAULTS,
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
 
-    expect(getActiveDynamicModelSelection(ctx)?.reference.contextWindowTokens).toBeUndefined();
+    expect(getActiveDynamicModelSelection(ctx)?.reference.contextWindowTokens).toBe(256_000);
   });
 
-  it("lets turn-scoped selections override session selections and null fall back", async () => {
+  it("lets turn-scoped selections override session selections", async () => {
     const ctx = new ContextContainer();
-    let turnResult: string | null = "openai/gpt-5.5-turn";
+    let turnResult = "openai/gpt-5.5-turn";
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "session.started": () => "openai/gpt-5.5-mini",
             "turn.started": () => turnResult,
@@ -109,7 +106,7 @@ describe("dynamic model lifecycle", () => {
         ctx,
         dynamicModel: DYNAMIC_MODEL_SOURCE,
         event,
-        fallback: FALLBACK,
+        defaults: DEFAULTS,
         messages: [],
         scope: { moduleMap, nodeId: undefined },
       });
@@ -119,10 +116,10 @@ describe("dynamic model lifecycle", () => {
 
     expect(getActiveDynamicModelSelection(ctx)?.reference.id).toBe("openai/gpt-5.5-turn");
 
-    turnResult = null;
+    turnResult = "openai/gpt-5.5-next";
     await dispatch(createTurnStartedEvent({ sequence: 1, turnId: "turn_1" }));
 
-    expect(getActiveDynamicModelSelection(ctx)?.reference.id).toBe("openai/gpt-5.5-mini");
+    expect(getActiveDynamicModelSelection(ctx)?.reference.id).toBe("openai/gpt-5.5-next");
   });
 
   it("keeps step-scoped live provider instances outside mock mode", async () => {
@@ -132,7 +129,6 @@ describe("dynamic model lifecycle", () => {
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "session.started": () => "openai/gpt-5.5-mini",
             "step.started": () => stepModel,
@@ -145,7 +141,7 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createSessionStartedEvent(),
-      fallback: { id: "openai/gpt-5.5" },
+      defaults: { id: "dynamic" },
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -153,7 +149,7 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_0" }),
-      fallback: { id: "openai/gpt-5.5" },
+      defaults: { id: "dynamic" },
       messages: [{ content: "Use the direct model.", role: "user" }],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -175,7 +171,6 @@ describe("dynamic model lifecycle", () => {
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "step.started": () => stepModel,
           },
@@ -187,7 +182,7 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_0" }),
-      fallback: { id: "openai/gpt-5.5" },
+      defaults: { id: "dynamic" },
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -207,7 +202,6 @@ describe("dynamic model lifecycle", () => {
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "session.started": () => liveModel,
           },
@@ -215,26 +209,51 @@ describe("dynamic model lifecycle", () => {
       },
     });
 
-    await dispatchDynamicModelEvent({
-      ctx,
-      dynamicModel: DYNAMIC_MODEL_SOURCE,
-      event: createSessionStartedEvent(),
-      fallback: FALLBACK,
-      messages: [],
-      scope: { moduleMap, nodeId: undefined },
-    });
+    await expect(
+      dispatchDynamicModelEvent({
+        ctx,
+        dynamicModel: DYNAMIC_MODEL_SOURCE,
+        event: createSessionStartedEvent(),
+        defaults: DEFAULTS,
+        messages: [],
+        scope: { moduleMap, nodeId: undefined },
+      }),
+    ).rejects.toThrow("session- and turn-scoped selections must return");
 
-    expect(ctx.get(SessionDynamicModelReferenceKey)).toBeNull();
+    expect(ctx.get(SessionDynamicModelReferenceKey)).toBeUndefined();
     expect(getActiveDynamicModelSelection(ctx)).toBeNull();
   });
 
-  it("clears the scope and falls back when a resolver throws", async () => {
+  it("rejects a resolver that does not return a model", async () => {
+    const ctx = new ContextContainer();
+    const moduleMap = createModuleMap({
+      default: {
+        model: defineDynamic({
+          events: {
+            "session.started": () => null,
+          },
+        }),
+      },
+    });
+
+    await expect(
+      dispatchDynamicModelEvent({
+        ctx,
+        dynamicModel: DYNAMIC_MODEL_SOURCE,
+        event: createSessionStartedEvent(),
+        defaults: DEFAULTS,
+        messages: [],
+        scope: { moduleMap, nodeId: undefined },
+      }),
+    ).rejects.toThrow("handler did not return a model");
+  });
+
+  it("fails the event when a resolver throws", async () => {
     const ctx = new ContextContainer();
     ctx.set(TurnDynamicModelReferenceKey, { id: "openai/gpt-prior" });
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "turn.started": () => {
               throw new Error("flag service unavailable");
@@ -244,25 +263,25 @@ describe("dynamic model lifecycle", () => {
       },
     });
 
-    await dispatchDynamicModelEvent({
-      ctx,
-      dynamicModel: DYNAMIC_MODEL_SOURCE,
-      event: createTurnStartedEvent({ sequence: 0, turnId: "turn_0" }),
-      fallback: FALLBACK,
-      messages: [],
-      scope: { moduleMap, nodeId: undefined },
-    });
+    await expect(
+      dispatchDynamicModelEvent({
+        ctx,
+        dynamicModel: DYNAMIC_MODEL_SOURCE,
+        event: createTurnStartedEvent({ sequence: 0, turnId: "turn_0" }),
+        defaults: DEFAULTS,
+        messages: [],
+        scope: { moduleMap, nodeId: undefined },
+      }),
+    ).rejects.toThrow("flag service unavailable");
 
-    expect(ctx.get(TurnDynamicModelReferenceKey)).toBeNull();
-    expect(getActiveDynamicModelSelection(ctx)).toBeNull();
+    expect(ctx.get(TurnDynamicModelReferenceKey)?.id).toBe("openai/gpt-prior");
   });
 
-  it("clears the scope when a selection carries unknown keys", async () => {
+  it("rejects a selection that carries unknown keys", async () => {
     const ctx = new ContextContainer();
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
             "session.started": () =>
               ({
@@ -274,14 +293,16 @@ describe("dynamic model lifecycle", () => {
       },
     });
 
-    await dispatchDynamicModelEvent({
-      ctx,
-      dynamicModel: DYNAMIC_MODEL_SOURCE,
-      event: createSessionStartedEvent(),
-      fallback: FALLBACK,
-      messages: [],
-      scope: { moduleMap, nodeId: undefined },
-    });
+    await expect(
+      dispatchDynamicModelEvent({
+        ctx,
+        dynamicModel: DYNAMIC_MODEL_SOURCE,
+        event: createSessionStartedEvent(),
+        defaults: DEFAULTS,
+        messages: [],
+        scope: { moduleMap, nodeId: undefined },
+      }),
+    ).rejects.toThrow("unknown key(s): contextWindowTokens");
 
     expect(getActiveDynamicModelSelection(ctx)).toBeNull();
   });

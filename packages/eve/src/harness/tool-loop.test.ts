@@ -909,13 +909,13 @@ describe("createToolLoopHarness", () => {
       toolResults: [],
     });
 
-    const resolveModel = vi.fn().mockResolvedValue("fallback-model" as LanguageModel);
+    const resolveModel = vi.fn().mockResolvedValue("dynamic" as LanguageModel);
     const dispatchDynamicModelEvent: NonNullable<
       ToolLoopHarnessConfig["dispatchDynamicModelEvent"]
-    > = vi.fn(async ({ ctx, event, fallback, messages }) => {
+    > = vi.fn(async ({ ctx, event, defaults, messages }) => {
       expect(event.type).toBe("step.started");
       expect(messages.at(-1)).toEqual({ content: "Hi", role: "user" });
-      expect(fallback).toEqual({ contextWindowTokens: 100_000, id: "fallback-model" });
+      expect(defaults).toEqual({ contextWindowTokens: 100_000, id: "dynamic" });
 
       ctx.setVirtualContext(LiveStepDynamicModelSelectionKey, {
         model: "selected-model" as LanguageModel,
@@ -934,8 +934,8 @@ describe("createToolLoopHarness", () => {
     const ctx = new ContextContainer();
     const session = createTestSession({
       agent: {
-        dynamicModelDefaultReference: { contextWindowTokens: 100_000, id: "fallback-model" },
-        modelReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        dynamicModelDefaults: { contextWindowTokens: 100_000, id: "dynamic" },
+        modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },
@@ -986,8 +986,8 @@ describe("createToolLoopHarness", () => {
     });
     const session = createTestSession({
       agent: {
-        dynamicModelDefaultReference: { contextWindowTokens: 100_000, id: "fallback-model" },
-        modelReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        dynamicModelDefaults: { contextWindowTokens: 100_000, id: "dynamic" },
+        modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },
@@ -1027,8 +1027,8 @@ describe("createToolLoopHarness", () => {
     });
     const session = createTestSession({
       agent: {
-        dynamicModelDefaultReference: { contextWindowTokens: 100_000, id: "fallback-model" },
-        modelReference: { contextWindowTokens: 100_000, id: "fallback-model" },
+        dynamicModelDefaults: { contextWindowTokens: 100_000, id: "dynamic" },
+        modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },
@@ -1045,12 +1045,9 @@ describe("createToolLoopHarness", () => {
     expect(second.session.compaction.threshold).toBe(180_000);
 
     ctx.set(SessionDynamicModelReferenceKey, null);
-    const third = await contextStorage.run(ctx, () => runStep(second.session, { message: "Back" }));
-    expect(third.session.agent.modelReference).toEqual({
-      contextWindowTokens: 100_000,
-      id: "fallback-model",
-    });
-    expect(third.session.compaction.threshold).toBe(90_000);
+    await expect(
+      contextStorage.run(ctx, () => runStep(second.session, { message: "Missing" })),
+    ).rejects.toThrow("did not select a model");
   });
 
   it("keeps declared subagent tools visible in deeply nested sessions", async () => {

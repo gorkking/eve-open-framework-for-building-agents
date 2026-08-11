@@ -87,6 +87,9 @@ function renderEndpoint(
   // external providers render fully quiet. Explicit bright-white (SGR 97)
   // would vanish on light themes.
   const clause = (name: string, suffix: string) => `${c.dim("via ")}${name}${c.dim(suffix)}`;
+  if (input.endpoint.kind === "dynamic") {
+    return undefined;
+  }
   if (input.endpoint.kind === "external") {
     const provider =
       EXTERNAL_PROVIDER_DISPLAY_NAMES[input.endpoint.provider] ?? input.endpoint.provider;

@@ -35,13 +35,18 @@ export type AgentReasoningDefinition = NonNullable<CallSettings["reasoning"]>;
  * - `external`: a direct provider instance (e.g. `anthropic(...)`) that bypasses
  *   the gateway and talks to the provider's own endpoint. `provider` is the AI
  *   SDK provider name (e.g. `"anthropic"`).
+ * - `dynamic`: selected only at runtime, so no single compile-time route exists.
  *
  * This is a routing fact, not a model-existence check; it does not assert the
  * model id names a real model.
  */
 export type ModelRouting =
   | { kind: "gateway"; target: string; byok?: string }
-  | { kind: "external"; provider: string };
+  | { kind: "external"; provider: string }
+  | { kind: "dynamic" };
+
+/** Compile-time model id used when the runtime must obtain a dynamic selection. */
+export const DYNAMIC_MODEL_ID = "dynamic";
 
 export type InternalAgentModelDefinition = {
   id: string;
@@ -61,7 +66,7 @@ export type AgentModelResolveContext = DynamicResolveContext;
 
 export interface PublicAgentModelSelectionDefinition {
   readonly model: PublicAgentStaticModelDefinition;
-  /** Context window of the selected model, in tokens; never inherited from the fallback. */
+  /** Context window of the selected model, in tokens. */
   readonly modelContextWindowTokens?: number;
   /** Provider options for the selected model; defaults to the agent-level `modelOptions`. */
   readonly modelOptions?: AgentModelOptionsDefinition;
@@ -69,29 +74,23 @@ export interface PublicAgentModelSelectionDefinition {
 
 export type PublicAgentDynamicModelResult =
   | PublicAgentStaticModelDefinition
-  | PublicAgentModelSelectionDefinition
-  | null;
+  | PublicAgentModelSelectionDefinition;
 
 export type AgentModelResolver = (
   event: unknown,
   ctx: AgentModelResolveContext,
 ) => PublicAgentDynamicModelResult | Promise<PublicAgentDynamicModelResult>;
 
-export type PublicAgentDynamicModelDefinition = DynamicSentinel<
-  PublicAgentDynamicModelResult,
-  PublicAgentStaticModelDefinition
->;
+export type PublicAgentDynamicModelDefinition = DynamicSentinel<PublicAgentDynamicModelResult>;
 
 export interface PublicAgentDynamicModelDefinitionInput {
-  /** Compiled static model: build-time metadata and the active model when no scope is set. */
-  readonly fallback: PublicAgentStaticModelDefinition;
   readonly events: DynamicSentinel<PublicAgentDynamicModelResult>["events"];
 }
 
 export function isDynamicModelDefinition(
   value: unknown,
 ): value is PublicAgentDynamicModelDefinition {
-  return isDynamicSentinel(value) && "fallback" in value;
+  return isDynamicSentinel(value);
 }
 
 /**
@@ -289,7 +288,7 @@ export type PublicAgentDefinition = {
   readonly experimental?: AgentExperimentalDefinition;
   /**
    * Language model used for agent turns. Accepts an AI Gateway model ID, any AI
-   * SDK-compatible language model, or `defineDynamic({ fallback, events })` for
+   * SDK-compatible language model, or `defineDynamic({ events })` for
    * scoped dynamic model selection.
    */
   readonly model: PublicAgentModelDefinition;

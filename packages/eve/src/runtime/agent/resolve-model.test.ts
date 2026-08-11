@@ -45,18 +45,14 @@ describe("dynamic runtime model resolution", () => {
     const moduleMap = createModuleMap({
       default: {
         model: defineDynamic({
-          fallback: "openai/gpt-5.5",
           events: {
-            "session.started": (_event, ctx) =>
-              ctx.channel.kind === "slack"
-                ? {
-                    model: "openai/gpt-5.5-mini",
-                    modelContextWindowTokens: 128_000,
-                    modelOptions: {
-                      providerOptions: { gateway: { order: ["openai"] } },
-                    },
-                  }
-                : null,
+            "session.started": (_event, ctx) => ({
+              model: ctx.channel.kind === "slack" ? "openai/gpt-5.5-mini" : "openai/gpt-5.5",
+              modelContextWindowTokens: 128_000,
+              modelOptions: {
+                providerOptions: { gateway: { order: ["openai"] } },
+              },
+            }),
           },
         }),
       },
@@ -79,7 +75,7 @@ describe("dynamic runtime model resolution", () => {
     if (result === null || result === undefined) throw new Error("expected selection");
 
     const resolved = normalizeDynamicRuntimeModelResult({
-      fallback: { contextWindowTokens: 256_000, id: "openai/gpt-5.5" },
+      defaults: { contextWindowTokens: 256_000, id: "dynamic" },
       result,
     });
 
@@ -92,18 +88,18 @@ describe("dynamic runtime model resolution", () => {
     });
   });
 
-  it("inherits fallback provider options but never the fallback context window", () => {
+  it("inherits agent-level model metadata", () => {
     const resolved = normalizeDynamicRuntimeModelResult({
-      fallback: {
+      defaults: {
         contextWindowTokens: 256_000,
-        id: "openai/gpt-5.5",
+        id: "dynamic",
         providerOptions: { gateway: { order: ["openai"] } },
       },
       result: "openai/gpt-5.5-mini",
     });
 
     expect(resolved.reference).toEqual({
-      contextWindowTokens: undefined,
+      contextWindowTokens: 256_000,
       id: "openai/gpt-5.5-mini",
       providerOptions: { gateway: { order: ["openai"] } },
     });
@@ -112,7 +108,7 @@ describe("dynamic runtime model resolution", () => {
   it("rejects selections with unknown keys", () => {
     expect(() =>
       normalizeDynamicRuntimeModelResult({
-        fallback: { id: "openai/gpt-5.5" },
+        defaults: { id: "dynamic" },
         result: {
           model: "openai/gpt-5.5-mini",
           contextWindowTokens: 128_000,

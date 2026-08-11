@@ -30,7 +30,7 @@ async function resolveGatewayCredentialPresence(
 ): Promise<GatewayCredentialPresence> {
   const apiKey = hasEnvValue(process.env.AI_GATEWAY_API_KEY);
 
-  if (routing.kind === "external" || apiKey) {
+  if (routing.kind === "dynamic" || routing.kind === "external" || apiKey) {
     return { apiKey, oidc: false };
   }
 

@@ -11,6 +11,7 @@ import { toErrorMessage } from "#shared/errors.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import {
+  DYNAMIC_MODEL_ID,
   isDynamicModelDefinition,
   type PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
@@ -54,18 +55,21 @@ export async function compileAgentConfig(
       ? `Expected the default agent config to match the public eve shape.`
       : `Expected the agent config export "${configModule.exportName ?? "default"}" from "${configModulePath}" to match the public eve shape.`,
   );
-  const authoredModel = isDynamicModelDefinition(definition.model)
-    ? definition.model.fallback
-    : definition.model;
-  const model = await normalizeAuthoredModelReference({
-    modelCatalog: context.modelCatalog,
-    purpose: "the primary compaction trigger model",
-    contextWindowTokens: definition.modelContextWindowTokens,
-    providerOptions: definition.modelOptions?.providerOptions,
-    source: configModule,
-    sourcePath: configModulePath,
-    value: authoredModel,
-  });
+  const dynamicModel = isDynamicModelDefinition(definition.model);
+  const model = dynamicModel
+    ? normalizeDynamicModelReference({
+        contextWindowTokens: definition.modelContextWindowTokens,
+        providerOptions: definition.modelOptions?.providerOptions,
+      })
+    : await normalizeAuthoredModelReference({
+        modelCatalog: context.modelCatalog,
+        purpose: "the primary compaction trigger model",
+        contextWindowTokens: definition.modelContextWindowTokens,
+        providerOptions: definition.modelOptions?.providerOptions,
+        source: configModule,
+        sourcePath: configModulePath,
+        value: definition.model,
+      });
   const compaction: {
     model?: CompiledRuntimeModelReference;
     thresholdPercent?: number;
@@ -96,7 +100,7 @@ export async function compileAgentConfig(
     compiledConfig.description = definition.description;
   }
 
-  if (isDynamicModelDefinition(definition.model)) {
+  if (dynamicModel) {
     if (configModule === undefined) {
       throw new Error("Expected dynamic model definitions to be authored in agent.ts.");
     }
@@ -165,6 +169,18 @@ export async function compileAgentConfig(
   }
 
   return compiledConfig;
+}
+
+function normalizeDynamicModelReference(input: {
+  readonly contextWindowTokens?: number;
+  readonly providerOptions?: Record<string, JsonObject>;
+}): CompiledRuntimeModelReference {
+  return {
+    id: DYNAMIC_MODEL_ID,
+    contextWindowTokens: input.contextWindowTokens,
+    providerOptions: parseProviderOptionsRecord(input.providerOptions),
+    routing: { kind: "dynamic" },
+  };
 }
 
 function normalizeExperimentalDefinition(

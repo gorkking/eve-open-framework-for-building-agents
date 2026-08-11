@@ -28,7 +28,7 @@ export type E2ESubagentConfig = Pick<AgentDefinition, "model" | "modelContextWin
 /**
  * A static model handle: a gateway model id string or a deterministic mock
  * instance. Assignable anywhere fixtures author a non-dynamic model
- * (agent `model`, compaction `model`, dynamic fallbacks, subagents).
+ * (agent `model`, compaction `model`, dynamic selectors, subagents).
  */
 export type E2EModel = string | ReturnType<typeof mockModel>;
 

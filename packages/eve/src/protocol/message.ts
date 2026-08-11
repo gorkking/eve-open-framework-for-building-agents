@@ -117,7 +117,7 @@ export interface RuntimeIdentity {
     readonly gitBranch?: string;
     readonly gitSha?: string;
   };
-  /** Configured model id; dynamic-model agents report `dynamic:<fallback id>`. */
+  /** Configured model id; dynamic-model agents report `dynamic`. */
   readonly modelId: string;
 }
 

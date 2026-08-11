@@ -1,13 +1,13 @@
 import { defineEval } from "eve/evals";
+import { equals } from "eve/evals/expect";
 
-/** A throwing resolver degrades to the fallback model instead of failing the turn. */
+/** A throwing resolver fails the turn instead of selecting another model. */
 export default defineEval({
-  description: "Dynamic model smoke: a throwing resolver falls back instead of failing the turn.",
+  description: "Dynamic model smoke: resolver failures stop the turn.",
   async test(t) {
-    await t.send('[model: boom] Reply with exactly the text "still here" and nothing else.');
+    const failed = await t.send("[model: boom] This turn must fail before model execution.");
 
-    t.succeeded();
-    t.messageIncludes("still here");
-    t.usedNoTools();
+    t.check(failed.status, equals("failed"));
+    failed.event("turn.failed");
   },
 });

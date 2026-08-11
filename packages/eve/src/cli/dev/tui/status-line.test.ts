@@ -62,6 +62,17 @@ describe("buildStatusLine", () => {
     expect(line).toBe("anthropic/claude-sonnet-5 via ai-gateway(oidc:my-agent)");
   });
 
+  it("does not claim an endpoint for a runtime-selected model", () => {
+    const line = buildStatusLine({
+      model: "dynamic",
+      endpoint: { kind: "dynamic" },
+      theme: plain,
+      width: 120,
+    });
+
+    expect(line).toBe("dynamic");
+  });
+
   it("folds the reasoning level and Fast mode marker into the model segment", () => {
     const line = buildStatusLine({
       model: "xai/grok-4.5",

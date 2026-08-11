@@ -6,6 +6,12 @@ import {
 } from "./resolve-model-endpoint-status.js";
 
 describe("resolveModelEndpointStatus", () => {
+  it("reports runtime-selected routing as dynamic", () => {
+    expect(resolveModelEndpointStatus({ kind: "dynamic" }, { apiKey: false, oidc: false })).toEqual(
+      { kind: "dynamic" },
+    );
+  });
+
   it("reports an external endpoint without a connectedness claim", () => {
     expect(
       resolveModelEndpointStatus(

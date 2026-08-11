@@ -10,6 +10,7 @@ import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { getInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
 import { createLogger } from "#internal/logging.js";
 import type { RuntimeIdentity } from "#protocol/message.js";
+import { DYNAMIC_MODEL_ID } from "#shared/agent-definition.js";
 import { UNSPECIFIED_INPUT_SCHEMA } from "#shared/tool-schema.js";
 import type { RunMode } from "#shared/run-mode.js";
 import {
@@ -135,10 +136,7 @@ export function buildRuntimeIdentity(node: ResolvedRuntimeAgentNode): RuntimeIde
     agentId: node.turnAgent.id,
     agentName: node.agent.config?.name,
     eveVersion: packageInfo.version,
-    modelId:
-      node.turnAgent.dynamicModel === undefined
-        ? node.turnAgent.model.id
-        : `dynamic:${node.turnAgent.model.id}`,
+    modelId: node.turnAgent.dynamicModel === undefined ? node.turnAgent.model.id : DYNAMIC_MODEL_ID,
   };
 
   const gitSha = process.env.VERCEL_GIT_COMMIT_SHA?.trim();
@@ -174,7 +172,7 @@ function createRuntimeDynamicModelEventDispatcher(
       ctx: input.ctx,
       dynamicModel,
       event: input.event,
-      fallback: input.fallback,
+      defaults: input.defaults,
       messages: input.messages,
       scope,
     });

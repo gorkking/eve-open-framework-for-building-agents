@@ -103,8 +103,9 @@ export type CompiledRuntimeModelReference = InternalAgentModelDefinition & {
 };
 
 /**
- * Dynamic model resolver source preserved in the compiled manifest; the
- * compiled `config.model` remains the fallback model.
+ * Dynamic model resolver source preserved in the compiled manifest. For a
+ * dynamic agent, `config.model` carries compile-time defaults rather than an
+ * executable model reference.
  */
 export type CompiledDynamicModelDefinition = ModuleSourceRef & {
   readonly eventNames: readonly string[];
@@ -357,6 +358,7 @@ const compiledChannelEntrySchema = z.union([
 ]) as unknown as z.ZodType<CompiledChannelEntry>;
 
 const modelRoutingSchema = z.union([
+  z.object({ kind: z.literal("dynamic") }).strict(),
   z
     .object({
       kind: z.literal("gateway"),
@@ -989,6 +991,9 @@ function cloneCompiledRuntimeModelReference(
 }
 
 function cloneModelRouting(routing: ModelRouting): ModelRouting {
+  if (routing.kind === "dynamic") {
+    return { kind: "dynamic" };
+  }
   if (routing.kind === "external") {
     return { kind: "external", provider: routing.provider };
   }

@@ -17,6 +17,7 @@ import {
 } from "#internal/authored-module.js";
 import type { PublicAgentStaticModelDefinition } from "#shared/agent-definition.js";
 import {
+  ALLOWED_DYNAMIC_TOOL_EVENTS,
   isDynamicSentinel,
   type DynamicEvents,
   type DynamicToolEventName,
@@ -134,22 +135,27 @@ function normalizeAgentModelDefinition(
   value: unknown,
   message: string,
 ): NormalizedAgentDefinition["model"] {
-  // Bare-sentinel check so a fallback-less defineDynamic hits the
-  // actionable error below instead of the generic invalid-model path.
   if (!isDynamicSentinel(value)) {
     return value as NormalizedAgentDefinition["model"];
   }
 
   const record = expectObjectRecord(value, message);
-  expectOnlyKnownKeys(record, ["events", "fallback", "kind"], message);
-
-  if (record.fallback === undefined) {
-    throw new Error(`${message} Dynamic model definitions must include a "fallback" model.`);
-  }
+  expectOnlyKnownKeys(record, ["events", "kind"], message);
 
   const rawEvents = expectObjectRecord(record.events, message);
+  const eventNames = Object.keys(rawEvents);
+  if (eventNames.length === 0) {
+    throw new Error(
+      `${message} Dynamic model definitions must include at least one event handler.`,
+    );
+  }
   const events: MutableDynamicEvents = {};
   for (const [eventName, handler] of Object.entries(rawEvents)) {
+    if (!ALLOWED_DYNAMIC_TOOL_EVENTS.has(eventName)) {
+      throw new Error(
+        `${message} Dynamic models support only "session.started", "turn.started", and "step.started" handlers.`,
+      );
+    }
     events[eventName as DynamicToolEventName] = expectFunction(handler, message) as NonNullable<
       DynamicEvents[DynamicToolEventName]
     >;
@@ -157,7 +163,6 @@ function normalizeAgentModelDefinition(
 
   return {
     events,
-    fallback: record.fallback as PublicAgentStaticModelDefinition,
     kind: record.kind,
   } as NormalizedAgentDefinition["model"];
 }

@@ -92,6 +92,9 @@ export function resolveModelEndpointStatus(
   routing: ModelRouting,
   credentials: GatewayCredentialPresence,
 ): ModelEndpointStatus {
+  if (routing.kind === "dynamic") {
+    return { kind: "dynamic" };
+  }
   if (routing.kind === "external") {
     return { kind: "external", provider: routing.provider };
   }

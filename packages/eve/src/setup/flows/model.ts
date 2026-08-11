@@ -253,7 +253,14 @@ function modelMenuRows(
   }
 
   let providerRow: SelectOption<ModelMenuRow>;
-  if (routing?.kind === "external") {
+  if (routing?.kind === "dynamic") {
+    providerRow = {
+      disabled: true,
+      value: "provider",
+      label: "Change provider",
+      description: "Provider access depends on the runtime model selection",
+    };
+  } else if (routing?.kind === "external") {
     providerRow = {
       disabled: true,
       value: "provider",
@@ -388,16 +395,21 @@ export async function runModelFlow(input: {
   let providerOutcome: ModelProviderOutcome | undefined;
   let commitDraft = false;
   const externalNotice: SelectNotice | undefined =
-    routing?.kind === "external"
+    routing?.kind === "dynamic"
       ? {
           tone: "warning",
-          text: "`agent.ts` specifies the model provider directly. Model, provider, and service-tier changes stay source-owned; reasoning remains configurable here.",
+          text: "`agent.ts` selects the model dynamically. Edit the `defineDynamic` resolver to change model selection.",
         }
-      : undefined;
+      : routing?.kind === "external"
+        ? {
+            tone: "warning",
+            text: "`agent.ts` specifies the model provider directly. Model, provider, and service-tier changes stay source-owned; reasoning remains configurable here.",
+          }
+        : undefined;
 
   // Start at the first useful row. Cancellation keeps the current row.
   let nextSelection: ModelMenuRow =
-    provider.kind === "unset" && routing?.kind !== "external"
+    provider.kind === "unset" && routing?.kind !== "dynamic" && routing?.kind !== "external"
       ? "provider"
       : editable || settingsEditable
         ? "model"
@@ -405,7 +417,9 @@ export async function runModelFlow(input: {
   // A gateway model with no provider cannot run. Skip the menu's extra Enter
   // and open provider setup as soon as that state is confirmed.
   let openProviderFirst =
-    routing?.kind !== "external" && (input.initialStep === "provider" || provider.kind === "unset");
+    routing?.kind !== "dynamic" &&
+    routing?.kind !== "external" &&
+    (input.initialStep === "provider" || provider.kind === "unset");
 
   while (true) {
     let pick: ModelMenuRow;
@@ -454,7 +468,10 @@ export async function runModelFlow(input: {
           : {
               kind: "fixed",
               current,
-              reason: "Set via an SDK model call in agent.ts; edit the source to change it",
+              reason:
+                routing?.kind === "dynamic"
+                  ? "Selected by defineDynamic in agent.ts; edit the resolver to change it"
+                  : "Set via an SDK model call in agent.ts; edit the source to change it",
             },
         reasoning,
         serviceTier,
@@ -561,8 +578,9 @@ async function readCurrentAgentModel(appRoot: string): Promise<CurrentAgentModel
       routing: model?.routing ?? null,
       reasoning: config?.reasoning ?? null,
       serviceTier: readGatewayServiceTier(model?.providerOptions),
-      editable: model !== undefined && model.source === undefined,
-      settingsEditable: config?.source !== undefined,
+      editable:
+        model !== undefined && model.source === undefined && config?.dynamicModel === undefined,
+      settingsEditable: config?.source !== undefined && config.dynamicModel === undefined,
     };
   } catch {
     return {
@@ -590,8 +608,10 @@ export async function modelChangeRefusalForUneditableModel(
     return null;
   }
   const detail =
-    routing?.kind === "external"
-      ? `the external provider \`${routing.provider}\``
-      : "an SDK model call";
+    routing?.kind === "dynamic"
+      ? "a defineDynamic resolver"
+      : routing?.kind === "external"
+        ? `the external provider \`${routing.provider}\``
+        : "an SDK model call";
   return `Model is set via ${detail} in agent.ts, not a string literal; /model can't rewrite it. Edit \`model\` in agent.ts.`;
 }
