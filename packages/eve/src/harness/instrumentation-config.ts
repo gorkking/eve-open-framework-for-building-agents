@@ -1,9 +1,7 @@
-import type {
-  InstrumentationDefinition,
-  InstrumentationSetupContext,
-} from "#public/instrumentation/index.js";
 import { createInstrumentationHooks } from "#harness/instrumentation-lifecycle.js";
 import { registerInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
+import { createInstrumentationSetupContext } from "#harness/instrumentation-setup-context.js";
+import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 
 /**
  * Process-global store for the authored instrumentation config.
@@ -30,19 +28,24 @@ interface InstrumentationConfigGlobal {
 const globalContainer = globalThis as typeof globalThis & InstrumentationConfigGlobal;
 
 /**
- * Registers the authored instrumentation config and invokes its `setup`
- * callback with the resolved agent name.
+ * Registers the authored instrumentation config and awaits its `setup`
+ * callback.
  *
  * Called once by the generated instrumentation Nitro plugin at server
  * startup. Subsequent calls overwrite the previous value.
+ *
+ * The store write lands before `setup` runs so a synchronous caller sees the
+ * config without waiting on the returned promise.
  *
  * @internal — not part of the public API.
  */
 export async function registerInstrumentationConfig(
   config: InstrumentationDefinition,
-  context: InstrumentationSetupContext,
+  input: { readonly agentName: string },
 ): Promise<void> {
   globalContainer[INSTRUMENTATION_CONFIG_GLOBAL_KEY] = config;
+  // This legacy layout leaves `registerOTel` to `setup`, so install only the
+  // runtime projection consumed by the harness.
   registerInstrumentationRuntime({
     forceFlush: async () => undefined,
     hooks: createInstrumentationHooks([]),
@@ -55,7 +58,7 @@ export async function registerInstrumentationConfig(
     runInContext: (_operation, execute) => execute(),
     shutdown: async () => undefined,
   });
-  await config.setup?.(context);
+  await config.setup?.(createInstrumentationSetupContext(input.agentName));
 }
 
 /**

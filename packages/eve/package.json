@@ -206,6 +206,11 @@
       "import": "./dist/src/public/instrumentation/index.js",
       "default": "./dist/src/public/instrumentation/index.js"
     },
+    "./instrumentation/otel": {
+      "types": "./dist/src/public/instrumentation/otel.d.ts",
+      "import": "./dist/src/public/instrumentation/otel.js",
+      "default": "./dist/src/public/instrumentation/otel.js"
+    },
     "./schedules": {
       "types": "./dist/src/public/schedules/index.d.ts",
       "import": "./dist/src/public/schedules/index.js",

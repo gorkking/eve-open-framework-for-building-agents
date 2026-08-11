@@ -77,18 +77,25 @@ vi.mock("ai", () => ({
   tool: vi.fn((t: unknown) => t),
 }));
 
-const { existingOtelIntegration, mockCreateAiSdkHookBridge } = vi.hoisted(() => ({
-  existingOtelIntegration: { onStart: vi.fn() },
+const {
+  mockCreateAiSdkHookBridge,
+  mockGetRegisteredTelemetryIntegrations,
+  registeredAuthorIntegration,
+  registeredOtelIntegration,
+} = vi.hoisted(() => ({
   mockCreateAiSdkHookBridge: vi.fn((..._args: unknown[]) => ({ onStart: vi.fn() })),
+  mockGetRegisteredTelemetryIntegrations: vi.fn((): unknown[] => []),
+  registeredAuthorIntegration: { onStart: vi.fn() },
+  registeredOtelIntegration: { onStart: vi.fn() },
 }));
 
 vi.mock("./ai-sdk-hook-bridge.js", () => ({
   createAiSdkHookBridge: (...args: unknown[]) => mockCreateAiSdkHookBridge(...args),
 }));
 
-vi.mock("./otel-integration.js", () => ({
-  createOtelIntegration: vi.fn(() => existingOtelIntegration),
+vi.mock("./ai-sdk-telemetry.js", () => ({
   ensureOtelIntegration: vi.fn(),
+  getRegisteredTelemetryIntegrations: () => mockGetRegisteredTelemetryIntegrations(),
 }));
 
 const mockGetInstrumentationConfig = vi.fn().mockReturnValue(undefined);
@@ -101,6 +108,10 @@ vi.mock("./instrumentation-runtime.js", () => ({
   getInstrumentationRuntime: (...args: unknown[]) => mockGetInstrumentationRuntime(...args),
 }));
 
+/**
+ * Registering an authored config writes both stores, so the tests toggle
+ * telemetry through one call rather than keeping two mocks in step by hand.
+ */
 function declareTelemetry(config: Readonly<Record<string, unknown>> | undefined): void {
   mockGetInstrumentationConfig.mockReturnValue(config);
   mockGetInstrumentationRuntime.mockReturnValue(
@@ -135,6 +146,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   declareTelemetry(undefined);
+  mockGetRegisteredTelemetryIntegrations.mockReturnValue([]);
 });
 
 function createTestSession(overrides?: Partial<HarnessSession>): HarnessSession {
@@ -10204,7 +10216,7 @@ describe("createToolLoopHarness", () => {
       });
       const attemptCompleted = vi.fn();
       const hooks = createInstrumentationHooks([
-        { events: { "step.attempt.completed": attemptCompleted } },
+        { events: { "step.attempt.completed": attemptCompleted }, name: "attempt" },
       ]);
       const runInContext: InstrumentationContextRunner = (_operation, execute) => execute();
       const config = createTestConfig("conversation", undefined, {
@@ -10278,7 +10290,7 @@ describe("createToolLoopHarness", () => {
       });
       const started = vi.fn();
       const hooks = createInstrumentationHooks([
-        { events: { "action.started": started }, name: "test" },
+        { events: { "action.started": started }, name: "action" },
       ]);
       const { emit } = createEventCollector();
       const runStep = createToolLoopHarness(
@@ -10301,7 +10313,7 @@ describe("createToolLoopHarness", () => {
       );
     });
 
-    it("composes lifecycle hooks with existing authored OTel", async () => {
+    it("composes the bridge with every registered integration", async () => {
       setupMockAgent({
         finishReason: "stop",
         response: { messages: [{ content: "Hello!", role: "assistant" }] },
@@ -10310,6 +10322,11 @@ describe("createToolLoopHarness", () => {
         toolResults: [],
       });
       declareTelemetry({ recordInputs: true, recordOutputs: false });
+      // An authored module can register its own integration alongside eve's.
+      mockGetRegisteredTelemetryIntegrations.mockReturnValue([
+        registeredOtelIntegration,
+        registeredAuthorIntegration,
+      ]);
       const hooks = createInstrumentationHooks([]);
       const runStep = createToolLoopHarness(
         createTestConfig("conversation", undefined, {
@@ -10331,7 +10348,7 @@ describe("createToolLoopHarness", () => {
         };
       };
       expect(agentCall.telemetry).toMatchObject({
-        integrations: [bridge, existingOtelIntegration],
+        integrations: [bridge, registeredOtelIntegration, registeredAuthorIntegration],
         recordInputs: true,
         recordOutputs: false,
       });

@@ -155,17 +155,20 @@ async function dispatchToProvider(
   const startedBoundary = event.type.endsWith(".started") || event.type === "input.requested";
   const owner = stateOwner(event);
   const providerName = provider.name;
-  if (isInstrumentationStateAbandoned(providerName, event.idempotencyKey)) return;
+  const stateNamespace = provider.stateNamespace ?? providerName;
+  if (isInstrumentationStateAbandoned(stateNamespace, event.idempotencyKey)) return;
   const handler = provider.events?.[event.type];
   if (handler === undefined) return;
-  const state = instrumentationStateSlot(providerName, event.idempotencyKey, owner);
+  const state = instrumentationStateSlot(stateNamespace, event.idempotencyKey, owner);
   try {
     const settled = await withTimeout(
       () => (handler as InstrumentationEventHandler<InstrumentationEvent>)(event, { state }),
       handlerTimeoutMs,
       () => {
         state.revoke();
-        if (startedBoundary) abandonInstrumentationState(providerName, event.idempotencyKey, owner);
+        if (startedBoundary) {
+          abandonInstrumentationState(stateNamespace, event.idempotencyKey, owner);
+        }
       },
     );
     if (!settled) {

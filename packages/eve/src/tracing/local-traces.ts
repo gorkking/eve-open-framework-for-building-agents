@@ -23,7 +23,15 @@ export interface LocalTracesProcessor extends SpanProcessor {
   releaseSession(sessionId: string): Promise<boolean>;
 }
 
-/** Whether a processor still exposes the local spool's session lifecycle. */
+/**
+ * Reports whether a processor tracks which session owns which trace, so eve can
+ * tell it when that session is done.
+ *
+ * Anything standing between eve and the spool has to answer for the spool, so
+ * this is the check a wrapper uses to decide whether it must forward the call.
+ *
+ * @internal
+ */
 export function hasSessionRelease(processor: SpanProcessor): processor is LocalTracesProcessor {
   return typeof (processor as Partial<LocalTracesProcessor>).releaseSession === "function";
 }
@@ -35,7 +43,8 @@ export function hasSessionRelease(processor: SpanProcessor): processor is LocalT
  * to observe spans to track which session owns which trace.
  *
  * Internal because of `releaseSession`, which eve's runtime drives off session
- * lifecycle.
+ * lifecycle. The authored surface is `localTraces()`, which wraps this in an
+ * `OtelIntegration`.
  */
 export function createLocalTracesProcessor(
   input: { readonly appRoot?: string } = {},
@@ -80,7 +89,16 @@ export function createLocalTracesProcessor(
   };
 }
 
-/** Intersects the local destination policy with `EVE_TRACES_CONTENT`. */
+/**
+ * The local spool's content policy: its options, intersected with
+ * `EVE_TRACES_CONTENT`.
+ *
+ * The variable used to be the process-wide switch. It now applies to this one
+ * destination, and only ever narrows — `off` still wins where it applies, but
+ * it no longer decides what a hosted backend beside it receives.
+ *
+ * @internal
+ */
 export function resolveLocalTracesContent(
   options: {
     readonly recordInputs?: boolean;

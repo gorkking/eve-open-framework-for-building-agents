@@ -94,7 +94,10 @@ describe("createAiSdkHookBridge", () => {
   it("passes the identity captured at model-call start to the context runner", async () => {
     const ids: string[] = [];
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.started": (event) => void ids.push(event.idempotencyKey) } },
+      {
+        events: { "model.call.started": (event) => void ids.push(event.idempotencyKey) },
+        name: "identity",
+      },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks, (operation, execute) => {
       ids.push(operation.idempotencyKey);
@@ -132,7 +135,10 @@ describe("createAiSdkHookBridge", () => {
   it("derives replay-stable model identity without the AI SDK call ID", async () => {
     const keys: string[] = [];
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.started": (event) => void keys.push(event.idempotencyKey) } },
+      {
+        events: { "model.call.started": (event) => void keys.push(event.idempotencyKey) },
+        name: "identity",
+      },
     ]);
 
     for (const callId of ["sdk-random-1", "sdk-random-2"]) {
@@ -155,6 +161,7 @@ describe("createAiSdkHookBridge", () => {
             events.push(event);
           },
         },
+        name: "metadata",
       },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
@@ -183,11 +190,13 @@ describe("createAiSdkHookBridge", () => {
             throw new Error("provider failed");
           },
         },
+        name: "failing",
       },
       {
         events: {
           "model.call.completed": after,
         },
+        name: "observer",
       },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
@@ -211,7 +220,9 @@ describe("createAiSdkHookBridge", () => {
 
   it("terminalizes started operations when the attempt errors", async () => {
     const after = vi.fn();
-    const hooks = createInstrumentationHooks([{ events: { "model.call.failed": after } }]);
+    const hooks = createInstrumentationHooks([
+      { events: { "model.call.failed": after }, name: "terminal" },
+    ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
     await Reflect.apply(bridge.onLanguageModelCallStart!, bridge, [
@@ -252,8 +263,8 @@ describe("createAiSdkHookBridge", () => {
     });
     const started = vi.fn();
     const hooks = createInstrumentationHooks([
-      { events: { "step.attempt.started": mutator } },
-      { events: { "step.attempt.started": started } },
+      { events: { "step.attempt.started": mutator }, name: "mutator" },
+      { events: { "step.attempt.started": started }, name: "observer" },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
@@ -288,7 +299,10 @@ describe("createAiSdkHookBridge", () => {
       expect(Object.isFrozen(event.usage.inputTokenDetails)).toBe(true);
     });
     const hooks = createInstrumentationHooks([
-      { events: { "model.call.completed": after, "model.call.started": before } },
+      {
+        events: { "model.call.completed": after, "model.call.started": before },
+        name: "model",
+      },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
@@ -404,7 +418,10 @@ describe("createAiSdkHookBridge", () => {
         expect(Object.isFrozen(event.output)).toBe(true);
       });
       const hooks = createInstrumentationHooks([
-        { events: { "tool.call.completed": after, "tool.call.started": before } },
+        {
+          events: { "tool.call.completed": after, "tool.call.started": before },
+          name: "tool",
+        },
       ]);
       const bridge = createAiSdkHookBridge(scope, hooks);
       const toolCall = { input: { q: "eve" }, toolCallId: "tool-1", toolName: "search" };
@@ -478,7 +495,9 @@ describe("createAiSdkHookBridge", () => {
 
   it("skips a terminal handler when the operation never started", async () => {
     const completed = vi.fn();
-    const hooks = createInstrumentationHooks([{ events: { "model.call.completed": completed } }]);
+    const hooks = createInstrumentationHooks([
+      { events: { "model.call.completed": completed }, name: "terminal" },
+    ]);
     const bridge = createAiSdkHookBridge(scope, hooks);
 
     // No onLanguageModelCallStart, so the bridge holds no id and publishes
@@ -516,6 +535,7 @@ describe("createAiSdkHookBridge", () => {
             terminalStates.set(event.idempotencyKey, started.get(event.idempotencyKey));
           },
         },
+        name: "parallel",
       },
     ]);
     const bridge = createAiSdkHookBridge(scope, hooks);

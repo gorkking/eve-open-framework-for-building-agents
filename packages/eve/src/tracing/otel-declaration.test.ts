@@ -61,7 +61,9 @@ describe("otelIntegration", () => {
     expect(otelIntegration().content).toStrictEqual({ recordInputs: true, recordOutputs: true });
   });
 
-  it("puts a declined policy in front of every processor", () => {
+  // An author's own processor is part of this destination, and the point of
+  // declining is that nothing under it sees what was said.
+  it("puts a declined policy in front of every processor, an author's included", () => {
     const first = processor();
     const integration = otelIntegration({ recordOutputs: false, spanProcessors: [first] });
 
@@ -135,12 +137,16 @@ describe("collectOtelPipeline", () => {
     });
     expect(collected.settings).toStrictEqual({
       functionId: "weather",
+      // Nothing declared a destination, so nothing asked for content.
       recordInputs: false,
       recordOutputs: false,
       traceChannelRequests: true,
     });
   });
 
+  // Content governs what is written onto the span, which is upstream of every
+  // destination — so one that wants it is enough, and the ones that declined
+  // drop it on their own way out.
   it("takes content capture as the union across destinations", () => {
     const collected = collectOtelPipeline([
       otelIntegration({ recordInputs: false, recordOutputs: false }),

@@ -445,6 +445,8 @@ export type InstrumentationEventHandler<TEvent> = (
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
   readonly name: string;
+  /** Durable state identity, separate from the human-readable log name. */
+  readonly stateNamespace?: string;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
     readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptCompletedEvent>;

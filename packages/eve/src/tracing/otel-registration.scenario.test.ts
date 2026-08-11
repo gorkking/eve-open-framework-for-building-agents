@@ -82,7 +82,8 @@ describe("registerOtelPipeline", () => {
   it("does not export the private registration span", async () => {
     const exporter = new InMemorySpanExporter();
     const processor = new SimpleSpanProcessor(exporter);
-    registerOtelPipeline({
+    const shutdown = vi.spyOn(processor, "shutdown");
+    const runtime = registerOtelPipeline({
       pipeline: { spanProcessors: [processor] },
       serviceName: "weather",
     });
@@ -91,7 +92,8 @@ describe("registerOtelPipeline", () => {
     await processor.forceFlush();
 
     expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["user.work"]);
-    await processor.shutdown();
+    await runtime.shutdown();
+    expect(shutdown).toHaveBeenCalledOnce();
   });
 });
 

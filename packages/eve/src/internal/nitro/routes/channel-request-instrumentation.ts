@@ -58,9 +58,8 @@ export interface TraceChannelRequestInput {
  * waiting for `event.waitUntil()` work or streamed response bodies.
  *
  * Emitting these spans is opt-in: unless authored instrumentation enables it
- * via `defineInstrumentation({ traceChannelRequests: true })`, the handler runs
- * with no span (`undefined`) and no context extraction — a true bypass, not a
- * non-recording span.
+ * via `traceChannelRequests: true`, the handler runs with no span (`undefined`)
+ * and no context extraction — a true bypass, not a non-recording span.
  *
  * This is observability-only: it never changes the response and performs no
  * synchronous span export in the request path, adding only minimal in-process

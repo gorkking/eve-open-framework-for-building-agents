@@ -160,6 +160,7 @@ describe("createInstrumentationHandleEvent", () => {
       },
     ]);
   });
+
   it("publishes every runtime action and settles it in a replacement worker", async () => {
     const events: unknown[] = [];
     const scope = {

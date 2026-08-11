@@ -938,10 +938,10 @@ describe("createAgentOtelInstrumentation", () => {
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
     const agentOtel = createAgentOtelInstrumentation({
-      recordInputs: false,
-      recordOutputs: false,
       frameworkVersion: "test",
       idGenerator,
+      recordInputs: false,
+      recordOutputs: false,
       stateStore: new InMemoryAgentTraceStateStore(),
       tracer: provider.getTracer("eve.agent"),
     });

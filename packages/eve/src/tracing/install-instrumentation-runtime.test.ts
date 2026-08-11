@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ContextContainer, contextStorage } from "#context/container.js";
+import { turnIdempotencyKey } from "#harness/instrumentation-lifecycle.js";
 import { installInstrumentationRuntime } from "#tracing/install-instrumentation-runtime.js";
 import { otelIntegration, collectOtelPipeline } from "#tracing/otel-declaration.js";
 
-const { forceFlush, shutdown } = vi.hoisted(() => ({
+const { forceFlush, internalTerminalState, shutdown } = vi.hoisted(() => ({
   forceFlush: vi.fn(async () => undefined),
+  internalTerminalState: vi.fn(),
   shutdown: vi.fn(async () => undefined),
 }));
 
@@ -25,7 +28,17 @@ vi.mock("#tracing/otel-registration.js", async (importOriginal) => {
 
 vi.mock("#tracing/agent-otel-provider.js", () => ({
   createAgentOtelInstrumentation: () => ({
-    hook: {},
+    hook: {
+      events: {
+        "turn.completed": (_event: unknown, ctx: { state: { get(): unknown } }) => {
+          internalTerminalState(ctx.state.get());
+        },
+        "turn.started": (_event: unknown, ctx: { state: { set(value: string): void } }) => {
+          ctx.state.set("framework");
+        },
+      },
+      name: "eve.otel",
+    },
     runInContext: (_operation: unknown, execute: () => PromiseLike<unknown>) => execute(),
   }),
 }));
@@ -35,6 +48,7 @@ const RUNTIME_GLOBAL_KEY = Symbol.for("eve.instrumentation-runtime");
 describe("installInstrumentationRuntime", () => {
   beforeEach(() => {
     forceFlush.mockClear();
+    internalTerminalState.mockClear();
     shutdown.mockClear();
     delete (globalThis as Record<symbol, unknown>)[RUNTIME_GLOBAL_KEY];
   });
@@ -62,5 +76,45 @@ describe("installInstrumentationRuntime", () => {
     });
     expect(shutdown).toHaveBeenCalledOnce();
     expect(providerShutdown).toHaveBeenCalledOnce();
+  });
+
+  it("isolates authored state from an internal provider with the same name", async () => {
+    const authoredTerminalState = vi.fn();
+    const runtime = installInstrumentationRuntime({
+      collected: collectOtelPipeline([otelIntegration()]),
+      frameworkVersion: "test",
+      providers: [
+        {
+          events: {
+            "turn.completed": (_event, ctx) => authoredTerminalState(ctx.state.get()),
+            "turn.started": (_event, ctx) => ctx.state.set("authored"),
+          },
+          name: "eve.otel",
+          stateNamespace: "authored:eve.otel",
+        },
+      ],
+      serviceName: "weather",
+    });
+    const idempotencyKey = turnIdempotencyKey("session-1", "turn-1");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      await runtime.hooks.publish({
+        idempotencyKey,
+        rootSessionId: "session-1",
+        sequence: 0,
+        sessionId: "session-1",
+        turnId: "turn-1",
+        type: "turn.started",
+      });
+      await runtime.hooks.publish({
+        idempotencyKey,
+        sessionId: "session-1",
+        turnId: "turn-1",
+        type: "turn.completed",
+      });
+    });
+
+    expect(internalTerminalState).toHaveBeenCalledExactlyOnceWith("framework");
+    expect(authoredTerminalState).toHaveBeenCalledExactlyOnceWith("authored");
   });
 });

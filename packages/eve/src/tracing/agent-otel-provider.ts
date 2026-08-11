@@ -58,9 +58,13 @@ interface AttemptSpanState {
 }
 
 export interface AgentOtelInstrumentationInput {
-  /** Whether any destination requested model prompts and tool inputs. */
+  /**
+   * Whether to write model prompts and tool call inputs onto spans at all.
+   * This is the union across destinations, not one destination's policy: a
+   * destination that declined drops these on its way out instead.
+   */
   readonly recordInputs?: boolean;
-  /** Whether any destination requested model responses and tool outputs. */
+  /** The same, for model responses and tool call outputs. */
   readonly recordOutputs?: boolean;
   readonly frameworkVersion: string;
   readonly idGenerator: AgentSpanIdGenerator;
@@ -509,7 +513,6 @@ export function createAgentOtelInstrumentation(
 
   return {
     hook: {
-      name: "eve.otel",
       events: {
         "action.completed": actions.events["action.completed"],
         "action.failed": actions.events["action.failed"],
@@ -535,6 +538,7 @@ export function createAgentOtelInstrumentation(
         "turn.failed": onTurnTerminal,
         "turn.started": onTurnStarted,
       },
+      name: "eve.otel",
     },
     runInContext(operation, execute) {
       const scope = attemptScopes.get(operation.scope.attemptId) ?? operation.scope;
