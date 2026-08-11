@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { InternalSandboxSession } from "#execution/sandbox/session.js";
+import type {
+  InternalSandboxSession,
+  SandboxNetworkPolicyRef,
+} from "#execution/sandbox/session.js";
 import type { SandboxProcess } from "#shared/sandbox-session.js";
 import { buildSandboxSession } from "#execution/sandbox/session.js";
 import { bufferToStream, streamToBuffer } from "#execution/sandbox/stream-utils.js";
@@ -71,6 +74,58 @@ describe("buildSandboxSession", () => {
     const session = buildSandboxSession(createTestPrimitives());
 
     await expect(session.setNetworkPolicy("deny-all")).resolves.toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // getNetworkPolicy
+  // ---------------------------------------------------------------------------
+
+  it("reports allow-all when no policy ref is supplied", () => {
+    const session = buildSandboxSession(createTestPrimitives());
+
+    expect(session.getNetworkPolicy()).toBe("allow-all");
+  });
+
+  it("reports the policy the ref was seeded with", () => {
+    const session = buildSandboxSession(createTestPrimitives(), async () => {}, {
+      current: "deny-all",
+    });
+
+    expect(session.getNetworkPolicy()).toBe("deny-all");
+  });
+
+  it("reports the policy applied through setNetworkPolicy", async () => {
+    const session = buildSandboxSession(createTestPrimitives(), async () => {}, {
+      current: "allow-all",
+    });
+
+    await session.setNetworkPolicy("deny-all");
+
+    expect(session.getNetworkPolicy()).toBe("deny-all");
+  });
+
+  it("keeps the prior policy when the applier rejects", async () => {
+    const session = buildSandboxSession(
+      createTestPrimitives(),
+      async () => {
+        throw new Error("setNetworkPolicy() is not supported on this backend.");
+      },
+      { current: "deny-all" },
+    );
+
+    await expect(session.setNetworkPolicy("allow-all")).rejects.toThrow("is not supported");
+    expect(session.getNetworkPolicy()).toBe("deny-all");
+  });
+
+  it("reads policy changes the backend handle writes to a shared ref", () => {
+    const networkPolicyRef: SandboxNetworkPolicyRef = { current: "allow-all" };
+    const session = buildSandboxSession(createTestPrimitives(), async () => {}, networkPolicyRef);
+
+    // Stands in for a handle's `use({ networkPolicy })`, which drives the
+    // provider SDK directly rather than going through the session.
+    networkPolicyRef.current = "deny-all";
+
+    expect(session.getNetworkPolicy()).toBe("deny-all");
   });
 
   // ---------------------------------------------------------------------------

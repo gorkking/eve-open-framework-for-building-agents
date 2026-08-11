@@ -100,6 +100,11 @@ export class MicrosandboxVm {
     return this.#input.sessionKey;
   }
 
+  /** Policy the live VM was last created or recreated under. */
+  get networkPolicy(): SandboxNetworkPolicy | undefined {
+    return this.#networkPolicy;
+  }
+
   async captureState(optionsHash: string): Promise<MicrosandboxSessionMetadata> {
     this.#optionsHash = optionsHash;
     if (isEveDevEnvironment()) {

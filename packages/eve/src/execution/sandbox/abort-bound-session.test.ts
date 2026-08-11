@@ -55,6 +55,7 @@ function createRecordingSession(calls: RecordedCall[]): SandboxSession {
     removePath: async (options) => {
       record("removePath", options.abortSignal);
     },
+    getNetworkPolicy: () => "allow-all" as const,
     setNetworkPolicy: async () => {},
   };
 }

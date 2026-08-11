@@ -21,16 +21,20 @@ interface ExtensionCapabilityContract {
 
 const EXTENSION_CAPABILITY_CONTRACTS = {
   extension: { current: 1, supported: [1], dropped: {} },
-  tool: { current: 11, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], dropped: {} },
-  dynamicTool: { current: 12, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], dropped: {} },
-  connection: { current: 4, supported: [1, 2, 3, 4], dropped: {} },
-  hook: { current: 9, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9], dropped: {} },
+  tool: { current: 12, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], dropped: {} },
+  dynamicTool: {
+    current: 13,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    dropped: {},
+  },
+  connection: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },
+  hook: { current: 10, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dropped: {} },
   skill: { current: 1, supported: [1], dropped: {} },
   dynamicSkill: { current: 7, supported: [1, 2, 3, 4, 5, 6, 7], dropped: {} },
   instructions: { current: 1, supported: [1], dropped: {} },
   dynamicInstructions: { current: 7, supported: [1, 2, 3, 4, 5, 6, 7], dropped: {} },
   config: { current: 1, supported: [1], dropped: {} },
-  state: { current: 3, supported: [1, 2, 3], dropped: {} },
+  state: { current: 4, supported: [1, 2, 3, 4], dropped: {} },
 } as const satisfies Record<string, ExtensionCapabilityContract>;
 
 /** One independently versioned extension-facing contract. */

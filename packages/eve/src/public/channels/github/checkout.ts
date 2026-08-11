@@ -59,7 +59,10 @@ export interface GitHubCheckoutInput extends GitHubCheckoutOptions {
  * The installation token is brokered at the sandbox firewall
  * (`sandbox.setNetworkPolicy`) rather than embedded in the remote URL, so it
  * never enters the sandbox process. Requires a firewall-capable backend; the
- * local backend rejects `setNetworkPolicy`.
+ * local backend rejects `setNetworkPolicy`. The broker policy is scoped to the
+ * fetch: the session's prior policy is restored before this returns, so the
+ * token transform and the egress the broker policy opens do not outlive the
+ * checkout.
  *
  * Channel-internal; not part of the public GitHub channel API.
  */
@@ -94,52 +97,63 @@ export async function checkoutGitHubRepository(
   const remote = publicRemoteUrl({ owner: descriptor.owner, repo: descriptor.repo });
   const fetchedRef = isFullSha(checkoutRef) ? checkoutRef : "FETCH_HEAD";
 
-  // Broker the installation token at the sandbox firewall: git fetches a clean
-  // (token-free) URL and the platform injects `Authorization` on egress to
-  // GitHub, so the token never enters the sandbox process. The `"*"` rule keeps
-  // the agent's other egress open.
-  await sandbox.setNetworkPolicy(buildBrokerNetworkPolicy(token));
+  // Capture the session's policy before widening it, so the broker window
+  // below can hand the sandbox back exactly as it found it.
+  const priorPolicy = sandbox.getNetworkPolicy();
 
-  await runCheckoutCommand({
-    command: `mkdir -p ${shellQuote(checkoutPath)}`,
-    label: "create checkout directory",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git init`,
-    label: "initialize git repository",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git remote remove origin >/dev/null 2>&1 || true`,
-    label: "reset git remote",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git remote add origin ${shellQuote(remote)}`,
-    label: "configure git remote",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
-      checkoutRef,
-    )}`,
-    label: "fetch GitHub ref",
-    sandbox,
-  });
-  await runCheckoutCommand({
-    command: `cd ${shellQuote(checkoutPath)} && git checkout --detach ${shellQuote(fetchedRef)}`,
-    label: "checkout GitHub ref",
-    sandbox,
-  });
-  if (input.includeBase === true && descriptor.baseSha !== null) {
+  try {
+    // Broker the installation token at the sandbox firewall: git fetches a clean
+    // (token-free) URL and the platform injects `Authorization` on egress to
+    // GitHub, so the token never enters the sandbox process. The `"*"` rule keeps
+    // the agent's other egress open.
+    await sandbox.setNetworkPolicy(buildBrokerNetworkPolicy(token));
+
     await runCheckoutCommand({
-      command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
-        descriptor.baseSha,
-      )}`,
-      label: "fetch GitHub base ref",
+      command: `mkdir -p ${shellQuote(checkoutPath)}`,
+      label: "create checkout directory",
       sandbox,
     });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git init`,
+      label: "initialize git repository",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git remote remove origin >/dev/null 2>&1 || true`,
+      label: "reset git remote",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git remote add origin ${shellQuote(remote)}`,
+      label: "configure git remote",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
+        checkoutRef,
+      )}`,
+      label: "fetch GitHub ref",
+      sandbox,
+    });
+    await runCheckoutCommand({
+      command: `cd ${shellQuote(checkoutPath)} && git checkout --detach ${shellQuote(fetchedRef)}`,
+      label: "checkout GitHub ref",
+      sandbox,
+    });
+    if (input.includeBase === true && descriptor.baseSha !== null) {
+      await runCheckoutCommand({
+        command: `cd ${shellQuote(checkoutPath)} && GIT_TERMINAL_PROMPT=0 git fetch${fetchDepth} origin ${shellQuote(
+          descriptor.baseSha,
+        )}`,
+        label: "fetch GitHub base ref",
+        sandbox,
+      });
+    }
+  } finally {
+    // Drop the token transform and the broker's `"*"` allowance even when the
+    // fetch throws: leaving them in place would keep the installation token
+    // brokered onto every later request the agent makes to GitHub.
+    await sandbox.setNetworkPolicy(priorPolicy);
   }
 
   const head = await runCheckoutCommand({

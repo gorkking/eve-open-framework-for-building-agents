@@ -34,7 +34,7 @@ import {
 } from "#execution/sandbox/bindings/microsandbox-templates.js";
 import { createLoggingSandboxSession } from "#execution/sandbox/logging-session.js";
 import { withDevelopmentSandboxMetadataPathTag } from "#execution/sandbox/development-run.js";
-import { buildSandboxSession } from "#execution/sandbox/session.js";
+import { buildSandboxSession, type SandboxNetworkPolicyRef } from "#execution/sandbox/session.js";
 import { resolveSandboxCacheDirectory } from "#internal/application/paths.js";
 import type {
   SandboxBackendCreateInput,
@@ -110,11 +110,15 @@ export async function prewarmMicrosandboxTemplate(input: {
     setupBaseRuntime: true,
     tags: undefined,
   });
+  const templateNetworkPolicyRef: SandboxNetworkPolicyRef = {
+    current: templateSandbox.networkPolicy ?? "allow-all",
+  };
   const templateSession = buildSandboxSession(
     createMicrosandboxInternalSession(templateSandbox),
     async (policy) => {
       await templateSandbox.setNetworkPolicy(policy);
     },
+    templateNetworkPolicyRef,
   );
 
   try {
@@ -129,6 +133,7 @@ export async function prewarmMicrosandboxTemplate(input: {
         use: async (useOptions?: MicrosandboxBootstrapUseOptions) => {
           if (useOptions?.networkPolicy !== undefined) {
             await templateSandbox.setNetworkPolicy(useOptions.networkPolicy);
+            templateNetworkPolicyRef.current = useOptions.networkPolicy;
           }
           return createLoggingSandboxSession({
             log: input.prewarmInput.log,
@@ -284,21 +289,26 @@ function createHandle(
   optionsHash: string,
   onShutdown?: () => void,
 ): SandboxBackendHandle<MicrosandboxSessionUseOptions> {
+  // One session and one policy ref per handle: `use()` drives the VM
+  // directly, so the ref is how that lands on `getNetworkPolicy`.
+  const networkPolicyRef: SandboxNetworkPolicyRef = {
+    current: sandbox.networkPolicy ?? "allow-all",
+  };
   const session = buildSandboxSession(
     createMicrosandboxInternalSession(sandbox),
     async (policy) => {
       await sandbox.setNetworkPolicy(policy);
     },
+    networkPolicyRef,
   );
   return {
     session,
     useSessionFn: async (options?: MicrosandboxSessionUseOptions) => {
       if (options?.networkPolicy !== undefined) {
         await sandbox.setNetworkPolicy(options.networkPolicy);
+        networkPolicyRef.current = options.networkPolicy;
       }
-      return buildSandboxSession(createMicrosandboxInternalSession(sandbox), async (policy) => {
-        await sandbox.setNetworkPolicy(policy);
-      });
+      return session;
     },
     async captureState() {
       const metadata = await sandbox.captureState(optionsHash);

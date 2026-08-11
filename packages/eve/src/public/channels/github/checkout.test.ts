@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import {
   clearGitHubInstallationTokenCache,
@@ -22,6 +23,13 @@ function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json" },
   });
+}
+
+/** The firewall policy checkout applies for the duration of the fetch. */
+function brokerPolicy(): SandboxNetworkPolicy {
+  const authorization = `Basic ${Buffer.from("x-access-token:ghs_checkout").toString("base64")}`;
+  const rule = [{ transform: [{ headers: { Authorization: authorization } }] }];
+  return { allow: { "github.com": rule, "codeload.github.com": rule, "*": [] } };
 }
 
 function pullRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -87,17 +95,67 @@ describe("GitHub checkout", () => {
       false,
     );
     expect(sandbox.commandLog.some((command) => command.includes("ghs_checkout"))).toBe(false);
-    // Token brokered at the firewall via a github.com header transform.
-    const authorization = `Basic ${Buffer.from("x-access-token:ghs_checkout").toString("base64")}`;
-    expect(sandbox.networkPolicyUpdates).toEqual([
-      {
-        allow: {
-          "github.com": [{ transform: [{ headers: { Authorization: authorization } }] }],
-          "codeload.github.com": [{ transform: [{ headers: { Authorization: authorization } }] }],
-          "*": [],
-        },
+    // Token brokered at the firewall via a github.com header transform, then
+    // handed back to the policy the session started on.
+    expect(sandbox.networkPolicyUpdates).toEqual([brokerPolicy(), "allow-all"]);
+    expect(sandbox.session.getNetworkPolicy()).toBe("allow-all");
+  });
+
+  it("restores a restrictive prior policy after the fetch window", async () => {
+    const headSha = "a".repeat(40);
+    const sandbox = mockSandbox({
+      initialNetworkPolicy: "deny-all",
+      run(options) {
+        if (options.command.includes("git rev-parse HEAD 2>/dev/null")) {
+          return { exitCode: 128, stderr: "", stdout: "" };
+        }
+        if (options.command.includes("git rev-parse HEAD")) {
+          return { exitCode: 0, stderr: "", stdout: `${headSha}\n` };
+        }
+        return { exitCode: 0, stderr: "", stdout: "" };
       },
-    ]);
+    });
+
+    await checkoutGitHubRepository(sandbox.session, {
+      credentials,
+      headSha,
+      installationId: 55,
+      owner: "vercel",
+      repo: "eve",
+    });
+
+    expect(sandbox.networkPolicyUpdates).toEqual([brokerPolicy(), "deny-all"]);
+    expect(sandbox.session.getNetworkPolicy()).toBe("deny-all");
+  });
+
+  it("restores the prior policy when the fetch fails", async () => {
+    const headSha = "d".repeat(40);
+    const sandbox = mockSandbox({
+      initialNetworkPolicy: "deny-all",
+      run(options) {
+        if (options.command.includes("git fetch")) {
+          return {
+            exitCode: 128,
+            stderr: "fatal: could not read from remote repository",
+            stdout: "",
+          };
+        }
+        return { exitCode: 0, stderr: "", stdout: "" };
+      },
+    });
+
+    await expect(
+      checkoutGitHubRepository(sandbox.session, {
+        credentials,
+        headSha,
+        installationId: 55,
+        owner: "vercel",
+        repo: "eve",
+      }),
+    ).rejects.toThrow("Verify the GitHub App installation has access to this repository");
+
+    expect(sandbox.networkPolicyUpdates).toEqual([brokerPolicy(), "deny-all"]);
+    expect(sandbox.session.getNetworkPolicy()).toBe("deny-all");
   });
 
   it("skips fetch when the workspace is already at the target commit", async () => {

@@ -18,6 +18,18 @@ import { bufferToStream, streamToBuffer } from "./stream-utils.js";
 export type { InternalSandboxSession };
 
 /**
+ * Mutable slot holding the network policy a sandbox is running under.
+ *
+ * A backend handle owns the ref when it can change the policy behind the
+ * session's back — `useSessionFn` applying `use({ networkPolicy })`
+ * straight to the provider SDK, for instance — so that
+ * {@link SandboxSession.getNetworkPolicy} keeps reporting the truth.
+ */
+export interface SandboxNetworkPolicyRef {
+  current: SandboxNetworkPolicy;
+}
+
+/**
  * Builds a public {@link SandboxSession} from backend-specific primitives.
  *
  * Encoding handling, line-range slicing, and the binary/text/stream
@@ -29,10 +41,15 @@ export type { InternalSandboxSession };
  * `setNetworkPolicy` applies a firewall policy to the live sandbox. It
  * defaults to a no-op so backends without a firewall (and test doubles)
  * need not supply one; the Vercel backend wires it to `sandbox.update`.
+ * `getNetworkPolicy` reads `networkPolicyRef`, which each successful
+ * `setNetworkPolicy` updates. Backends seed the ref with the policy the
+ * sandbox was created under, and share one ref across the handle when the
+ * handle can change the policy without going through this session.
  */
 export function buildSandboxSession(
   primitives: InternalSandboxSession,
   setNetworkPolicy: (policy: SandboxNetworkPolicy) => Promise<void> = async () => {},
+  networkPolicyRef: SandboxNetworkPolicyRef = { current: "allow-all" },
 ): SandboxSession {
   async function run(options: SandboxRunOptions) {
     const process = await primitives.spawn(options);
@@ -111,7 +128,15 @@ export function buildSandboxSession(
         recursive: options.recursive,
       });
     },
-    setNetworkPolicy,
+    getNetworkPolicy(): SandboxNetworkPolicy {
+      return networkPolicyRef.current;
+    },
+    async setNetworkPolicy(policy: SandboxNetworkPolicy) {
+      await setNetworkPolicy(policy);
+      // Only record a policy the backend accepted: just-bash rejects the
+      // call outright, and a provider can fail mid-apply.
+      networkPolicyRef.current = policy;
+    },
   };
 }
 

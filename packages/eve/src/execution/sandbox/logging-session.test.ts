@@ -105,6 +105,7 @@ function createTestSession(runResult = { exitCode: 0, stderr: "", stdout: "" }):
     writeBinaryFile: vi.fn(async () => {}),
     writeTextFile: vi.fn(async () => {}),
     removePath: vi.fn(async () => {}),
+    getNetworkPolicy: vi.fn(() => "allow-all" as const),
     setNetworkPolicy: vi.fn(async () => {}),
   };
 }
