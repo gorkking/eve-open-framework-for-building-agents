@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { createCompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
+import { createRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import { discoverAgent } from "#discover/discover-agent.js";
 import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
 import type { AgentReasoningDefinition } from "#shared/agent-definition.js";
@@ -123,7 +123,7 @@ async function validateModelSlug(appRoot: string, slug: string): Promise<string 
     return `\`${slug}\` isn't a provider/model id (e.g. anthropic/claude-sonnet-5).`;
   }
 
-  const catalog = createCompiledRuntimeModelCatalogLoader(appRoot);
+  const catalog = createRuntimeModelCatalogLoader(appRoot);
   try {
     const limits = await catalog.getModelLimits(formatLanguageModelGatewayId(slug));
     if (limits === null) {

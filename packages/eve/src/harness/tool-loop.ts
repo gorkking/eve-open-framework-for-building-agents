@@ -414,14 +414,19 @@ function updateCompactionThresholdForModelReference(input: {
   readonly modelReference: RuntimeModelReference;
   readonly priorReference: RuntimeModelReference;
 }): CompactionConfig {
-  if (
-    input.modelReference.contextWindowTokens === undefined ||
-    input.priorReference.contextWindowTokens === undefined
-  ) {
+  if (input.modelReference.contextWindowTokens === undefined) {
     return input.compaction;
   }
 
-  const thresholdPercent = input.compaction.threshold / input.priorReference.contextWindowTokens;
+  const thresholdPercent =
+    input.compaction.thresholdPercent ??
+    (input.priorReference.contextWindowTokens === undefined
+      ? undefined
+      : input.compaction.threshold / input.priorReference.contextWindowTokens);
+  if (thresholdPercent === undefined) {
+    return input.compaction;
+  }
+
   return {
     ...input.compaction,
     threshold: Math.max(1, Math.floor(input.modelReference.contextWindowTokens * thresholdPercent)),

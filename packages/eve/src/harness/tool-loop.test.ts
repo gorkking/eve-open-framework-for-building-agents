@@ -933,12 +933,12 @@ describe("createToolLoopHarness", () => {
     const ctx = new ContextContainer();
     const session = createTestSession({
       agent: {
-        modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
+        modelReference: { id: "dynamic" },
         requiresDynamicModelSelection: true,
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },
-      compaction: { recentWindowSize: 10, threshold: 90_000 },
+      compaction: { recentWindowSize: 10, threshold: 100_000, thresholdPercent: 0.9 },
     });
 
     const result = await contextStorage.run(ctx, () => runStep(session, { message: "Hi" }));

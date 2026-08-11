@@ -1,7 +1,8 @@
-import { e2eAgentConfig, e2eModel, type E2EModel } from "@eve-e2e/config";
+import { e2eAgentConfig, type E2EModel } from "@eve-e2e/config";
 import { defineAgent, defineDynamic, type DynamicResolveContext } from "eve";
 
-const model = e2eModel();
+const { experimental, model: configuredModel, modelContextWindowTokens } = e2eAgentConfig();
+const model = configuredModel as E2EModel;
 
 type DynamicModelSelection =
   | E2EModel
@@ -15,9 +16,7 @@ type DynamicModelSelection =
  * can select their deterministic provider object directly.
  */
 export default defineAgent({
-  // Harness config wires the workflow world; the dynamic definition below
-  // overrides the harness model.
-  ...e2eAgentConfig(),
+  experimental,
   model: defineDynamic({
     events: {
       "step.started": (_event, ctx): DynamicModelSelection => {
@@ -31,6 +30,14 @@ export default defineAgent({
           return null as never;
         }
 
+        if (text.includes("[model: catalog-unknown]")) {
+          return "unknown/eve-dynamic-model";
+        }
+
+        if (text.includes("[model: catalog]")) {
+          return typeof model === "string" ? model : "openai/gpt-5.4";
+        }
+
         if (text.includes("[model: mini]")) {
           return {
             model,
@@ -38,7 +45,7 @@ export default defineAgent({
           };
         }
 
-        return model;
+        return modelContextWindowTokens === undefined ? model : { model, modelContextWindowTokens };
       },
     },
   }),

@@ -10,7 +10,7 @@ import {
 } from "#internal/authored-module-loader.js";
 import { toErrorMessage } from "#shared/errors.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
-import type { CompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
+import type { RuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 
 /**
  * Shared compile-time context threaded through every per-primitive
@@ -21,7 +21,7 @@ import type { CompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.
  * reuses the cache across all of its child compilations.
  */
 export interface ManifestCompileContext {
-  readonly modelCatalog: CompiledRuntimeModelCatalogLoader;
+  readonly modelCatalog: RuntimeModelCatalogLoader;
 }
 
 export interface ModuleBackedDefinitionLoadOptions {

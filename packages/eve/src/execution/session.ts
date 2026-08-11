@@ -38,6 +38,7 @@ export function createCompactionConfig(
   const config = {
     recentWindowSize: DEFAULT_COMPACTION_RECENT_WINDOW_SIZE,
     threshold,
+    thresholdPercent,
   };
 
   if (input.lastKnownInputTokens !== undefined) {

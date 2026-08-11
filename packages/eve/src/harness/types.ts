@@ -35,6 +35,7 @@ export interface CompactionConfig {
   readonly lastKnownPromptMessageCount?: number;
   readonly recentWindowSize: number;
   readonly threshold: number;
+  readonly thresholdPercent?: number;
 }
 
 /**

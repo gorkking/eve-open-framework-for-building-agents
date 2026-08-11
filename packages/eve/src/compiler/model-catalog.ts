@@ -81,10 +81,8 @@ const builtInCompiledRuntimeModelLimitsById = new Map<string, CompiledRuntimeMod
   ],
 ]);
 
-/**
- * Loader that resolves compile-time model limits for one application build.
- */
-export interface CompiledRuntimeModelCatalogLoader {
+/** Loader that resolves stable AI Gateway model metadata. */
+export interface RuntimeModelCatalogLoader {
   getModelLimits(modelId: string): Promise<CompiledRuntimeModelLimits | null>;
   getByProviderModelId(
     provider: string,
@@ -92,21 +90,13 @@ export interface CompiledRuntimeModelCatalogLoader {
   ): Promise<{ slug: string; limits: CompiledRuntimeModelLimits } | null>;
 }
 
-/**
- * Resolves the app-local cache path used for AI Gateway model metadata during
- * compilation.
- */
-export function resolveCompiledRuntimeModelCatalogCachePath(appRoot: string): string {
+/** Resolves the app-local cache path used for AI Gateway model metadata. */
+export function resolveRuntimeModelCatalogCachePath(appRoot: string): string {
   return join(appRoot, ".eve", "cache", "model-catalog.json");
 }
 
-/**
- * Creates a per-build loader that caches the AI Gateway model catalog in
- * memory and on disk.
- */
-export function createCompiledRuntimeModelCatalogLoader(
-  appRoot: string,
-): CompiledRuntimeModelCatalogLoader {
+/** Creates a loader that caches the AI Gateway model catalog in memory and on disk. */
+export function createRuntimeModelCatalogLoader(appRoot: string): RuntimeModelCatalogLoader {
   let cachedCatalogPromise: Promise<CompiledRuntimeModelCatalogCache | null> | null = null;
   let fetchedCatalogError: unknown = null;
   let fetchedCatalogPromise: Promise<CompiledRuntimeModelCatalogCache> | null = null;
@@ -207,6 +197,20 @@ export function createCompiledRuntimeModelCatalogLoader(
   };
 }
 
+const runtimeModelCatalogLoaders = new Map<string, RuntimeModelCatalogLoader>();
+
+/** Returns the process-cached model catalog loader for one application root. */
+export function getRuntimeModelCatalogLoader(appRoot: string): RuntimeModelCatalogLoader {
+  const existing = runtimeModelCatalogLoaders.get(appRoot);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const loader = createRuntimeModelCatalogLoader(appRoot);
+  runtimeModelCatalogLoaders.set(appRoot, loader);
+  return loader;
+}
+
 type CompiledRuntimeModelCatalogCache = z.infer<typeof compiledRuntimeModelCatalogCacheSchema>;
 
 async function fetchAndPersistModelCatalog(
@@ -235,7 +239,7 @@ async function fetchAndPersistModelCatalog(
   };
 
   try {
-    const cachePath = resolveCompiledRuntimeModelCatalogCachePath(appRoot);
+    const cachePath = resolveRuntimeModelCatalogCachePath(appRoot);
     await mkdir(join(appRoot, ".eve", "cache"), { recursive: true });
     await writeFile(cachePath, `${JSON.stringify(cacheArtifact, null, 2)}\n`, "utf8");
   } catch {
@@ -249,7 +253,7 @@ async function readModelCatalogCache(
   appRoot: string,
 ): Promise<CompiledRuntimeModelCatalogCache | null> {
   try {
-    const cacheText = await readFile(resolveCompiledRuntimeModelCatalogCachePath(appRoot), "utf8");
+    const cacheText = await readFile(resolveRuntimeModelCatalogCachePath(appRoot), "utf8");
     const parsed = compiledRuntimeModelCatalogCacheSchema.safeParse(JSON.parse(cacheText));
     return parsed.success ? parsed.data : null;
   } catch (error) {

@@ -80,8 +80,9 @@ selection object, or a promise of one of those values.
   live `LanguageModel` objects only from `step.started`.
 - **Selection object.** `{ model, modelContextWindowTokens?, modelOptions? }`.
   Agent-level `modelContextWindowTokens` and `modelOptions` apply when the
-  selection omits their corresponding fields. Set selection-specific values
-  when the possible models have different requirements.
+  selection omits their corresponding fields. If neither level sets
+  `modelContextWindowTokens`, eve resolves it from the AI Gateway model catalog
+  at runtime. Models outside the catalog must provide it at one of those levels.
 
 Runtime identity and build metadata report a dynamic agent's model as
 `dynamic`, because no concrete model is selected until runtime.

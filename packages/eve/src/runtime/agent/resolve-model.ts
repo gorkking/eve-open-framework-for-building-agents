@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import type { RuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
 import { normalizeAgentDefinition } from "#internal/authored-definition/core.js";
 import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
@@ -20,6 +21,7 @@ import {
   type PublicAgentModelSelectionDefinition,
   type PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
+import { toErrorMessage } from "#shared/errors.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 
 export { shouldMockAuthoredRuntimeModels };
@@ -27,6 +29,7 @@ export { shouldMockAuthoredRuntimeModels };
 /** Loaded compiled-module scope used to resolve source-backed runtime models. */
 export interface RuntimeModelResolutionScope {
   readonly moduleMap: CompiledModuleMap;
+  readonly modelCatalog?: RuntimeModelCatalogLoader;
   readonly nodeId: string | undefined;
 }
 
@@ -134,11 +137,12 @@ export async function loadDynamicRuntimeModelDefinition(input: {
   return authoredModel;
 }
 
-export function normalizeDynamicRuntimeModelResult(input: {
+export async function resolveDynamicRuntimeModelResult(input: {
   readonly contextWindowTokens?: number;
+  readonly modelCatalog?: RuntimeModelCatalogLoader;
   readonly providerOptions?: Record<string, JsonObject>;
   readonly result: PublicAgentDynamicModelResult;
-}): ResolvedRuntimeModelSelection {
+}): Promise<ResolvedRuntimeModelSelection> {
   const selection = normalizeDynamicModelSelection(input.result);
   validateDynamicModelSelection(selection);
   const providerOptions =
@@ -149,23 +153,80 @@ export function normalizeDynamicRuntimeModelResult(input: {
 
   if (typeof selection.model === "string") {
     const id = formatLanguageModelGatewayId(selection.model);
-    return {
-      reference: {
-        id,
-        contextWindowTokens,
-        providerOptions,
+    return await resolveDynamicModelContextWindow({
+      modelCatalog: input.modelCatalog,
+      selection: {
+        reference: {
+          id,
+          contextWindowTokens,
+          providerOptions,
+        },
       },
-    };
+    });
   }
 
   validateRuntimeLanguageModel(selection.model);
 
+  return await resolveDynamicModelContextWindow({
+    modelCatalog: input.modelCatalog,
+    selection: {
+      model: selection.model,
+      reference: {
+        id: formatLanguageModelGatewayId(selection.model),
+        contextWindowTokens,
+        providerOptions,
+      },
+    },
+  });
+}
+
+async function resolveDynamicModelContextWindow(input: {
+  readonly modelCatalog?: RuntimeModelCatalogLoader;
+  readonly selection: ResolvedRuntimeModelSelection;
+}): Promise<ResolvedRuntimeModelSelection> {
+  if (input.selection.reference.contextWindowTokens !== undefined) {
+    return input.selection;
+  }
+
+  if (input.modelCatalog === undefined) {
+    throw new Error("Dynamic model metadata lookup requires a runtime model catalog.");
+  }
+
+  const selectedModelId = input.selection.reference.id;
+  let contextWindowTokens: number | undefined;
+  let resolvedModelId = selectedModelId;
+
+  try {
+    const model = input.selection.model;
+    if (model === undefined || typeof model === "string") {
+      contextWindowTokens = (await input.modelCatalog.getModelLimits(selectedModelId))
+        ?.contextWindowTokens;
+    } else {
+      const catalogModel = await input.modelCatalog.getByProviderModelId(
+        model.provider,
+        model.modelId,
+      );
+      contextWindowTokens = catalogModel?.limits.contextWindowTokens;
+      resolvedModelId = catalogModel?.slug ?? selectedModelId;
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to load AI Gateway model metadata for dynamically selected model "${selectedModelId}". ${toErrorMessage(error)}`,
+    );
+  }
+
+  if (contextWindowTokens === undefined) {
+    throw new Error(
+      `Dynamically selected model "${selectedModelId}" does not have known AI Gateway context window metadata. Return { model, modelContextWindowTokens } for this selection.`,
+    );
+  }
+
   return {
-    model: selection.model,
+    ...input.selection,
     reference: {
-      id: formatLanguageModelGatewayId(selection.model),
+      ...input.selection.reference,
       contextWindowTokens,
-      providerOptions,
+      id: resolvedModelId,
     },
   };
 }

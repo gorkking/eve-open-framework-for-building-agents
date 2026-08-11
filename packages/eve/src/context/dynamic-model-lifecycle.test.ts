@@ -18,6 +18,7 @@ import {
 import type { RuntimeDynamicModelReference } from "#runtime/agent/bootstrap.js";
 
 const DYNAMIC_MODEL_SOURCE: RuntimeDynamicModelReference = {
+  contextWindowTokens: 256_000,
   eventNames: ["session.started", "turn.started", "step.started"],
   logicalPath: "agent.ts",
   sourceId: "agent-config",
@@ -61,7 +62,7 @@ describe("dynamic model lifecycle", () => {
     });
   });
 
-  it("inherits authored context-window defaults", async () => {
+  it("uses agent-level context-window metadata", async () => {
     const ctx = new ContextContainer();
     const moduleMap = createModuleMap({
       default: {
@@ -75,7 +76,7 @@ describe("dynamic model lifecycle", () => {
 
     await dispatchDynamicModelEvent({
       ctx,
-      dynamicModel: { ...DYNAMIC_MODEL_SOURCE, contextWindowTokens: 256_000 },
+      dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createSessionStartedEvent(),
       messages: [],
       scope: { moduleMap, nodeId: undefined },
@@ -150,7 +151,7 @@ describe("dynamic model lifecycle", () => {
     expect(getActiveDynamicModelSelection(ctx)).toEqual({
       model: stepModel,
       reference: {
-        contextWindowTokens: undefined,
+        contextWindowTokens: 256_000,
         id: "openai/gpt-step",
         providerOptions: undefined,
       },
@@ -181,7 +182,7 @@ describe("dynamic model lifecycle", () => {
 
     expect(getActiveDynamicModelSelection(ctx)).toEqual({
       reference: {
-        contextWindowTokens: undefined,
+        contextWindowTokens: 256_000,
         id: "openai/gpt-step",
         providerOptions: undefined,
       },

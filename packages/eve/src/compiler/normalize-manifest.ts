@@ -16,7 +16,7 @@ import {
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
-import { createCompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
+import { createRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import { compileAgentConfig } from "#compiler/normalize-agent-config.js";
 import { compileChannelDefinition } from "#compiler/normalize-channel.js";
 import { compileConnectionDefinition } from "#compiler/normalize-connection.js";
@@ -37,7 +37,7 @@ export async function compileAgentManifest(
   manifest: AgentSourceManifest,
 ): Promise<CompiledAgentManifest> {
   const context: ManifestCompileContext = {
-    modelCatalog: createCompiledRuntimeModelCatalogLoader(manifest.appRoot),
+    modelCatalog: createRuntimeModelCatalogLoader(manifest.appRoot),
   };
   const compiledNode = await compileAgentNodeManifest(manifest, context);
   const subagentGraph = await compileSubagentGraph({

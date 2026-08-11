@@ -1,6 +1,7 @@
 import { buildAdapterContext } from "#channel/adapter-context.js";
 import { callAdapterEventHandler, defaultDeliverResult } from "#channel/adapter.js";
 import type { DeliverPayload, SessionAuthContext } from "#channel/types.js";
+import { getRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import { dispatchStreamEventHooks } from "#context/hook-lifecycle.js";
 import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-lifecycle.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
@@ -89,6 +90,7 @@ import {
   turnWorkflowReference,
 } from "#execution/workflow-runtime.js";
 import { resumeHook } from "#internal/workflow/runtime.js";
+import type { RuntimeModelResolutionScope } from "#runtime/agent/resolve-model.js";
 
 /**
  * Result of one durable harness step, consumed by the turn workflow.
@@ -161,6 +163,14 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const adapter = ctx.require(ChannelKey);
   const bundle = ctx.require(BundleKey);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
+  const modelResolutionScope: RuntimeModelResolutionScope = {
+    moduleMap: bundle.moduleMap,
+    modelCatalog:
+      effectiveAgent.turnAgent.dynamicModel === undefined
+        ? undefined
+        : getRuntimeModelCatalogLoader(bundle.resolvedAgent.metadata.appRoot),
+    nodeId: bundle.nodeId,
+  };
 
   // Populate the callback base URL so getHookUrl() works during tool
   // execution, preferring eve's active local origin over metadata fallback.
@@ -333,10 +343,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
         dynamicModel: effectiveAgent.turnAgent.dynamicModel,
         event: emitted,
         messages: messages ?? [],
-        scope: {
-          moduleMap: bundle.moduleMap,
-          nodeId: bundle.nodeId,
-        },
+        scope: modelResolutionScope,
       });
     }
     await dispatchDynamicSubagentEvent({
@@ -423,10 +430,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           createRuntime: createWorkflowRuntime,
           handleEvent,
           mode,
-          modelResolutionScope: {
-            moduleMap: bundle.moduleMap,
-            nodeId: bundle.nodeId,
-          },
+          modelResolutionScope,
           node: effectiveNode,
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });

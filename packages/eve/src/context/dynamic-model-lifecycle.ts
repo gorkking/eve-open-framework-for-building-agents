@@ -16,7 +16,7 @@ import type {
 } from "#runtime/agent/bootstrap.js";
 import {
   loadDynamicRuntimeModelDefinition,
-  normalizeDynamicRuntimeModelResult,
+  resolveDynamicRuntimeModelResult,
   shouldMockAuthoredRuntimeModels,
   type ResolvedRuntimeModelSelection,
   type RuntimeModelResolutionScope,
@@ -96,8 +96,9 @@ export async function dispatchDynamicModelEvent(input: {
     if (rawResult === null || rawResult === undefined) {
       throw new Error("the handler did not return a model");
     }
-    const selection = normalizeDynamicRuntimeModelResult({
+    const selection = await resolveDynamicRuntimeModelResult({
       contextWindowTokens: input.dynamicModel.contextWindowTokens,
+      modelCatalog: input.scope.modelCatalog,
       providerOptions: input.dynamicModel.providerOptions,
       result: rawResult,
     });

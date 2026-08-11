@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compileAgent } from "../../src/compiler/compile-agent.js";
-import { resolveCompiledRuntimeModelCatalogCachePath } from "../../src/compiler/model-catalog.js";
+import { resolveRuntimeModelCatalogCachePath } from "../../src/compiler/model-catalog.js";
 import { useTemporaryAppRoots } from "../../src/internal/testing/use-temporary-app-roots.js";
 
 const createAppRoot = useTemporaryAppRoots();
@@ -74,9 +74,7 @@ describe("compiler model catalog", () => {
     const result = await compileAgent({
       startPath: appRoot,
     });
-    const cache = JSON.parse(
-      await readFile(resolveCompiledRuntimeModelCatalogCachePath(appRoot), "utf8"),
-    );
+    const cache = JSON.parse(await readFile(resolveRuntimeModelCatalogCachePath(appRoot), "utf8"));
 
     expect(result.manifest.config).toMatchObject({
       compaction: {},
@@ -155,9 +153,7 @@ describe("compiler model catalog", () => {
     const result = await compileAgent({
       startPath: appRoot,
     });
-    const cache = JSON.parse(
-      await readFile(resolveCompiledRuntimeModelCatalogCachePath(appRoot), "utf8"),
-    );
+    const cache = JSON.parse(await readFile(resolveRuntimeModelCatalogCachePath(appRoot), "utf8"));
 
     expect(result.manifest.config.model).toMatchObject({
       contextWindowTokens: 123_456,
@@ -262,7 +258,7 @@ describe("compiler model catalog", () => {
       recursive: true,
     });
     await writeFile(
-      resolveCompiledRuntimeModelCatalogCachePath(appRoot),
+      resolveRuntimeModelCatalogCachePath(appRoot),
       `${JSON.stringify(
         {
           fetchedAt: "2024-01-01T00:00:00.000Z",
