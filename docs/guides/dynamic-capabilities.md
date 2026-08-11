@@ -16,10 +16,6 @@ re-ingests the conversation at uncached prices. See
 [agent configuration](../agent-config#choose-the-model-dynamically) for the
 full contract.
 
-Dynamic model definitions do not accept a `fallback`; choose the default model
-inside the handler. Tools, skills, instructions, and subagents can still return
-`null` when a capability should be omitted.
-
 ## Dynamic subagents
 
 Wrap a declared subagent's own `agent.ts` in `defineDynamic` when its
