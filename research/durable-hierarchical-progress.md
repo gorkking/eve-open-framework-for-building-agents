@@ -11,7 +11,7 @@ last_updated: "2026-08-05"
 eve should represent progress independently from any channel presentation. Agent
 lifecycle facts reduce into a durable progress projection; delegated agents
 publish their projection to their parent, which incorporates it into its own
-projection. Only the root channel reconciles the resulting projection into an
+projection. Only the root channel renders the resulting projection into an
 external presentation.
 
 ```text
@@ -21,11 +21,11 @@ child lifecycle facts ──reduce──▶ child projection
 parent facts + child projections ──reduce──▶ parent projection
                                               │
                                               ▼
-                                      channel reconciler
+                                       channel renderer
                                   indicator | message | blocks
 ```
 
-A Slack thread status is one possible reconciler. A replaceable thread message,
+A Slack thread status is one possible rendering. A replaceable thread message,
 a Block Kit tree of parallel work, a terminal spinner, or no visible rendering
 are equally valid. Progress is desired state, not a command to call a specific
 channel API.
@@ -46,17 +46,10 @@ Slack status text currently comes directly from channel event handlers in
 | terminal session/turn events and visible posts | stop or supersede the active status                                                                                   |
 
 This is an implicit last-write-wins reducer spread across event handlers and
-`SlackChannelState` fields:
-
-- `pendingToolCallMessage` carries narration across `message.completed` and
-  `actions.requested`;
-- `lastReasoningTyping*` implements presentation throttling;
-- `statusKeepaliveStatus` remembers the latest non-empty desired status;
-- the thread-status controller turns that desired string into
-  `assistant.threads.setStatus` calls and refreshes it while work is parked.
-
-The status text is therefore derived from useful channel-neutral facts, but its
-reduction, scheduling, and Slack effect are currently interleaved.
+`SlackChannelState` fields. `pendingToolCallMessage` carries narration across
+`message.completed` and `actions.requested`; `lastReasoningTyping*` implements
+presentation throttling. The status text is therefore derived from useful
+channel-neutral facts, but its reduction and Slack effect are interleaved.
 
 ## Existing event and delegation boundaries
 
@@ -95,19 +88,20 @@ The proposal separates four responsibilities:
 2. eve materializes deterministic canonical progress from existing turn, step,
    action, blocker, plan, and child-session state;
 3. delegated sessions publish versioned canonical snapshots to their parent;
-4. the root channel selects, summarizes, and reconciles a presentation,
-   including timer-driven refresh when the presentation expires.
+4. the root channel selects, summarizes, and renders a presentation.
 
 Canonical progress is desired state, not an audit log and not presentation
 commands. The durable event stream remains the complete history. Channel state
-owns external message ids, capability fallbacks, cached summaries, and refresh
-policy.
+owns external message ids, capability fallbacks, and cached summaries.
+Platform-specific presentation maintenance, such as renewing an expiring Slack
+status, stays inside that channel implementation and is not part of the
+canonical progress or generic channel contract.
 
 ## Public API design space
 
 The public API needs boundaries at four levels: producers contribute meaning,
 the agent materializes canonical state, delegated sessions publish canonical
-snapshots, and the root channel projects and reconciles a presentation. These
+snapshots, and the root channel renders a presentation. These
 levels should not share one generic `reduce(event)` callback.
 
 ### Canonical types
@@ -405,7 +399,8 @@ export default defineHook({
 });
 ```
 
-This event fires only when canonical state changes, not on channel refresh.
+This event fires only when canonical state changes, not for presentation-only
+channel maintenance.
 
 ### Delegated-agent boundary
 
@@ -426,66 +421,16 @@ or a coarse remote task status that eve adapts into one child node. Lack of
 progress capability leaves the child as a running node until its terminal
 result.
 
-### Channel APIs
+### Channel API
 
-The channel boundary needs to distinguish pure/derived presentation from
-external effects and refresh. Three shapes are plausible.
-
-#### One effectful callback
-
-```ts
-progress: async ({ progress, reason }, channel, ctx) => {
-  await channel.thread.startTyping(selectStatus(progress));
-  return { refreshAfterMs: 75_000 };
-};
-```
-
-This is simple and fits existing channel event handlers. It makes model-summary
-caching, create-versus-update state, and testability the author's problem.
-
-#### Project then reconcile
-
-```ts
-progress: defineChannelProgress({
-  async project(progress, ctx) {
-    return summarizeForSlack(progress, ctx);
-  },
-  async reconcile(view, channel, ctx) {
-    await channel.thread.startTyping(view.status);
-    return { refreshAfterMs: 75_000 };
-  },
-});
-```
-
-`project` runs only for a changed canonical fingerprint. It may call a cheap
-model and must return serializable presentation state. `reconcile` runs for
-`changed`, `refresh`, and `terminal` reasons and owns effects. On refresh it
-receives the cached view.
-
-#### Event reducer over canonical changes
-
-```ts
-progress: {
-  initial: () => ({ messageTs: null, view: null }),
-  reduce(state, event) { /* changed | refresh | terminal */ },
-}
-```
-
-This resembles UI reducers but mixes pure state and effects unless another
-command layer is introduced.
-
-The recommended initial channel API is the one effectful callback. It receives
-an extensible input object and owns presentation state in the channel's existing
-durable state:
+The initial channel surface is one effectful callback. It receives an extensible
+input object and owns presentation state in the channel's existing durable
+state:
 
 ```ts
 interface ChannelProgressInput {
   readonly progress: ProgressSnapshot;
-  readonly reason: "changed" | "refresh" | "terminal";
-}
-
-interface ChannelProgressResult {
-  readonly refreshAfterMs?: number;
+  readonly reason: "changed" | "terminal";
 }
 ```
 
@@ -498,16 +443,19 @@ export default defineChannel({
       progress,
       reason,
     });
-    return {};
   },
 });
 ```
 
+This fits existing channel event handlers and lets a channel post, update,
+delete, summarize, or intentionally ignore progress. Model-summary caching,
+create-versus-update state, and testability remain the author's responsibility.
 Built-in channel presets may internally split pure projection from effects and
-cache model-generated summaries by canonical fingerprint. A custom callback
-that invokes a model owns equivalent caching. Keep `defineChannelProgress({
-project, reconcile })` as a possible later convenience rather than part of the
-initial surface.
+cache model-generated summaries by canonical fingerprint.
+
+The callback runs only when canonical progress changes or terminates. A channel
+that needs presentation-only maintenance owns its timer and reuses its last
+rendered state without manufacturing a progress update.
 
 For Slack, the built-in offers presets and an escape hatch:
 
@@ -532,17 +480,16 @@ slackChannel({
 
 slackChannel({
   async progress({ progress, reason }, channel) {
-    return renderCustomSlackProgress({ channel, progress, reason });
+    await renderCustomSlackProgress({ channel, progress, reason });
   },
 });
 ```
 
-`slackProgress.status()` refreshes the cached status presentation before Slack
-expires it. `slackProgress.plan()` selects the optional canonical plan and falls
-back when a turn has none. `slackProgress.message()` updates a thread message
-and normally requests no refresh. `progress: false` suppresses the built-in
-renderer without suppressing canonical progress or `progress.updated`
-observation.
+`slackProgress.plan()` selects the optional canonical plan and falls back when
+a turn has none. `slackProgress.message()` updates a thread message.
+`slackProgress.status()` owns any Slack-specific status renewal internally.
+`progress: false` suppresses the built-in renderer without suppressing canonical
+progress or `progress.updated` observation.
 
 ### API recommendation
 
@@ -555,7 +502,7 @@ The smallest coherent first public surface is:
 4. deterministic framework-owned scope reduction, with no initial agent config;
 5. `progress.updated` as an observe-only hook event;
 6. one effectful channel `progress({ progress, reason }, channel, ctx)` callback;
-7. Slack status, plan, and message presets built on the same channel contract.
+7. Slack status, plan, and message presets built on the same canonical input.
 
 The runtime child propagation protocol remains internal until remote capability
 negotiation requires a public wire contract.
@@ -627,31 +574,27 @@ Do not expose a public agent reducer until the tree survives nested delegation
 without channel-specific fields and a concrete adoption cannot be expressed as
 a progress report or channel projection.
 
-### Channel reconciler
+### Channel renderer
 
-The root channel receives a complete desired projection and reduces it into a
-presentation before reconciling external state. It owns effectful and
-presentation-specific concerns:
+The root channel receives a complete desired projection and renders external
+state. It owns effectful and presentation-specific concerns:
 
 - select which canonical nodes matter for this channel and audience;
 - optionally summarize them with authored code or a cheap model;
 - choose an indicator, one updated message, multiple posts, or blocks;
 - create and remember external resource ids;
 - update or clear prior presentation;
-- truncate, throttle, debounce, and refresh according to platform limits;
+- truncate, throttle, and debounce according to platform limits;
 - decide how completed children remain visible.
 
 A model summarizer is an optional, best-effort presentation stage. Its input is
-the bounded canonical graph; its output is cached by projection fingerprint in
-channel state. Failure falls back to deterministic copy. A timer refresh with
-an unchanged fingerprint reuses the cached summary and repeats only the channel
-effect, so a 75-second Slack refresh neither calls the model again nor creates a
-progress revision.
+the bounded canonical graph; its output may be cached by projection fingerprint
+in channel state. Failure falls back to deterministic copy.
 
-The reconciler's durable channel state contains external ids, the last
+The renderer's durable channel state contains external ids, the last
 successfully rendered projection fingerprint, and any cached presentation.
-Canonical reducer state must not contain those values. Reconciliation is
-best-effort and must not fail the agent turn.
+Canonical reducer state must not contain those values. Rendering is best-effort
+and must not fail the agent turn.
 
 ## Hierarchical propagation
 
@@ -697,7 +640,7 @@ maps or channel adapter state. Reduction occurs in the same durable step that
 observes the source lifecycle event. A changed delegated projection is then
 forwarded through a workflow hook step to its parent.
 
-The root channel reconciler observes projections after they have been adopted
+The root channel renderer observes projections after they have been adopted
 into serialized context. Its effect checkpoint includes updated channel state.
 External APIs without idempotency still have an unavoidable response/checkpoint
 crash window; initial implementations should prefer naturally idempotent
@@ -707,23 +650,6 @@ than claiming exactly-once posts.
 Progress propagation must never block model execution or terminal settlement
 indefinitely. Failed parent notification or channel rendering is diagnostic;
 the latest durable projection can be retried or superseded by a newer revision.
-
-## Relationship to status keepalive
-
-The status-keepalive work supplies useful scheduling for a root channel whose
-current presentation expires while the parent waits on delegated results. It
-is not the progress model.
-
-Under this design:
-
-- reducer output establishes desired progress;
-- the channel reconciler renders that desired progress;
-- optional status refresh reasserts an expiring presentation without producing
-  a new progress fact or reducer revision.
-
-A Block Kit reconciler may return no refresh deadline at all. A status
-indicator reconciler may request periodic refreshes. The durable progress tree
-and child propagation are unchanged in either case.
 
 ## Open decisions
 
@@ -748,9 +674,8 @@ and child propagation are unchanged in either case.
 9. At which turn/step settlement boundary should completed child internals
    collapse, especially when persistent subagent sessions are continued by a
    later call?
-10. Is elapsed time a renderer concern, a refresh-time projection over durable
-    `startedAt`, or semantic progress? It should not require a new child
-    revision every minute.
+10. Is elapsed time a renderer projection over durable `startedAt`, or semantic
+    progress? It should not require a new child revision every minute.
 11. How should remote liveness observations enter progress without confusing
     "no recent event" with failure?
 12. Should the framework todo gain stable item ids, title, and description, or
