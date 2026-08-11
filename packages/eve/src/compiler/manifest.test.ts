@@ -165,8 +165,10 @@ describe("compiledAgentManifestSchema", () => {
       appRoot: "/app",
       config: {
         dynamicModel: {
+          contextWindowTokens: 256_000,
           eventNames: ["session.started"],
           logicalPath: "agent.ts",
+          providerOptions: { gateway: { order: ["openai"] } },
           sourceId: "agent-config",
           sourceKind: "module",
         },
@@ -178,8 +180,10 @@ describe("compiledAgentManifestSchema", () => {
     const parsed = compiledAgentManifestSchema.parse(manifest);
 
     expect(parsed.config.dynamicModel).toEqual({
+      contextWindowTokens: 256_000,
       eventNames: ["session.started"],
       logicalPath: "agent.ts",
+      providerOptions: { gateway: { order: ["openai"] } },
       sourceId: "agent-config",
       sourceKind: "module",
     });

@@ -24,8 +24,6 @@ const DYNAMIC_MODEL_SOURCE: RuntimeDynamicModelReference = {
   sourceKind: "module",
 };
 
-const DEFAULTS = { contextWindowTokens: 256_000, id: "dynamic" };
-
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -50,7 +48,6 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createSessionStartedEvent(),
-      defaults: DEFAULTS,
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -78,9 +75,8 @@ describe("dynamic model lifecycle", () => {
 
     await dispatchDynamicModelEvent({
       ctx,
-      dynamicModel: DYNAMIC_MODEL_SOURCE,
+      dynamicModel: { ...DYNAMIC_MODEL_SOURCE, contextWindowTokens: 256_000 },
       event: createSessionStartedEvent(),
-      defaults: DEFAULTS,
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -106,7 +102,6 @@ describe("dynamic model lifecycle", () => {
         ctx,
         dynamicModel: DYNAMIC_MODEL_SOURCE,
         event,
-        defaults: DEFAULTS,
         messages: [],
         scope: { moduleMap, nodeId: undefined },
       });
@@ -141,7 +136,6 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createSessionStartedEvent(),
-      defaults: { id: "dynamic" },
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -149,7 +143,6 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_0" }),
-      defaults: { id: "dynamic" },
       messages: [{ content: "Use the direct model.", role: "user" }],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -182,7 +175,6 @@ describe("dynamic model lifecycle", () => {
       ctx,
       dynamicModel: DYNAMIC_MODEL_SOURCE,
       event: createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_0" }),
-      defaults: { id: "dynamic" },
       messages: [],
       scope: { moduleMap, nodeId: undefined },
     });
@@ -214,7 +206,6 @@ describe("dynamic model lifecycle", () => {
         ctx,
         dynamicModel: DYNAMIC_MODEL_SOURCE,
         event: createSessionStartedEvent(),
-        defaults: DEFAULTS,
         messages: [],
         scope: { moduleMap, nodeId: undefined },
       }),
@@ -241,7 +232,6 @@ describe("dynamic model lifecycle", () => {
         ctx,
         dynamicModel: DYNAMIC_MODEL_SOURCE,
         event: createSessionStartedEvent(),
-        defaults: DEFAULTS,
         messages: [],
         scope: { moduleMap, nodeId: undefined },
       }),
@@ -268,7 +258,6 @@ describe("dynamic model lifecycle", () => {
         ctx,
         dynamicModel: DYNAMIC_MODEL_SOURCE,
         event: createTurnStartedEvent({ sequence: 0, turnId: "turn_0" }),
-        defaults: DEFAULTS,
         messages: [],
         scope: { moduleMap, nodeId: undefined },
       }),
@@ -298,7 +287,6 @@ describe("dynamic model lifecycle", () => {
         ctx,
         dynamicModel: DYNAMIC_MODEL_SOURCE,
         event: createSessionStartedEvent(),
-        defaults: DEFAULTS,
         messages: [],
         scope: { moduleMap, nodeId: undefined },
       }),

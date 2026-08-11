@@ -172,7 +172,6 @@ function createRuntimeDynamicModelEventDispatcher(
       ctx: input.ctx,
       dynamicModel,
       event: input.event,
-      defaults: input.defaults,
       messages: input.messages,
       scope,
     });

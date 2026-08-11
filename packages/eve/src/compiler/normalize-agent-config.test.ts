@@ -19,7 +19,7 @@ describe("compileAgentConfig", () => {
     mocks.loadModuleBackedDefinition.mockReset();
   });
 
-  it("compiles dynamic model defaults and preserves the resolver source", async () => {
+  it("compiles dynamic model metadata with the resolver source", async () => {
     mocks.loadModuleBackedDefinition.mockResolvedValue({
       model: defineDynamic({
         events: {
@@ -44,15 +44,12 @@ describe("compileAgentConfig", () => {
     const modelCatalog = createModelCatalog();
     const compiled = await compileAgentConfig(manifest, { modelCatalog });
 
-    expect(compiled.model).toEqual({
-      contextWindowTokens: 256_000,
-      id: "dynamic",
-      providerOptions: { gateway: { order: ["openai"] } },
-      routing: { kind: "dynamic" },
-    });
+    expect(compiled.model).toEqual({ id: "dynamic", routing: { kind: "dynamic" } });
     expect(compiled.dynamicModel).toEqual({
+      contextWindowTokens: 256_000,
       eventNames: ["session.started", "step.started"],
       logicalPath: "agent.ts",
+      providerOptions: { gateway: { order: ["openai"] } },
       sourceId: "agent-config",
       sourceKind: "module",
     });

@@ -332,7 +332,6 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
         ctx,
         dynamicModel: effectiveAgent.turnAgent.dynamicModel,
         event: emitted,
-        defaults: effectiveAgent.turnAgent.model,
         messages: messages ?? [],
         scope: {
           moduleMap: bundle.moduleMap,

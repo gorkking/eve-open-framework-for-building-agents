@@ -47,8 +47,8 @@ export interface SessionAgent {
    * When omitted, the harness uses the active turn model for compaction.
    */
   readonly compactionModelReference?: RuntimeModelReference;
-  /** Agent-level metadata inherited by runtime-selected models. */
-  readonly dynamicModelDefaults?: RuntimeModelReference;
+  /** Whether the session requires a runtime model selection before each model call. */
+  readonly requiresDynamicModelSelection?: true;
   readonly modelReference: RuntimeModelReference;
   readonly reasoning?: AgentReasoningDefinition;
   readonly system: string;
@@ -295,7 +295,6 @@ export interface ToolLoopHarnessConfig {
   readonly dispatchDynamicModelEvent?: (input: {
     readonly ctx: AlsContext;
     readonly event: UnstampedMessageStreamEvent;
-    readonly defaults: RuntimeModelReference;
     readonly messages: readonly ModelMessage[];
   }) => Promise<void>;
   readonly resolveModel: (reference: RuntimeModelReference) => Promise<LanguageModel>;

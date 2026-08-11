@@ -57,10 +57,7 @@ export async function compileAgentConfig(
   );
   const dynamicModel = isDynamicModelDefinition(definition.model);
   const model = dynamicModel
-    ? normalizeDynamicModelReference({
-        contextWindowTokens: definition.modelContextWindowTokens,
-        providerOptions: definition.modelOptions?.providerOptions,
-      })
+    ? normalizeDynamicModelReference()
     : await normalizeAuthoredModelReference({
         modelCatalog: context.modelCatalog,
         purpose: "the primary compaction trigger model",
@@ -104,13 +101,22 @@ export async function compileAgentConfig(
     if (configModule === undefined) {
       throw new Error("Expected dynamic model definitions to be authored in agent.ts.");
     }
-    compiledConfig.dynamicModel = {
+    const compiledDynamicModel: Mutable<NonNullable<CompiledAgentDefinition["dynamicModel"]>> = {
       eventNames: Object.keys(definition.model.events) as DynamicToolEventName[],
       exportName: configModule.exportName,
       sourceKind: "module",
       logicalPath: configModule.logicalPath,
       sourceId: configModule.sourceId,
     };
+    if (definition.modelContextWindowTokens !== undefined) {
+      compiledDynamicModel.contextWindowTokens = definition.modelContextWindowTokens;
+    }
+    if (definition.modelOptions?.providerOptions !== undefined) {
+      compiledDynamicModel.providerOptions = parseProviderOptionsRecord(
+        definition.modelOptions.providerOptions,
+      );
+    }
+    compiledConfig.dynamicModel = compiledDynamicModel;
   }
 
   const experimental = normalizeExperimentalDefinition(definition.experimental);
@@ -171,14 +177,9 @@ export async function compileAgentConfig(
   return compiledConfig;
 }
 
-function normalizeDynamicModelReference(input: {
-  readonly contextWindowTokens?: number;
-  readonly providerOptions?: Record<string, JsonObject>;
-}): CompiledRuntimeModelReference {
+function normalizeDynamicModelReference(): CompiledRuntimeModelReference {
   return {
     id: DYNAMIC_MODEL_ID,
-    contextWindowTokens: input.contextWindowTokens,
-    providerOptions: parseProviderOptionsRecord(input.providerOptions),
     routing: { kind: "dynamic" },
   };
 }

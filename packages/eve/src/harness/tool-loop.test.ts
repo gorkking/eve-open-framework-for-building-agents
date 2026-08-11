@@ -912,10 +912,9 @@ describe("createToolLoopHarness", () => {
     const resolveModel = vi.fn().mockResolvedValue("dynamic" as LanguageModel);
     const dispatchDynamicModelEvent: NonNullable<
       ToolLoopHarnessConfig["dispatchDynamicModelEvent"]
-    > = vi.fn(async ({ ctx, event, defaults, messages }) => {
+    > = vi.fn(async ({ ctx, event, messages }) => {
       expect(event.type).toBe("step.started");
       expect(messages.at(-1)).toEqual({ content: "Hi", role: "user" });
-      expect(defaults).toEqual({ contextWindowTokens: 100_000, id: "dynamic" });
 
       ctx.setVirtualContext(LiveStepDynamicModelSelectionKey, {
         model: "selected-model" as LanguageModel,
@@ -934,8 +933,8 @@ describe("createToolLoopHarness", () => {
     const ctx = new ContextContainer();
     const session = createTestSession({
       agent: {
-        dynamicModelDefaults: { contextWindowTokens: 100_000, id: "dynamic" },
         modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
+        requiresDynamicModelSelection: true,
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },
@@ -975,6 +974,7 @@ describe("createToolLoopHarness", () => {
       return "selected-model" as LanguageModel;
     });
     const config = createTestConfig("conversation", undefined, {
+      dispatchDynamicModelEvent: vi.fn(),
       resolveModel,
     });
     const runStep = createToolLoopHarness(config);
@@ -986,8 +986,8 @@ describe("createToolLoopHarness", () => {
     });
     const session = createTestSession({
       agent: {
-        dynamicModelDefaults: { contextWindowTokens: 100_000, id: "dynamic" },
         modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
+        requiresDynamicModelSelection: true,
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },
@@ -1017,6 +1017,7 @@ describe("createToolLoopHarness", () => {
     });
 
     const config = createTestConfig("conversation", undefined, {
+      dispatchDynamicModelEvent: vi.fn(),
       resolveModel: vi.fn().mockResolvedValue("selected-model" as LanguageModel),
     });
     const runStep = createToolLoopHarness(config);
@@ -1027,8 +1028,8 @@ describe("createToolLoopHarness", () => {
     });
     const session = createTestSession({
       agent: {
-        dynamicModelDefaults: { contextWindowTokens: 100_000, id: "dynamic" },
         modelReference: { contextWindowTokens: 100_000, id: "dynamic" },
+        requiresDynamicModelSelection: true,
         system: "You are a test assistant.",
         tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
       },

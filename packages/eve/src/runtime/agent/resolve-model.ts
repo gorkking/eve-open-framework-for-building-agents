@@ -135,17 +135,17 @@ export async function loadDynamicRuntimeModelDefinition(input: {
 }
 
 export function normalizeDynamicRuntimeModelResult(input: {
-  readonly defaults: RuntimeModelReference;
+  readonly contextWindowTokens?: number;
+  readonly providerOptions?: Record<string, JsonObject>;
   readonly result: PublicAgentDynamicModelResult;
 }): ResolvedRuntimeModelSelection {
   const selection = normalizeDynamicModelSelection(input.result);
   validateDynamicModelSelection(selection);
   const providerOptions =
     selection.modelOptions?.providerOptions === undefined
-      ? input.defaults.providerOptions
+      ? input.providerOptions
       : parseProviderOptionsRecord(selection.modelOptions.providerOptions);
-  const contextWindowTokens =
-    selection.modelContextWindowTokens ?? input.defaults.contextWindowTokens;
+  const contextWindowTokens = selection.modelContextWindowTokens ?? input.contextWindowTokens;
 
   if (typeof selection.model === "string") {
     const id = formatLanguageModelGatewayId(selection.model);

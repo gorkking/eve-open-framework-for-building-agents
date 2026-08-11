@@ -221,7 +221,9 @@ function createResolvedAgentConfig(manifest: CompiledAgentNodeManifest): Resolve
   if (manifest.config.dynamicModel !== undefined) {
     config.dynamicModel = {
       ...createResolvedModuleSourceRef(manifest.config.dynamicModel),
+      contextWindowTokens: manifest.config.dynamicModel.contextWindowTokens,
       eventNames: [...manifest.config.dynamicModel.eventNames],
+      providerOptions: manifest.config.dynamicModel.providerOptions,
     };
   }
 

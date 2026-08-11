@@ -229,9 +229,11 @@ export function buildAgentInfoResponse(
       configSource: agent.config.source ? toSource(agent.config.source) : undefined,
       description: agent.config.description,
       model: {
-        contextWindowTokens: agent.config.model.contextWindowTokens,
+        contextWindowTokens:
+          agent.config.dynamicModel?.contextWindowTokens ?? agent.config.model.contextWindowTokens,
         id: agent.config.model.id,
-        providerOptions: agent.config.model.providerOptions,
+        providerOptions:
+          agent.config.dynamicModel?.providerOptions ?? agent.config.model.providerOptions,
         reasoning: agent.config.reasoning,
         source: agent.config.model.source ? toSource(agent.config.model.source) : undefined,
       },

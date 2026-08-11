@@ -358,7 +358,7 @@ async function resolveActiveRuntimeModel(input: {
   readonly session: HarnessSession;
 }> {
   if (input.ctx === undefined) {
-    if (input.session.agent.dynamicModelDefaults !== undefined) {
+    if (input.session.agent.requiresDynamicModelSelection === true) {
       throw new Error("Dynamic model selection requires an active runtime context.");
     }
     return {
@@ -370,7 +370,7 @@ async function resolveActiveRuntimeModel(input: {
   const selected = getActiveDynamicModelSelection(input.ctx);
 
   if (selected === null) {
-    if (input.session.agent.dynamicModelDefaults !== undefined) {
+    if (input.session.agent.requiresDynamicModelSelection === true) {
       throw new Error("Dynamic model resolver did not select a model for this step.");
     }
     return {
@@ -810,7 +810,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           stepIndex: emissionState.stepIndex,
           turnId: emissionState.turnId,
         }),
-        defaults: session.agent.dynamicModelDefaults ?? session.agent.modelReference,
         messages,
       });
     }

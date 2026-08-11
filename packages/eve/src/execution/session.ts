@@ -80,9 +80,9 @@ export function createSession(input: CreateSessionInput): HarnessSession {
   } = {
     agent: {
       compactionModelReference: turnAgent.compactionModel,
-      dynamicModelDefaults: turnAgent.dynamicModel === undefined ? undefined : turnAgent.model,
       modelReference: turnAgent.model,
       reasoning: turnAgent.reasoning,
+      requiresDynamicModelSelection: turnAgent.dynamicModel === undefined ? undefined : true,
       system: createSessionSystemPrompt({ turnAgent }),
       tools,
     },
@@ -128,10 +128,9 @@ export function refreshSessionFromTurnAgent(input: {
     ...input.session,
     agent: {
       compactionModelReference: input.turnAgent.compactionModel,
-      dynamicModelDefaults:
-        input.turnAgent.dynamicModel === undefined ? undefined : input.turnAgent.model,
       modelReference: input.turnAgent.model,
       reasoning: input.turnAgent.reasoning,
+      requiresDynamicModelSelection: input.turnAgent.dynamicModel === undefined ? undefined : true,
       system: createSessionSystemPrompt({ turnAgent: input.turnAgent }),
       tools: createSessionToolDefinitions(input.turnAgent),
     },
@@ -246,9 +245,9 @@ export function hydrateDurableSession(input: {
   } = {
     agent: {
       compactionModelReference: turnAgent.compactionModel,
-      dynamicModelDefaults: turnAgent.dynamicModel === undefined ? undefined : turnAgent.model,
       modelReference: turnAgent.model,
       reasoning: turnAgent.reasoning,
+      requiresDynamicModelSelection: turnAgent.dynamicModel === undefined ? undefined : true,
       system: durable.agent.system,
       tools,
     },

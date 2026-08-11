@@ -12,6 +12,7 @@ import {
 import type { ChannelRouteMethod } from "#public/definitions/channel.js";
 import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
 import type { InternalInstructionsDefinition } from "#shared/instructions-definition.js";
+import type { JsonObject } from "#shared/json.js";
 import { jsonObjectSchema } from "#shared/json-schemas.js";
 import type { Node } from "#shared/node.js";
 import type {
@@ -29,6 +30,8 @@ import type {
 } from "#shared/agent-definition.js";
 import type { InternalToolDefinition } from "#shared/tool-definition.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 /**
  * Stable manifest kind emitted by the compiler for runtime loading.
@@ -102,13 +105,11 @@ export type CompiledRuntimeModelReference = InternalAgentModelDefinition & {
   routing: ModelRouting;
 };
 
-/**
- * Dynamic model resolver source preserved in the compiled manifest. For a
- * dynamic agent, `config.model` carries compile-time defaults rather than an
- * executable model reference.
- */
+/** Dynamic model resolver configuration preserved in the compiled manifest. */
 export type CompiledDynamicModelDefinition = ModuleSourceRef & {
+  readonly contextWindowTokens?: number;
   readonly eventNames: readonly string[];
+  readonly providerOptions?: Record<string, JsonObject>;
 };
 
 /**
@@ -295,8 +296,10 @@ const moduleSourceRefSchema: z.ZodType<ModuleSourceRef> = z
 
 const compiledDynamicModelDefinitionSchema: z.ZodType<CompiledDynamicModelDefinition> = z
   .object({
+    contextWindowTokens: z.number().int().positive().optional(),
     eventNames: z.array(z.string()).readonly(),
     exportName: z.string().optional(),
+    providerOptions: z.record(z.string(), jsonObjectSchema).optional(),
     sourceKind: z.literal("module"),
     logicalPath: z.string(),
     sourceId: z.string(),
@@ -828,9 +831,7 @@ export function createCompiledAgentNodeManifest(input: {
       dynamicModel:
         input.config.dynamicModel === undefined
           ? undefined
-          : {
-              ...input.config.dynamicModel,
-            },
+          : cloneCompiledDynamicModelDefinition(input.config.dynamicModel),
       experimental:
         input.config.experimental === undefined
           ? undefined
@@ -986,6 +987,27 @@ function cloneCompiledRuntimeModelReference(
   }
   if (model.source !== undefined) {
     clone.source = { ...model.source };
+  }
+  return clone;
+}
+
+function cloneCompiledDynamicModelDefinition(
+  dynamicModel: CompiledDynamicModelDefinition,
+): CompiledDynamicModelDefinition {
+  const clone: Mutable<CompiledDynamicModelDefinition> = {
+    eventNames: [...dynamicModel.eventNames],
+    logicalPath: dynamicModel.logicalPath,
+    sourceId: dynamicModel.sourceId,
+    sourceKind: "module",
+  };
+  if (dynamicModel.contextWindowTokens !== undefined) {
+    clone.contextWindowTokens = dynamicModel.contextWindowTokens;
+  }
+  if (dynamicModel.exportName !== undefined) {
+    clone.exportName = dynamicModel.exportName;
+  }
+  if (dynamicModel.providerOptions !== undefined) {
+    clone.providerOptions = { ...dynamicModel.providerOptions };
   }
   return clone;
 }

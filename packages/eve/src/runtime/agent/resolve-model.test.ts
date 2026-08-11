@@ -75,7 +75,6 @@ describe("dynamic runtime model resolution", () => {
     if (result === null || result === undefined) throw new Error("expected selection");
 
     const resolved = normalizeDynamicRuntimeModelResult({
-      defaults: { contextWindowTokens: 256_000, id: "dynamic" },
       result,
     });
 
@@ -90,11 +89,8 @@ describe("dynamic runtime model resolution", () => {
 
   it("inherits agent-level model metadata", () => {
     const resolved = normalizeDynamicRuntimeModelResult({
-      defaults: {
-        contextWindowTokens: 256_000,
-        id: "dynamic",
-        providerOptions: { gateway: { order: ["openai"] } },
-      },
+      contextWindowTokens: 256_000,
+      providerOptions: { gateway: { order: ["openai"] } },
       result: "openai/gpt-5.5-mini",
     });
 
@@ -108,7 +104,6 @@ describe("dynamic runtime model resolution", () => {
   it("rejects selections with unknown keys", () => {
     expect(() =>
       normalizeDynamicRuntimeModelResult({
-        defaults: { id: "dynamic" },
         result: {
           model: "openai/gpt-5.5-mini",
           contextWindowTokens: 128_000,

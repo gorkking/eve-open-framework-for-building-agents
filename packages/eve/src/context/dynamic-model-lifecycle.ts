@@ -74,7 +74,6 @@ export async function dispatchDynamicModelEvent(input: {
   readonly ctx: AlsContext;
   readonly dynamicModel: RuntimeDynamicModelReference | undefined;
   readonly event: UnstampedMessageStreamEvent;
-  readonly defaults: RuntimeModelReference;
   readonly messages: readonly ModelMessage[];
   readonly scope: RuntimeModelResolutionScope;
 }): Promise<void> {
@@ -98,7 +97,8 @@ export async function dispatchDynamicModelEvent(input: {
       throw new Error("the handler did not return a model");
     }
     const selection = normalizeDynamicRuntimeModelResult({
-      defaults: input.defaults,
+      contextWindowTokens: input.dynamicModel.contextWindowTokens,
+      providerOptions: input.dynamicModel.providerOptions,
       result: rawResult,
     });
 

@@ -87,9 +87,12 @@ export function buildAgentInfoResponseFromManifest(
       configSource: manifest.config.source ? toSource(manifest.config.source) : undefined,
       description: manifest.config.description,
       model: {
-        contextWindowTokens: manifest.config.model.contextWindowTokens,
+        contextWindowTokens:
+          manifest.config.dynamicModel?.contextWindowTokens ??
+          manifest.config.model.contextWindowTokens,
         id: manifest.config.model.id,
-        providerOptions: manifest.config.model.providerOptions,
+        providerOptions:
+          manifest.config.dynamicModel?.providerOptions ?? manifest.config.model.providerOptions,
         reasoning: manifest.config.reasoning,
         source: manifest.config.model.source ? toSource(manifest.config.model.source) : undefined,
         routing: manifest.config.model.routing,

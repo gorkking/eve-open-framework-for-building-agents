@@ -4,6 +4,7 @@ import type { PreparedRuntimeTool } from "#runtime/sessions/turn.js";
 import type { ResolvedAgent } from "#runtime/types.js";
 import type { WorkspaceRuntimeSpec } from "#runtime/workspace/types.js";
 import type { InternalAgentModelDefinition } from "#shared/agent-definition.js";
+import type { JsonObject } from "#shared/json.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import type { AvailableSkillDescription } from "#execution/skills/instructions.js";
 
@@ -23,7 +24,9 @@ export type RuntimeModelReference = Readonly<InternalAgentModelDefinition>;
  */
 export type RuntimeDynamicModelReference = Readonly<
   ModuleSourceRef & {
+    readonly contextWindowTokens?: number;
     readonly eventNames: readonly string[];
+    readonly providerOptions?: Record<string, JsonObject>;
   }
 >;
 
