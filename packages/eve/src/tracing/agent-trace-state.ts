@@ -2,7 +2,8 @@ import type { SpanContext } from "#compiled/@opentelemetry/api/index.js";
 
 import type {
   InstrumentationParentLineage,
-  InstrumentationTurnTerminalEvent,
+  InstrumentationTurnFailedEvent,
+  InstrumentationTurnSettledEvent,
 } from "#harness/instrumentation-lifecycle.js";
 
 /** Sized so an ordinary session stays one trace and only an outsized one rolls. */
@@ -24,10 +25,9 @@ export interface AgentTurnTraceState {
   readonly rootSessionId: string;
   readonly sequence: number;
   readonly startTimeMs: number;
-  readonly terminal?: {
-    readonly error?: unknown;
-    readonly type: InstrumentationTurnTerminalEvent["type"];
-  };
+  readonly terminal?:
+    | { readonly error: unknown; readonly type: InstrumentationTurnFailedEvent["type"] }
+    | { readonly type: InstrumentationTurnSettledEvent["type"] };
 }
 
 /** Provider-owned serializable storage for durable agent trace state. */

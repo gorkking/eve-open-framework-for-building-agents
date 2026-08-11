@@ -11,6 +11,11 @@ import { ContextContainer, contextStorage } from "#context/container.js";
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import { listLocalTraces } from "#tracing/local-trace-reader.js";
 import type { InstrumentationAttemptScope } from "#harness/instrumentation-lifecycle.js";
+import {
+  attemptIdempotencyKey,
+  sessionIdempotencyKey,
+  turnIdempotencyKey,
+} from "#harness/instrumentation-lifecycle.js";
 import { installLocalInstrumentationRuntime } from "#tracing/local-instrumentation-runtime.js";
 import { LocalTraceSpanProcessor } from "#tracing/local-trace-span-processor.js";
 
@@ -49,11 +54,13 @@ describe("local instrumentation runtime", () => {
     await contextStorage.run(new ContextContainer(), async () => {
       await runtime.hooks.publish({
         agentName: "weather",
+        idempotencyKey: sessionIdempotencyKey("session-1"),
         rootSessionId: "session-1",
         sessionId: "session-1",
         type: "session.started",
       });
       await runtime.hooks.publish({
+        idempotencyKey: turnIdempotencyKey("session-1", "turn-1"),
         rootSessionId: "session-1",
         sequence: 0,
         sessionId: "session-1",
@@ -117,14 +124,20 @@ describe("local instrumentation runtime", () => {
           toolOutput: { output: { temperature: 72 }, type: "tool-result" },
         },
       ]);
-      await runtime.hooks.publish({ scope, type: "step.attempt.completed" });
       await runtime.hooks.publish({
+        idempotencyKey: attemptIdempotencyKey(scope),
+        scope,
+        type: "step.attempt.completed",
+      });
+      await runtime.hooks.publish({
+        idempotencyKey: turnIdempotencyKey("session-1", "turn-1"),
         sessionId: "session-1",
         turnId: "turn-1",
         type: "turn.completed",
       });
       // Settling the turn emits the turn span with the pre-allocated id.
       await runtime.hooks.publish({
+        idempotencyKey: sessionIdempotencyKey("session-1"),
         sessionId: "session-1",
         turnId: "turn-1",
         type: "session.waiting",

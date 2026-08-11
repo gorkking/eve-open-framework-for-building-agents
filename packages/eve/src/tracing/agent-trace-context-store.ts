@@ -112,10 +112,9 @@ function serializeState(state: AgentTraceContextState): unknown {
           terminal:
             value.terminal === undefined
               ? undefined
-              : {
-                  error: serializeError(value.terminal.error),
-                  type: value.terminal.type,
-                },
+              : value.terminal.type === "turn.failed"
+                ? { error: serializeError(value.terminal.error), type: value.terminal.type }
+                : { type: value.terminal.type },
         },
       ]),
     ),
@@ -187,7 +186,7 @@ function deserializeTerminal(value: unknown): AgentTurnTraceState["terminal"] {
   if (!isRecord(value) || typeof value.type !== "string") return undefined;
   const type = value.type;
   if (!isTurnTerminalType(type)) return undefined;
-  return { error: deserializeError(value.error), type };
+  return type === "turn.failed" ? { error: deserializeError(value.error), type } : { type };
 }
 
 function serializeSpanContext(context: SpanContext): Record<string, unknown> {

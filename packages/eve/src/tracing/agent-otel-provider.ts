@@ -41,6 +41,7 @@ import type {
   InstrumentationTurnTerminalEvent,
   InstrumentationUsage,
 } from "#harness/instrumentation-lifecycle.js";
+import { sessionIdempotencyKey } from "#harness/instrumentation-lifecycle.js";
 
 interface SpanState {
   readonly context: Context;
@@ -100,6 +101,7 @@ export function createAgentOtelInstrumentation(
       await ensureSessionContext({
         agentName: undefined,
         channelKind: undefined,
+        idempotencyKey: sessionIdempotencyKey(event.sessionId),
         parentTraceContext: event.parentTraceContext,
         rootSessionId: event.rootSessionId,
         sessionId: event.sessionId,
@@ -197,7 +199,10 @@ export function createAgentOtelInstrumentation(
     if (turn === undefined) return;
     await input.stateStore.setTurn(event.sessionId, event.turnId, {
       ...turn,
-      terminal: { error: event.error, type: event.type },
+      terminal:
+        event.type === "turn.failed"
+          ? { error: event.error, type: event.type }
+          : { type: event.type },
     });
   };
 
@@ -276,13 +281,13 @@ export function createAgentOtelInstrumentation(
       if (system !== undefined) span.setAttribute("ai.prompt.system", system);
     }
     const state = { context: trace.setSpan(attempt.operation.context, span), span };
-    getExecutionContexts(event.scope).models.set(event.id, state.context);
-    getSpanStates(modelSpans, event.scope).set(event.id, state);
+    getExecutionContexts(event.scope).models.set(event.idempotencyKey, state.context);
+    getSpanStates(modelSpans, event.scope).set(event.idempotencyKey, state);
   };
 
   const onModelCallTerminal = (event: InstrumentationModelCallTerminalEvent): void => {
-    executionContexts.get(event.scope)?.models.delete(event.id);
-    const state = takeSpanState(modelSpans, event.scope, event.id);
+    executionContexts.get(event.scope)?.models.delete(event.idempotencyKey);
+    const state = takeSpanState(modelSpans, event.scope, event.idempotencyKey);
     if (state === undefined) return;
     if (event.type === "model.call.failed") {
       recordError(state.span, event.error);
@@ -385,13 +390,13 @@ export function createAgentOtelInstrumentation(
       span: actionSpan,
       toolSpan,
     };
-    getExecutionContexts(event.scope).tools.set(event.id, state.context);
-    getSpanStates(toolSpans, event.scope).set(event.id, state);
+    getExecutionContexts(event.scope).tools.set(event.idempotencyKey, state.context);
+    getSpanStates(toolSpans, event.scope).set(event.idempotencyKey, state);
   };
 
   const onToolCallTerminal = (event: InstrumentationToolCallTerminalEvent): void => {
-    executionContexts.get(event.scope)?.tools.delete(event.id);
-    const state = takeSpanState(toolSpans, event.scope, event.id);
+    executionContexts.get(event.scope)?.tools.delete(event.idempotencyKey);
+    const state = takeSpanState(toolSpans, event.scope, event.idempotencyKey);
     if (state === undefined) return;
     if (event.type === "tool.call.failed") {
       recordError(state.toolSpan, event.error);
@@ -524,8 +529,8 @@ export function createAgentOtelInstrumentation(
       const contexts = executionContexts.get(operation.scope);
       const parent =
         operation.type === "model.call"
-          ? contexts?.models.get(operation.id)
-          : contexts?.tools.get(operation.id);
+          ? contexts?.models.get(operation.idempotencyKey)
+          : contexts?.tools.get(operation.idempotencyKey);
       return parent === undefined ? execute() : context.with(parent, execute);
     },
   };

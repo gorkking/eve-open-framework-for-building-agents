@@ -81,6 +81,39 @@ export type InstrumentationToolOutput =
   | { readonly type: "result"; readonly output: unknown }
   | { readonly type: "error"; readonly error: unknown };
 
+/** Replay-stable row identity for every lifecycle operation. */
+export function sessionIdempotencyKey(sessionId: string): string {
+  return `session:${sessionId}`;
+}
+
+export function turnIdempotencyKey(sessionId: string, turnId: string): string {
+  return `turn:${sessionId}:${turnId}`;
+}
+
+export function attemptIdempotencyKey(scope: InstrumentationAttemptScope): string {
+  return `step:${scope.attemptId}`;
+}
+
+/** One model call occurs per AI SDK step within an eve attempt. */
+export function modelCallIdempotencyKey(
+  scope: InstrumentationAttemptScope,
+  stepNumber: number,
+): string {
+  return `model:${scope.attemptId}:${String(stepNumber)}`;
+}
+
+export function toolCallIdempotencyKey(
+  scope: InstrumentationAttemptScope,
+  callId: string,
+  stepNumber: number,
+): string {
+  return `tool:${scope.attemptId}:${callId}:${String(stepNumber)}`;
+}
+
+export function inputIdempotencyKey(sessionId: string, turnId: string, requestId: string): string {
+  return `input:${sessionId}:${turnId}:${requestId}`;
+}
+
 /** Framework-owned reason an agent suspended for user input. */
 export type InstrumentationInputKind = "question" | "session-limit" | "tool-approval";
 
@@ -120,7 +153,7 @@ export interface InstrumentationInputRequestedEvent {
     readonly callId: string;
     readonly name: string;
   };
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly kind: InstrumentationInputKind;
   readonly request: InstrumentationInputRequest;
   readonly requestId: string;
@@ -130,7 +163,7 @@ export interface InstrumentationInputRequestedEvent {
 export interface InstrumentationInputResolvedEvent {
   readonly type: "input.resolved";
   readonly error?: unknown;
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly kind: InstrumentationInputKind;
   readonly outcome: InstrumentationInputOutcome;
   readonly requestId: string;
@@ -140,6 +173,7 @@ export interface InstrumentationInputResolvedEvent {
 
 export interface InstrumentationStepAttemptStartedEvent {
   readonly type: "step.attempt.started";
+  readonly idempotencyKey: string;
   readonly operation: InstrumentationOperationRef;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -148,6 +182,7 @@ export interface InstrumentationSessionStartedEvent {
   readonly type: "session.started";
   readonly agentName?: string;
   readonly channelKind?: string;
+  readonly idempotencyKey: string;
   readonly parentTraceContext?: InstrumentationTraceContext;
   readonly rootSessionId: string;
   readonly sessionId: string;
@@ -179,6 +214,7 @@ export interface InstrumentationParentLineage {
  */
 export interface InstrumentationSessionSettledEvent {
   readonly type: "session.completed" | "session.waiting";
+  readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId?: string;
 }
@@ -186,6 +222,7 @@ export interface InstrumentationSessionSettledEvent {
 export interface InstrumentationSessionFailedEvent {
   readonly type: "session.failed";
   readonly error: unknown;
+  readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId?: string;
 }
@@ -196,6 +233,7 @@ export type InstrumentationSessionTransitionEvent =
 
 export interface InstrumentationTurnStartedEvent {
   readonly type: "turn.started";
+  readonly idempotencyKey: string;
   readonly parentLineage?: InstrumentationParentLineage;
   readonly parentTraceContext?: InstrumentationTraceContext;
   readonly rootSessionId: string;
@@ -204,18 +242,41 @@ export interface InstrumentationTurnStartedEvent {
   readonly turnId: string;
 }
 
-export interface InstrumentationTurnTerminalEvent {
-  readonly type: "turn.cancelled" | "turn.completed" | "turn.failed";
-  readonly error?: unknown;
+export interface InstrumentationTurnSettledEvent {
+  readonly type: "turn.cancelled" | "turn.completed";
+  readonly idempotencyKey: string;
   readonly sessionId: string;
   readonly turnId: string;
 }
 
-export interface InstrumentationStepAttemptTerminalEvent {
-  readonly type: "step.attempt.completed" | "step.attempt.failed";
-  readonly error?: unknown;
+export interface InstrumentationTurnFailedEvent {
+  readonly type: "turn.failed";
+  readonly error: unknown;
+  readonly idempotencyKey: string;
+  readonly sessionId: string;
+  readonly turnId: string;
+}
+
+export type InstrumentationTurnTerminalEvent =
+  | InstrumentationTurnSettledEvent
+  | InstrumentationTurnFailedEvent;
+
+export interface InstrumentationStepAttemptCompletedEvent {
+  readonly type: "step.attempt.completed";
+  readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
+
+export interface InstrumentationStepAttemptFailedEvent {
+  readonly type: "step.attempt.failed";
+  readonly error: unknown;
+  readonly idempotencyKey: string;
+  readonly scope: InstrumentationAttemptScope;
+}
+
+export type InstrumentationStepAttemptTerminalEvent =
+  | InstrumentationStepAttemptCompletedEvent
+  | InstrumentationStepAttemptFailedEvent;
 
 /**
  * Provider metadata for one completed attempt, as reported by the AI SDK
@@ -224,13 +285,14 @@ export interface InstrumentationStepAttemptTerminalEvent {
  */
 export interface InstrumentationStepAttemptMetadataEvent {
   readonly type: "step.attempt.metadata";
+  readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
   readonly providerMetadata: Readonly<Record<string, unknown>>;
 }
 
 export interface InstrumentationModelCallStartedEvent {
   readonly type: "model.call.started";
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly input: InstrumentationModelInput;
   readonly model: InstrumentationModelRef;
   readonly scope: InstrumentationAttemptScope;
@@ -240,7 +302,7 @@ export interface InstrumentationModelCallCompletedEvent {
   readonly type: "model.call.completed";
   readonly content: readonly InstrumentationContentPart[];
   readonly finishReason: string;
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
   readonly usage: InstrumentationUsage;
 }
@@ -248,7 +310,7 @@ export interface InstrumentationModelCallCompletedEvent {
 export interface InstrumentationModelCallFailedEvent {
   readonly type: "model.call.failed";
   readonly error: unknown;
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
 
@@ -259,7 +321,7 @@ export type InstrumentationModelCallTerminalEvent =
 export interface InstrumentationToolCallStartedEvent {
   readonly type: "tool.call.started";
   readonly callId: string;
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly input: unknown;
   readonly scope: InstrumentationAttemptScope;
   readonly toolName: string;
@@ -267,7 +329,7 @@ export interface InstrumentationToolCallStartedEvent {
 
 export interface InstrumentationToolCallCompletedEvent {
   readonly type: "tool.call.completed";
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly output: InstrumentationToolOutput;
   readonly scope: InstrumentationAttemptScope;
 }
@@ -275,7 +337,7 @@ export interface InstrumentationToolCallCompletedEvent {
 export interface InstrumentationToolCallFailedEvent {
   readonly type: "tool.call.failed";
   readonly error: unknown;
-  readonly id: string;
+  readonly idempotencyKey: string;
   readonly scope: InstrumentationAttemptScope;
 }
 
@@ -295,8 +357,8 @@ export interface InstrumentationProviderDefinition {
   readonly name?: string;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
-    readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptTerminalEvent>;
-    readonly "step.attempt.failed"?: InstrumentationEventHandler<InstrumentationStepAttemptTerminalEvent>;
+    readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptCompletedEvent>;
+    readonly "step.attempt.failed"?: InstrumentationEventHandler<InstrumentationStepAttemptFailedEvent>;
     readonly "step.attempt.metadata"?: InstrumentationEventHandler<InstrumentationStepAttemptMetadataEvent>;
     readonly "model.call.started"?: InstrumentationEventHandler<InstrumentationModelCallStartedEvent>;
     readonly "model.call.completed"?: InstrumentationEventHandler<InstrumentationModelCallCompletedEvent>;
@@ -310,16 +372,16 @@ export interface InstrumentationProviderDefinition {
     readonly "tool.call.started"?: InstrumentationEventHandler<InstrumentationToolCallStartedEvent>;
     readonly "tool.call.completed"?: InstrumentationEventHandler<InstrumentationToolCallCompletedEvent>;
     readonly "tool.call.failed"?: InstrumentationEventHandler<InstrumentationToolCallFailedEvent>;
-    readonly "turn.cancelled"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
-    readonly "turn.completed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
-    readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnTerminalEvent>;
+    readonly "turn.cancelled"?: InstrumentationEventHandler<InstrumentationTurnSettledEvent>;
+    readonly "turn.completed"?: InstrumentationEventHandler<InstrumentationTurnSettledEvent>;
+    readonly "turn.failed"?: InstrumentationEventHandler<InstrumentationTurnFailedEvent>;
     readonly "turn.started"?: InstrumentationEventHandler<InstrumentationTurnStartedEvent>;
   };
   readonly flush?: () => void | PromiseLike<void>;
   readonly shutdown?: () => void | PromiseLike<void>;
 }
 
-/** Events that carry an operation `id`, pairing a start with its terminal. */
+/** Events that pair a start with its terminal under one `idempotencyKey`. */
 export type InstrumentationCorrelatedEvent =
   | InstrumentationInputRequestedEvent
   | InstrumentationInputResolvedEvent
@@ -348,12 +410,12 @@ export type InstrumentationContextRunner = <T>(
 /** Stable identity supplied only to a trusted framework context runner. */
 export type InstrumentationExecutionOperation =
   | {
-      readonly id: string;
+      readonly idempotencyKey: string;
       readonly scope: InstrumentationAttemptScope;
       readonly type: "model.call";
     }
   | {
-      readonly id: string;
+      readonly idempotencyKey: string;
       readonly scope: InstrumentationAttemptScope;
       readonly type: "tool.call";
     };

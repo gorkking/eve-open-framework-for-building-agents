@@ -89,7 +89,14 @@ describe("createInstrumentationHandleEvent", () => {
 
     await handleEvent(createSessionWaitingEvent());
 
-    expect(events).toEqual([{ sessionId: "session-1", turnId: "turn-1", type: "session.waiting" }]);
+    expect(events).toEqual([
+      {
+        idempotencyKey: "session:session-1",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        type: "session.waiting",
+      },
+    ]);
   });
 
   it("carries the dispatch lineage onto every turn a child session starts", async () => {
@@ -117,6 +124,7 @@ describe("createInstrumentationHandleEvent", () => {
 
     expect(events.filter((event) => event.type === "turn.started")).toEqual([
       {
+        idempotencyKey: "turn:child-1:child-turn-1",
         parentLineage,
         parentTraceContext: undefined,
         rootSessionId: "session-1",
@@ -126,6 +134,7 @@ describe("createInstrumentationHandleEvent", () => {
         type: "turn.started",
       },
       {
+        idempotencyKey: "turn:child-1:child-turn-2",
         parentLineage,
         parentTraceContext: undefined,
         rootSessionId: "session-1",
