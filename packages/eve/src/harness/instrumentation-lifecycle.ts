@@ -1,4 +1,5 @@
-import { createLogger, formatError } from "#internal/logging.js";
+import { createInstrumentationDispatcher } from "#harness/instrumentation-dispatch.js";
+import type { InstrumentationStateSlot } from "#harness/instrumentation-state.js";
 
 /**
  * Stable eve identity for one actual model attempt.
@@ -345,16 +346,23 @@ export type InstrumentationToolCallTerminalEvent =
   | InstrumentationToolCallCompletedEvent
   | InstrumentationToolCallFailedEvent;
 
+export interface InstrumentationHandlerContext {
+  readonly state: InstrumentationStateSlot;
+}
+
 /**
  * The AI SDK can omit a model terminal when an incomplete stream closes. A
  * provider that correlates starts with terminals must scope that state to the
  * attempt and release anything still open when the step attempt terminates.
  */
-export type InstrumentationEventHandler<TEvent> = (event: TEvent) => void | PromiseLike<void>;
+export type InstrumentationEventHandler<TEvent> = (
+  event: TEvent,
+  ctx: InstrumentationHandlerContext,
+) => void | PromiseLike<void>;
 
 /** Internal provider shape mirrored by the future public hook contract. */
 export interface InstrumentationProviderDefinition {
-  readonly name?: string;
+  readonly name: string;
   readonly events?: {
     readonly "step.attempt.started"?: InstrumentationEventHandler<InstrumentationStepAttemptStartedEvent>;
     readonly "step.attempt.completed"?: InstrumentationEventHandler<InstrumentationStepAttemptCompletedEvent>;
@@ -380,6 +388,20 @@ export interface InstrumentationProviderDefinition {
   readonly flush?: () => void | PromiseLike<void>;
   readonly shutdown?: () => void | PromiseLike<void>;
 }
+
+type InstrumentationProviderInput = Omit<InstrumentationProviderDefinition, "name"> & {
+  readonly name?: string;
+};
+
+export interface InstrumentationDispatchGroups {
+  readonly serialBefore?: readonly InstrumentationProviderDefinition[];
+  readonly parallel?: readonly InstrumentationProviderDefinition[];
+  readonly serialAfter?: readonly InstrumentationProviderDefinition[];
+}
+
+export type InstrumentationHooksInput =
+  | readonly InstrumentationProviderInput[]
+  | InstrumentationDispatchGroups;
 
 /** Events that pair a start with its terminal under one `idempotencyKey`. */
 export type InstrumentationCorrelatedEvent =
@@ -425,26 +447,14 @@ export interface InstrumentationHooks {
   publish(event: InstrumentationEvent): Promise<void>;
 }
 
-const log = createLogger("harness.instrumentation-lifecycle");
+export interface CreateInstrumentationHooksOptions {
+  readonly handlerTimeoutMs?: number;
+}
 
-/** Creates failure-isolated hooks backed by an ordered provider list. */
+/** Creates failure-isolated hooks backed by normalized dispatch groups. */
 export function createInstrumentationHooks(
-  providers: readonly InstrumentationProviderDefinition[],
+  input: InstrumentationHooksInput,
+  options: CreateInstrumentationHooksOptions = {},
 ): InstrumentationHooks {
-  const publish = async (event: InstrumentationEvent): Promise<void> => {
-    for (const provider of providers) {
-      const handler = provider.events?.[event.type];
-      if (handler === undefined) continue;
-      try {
-        await (handler as InstrumentationEventHandler<InstrumentationEvent>)(event);
-      } catch (error) {
-        log.warn("instrumentation provider failed", {
-          boundary: event.type,
-          error: formatError(error),
-        });
-      }
-    }
-  };
-
-  return { publish };
+  return createInstrumentationDispatcher(input, options);
 }

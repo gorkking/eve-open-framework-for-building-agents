@@ -29,6 +29,7 @@ import {
   isHarnessBetweenTurns,
   setHarnessEmissionState,
 } from "#harness/emission.js";
+import { preserveSerializedInstrumentationState } from "#harness/instrumentation-state.js";
 import { preserveSerializedAgentTraceState } from "#tracing/agent-trace-context-store.js";
 import { matchAuthorizationCallbacks } from "#execution/authorization-callback-match.js";
 import { readTurnSleepDurationMs } from "#harness/turn-sleep.js";
@@ -443,11 +444,15 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   } catch (error) {
     if (!isTurnCancellation(error)) throw error;
     writer.releaseLock();
+    // Both carve-outs exist because the cancellation epilogue still publishes
+    // `turn.cancelled` downstream, and the open spans and provider state it
+    // needs to close were written by the step being discarded.
+    const interrupted = serializeContext(ctx);
     return {
       action: "cancelled",
-      serializedContext: preserveSerializedAgentTraceState(
-        input.serializedContext,
-        serializeContext(ctx),
+      serializedContext: preserveSerializedInstrumentationState(
+        preserveSerializedAgentTraceState(input.serializedContext, interrupted),
+        interrupted,
       ),
       sessionState: input.sessionState,
     };

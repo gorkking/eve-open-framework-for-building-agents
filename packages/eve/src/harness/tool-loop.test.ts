@@ -10242,6 +10242,7 @@ describe("createToolLoopHarness", () => {
           scope: expect.objectContaining({ attemptIndex: 0 }),
           type: "step.attempt.completed",
         }),
+        expect.anything(),
       );
     });
 

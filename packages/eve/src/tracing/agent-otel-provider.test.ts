@@ -1,12 +1,13 @@
-import { SpanStatusCode } from "@opentelemetry/api";
+import { SpanStatusCode, trace as apiTrace } from "@opentelemetry/api";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { context } from "#compiled/@opentelemetry/api/index.js";
 import { createAiSdkHookBridge } from "#harness/ai-sdk-hook-bridge.js";
 import { createAgentOtelInstrumentation } from "#tracing/agent-otel-provider.js";
 import { AgentSpanIdGenerator } from "#tracing/agent-span-id-generator.js";
@@ -263,6 +264,7 @@ function nanos(hrTime: readonly [number, number]): bigint {
 describe("createAgentOtelInstrumentation", () => {
   it("emits the agent hierarchy in one session trace", async () => {
     const runtime = createRuntime();
+    const contextWith = vi.spyOn(context, "with");
     await emitAttempt({
       hooks: runtime.hooks,
       runInContext: runtime.runInContext,
@@ -270,6 +272,8 @@ describe("createAgentOtelInstrumentation", () => {
       turnId: "turn-1",
       turnSequence: 0,
     });
+    const executionParents = contextWith.mock.calls.map(([parent]) => parent);
+    contextWith.mockRestore();
     await runtime.provider.forceFlush();
 
     const spans = runtime.exporter.getFinishedSpans();
@@ -292,6 +296,12 @@ describe("createAgentOtelInstrumentation", () => {
     expect(step.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
     expect(operation.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(model.parentSpanContext?.spanId).toBe(operation.spanContext().spanId);
+    expect(
+      executionParents.some(
+        (parent) =>
+          apiTrace.getSpan(parent as never)?.spanContext().spanId === model.spanContext().spanId,
+      ),
+    ).toBe(true);
     expect(action.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
     expect(tool.parentSpanContext?.spanId).toBe(action.spanContext().spanId);
     expect(new Set(spans.map((span) => span.spanContext().traceId))).toHaveLength(1);

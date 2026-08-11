@@ -38,6 +38,7 @@ describe("createAiSdkHookBridge", () => {
             );
           },
         },
+        name,
       };
     };
     const hooks = createInstrumentationHooks([provider("a"), provider("b")]);
@@ -221,6 +222,7 @@ describe("createAiSdkHookBridge", () => {
 
     expect(after).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ error, type: "model.call.failed" }),
+      expect.anything(),
     );
   });
 
@@ -236,6 +238,7 @@ describe("createAiSdkHookBridge", () => {
 
     expect(after).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ error: reason, type: "tool.call.failed" }),
+      expect.anything(),
     );
   });
 
@@ -265,8 +268,8 @@ describe("createAiSdkHookBridge", () => {
       scope,
       type: "step.attempt.started",
     };
-    expect(mutator).toHaveBeenCalledExactlyOnceWith(expected);
-    expect(started).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(mutator).toHaveBeenCalledExactlyOnceWith(expected, expect.anything());
+    expect(started).toHaveBeenCalledExactlyOnceWith(expected, expect.anything());
   });
 
   it("projects the model call callbacks onto eve fields only", async () => {
@@ -333,45 +336,51 @@ describe("createAiSdkHookBridge", () => {
       },
     ]);
 
-    expect(before).toHaveBeenCalledExactlyOnceWith({
-      idempotencyKey: `model:${scope.attemptId}:0`,
-      input: { instructions: "be brief", messages: [{ content: "hi", role: "user" }] },
-      model: { modelId: "model", provider: "test" },
-      scope,
-      type: "model.call.started",
-    });
+    expect(before).toHaveBeenCalledExactlyOnceWith(
+      {
+        idempotencyKey: `model:${scope.attemptId}:0`,
+        input: { instructions: "be brief", messages: [{ content: "hi", role: "user" }] },
+        model: { modelId: "model", provider: "test" },
+        scope,
+        type: "model.call.started",
+      },
+      expect.anything(),
+    );
     // An unrecognized part kind is dropped rather than forwarded, so widening
     // InstrumentationContentPart is what makes a new kind reachable.
-    expect(after).toHaveBeenCalledExactlyOnceWith({
-      content: [
-        { text: "thinking", type: "reasoning" },
-        { text: "hello", type: "text" },
-        { callId: "tool-1", input: { a: 1 }, toolName: "search", type: "tool-call" },
-        {
-          callId: "tool-1",
-          input: { a: 1 },
-          output: "ok",
-          toolName: "search",
-          type: "tool-result",
+    expect(after).toHaveBeenCalledExactlyOnceWith(
+      {
+        content: [
+          { text: "thinking", type: "reasoning" },
+          { text: "hello", type: "text" },
+          { callId: "tool-1", input: { a: 1 }, toolName: "search", type: "tool-call" },
+          {
+            callId: "tool-1",
+            input: { a: 1 },
+            output: "ok",
+            toolName: "search",
+            type: "tool-result",
+          },
+          {
+            callId: "tool-2",
+            error: "boom",
+            input: { a: 2 },
+            toolName: "search",
+            type: "tool-error",
+          },
+        ],
+        finishReason: "tool-calls",
+        idempotencyKey: `model:${scope.attemptId}:0`,
+        scope,
+        type: "model.call.completed",
+        usage: {
+          inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 4 },
+          inputTokens: 1,
+          outputTokens: 2,
         },
-        {
-          callId: "tool-2",
-          error: "boom",
-          input: { a: 2 },
-          toolName: "search",
-          type: "tool-error",
-        },
-      ],
-      finishReason: "tool-calls",
-      idempotencyKey: `model:${scope.attemptId}:0`,
-      scope,
-      type: "model.call.completed",
-      usage: {
-        inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 4 },
-        inputTokens: 1,
-        outputTokens: 2,
       },
-    });
+      expect.anything(),
+    );
   });
 
   it.each([
@@ -405,20 +414,26 @@ describe("createAiSdkHookBridge", () => {
         { callId: "call-1", toolCall, toolExecutionMs: 1, toolOutput },
       ]);
 
-      expect(before).toHaveBeenCalledExactlyOnceWith({
-        callId: "tool-1",
-        idempotencyKey: `tool:${scope.attemptId}:tool-1:0`,
-        input: { q: "eve" },
-        scope,
-        toolName: "search",
-        type: "tool.call.started",
-      });
-      expect(after).toHaveBeenCalledExactlyOnceWith({
-        idempotencyKey: `tool:${scope.attemptId}:tool-1:0`,
-        output: expected,
-        scope,
-        type: "tool.call.completed",
-      });
+      expect(before).toHaveBeenCalledExactlyOnceWith(
+        {
+          callId: "tool-1",
+          idempotencyKey: `tool:${scope.attemptId}:tool-1:0`,
+          input: { q: "eve" },
+          scope,
+          toolName: "search",
+          type: "tool.call.started",
+        },
+        expect.anything(),
+      );
+      expect(after).toHaveBeenCalledExactlyOnceWith(
+        {
+          idempotencyKey: `tool:${scope.attemptId}:tool-1:0`,
+          output: expected,
+          scope,
+          type: "tool.call.completed",
+        },
+        expect.anything(),
+      );
     },
   );
 
@@ -433,6 +448,7 @@ describe("createAiSdkHookBridge", () => {
           },
           "model.call.started": (event) => void own.set(event.idempotencyKey, `${name}-state`),
         },
+        name,
       };
     };
     const hooks = createInstrumentationHooks([provider("a"), provider("b")]);

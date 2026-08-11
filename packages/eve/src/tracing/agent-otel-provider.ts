@@ -84,6 +84,7 @@ export function createAgentOtelInstrumentation(
     InstrumentationAttemptScope,
     { readonly models: Map<string, Context>; readonly tools: Map<string, Context> }
   >();
+  const attemptScopes = new Map<string, InstrumentationAttemptScope>();
   // A serverless turn runs inside one `turnStep` "use step" invocation. If
   // that worker is lost, Workflow retries the whole step from entry rather
   // than resuming this callback sequence in a replacement process.
@@ -173,12 +174,15 @@ export function createAgentOtelInstrumentation(
       },
       step: { context: stepContext, span: stepSpan },
     });
+    attemptScopes.set(event.scope.attemptId, event.scope);
   };
 
   const onStepTerminal = (event: InstrumentationStepAttemptTerminalEvent): void => {
-    executionContexts.delete(event.scope);
-    drainOpenSpans(event);
-    const attempt = steps.get(event.scope);
+    const scope = attemptScopes.get(event.scope.attemptId) ?? event.scope;
+    executionContexts.delete(scope);
+    drainOpenSpans({ ...event, scope });
+    attemptScopes.delete(event.scope.attemptId);
+    const attempt = steps.get(scope);
     if (attempt === undefined) return;
     // The span event drops the `attempt` segment: this span *is* one attempt,
     // and `agent.step.attempt` on it already says which.
@@ -191,7 +195,7 @@ export function createAgentOtelInstrumentation(
     }
     attempt.operation.span.end();
     attempt.step.span.end();
-    steps.delete(event.scope);
+    steps.delete(scope);
   };
 
   const onTurnTerminal = async (event: InstrumentationTurnTerminalEvent): Promise<void> => {
@@ -526,7 +530,8 @@ export function createAgentOtelInstrumentation(
       },
     },
     runInContext(operation, execute) {
-      const contexts = executionContexts.get(operation.scope);
+      const scope = attemptScopes.get(operation.scope.attemptId) ?? operation.scope;
+      const contexts = executionContexts.get(scope);
       const parent =
         operation.type === "model.call"
           ? contexts?.models.get(operation.idempotencyKey)
