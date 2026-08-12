@@ -212,7 +212,7 @@ describe("memory lifecycle", () => {
               callId: "call-1",
               input: { index: 1 },
               kind: "tool-call",
-              toolName: "user__forget_memory",
+              toolName: "user__remove_memory",
             },
             kind: "tool-approval",
             prompt: "Allow this memory change?",

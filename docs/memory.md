@@ -1,6 +1,6 @@
 ---
 title: "Memory"
-description: "Attach provider-owned context, tools, and lifecycle behavior across sessions."
+description: "Attach provider-owned memory messages, tools, and lifecycle behavior across sessions."
 ---
 
 Memory is an explicit filesystem slot that carries provider-owned behavior across sessions. eve supplies path-derived identity and a trusted, locked scope; your provider decides how recall, capture, storage, formatting, retention, and tools work.
@@ -22,10 +22,10 @@ The two forms are mutually exclusive. Local subagents can declare their own slot
 
 ```ts title="agent/memory/user.ts"
 import { byPrincipal, defineMemory } from "eve/memory";
-import { userMemory } from "../lib/user-memory";
+import { fileMemory } from "eve/memory/file";
 
 export default defineMemory({
-  provider: userMemory,
+  provider: fileMemory(),
   scope: byPrincipal(),
 });
 ```
@@ -46,15 +46,52 @@ eve awaits the resolver once, then hashes the application, environment, graph no
 
 If a memory tool pauses for approval, the pending call keeps its locked scope. Only the principal that initiated the call can answer the approval request; a response from another principal fails before eve resolves or executes the tool.
 
+## File memory
+
+`fileMemory()` is eve's bounded, model-maintained memory file. It works with any scope; `byPrincipal()` in the example above creates a separate file for each authenticated principal. The provider recalls indexed memories when the session starts, then refreshes that context after each successful compaction. It exposes two minimal operations: `save_memory(text)` adds one memory and returns its index, while `remove_memory(index)` removes one memory. eve qualifies them as `user__save_memory` and `user__remove_memory` because the slot file is `user.ts`.
+
+The stored file contains one memory per line, so the recalled context gives the model the index needed to remove an entry without recreating the rest:
+
+```text
+0: Prefers dark mode.
+1: Likes concise answers.
+```
+
+eve allocates each new memory one index above the current highest index and never rewrites the indexes of surviving memories. It also normalizes saved text to one line, preserves unrelated memories, and retries conditional writes when another invocation changes the document concurrently. Saving identical text returns its existing index instead of adding a duplicate. Removing an index that no longer exists is a no-op.
+
+The provider stores at most 100 memories by default. Configure `memoryLimit` to change that count. At the limit, a failed save tells the model to remove an outdated memory by index and retry. The provider tells the model to keep stable context and omit secrets, instructions, and current-task details. It does not run a hidden capture model or persist complete transcripts.
+
+On Vercel, the default backend stores private `MEMORY.md` objects in Vercel Blob. Attach a Blob store to the project so `BLOB_STORE_ID` and Vercel OIDC are available, or provide `BLOB_READ_WRITE_TOKEN`. Outside Vercel, the default is process-local memory for zero-configuration development and tests; it is not durable across restarts.
+
+Pin Vercel Blob explicitly when you want to use it locally or customize credentials and pathnames:
+
+```ts title="agent/memory/user.ts"
+import { byPrincipal, defineMemory } from "eve/memory";
+import { fileMemory, vercelBlob } from "eve/memory/file";
+
+export default defineMemory({
+  provider: fileMemory({
+    backend: vercelBlob({
+      prefix: "my-agent/memory/files",
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    }),
+    memoryLimit: 200,
+  }),
+  scope: byPrincipal(),
+});
+```
+
+Storage is deliberately behind `MemoryDocumentBackend`, a conditional read/replace contract for one versioned text document. A KV store, database row, S3 object, or R2 object can implement that contract without becoming part of eve's memory model. Stale writes must throw `MemoryDocumentConflictError`; the provider rereads the latest document and reapplies the individual save or remove operation.
+
 ## Define a provider
 
 Providers opt into only the lifecycle points they need:
 
-```ts title="agent/lib/user-memory.ts"
+```ts title="agent/lib/custom-memory.ts"
 import { defineMemoryProvider } from "eve/memory";
 import { service } from "./service";
 
-export const userMemory = defineMemoryProvider({
+export const customMemory = defineMemoryProvider({
   events: {
     async "message.received"(event, ctx) {
       const content = await service.recall(ctx.memory.scope, event.data.message, ctx.messages);
@@ -80,7 +117,7 @@ import { defineDynamic, defineMemoryProvider } from "eve/memory";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-export const userMemory = defineMemoryProvider({
+export const customMemory = defineMemoryProvider({
   tools: defineDynamic({
     events: {
       "step.started"(_event, ctx) {
@@ -118,4 +155,4 @@ Completed-turn handlers do not run for failed, cancelled, adapter-consumed, or i
 
 ## Testing providers
 
-Tests can use a module-local `Map` keyed by `ctx.memory.scope.key` to exercise recall and capture without a service. Treat that only as process-local test storage: it is neither durable nor shared across serverless instances. eve intentionally ships no storage provider as part of the framework contract.
+Use `inMemory()` from `eve/memory/file` when testing `fileMemory()` or a custom `MemoryDocumentBackend`. Treat it only as process-local storage: it is neither durable nor shared across serverless instances.

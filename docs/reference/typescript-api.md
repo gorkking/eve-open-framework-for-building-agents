@@ -83,6 +83,7 @@ A few non-`define*` helpers round out the set: `disableTool`, `experimental_work
 | `eve/channels/{slack,discord,teams,telegram,twilio,github}` | platform channel factories                                              |
 | `eve/hooks`                                                 | `defineHook`                                                            |
 | `eve/memory`                                                | `defineMemory`, `defineMemoryProvider`, `defineDynamic`, `byPrincipal`  |
+| `eve/memory/file`                                           | `fileMemory`, `inMemory`, `vercelBlob`, `MemoryDocumentBackend`         |
 | `eve/schedules`                                             | `defineSchedule`                                                        |
 | `eve/skills`                                                | `defineSkill`, `defineDynamic`                                          |
 | `eve/instructions`                                          | `defineInstructions`, `defineDynamic`                                   |
