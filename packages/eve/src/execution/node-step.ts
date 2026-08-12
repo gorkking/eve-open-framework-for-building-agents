@@ -2,6 +2,7 @@ import type { LanguageModel } from "ai";
 
 import type { Runtime, SessionCapabilities } from "#channel/types.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
+import { takePendingMemoryMessages } from "#context/memory-lifecycle.js";
 import { createHarnessDelegationToolDefinition } from "#execution/delegation-tool.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
@@ -110,6 +111,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     onCompaction: preserveFrameworkStateOnCompaction,
     persistentSubagentSessions:
       input.node.agent.config?.experimental?.subagentPersistentSessions === true,
+    takePendingMessages: takePendingMemoryMessages,
     dispatchDynamicModelEvent: dispatchModelEvent,
     resolveModel,
     runtimeIdentity: buildRuntimeIdentity(input.node),

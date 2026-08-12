@@ -20,7 +20,7 @@ const definition: CompiledMemoryDefinition = {
 describe("resolveMemoryDefinition", () => {
   it("resolves a structural memory slot and its dynamic tools", async () => {
     const provider = defineMemoryProvider({
-      events: { "turn.prepared": () => null },
+      events: { "message.received": () => null },
       tools: defineDynamic({ events: { "step.started": () => null } }),
     });
 
@@ -42,7 +42,7 @@ describe("resolveMemoryDefinition", () => {
 
   it("rejects unsupported provider lifecycle keys", async () => {
     const provider = defineMemoryProvider({ events: {} });
-    Object.assign(provider.events!, { "session.started": () => undefined });
+    Object.assign(provider.events!, { "step.started": () => undefined });
 
     await expect(
       resolveMemoryDefinition(
@@ -50,7 +50,7 @@ describe("resolveMemoryDefinition", () => {
         buildModuleMap(defineMemory({ provider, scope: byPrincipal() })),
         undefined,
       ),
-    ).rejects.toThrow(/supported event key.*session\.started/);
+    ).rejects.toThrow(/supported event key.*step\.started/);
   });
 });
 

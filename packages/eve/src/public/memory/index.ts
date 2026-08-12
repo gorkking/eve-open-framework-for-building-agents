@@ -46,21 +46,6 @@ export interface MemoryProviderContext extends MemoryCallbackContext {
   };
 }
 
-/** Internal lifecycle event emitted after input admission and initial compaction. */
-export interface MemoryTurnPreparedEvent {
-  readonly data: {
-    readonly sequence: number;
-    readonly turnId: string;
-  };
-  readonly type: "turn.prepared";
-}
-
-/** Transient prompt contribution returned while preparing one turn. */
-export interface MemoryTurnPreparedResult {
-  /** Provider-formatted text appended to the model-visible prompt tail. */
-  readonly context?: string;
-}
-
 /** One provider-owned model tool resolved for a memory lifecycle boundary. */
 interface MemoryProviderTool {
   readonly description: string;
@@ -96,24 +81,28 @@ export type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicSentinel<TRes
   readonly events: MemoryDynamicEvents<TResult>;
 };
 
-/** Side-effect and transient-context lifecycle handlers owned by a memory provider. */
+/** Lifecycle handlers owned by a memory provider. */
 export interface MemoryProviderEvents {
-  readonly "compaction.completed"?: (
-    event: HookEventMap["compaction.completed"],
+  readonly "turn.started"?: (
+    event: HookEventMap["turn.started"],
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => string | null | void | Promise<string | null | void>;
+  readonly "message.received"?: (
+    event: HookEventMap["message.received"],
+    context: MemoryProviderContext,
+  ) => string | null | void | Promise<string | null | void>;
   readonly "compaction.requested"?: (
     event: HookEventMap["compaction.requested"],
+    context: MemoryProviderContext,
+  ) => void | Promise<void>;
+  readonly "compaction.completed"?: (
+    event: HookEventMap["compaction.completed"],
     context: MemoryProviderContext,
   ) => void | Promise<void>;
   readonly "turn.completed"?: (
     event: HookEventMap["turn.completed"],
     context: MemoryProviderContext,
   ) => void | Promise<void>;
-  readonly "turn.prepared"?: (
-    event: MemoryTurnPreparedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryTurnPreparedResult | null | Promise<MemoryTurnPreparedResult | null>;
 }
 
 /** Model-tool resolvers owned by a memory provider. */

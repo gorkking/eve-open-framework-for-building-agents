@@ -11,8 +11,9 @@ import { toErrorMessage } from "#shared/errors.js";
 const MEMORY_EVENT_NAMES = new Set([
   "compaction.completed",
   "compaction.requested",
+  "message.received",
   "turn.completed",
-  "turn.prepared",
+  "turn.started",
 ]);
 const MEMORY_TOOL_EVENT_NAMES = new Set(["step.started"]);
 

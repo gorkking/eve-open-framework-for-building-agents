@@ -206,7 +206,9 @@ export interface DurableMemorySlotState {
 
 export interface DurableTurnMemoryState {
   readonly deferred: boolean;
+  readonly handledMessageEvents: readonly string[];
   readonly pendingApprovalPrincipal?: string;
+  readonly pendingMessages: readonly string[];
   readonly sequence: number;
   readonly slots: readonly DurableMemorySlotState[];
   readonly turnId: string;

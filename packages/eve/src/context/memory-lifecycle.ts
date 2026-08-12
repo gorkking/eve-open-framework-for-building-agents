@@ -16,7 +16,6 @@ import type {
   MemoryProviderContext,
   MemoryProviderEvents,
   MemoryScope,
-  MemoryTurnPreparedEvent,
 } from "#public/memory/index.js";
 import type { HookContext, StreamEventHook } from "#public/definitions/hook.js";
 import type { ResolvedHookDefinition, ResolvedMemoryDefinition } from "#runtime/types.js";
@@ -24,15 +23,23 @@ import { toErrorMessage } from "#shared/errors.js";
 
 const log = createLogger("memory");
 const MEMORY_HOOK_EVENTS = [
+  "turn.started",
+  "message.received",
   "compaction.requested",
   "compaction.completed",
   "turn.completed",
 ] as const;
+const MEMORY_MESSAGE_EVENTS = new Set<keyof MemoryProviderEvents>([
+  "turn.started",
+  "message.received",
+]);
 
 interface MemoryIdentity {
   readonly agentId: string;
   readonly nodeId: string;
 }
+
+type MemoryMessageResult = string | null | void;
 
 /** Locks memory scopes before ordinary hook and dynamic dispatch. */
 export function prepareMemoryLifecycleEvent(input: {
@@ -127,12 +134,24 @@ export function createMemoryHookDefinitions(
         if (active === null || (eventName === "turn.completed" && active.state.deferred)) {
           return;
         }
+        const messageEventKey = `${eventName}:${memory.slot}`;
+        if (
+          MEMORY_MESSAGE_EVENTS.has(eventName) &&
+          active.state.handledMessageEvents.includes(messageEventKey)
+        ) {
+          return;
+        }
 
         const providerContext = buildMemoryProviderContext(active.slot, hookContext);
         try {
-          await invokeMemoryHook(handler, event, providerContext);
+          const result = await invokeMemoryHook(handler, event, providerContext);
+          if (MEMORY_MESSAGE_EVENTS.has(eventName)) {
+            recordMemoryMessage(messageEventKey, memory.slot, result);
+          }
         } catch (error) {
-          if (eventName === "compaction.requested") throw error;
+          if (eventName === "compaction.requested" || MEMORY_MESSAGE_EVENTS.has(eventName)) {
+            throw error;
+          }
           log.error(`Memory provider ${eventName} handler failed after settlement.`, {
             error: toErrorMessage(error),
             slot: memory.slot,
@@ -155,37 +174,13 @@ export function createMemoryHookDefinitions(
   });
 }
 
-/** Resolves provider prompt contributions after compaction. */
-export async function prepareMemoryTurn(input: {
-  readonly abortSignal: AbortSignal;
-  readonly memories: readonly ResolvedMemoryDefinition[];
-  readonly messages: readonly ModelMessage[];
-}): Promise<readonly ModelMessage[]> {
-  const state = contextStorage.getStore()?.get(TurnMemoryStateKey);
-  if (state === undefined) return [];
-
-  const event: MemoryTurnPreparedEvent = {
-    data: { sequence: state.sequence, turnId: state.turnId },
-    type: "turn.prepared",
-  };
-  const contributions: ModelMessage[] = [];
-
-  for (const slotState of state.slots) {
-    const memory = requireMemory(input.memories, slotState.slot);
-    const handler = memory.provider.events?.["turn.prepared"];
-    if (handler === undefined) continue;
-    const context = createMemoryProviderContext({
-      abortSignal: input.abortSignal,
-      messages: input.messages,
-      slot: memory.slot,
-    });
-    if (context === null) continue;
-    const prepared = await handler(event, context);
-    const content = normalizePreparedContext(memory.slot, prepared);
-    if (content !== undefined) contributions.push({ content, role: "user" });
-  }
-
-  return contributions;
+/** Takes memory messages returned by real turn events for durable materialization. */
+export function takePendingMemoryMessages(): readonly ModelMessage[] {
+  const ctx = contextStorage.getStore();
+  const state = ctx?.get(TurnMemoryStateKey);
+  if (ctx === undefined || state === undefined || state.pendingMessages.length === 0) return [];
+  ctx.set(TurnMemoryStateKey, { ...state, pendingMessages: [] });
+  return state.pendingMessages.map((content) => ({ content, role: "user" }));
 }
 
 /** Builds the scoped callback context used by memory-owned dynamic tools. */
@@ -243,6 +238,8 @@ function resolveTurnState(input: {
 
   return {
     deferred: false,
+    handledMessageEvents: [],
+    pendingMessages: [],
     sequence: input.sequence,
     slots,
     turnId: input.turnId,
@@ -301,38 +298,36 @@ function validateScopeParts(slot: string, parts: readonly string[]): void {
   }
 }
 
-function normalizePreparedContext(
-  slot: string,
-  value: { readonly context?: string } | null | undefined,
-): string | undefined {
-  if (value === null || value === undefined || value.context === undefined) return undefined;
-  if (typeof value.context !== "string") {
-    throw new TypeError(`Memory provider "${slot}" returned a non-string prepared context.`);
-  }
-  const context = value.context.trim();
-  return context.length === 0 ? undefined : context;
+function recordMemoryMessage(eventKey: string, slot: string, value: unknown): void {
+  const ctx = contextStorage.getStore();
+  const state = ctx?.get(TurnMemoryStateKey);
+  if (ctx === undefined || state === undefined) return;
+  const content = normalizeMemoryMessage(slot, value);
+  ctx.set(TurnMemoryStateKey, {
+    ...state,
+    handledMessageEvents: [...state.handledMessageEvents, eventKey],
+    pendingMessages:
+      content === undefined ? state.pendingMessages : [...state.pendingMessages, content],
+  });
 }
 
-function requireMemory(
-  memories: readonly ResolvedMemoryDefinition[],
-  slot: string,
-): ResolvedMemoryDefinition {
-  const memory = memories.find((candidate) => candidate.slot === slot);
-  if (memory === undefined) {
-    throw new Error(`Memory slot "${slot}" is unavailable in the active runtime revision.`);
+function normalizeMemoryMessage(slot: string, value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new TypeError(`Memory provider "${slot}" returned a non-string memory message.`);
   }
-  return memory;
+  return value.trim().length === 0 ? undefined : value;
 }
 
 async function invokeMemoryHook(
-  handler: NonNullable<
-    MemoryProviderEvents["compaction.requested" | "compaction.completed" | "turn.completed"]
-  >,
+  handler: NonNullable<MemoryProviderEvents[keyof MemoryProviderEvents]>,
   event: MessageStreamEvent,
   context: MemoryProviderContext,
-): Promise<void> {
-  await (handler as (event: MessageStreamEvent, context: MemoryProviderContext) => unknown)(
-    event,
-    context,
-  );
+): Promise<MemoryMessageResult> {
+  return await (
+    handler as (
+      event: MessageStreamEvent,
+      context: MemoryProviderContext,
+    ) => MemoryMessageResult | Promise<MemoryMessageResult>
+  )(event, context);
 }

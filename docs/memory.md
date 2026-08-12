@@ -53,9 +53,8 @@ import { service } from "./service";
 
 export const userMemory = defineMemoryProvider({
   events: {
-    async "turn.prepared"(_event, ctx) {
-      const context = await service.recall(ctx.memory.scope, ctx.messages);
-      return context === null ? null : { context };
+    async "message.received"(event, ctx) {
+      return service.recall(ctx.memory.scope, event.data.message, ctx.messages);
     },
     async "turn.completed"(_event, ctx) {
       await service.capture(ctx.memory.scope, ctx.messages);
@@ -64,7 +63,9 @@ export const userMemory = defineMemoryProvider({
 });
 ```
 
-Prepared context is appended as transient user context at the prompt tail. It is not written to durable history, included in compaction snapshots, or passed back to `turn.completed`. The provider owns its formatting; recalled text is not elevated to a system instruction.
+A non-empty string returned from `turn.started` or `message.received` becomes one `role: "user"` message in durable session history. Use `turn.started` when recall does not depend on the incoming message. Use `message.received` when it does; the event contains the accepted message and structured parts.
+
+eve appends memory messages after the turn's initial compaction decision. Later model steps and turns retain them until compaction or context clearing removes them, which keeps each request as an extension of the previous prompt for stable prompt caching. They are included in later provider snapshots, including `turn.completed`, and in later compaction input. Unlike dynamic instructions, memory messages are not hoisted into the system prompt.
 
 ## Provider tools
 
@@ -99,13 +100,14 @@ Memory tools use the same `defineDynamic` primitive and lifecycle scoping as oth
 
 ## Lifecycle
 
-| Boundary               | Provider input                                 | Behavior                                                               |
-| ---------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
-| `compaction.requested` | Complete durable history before compaction     | Awaited before compaction; a failure aborts the pass                   |
-| `compaction.completed` | Successfully checkpointed durable history      | Runs after the checkpoint; failures are logged and cannot roll it back |
-| `turn.prepared`        | Post-compaction history including newest input | May return transient context                                           |
-| `step.started`         | Current model-visible durable history          | May replace or clear the slot's tools for that model call              |
-| `turn.completed`       | Complete settled durable history               | Awaited after `turn.completed` and before the session becomes ready    |
+| Boundary               | Provider input                             | Behavior                                                               |
+| ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| `turn.started`         | Durable history before the incoming input  | May return one durable user message                                    |
+| `message.received`     | Accepted incoming message and history      | May return one durable user message                                    |
+| `compaction.requested` | Complete durable history before compaction | Awaited before compaction; a failure aborts the pass                   |
+| `compaction.completed` | Successfully checkpointed durable history  | Runs after the checkpoint; failures are logged and cannot roll it back |
+| `step.started`         | Current model-visible durable history      | May replace or clear the slot's tools for that model call              |
+| `turn.completed`       | Complete settled durable history           | Awaited after `turn.completed` and before the session becomes ready    |
 
 Completed-turn handlers do not run for failed, cancelled, adapter-consumed, or input-deferred turns. A provider is responsible for persistence, retry/idempotency, retention, erasure, and applying the supplied scope to every downstream operation.
 

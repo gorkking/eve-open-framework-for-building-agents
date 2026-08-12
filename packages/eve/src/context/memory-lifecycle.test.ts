@@ -6,7 +6,7 @@ import { SessionKey, TurnMemoryStateKey } from "#context/keys.js";
 import {
   createMemoryHookDefinitions,
   prepareMemoryLifecycleEvent,
-  prepareMemoryTurn,
+  takePendingMemoryMessages,
 } from "#context/memory-lifecycle.js";
 import type { HookContext } from "#public/definitions/hook.js";
 import { defineMemoryProvider } from "#public/memory/index.js";
@@ -14,6 +14,7 @@ import {
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
   createInputRequestedEvent,
+  createMessageReceivedEvent,
   createTurnCompletedEvent,
   createTurnStartedEvent,
   stampMessageStreamEvent,
@@ -21,7 +22,7 @@ import {
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 
 describe("memory lifecycle", () => {
-  it("locks one scope and routes provider callbacks through hooks and turn preparation", async () => {
+  it("locks one scope and materializes messages returned from real turn events", async () => {
     const observed: Array<{ phase: string; messages: readonly ModelMessage[]; scopeKey: string }> =
       [];
     const provider = defineMemoryProvider({
@@ -40,13 +41,13 @@ describe("memory lifecycle", () => {
             scopeKey: context.memory.scope.key,
           });
         },
-        "turn.prepared"(_event, context) {
+        "message.received"(_event, context) {
           observed.push({
             messages: context.messages,
-            phase: "prepared",
+            phase: "message-received",
             scopeKey: context.memory.scope.key,
           });
-          return { context: "provider context" };
+          return "message memory";
         },
         "turn.completed"(_event, context) {
           observed.push({
@@ -54,6 +55,14 @@ describe("memory lifecycle", () => {
             phase: "turn-completed",
             scopeKey: context.memory.scope.key,
           });
+        },
+        "turn.started"(_event, context) {
+          observed.push({
+            messages: context.messages,
+            phase: "turn-started",
+            scopeKey: context.memory.scope.key,
+          });
+          return "turn memory";
         },
       },
     });
@@ -92,6 +101,13 @@ describe("memory lifecycle", () => {
     const turnCompleted = stampMessageStreamEvent(
       createTurnCompletedEvent({ sequence: 2, turnId: "turn-2" }),
     );
+    const messageReceived = stampMessageStreamEvent(
+      createMessageReceivedEvent({ message: "hello", sequence: 2, turnId: "turn-2" }),
+    );
+    const memoryMessages: readonly ModelMessage[] = [
+      { content: "turn memory", role: "user" },
+      { content: "message memory", role: "user" },
+    ];
 
     await contextStorage.run(ctx, async () => {
       prepareMemoryLifecycleEvent({
@@ -100,32 +116,39 @@ describe("memory lifecycle", () => {
         identity: { agentId: "agent-1", nodeId: "__root__" },
         memories: [memory],
       });
+      await hooks.events["turn.started"]!(turnStarted, hookContext(before));
+      await hooks.events["message.received"]!(messageReceived, hookContext(before));
       await hooks.events["compaction.requested"]!(requested, hookContext(before));
       await hooks.events["compaction.completed"]!(completed, hookContext(after));
 
-      await expect(
-        prepareMemoryTurn({
-          abortSignal: new AbortController().signal,
-          memories: [memory],
-          messages: after,
-        }),
-      ).resolves.toEqual([{ content: "provider context", role: "user" }]);
+      expect(takePendingMemoryMessages()).toEqual(memoryMessages);
+      expect(takePendingMemoryMessages()).toEqual([]);
       prepareMemoryLifecycleEvent({
         ctx,
         event: turnCompleted,
         identity: { agentId: "agent-1", nodeId: "__root__" },
         memories: [memory],
       });
-      await hooks.events["turn.completed"]!(turnCompleted, hookContext(after));
+      await hooks.events["turn.completed"]!(
+        turnCompleted,
+        hookContext([...after, ...memoryMessages]),
+      );
     });
 
     expect(observed.map(({ phase }) => phase)).toEqual([
+      "turn-started",
+      "message-received",
       "requested",
       "completed",
-      "prepared",
       "turn-completed",
     ]);
-    expect(observed.map(({ messages }) => messages)).toEqual([before, after, after, after]);
+    expect(observed.map(({ messages }) => messages)).toEqual([
+      before,
+      before,
+      before,
+      after,
+      [...after, ...memoryMessages],
+    ]);
     expect(new Set(observed.map(({ scopeKey }) => scopeKey)).size).toBe(1);
     expect(ctx.require(TurnMemoryStateKey).slots).toHaveLength(1);
   });

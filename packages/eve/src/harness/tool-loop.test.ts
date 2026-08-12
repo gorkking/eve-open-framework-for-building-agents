@@ -753,6 +753,39 @@ describe("createToolLoopHarness", () => {
     expect(agentCall!.tools).not.toHaveProperty("Workflow");
   });
 
+  it("persists pending framework messages across model steps and turns", async () => {
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Hello!", role: "assistant" }] },
+      text: "Hello!",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const takePendingMessages = vi
+      .fn<() => readonly ModelMessage[]>()
+      .mockReturnValueOnce([{ content: "remembered context", role: "user" }])
+      .mockReturnValue([]);
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", undefined, { takePendingMessages }),
+    );
+
+    const first = await runStep(createTestSession(), { message: "Hi" });
+    const second = await runStep(first.session, { message: "Follow up" });
+
+    expect(first.session.history).toEqual([
+      { content: "Hi", role: "user" },
+      { content: "remembered context", role: "user" },
+      { content: "Hello!", role: "assistant" },
+    ]);
+    expect(second.session.history).toEqual([
+      ...first.session.history,
+      { content: "Follow up", role: "user" },
+      { content: "Hello!", role: "assistant" },
+    ]);
+    expect(takePendingMessages).toHaveBeenCalledTimes(2);
+  });
+
   it("announces parked agents as user-role content before the user message, outside the system prompt", async () => {
     setupMockAgent({
       finishReason: "stop",

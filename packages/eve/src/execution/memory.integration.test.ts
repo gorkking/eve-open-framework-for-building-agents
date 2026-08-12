@@ -20,15 +20,15 @@ const RECALL_CONTEXT = `Recall directive private: reply with the exact string \`
 describe("first-class memory integration", () => {
   it("carries scope-bound provider context and tools across independent sessions", async () => {
     const stored = new Map<string, string>();
-    const preparedScopeKeys: string[] = [];
+    const recalledScopeKeys: string[] = [];
     const completedSnapshots: string[] = [];
 
     const provider = defineMemoryProvider({
       events: {
-        "turn.prepared"(_event, context) {
-          preparedScopeKeys.push(context.memory.scope.key);
+        "message.received"(_event, context) {
+          recalledScopeKeys.push(context.memory.scope.key);
           const recalled = stored.get(context.memory.scope.key);
-          return recalled === undefined ? null : { context: recalled };
+          return recalled ?? null;
         },
         "turn.completed"(_event, context) {
           completedSnapshots.push(JSON.stringify(context.messages));
@@ -93,10 +93,10 @@ describe("first-class memory integration", () => {
       );
     });
 
-    expect(preparedScopeKeys[0]).toBe(preparedScopeKeys[1]);
-    expect(preparedScopeKeys[2]).not.toBe(preparedScopeKeys[1]);
+    expect(recalledScopeKeys[0]).toBe(recalledScopeKeys[1]);
+    expect(recalledScopeKeys[2]).not.toBe(recalledScopeKeys[1]);
     expect(completedSnapshots).toHaveLength(3);
-    expect(completedSnapshots[1]).not.toContain("Recall directive private");
+    expect(completedSnapshots[1]).toContain("Recall directive private");
   });
 });
 

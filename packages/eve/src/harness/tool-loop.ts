@@ -1124,6 +1124,8 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       telemetry: enrichTelemetry(otelSettings, agentName) ?? undefined,
     }));
 
+    messages.push(...(config.takePendingMessages?.() ?? []));
+
     const approvedTools = getApprovedTools(session);
 
     const emptyDeliveryEnabled =
