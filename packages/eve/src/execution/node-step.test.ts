@@ -26,6 +26,9 @@ vi.mock("ai", () => ({
 
 vi.mock("../runtime/agent/resolve-model.js", () => ({
   resolveRuntimeModelReference: vi.fn().mockResolvedValue({}),
+  resolveRuntimeModelReferenceMetadata: vi
+    .fn()
+    .mockImplementation(async (input: { readonly reference: unknown }) => input.reference),
 }));
 
 afterEach(() => {

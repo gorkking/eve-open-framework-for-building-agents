@@ -77,9 +77,22 @@ vi.mock("ai", () => ({
   tool: vi.fn((t: unknown) => t),
 }));
 
-const { existingOtelIntegration, mockCreateAiSdkHookBridge } = vi.hoisted(() => ({
+const {
+  existingOtelIntegration,
+  mockCreateAiSdkHookBridge,
+  mockResolveRuntimeModelReferenceMetadata,
+} = vi.hoisted(() => ({
   existingOtelIntegration: { onStart: vi.fn() },
   mockCreateAiSdkHookBridge: vi.fn((..._args: unknown[]) => ({ onStart: vi.fn() })),
+  mockResolveRuntimeModelReferenceMetadata: vi.fn(
+    async (input: { readonly reference: unknown }) => input.reference,
+  ),
+}));
+
+vi.mock("#runtime/agent/resolve-model.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("#runtime/agent/resolve-model.js")>()),
+  resolveRuntimeModelReferenceMetadata: (input: { readonly reference: unknown }) =>
+    mockResolveRuntimeModelReferenceMetadata(input),
 }));
 
 vi.mock("./ai-sdk-hook-bridge.js", () => ({
@@ -998,6 +1011,50 @@ describe("createToolLoopHarness", () => {
       providerOptions: { openai: { parallelToolCalls: false } },
     });
     expect(result.session.compaction.threshold).toBe(180_000);
+  });
+
+  it("hydrates missing static model metadata before the model call", async () => {
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Hello!", role: "assistant" }] },
+      text: "Hello!",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const ctx = new ContextContainer();
+    const model = "openai/gpt-5.5" as LanguageModel;
+    const resolveModel = vi.fn().mockResolvedValue(model);
+    mockResolveRuntimeModelReferenceMetadata.mockResolvedValueOnce({
+      contextWindowTokens: 256_000,
+      id: "openai/gpt-5.5",
+      maxOutputTokens: 32_000,
+    });
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", undefined, { resolveModel }),
+    );
+    const session = createTestSession({
+      agent: {
+        modelReference: { id: "openai/gpt-5.5" },
+        system: "You are a test assistant.",
+        tools: [{ description: "Adds numbers", name: "add", inputSchema: { type: "object" } }],
+      },
+    });
+
+    const result = await contextStorage.run(ctx, () => runStep(session, { message: "Hi" }));
+
+    expect(mockResolveRuntimeModelReferenceMetadata).toHaveBeenCalledWith({
+      model,
+      reference: { id: "openai/gpt-5.5" },
+      state: ctx,
+    });
+    expect(vi.mocked(ToolLoopAgent).mock.calls[0]?.[0].model).toBe(model);
+    expect(result.session.agent.modelReference).toEqual({
+      contextWindowTokens: 256_000,
+      id: "openai/gpt-5.5",
+      maxOutputTokens: 32_000,
+    });
+    expect(result.session.compaction.threshold).toBe(230_400);
   });
 
   it("uses session-scoped dynamic model selection for the model call", async () => {

@@ -26,6 +26,11 @@ to `anthropic/claude-sonnet-5`. When `agent.ts` is present, `model` is required.
 
 `model` accepts a gateway model id string, which routes through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway). To call a provider directly and configure the model in code, pass a provider-authored `LanguageModel`.
 
+When `modelContextWindowTokens` is omitted, eve resolves it from the AI Gateway
+catalog. Eve embeds metadata available during compilation and resolves missing
+metadata at runtime, caching successful lookups in durable session state for 24
+hours. Set it explicitly for an unlisted or custom model.
+
 Provider-specific AI SDK packages are regular project dependencies. A fresh `eve init` app includes the core `ai` package, but it does not install every provider package. Install the provider package you import, then set that provider's API key:
 
 ```bash
@@ -87,11 +92,9 @@ selection object. Returning `null` or `undefined` fails the turn.
 - **Serialization.** Session/turn selections must be model id strings; return
   live `LanguageModel` objects only from `step.started`.
 - **Selection object.** `{ model, modelContextWindowTokens?, modelOptions? }`.
-  When `modelContextWindowTokens` is omitted, eve resolves it from the AI
-  Gateway catalog and caches successful metadata in durable session state for
-  24 hours. Set it explicitly for an unlisted or custom model. Dynamic agents
-  cannot set sibling `modelContextWindowTokens` or `modelOptions` fields;
-  return per-model values from the handler.
+  Omitted metadata follows the same catalog resolution and caching path as a
+  static model. Dynamic agents cannot set sibling `modelContextWindowTokens` or
+  `modelOptions` fields; return per-model values from the handler.
 
 The `session.started` runtime identity does not include a model id for a
 dynamic agent. Each public `step.started` event reports the concrete `modelId`

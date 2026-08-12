@@ -163,52 +163,22 @@ export async function resolveRuntimeModelSelection(input: {
 
   const selectedModel = selection.model;
   const catalog = input.catalog ?? runtimeModelCatalogForState(input.state);
-  if (typeof selectedModel === "string") {
-    const id = formatLanguageModelGatewayId(selectedModel);
-    const metadata = await resolveSelectionMetadata({
-      cacheKey: `gateway:${normalizeCatalogModelId(id)}`,
-      catalog,
-      contextWindowTokens: selection.modelContextWindowTokens,
-      load: (catalog) => catalog.getByGatewayId(id),
-      modelLabel: id,
-      state: input.state,
-    });
-    return {
-      reference: {
-        id: metadata.resolvedModelId,
-        contextWindowTokens: metadata.contextWindowTokens,
-        maxOutputTokens: metadata.maxOutputTokens,
-        providerOptions,
-      },
-    };
+  if (typeof selectedModel !== "string") {
+    validateRuntimeLanguageModel(selectedModel);
+    if (input.durability === "durable") {
+      throw new Error(
+        'Dynamic model selection returned a provider object, but durable model selections must be serializable. Return a model id string, or use a "step.started" model resolver.',
+      );
+    }
   }
 
-  validateRuntimeLanguageModel(selectedModel);
-  if (input.durability === "durable") {
-    throw new Error(
-      'Dynamic model selection returned a provider object, but durable model selections must be serializable. Return a model id string, or use a "step.started" model resolver.',
-    );
-  }
-
-  const formattedId = formatLanguageModelGatewayId(selectedModel);
-  const topLevelProvider = selectedModel.provider.split(".")[0]!;
-  const metadata = await resolveSelectionMetadata({
-    cacheKey:
-      topLevelProvider === "gateway"
-        ? `gateway:${normalizeCatalogModelId(selectedModel.modelId)}`
-        : `provider:${selectedModel.provider}:${normalizeCatalogModelId(selectedModel.modelId)}`,
+  const metadata = await resolveRuntimeModelMetadata({
     catalog,
     contextWindowTokens: selection.modelContextWindowTokens,
-    load: (catalog) =>
-      topLevelProvider === "gateway"
-        ? catalog.getByGatewayId(selectedModel.modelId)
-        : catalog.getByProviderModelId(selectedModel.provider, selectedModel.modelId),
-    modelLabel: formattedId,
+    model: selectedModel,
     state: input.state,
   });
-
-  return {
-    model: selectedModel,
+  const resolved = {
     reference: {
       id: metadata.resolvedModelId,
       contextWindowTokens: metadata.contextWindowTokens,
@@ -216,6 +186,78 @@ export async function resolveRuntimeModelSelection(input: {
       providerOptions,
     },
   };
+  return typeof selectedModel === "string" ? resolved : { ...resolved, model: selectedModel };
+}
+
+/**
+ * Resolves catalog metadata for a compiled static model reference at runtime.
+ *
+ * Static and dynamic authored models share the same metadata semantics: an
+ * explicit context window wins, otherwise eve resolves the selected model from
+ * the AI Gateway catalog and caches the result in durable session state.
+ */
+export async function resolveRuntimeModelReferenceMetadata(input: {
+  readonly catalog?: RuntimeModelCatalog;
+  readonly model: LanguageModel;
+  readonly reference: RuntimeModelReference;
+  readonly state: ContextAccessor;
+}): Promise<RuntimeModelReference> {
+  if (
+    input.reference.contextWindowTokens !== undefined ||
+    resolveBootstrapRuntimeModel(input.reference) !== null ||
+    shouldMockAuthoredRuntimeModels()
+  ) {
+    return input.reference;
+  }
+
+  const catalog = input.catalog ?? runtimeModelCatalogForState(input.state);
+  const metadata = await resolveRuntimeModelMetadata({
+    catalog,
+    model: input.model,
+    state: input.state,
+  });
+  return {
+    ...input.reference,
+    id: metadata.resolvedModelId,
+    contextWindowTokens: metadata.contextWindowTokens,
+    maxOutputTokens: metadata.maxOutputTokens,
+  };
+}
+
+async function resolveRuntimeModelMetadata(input: {
+  readonly catalog: RuntimeModelCatalog;
+  readonly contextWindowTokens?: number;
+  readonly model: LanguageModel;
+  readonly state: ContextAccessor;
+}): Promise<RuntimeModelMetadata> {
+  const model = input.model;
+  if (typeof model === "string") {
+    const id = formatLanguageModelGatewayId(model);
+    return await resolveSelectionMetadata({
+      cacheKey: `gateway:${normalizeCatalogModelId(id)}`,
+      catalog: input.catalog,
+      contextWindowTokens: input.contextWindowTokens,
+      load: (catalog) => catalog.getByGatewayId(id),
+      modelLabel: id,
+      state: input.state,
+    });
+  }
+
+  const topLevelProvider = model.provider.split(".")[0]!;
+  return await resolveSelectionMetadata({
+    cacheKey:
+      topLevelProvider === "gateway"
+        ? `gateway:${normalizeCatalogModelId(model.modelId)}`
+        : `provider:${model.provider}:${normalizeCatalogModelId(model.modelId)}`,
+    catalog: input.catalog,
+    contextWindowTokens: input.contextWindowTokens,
+    load: (catalog) =>
+      topLevelProvider === "gateway"
+        ? catalog.getByGatewayId(model.modelId)
+        : catalog.getByProviderModelId(model.provider, model.modelId),
+    modelLabel: formatLanguageModelGatewayId(model),
+    state: input.state,
+  });
 }
 
 const runtimeModelCatalogsByState = new WeakMap<ContextAccessor, RuntimeModelCatalog>();
@@ -255,7 +297,7 @@ async function resolveSelectionMetadata(input: {
   const resolved = await input.load(input.catalog);
   if (resolved === null) {
     throw new Error(
-      `Cannot select model "${input.modelLabel}" because AI Gateway did not provide context window metadata. Return modelContextWindowTokens with this selection for an unlisted or custom model.`,
+      `Cannot select model "${input.modelLabel}" because AI Gateway did not provide context window metadata. Set modelContextWindowTokens for an unlisted or custom model.`,
     );
   }
 

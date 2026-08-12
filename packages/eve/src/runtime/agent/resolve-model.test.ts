@@ -11,6 +11,7 @@ import type { RuntimeModelCatalog } from "#runtime/agent/model-catalog.js";
 import {
   loadDynamicRuntimeModelDefinition,
   resolveRuntimeModelReference,
+  resolveRuntimeModelReferenceMetadata,
   resolveRuntimeModelSelection,
 } from "#runtime/agent/resolve-model.js";
 
@@ -111,6 +112,34 @@ describe("dynamic runtime model resolution", () => {
     });
 
     expect(first.reference).toMatchObject({
+      contextWindowTokens: 256_000,
+      id: "openai/gpt-5.5",
+      maxOutputTokens: 32_000,
+    });
+    expect(second).toEqual(first);
+    expect(catalog.getByGatewayId).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves compiled static model metadata through the same catalog cache", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const state = new ContextContainer();
+    const catalog = createCatalog();
+    const reference = { id: "openai/gpt-5.5" };
+
+    const first = await resolveRuntimeModelReferenceMetadata({
+      catalog,
+      model: "openai/gpt-5.5",
+      reference,
+      state,
+    });
+    const second = await resolveRuntimeModelReferenceMetadata({
+      catalog,
+      model: "openai/gpt-5.5",
+      reference,
+      state,
+    });
+
+    expect(first).toEqual({
       contextWindowTokens: 256_000,
       id: "openai/gpt-5.5",
       maxOutputTokens: 32_000,
@@ -242,7 +271,7 @@ describe("dynamic runtime model resolution", () => {
         selection: "custom/unknown",
         state,
       }),
-    ).rejects.toThrow(/Return modelContextWindowTokens/);
+    ).rejects.toThrow(/Set modelContextWindowTokens/);
   });
 
   it("rejects durable provider objects before catalog lookup", async () => {

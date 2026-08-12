@@ -57,6 +57,7 @@ import {
 } from "#protocol/message.js";
 import type { InstrumentationDefinition } from "#public/instrumentation/index.js";
 import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
+import { resolveRuntimeModelReferenceMetadata } from "#runtime/agent/resolve-model.js";
 import { resolveAgentsAnnouncement } from "#harness/handles/prompt.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import {
@@ -382,9 +383,15 @@ async function resolveActiveRuntimeModel(input: {
         "Dynamic model selection is required before model-dependent work begins. Add a matching resolver handler that returns a concrete model.",
       );
     }
+    const model = await input.config.resolveModel(reference);
+    const resolvedReference = await resolveRuntimeModelReferenceMetadata({
+      model,
+      reference,
+      state: input.ctx,
+    });
     return {
-      model: await input.config.resolveModel(reference),
-      session: input.session,
+      model,
+      session: updateSessionModelReference(input.session, resolvedReference),
     };
   }
 

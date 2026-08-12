@@ -335,9 +335,7 @@ async function withCompiledRuntimeModelLimits(
   }
 
   if (limits === null) {
-    throw new Error(
-      `Cannot compile agent compaction because ${input.purpose} "${model.id}" does not have known AI Gateway context window metadata.`,
-    );
+    return model;
   }
 
   return {

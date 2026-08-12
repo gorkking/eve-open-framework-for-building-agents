@@ -77,6 +77,25 @@ describe("compileAgentConfig", () => {
     expect(compiled.description).toBeUndefined();
     expect(compiled.source?.sourceId).toBe("agent-config");
   });
+
+  it("defers missing static model metadata to runtime", async () => {
+    const manifest = createAgentSourceManifest({
+      agentId: "researcher",
+      agentRoot: "/app/agent/subagents/researcher",
+      appRoot: "/app",
+    });
+    const modelCatalog = createModelCatalog();
+    vi.mocked(modelCatalog.getModelLimits).mockResolvedValue(null);
+
+    const compiled = await compileAgentConfig(
+      manifest,
+      { modelCatalog },
+      { definition: { model: "openai/gpt-5.5" } },
+    );
+
+    expect(compiled.model).toMatchObject({ id: "openai/gpt-5.5" });
+    expect(compiled.model?.contextWindowTokens).toBeUndefined();
+  });
 });
 
 function createModelCatalog(): ManifestCompileContext["modelCatalog"] {
