@@ -32,26 +32,26 @@ function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) |
   }
 }
 
-function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessToolDefinition[] {
+export function replayDurableTools(
+  metadata: readonly DurableDynamicToolMetadata[],
+): HarnessToolDefinition[] {
   const tools: HarnessToolDefinition[] = [];
 
   for (const m of metadata) {
     if (!m.executeStepFnName || !m.closureVars) {
-      log.warn(
-        `Dynamic tool "${m.name}" has no registered step function — ` +
-          "skipping on this step. The bundler transform may not have processed this tool file.",
+      throw new Error(
+        `Dynamic tool "${m.name}" cannot be replayed because its durable execute metadata is incomplete.`,
       );
-      continue;
     }
 
     const stepFn = lookupStepFunction(m.executeStepFnName);
     if (!stepFn) {
-      log.warn(
-        `Dynamic tool "${m.name}" references step function "${m.executeStepFnName}" ` +
-          "which is not registered — skipping on this step.",
+      throw new Error(
+        `Dynamic tool "${m.name}" cannot be replayed because execute function "${m.executeStepFnName}" is not registered.`,
       );
-      continue;
     }
+
+    const toModelOutput = buildReplayedModelOutput(m);
 
     tools.push({
       description: m.description,
@@ -63,10 +63,26 @@ function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessTo
       name: m.name,
       approval: buildReplayedApproval(m),
       outputSchema: toOutputSchema(m.outputSchema),
+      toModelOutput,
     });
   }
 
   return tools;
+}
+
+function buildReplayedModelOutput(
+  metadata: DurableDynamicToolMetadata,
+): HarnessToolDefinition["toModelOutput"] | undefined {
+  if (metadata.toModelOutputStepFnName === undefined) return undefined;
+
+  const toModelOutputStepFn = lookupStepFunction(metadata.toModelOutputStepFnName);
+  if (toModelOutputStepFn === null) {
+    throw new Error(
+      `Dynamic tool "${metadata.name}" cannot be replayed because model-output function "${metadata.toModelOutputStepFnName}" is not registered.`,
+    );
+  }
+
+  return (output: unknown) => toModelOutputStepFn(metadata.closureVars ?? {}, output);
 }
 
 function buildReplayedApproval(
@@ -137,7 +153,7 @@ export function buildDynamicTools(ctx: {
   get<T>(key: ContextKey<T>): T | undefined;
 }): readonly HarnessToolDefinition[] {
   const step = ctx.get(LiveStepToolsKey) ?? [];
-  const turn = replayTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
-  const session = replayTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
+  const turn = replayDurableTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
+  const session = replayDurableTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
   return [...step, ...turn, ...session];
 }

@@ -306,6 +306,7 @@ describe("createExecutionNodeStep", () => {
       nodeId: undefined,
     };
     const step = createExecutionNodeStep({
+      abortSignal: new AbortController().signal,
       createRuntime: () => createNoopRuntime(),
       mode: "task",
       modelResolutionScope,
@@ -368,6 +369,7 @@ describe("createExecutionNodeStep", () => {
       }),
     );
     const step = createExecutionNodeStep({
+      abortSignal: new AbortController().signal,
       createRuntime,
       mode: "task",
       modelResolutionScope: {

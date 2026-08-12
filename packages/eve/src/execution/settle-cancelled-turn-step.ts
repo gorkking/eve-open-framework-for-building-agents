@@ -30,6 +30,7 @@ import { clearPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import { createInstrumentationHandleEvent } from "#harness/instrumentation-native-events.js";
 import { getInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
 import { clearPendingWorkflowInterrupt } from "#harness/workflow-interrupt-state.js";
+import { TurnCancelledError } from "#harness/turn-cancellation.js";
 import {
   encodeMessageStreamEvent,
   type UnstampedMessageStreamEvent,
@@ -86,6 +87,7 @@ export async function settleCancelledTurnStep(input: {
     !stoppedAtDescendantLimit;
 
   if (!alreadyEpilogued) {
+    const abortSignal = AbortSignal.abort(new TurnCancelledError());
     const writer = input.parentWritable.getWriter();
     try {
       const scoped = await withContextScope(ctx, session, async (enrichedSession) => {
@@ -96,8 +98,10 @@ export async function settleCancelledTurnStep(input: {
           const stamped = stampMessageStreamEvent(transformed);
           await writer.write(encodeMessageStreamEvent(stamped));
           await dispatchStreamEventHooks({
+            abortSignal,
             ctx,
             event: stamped,
+            messages: enrichedSession.history,
             registry: bundle.hookRegistry,
           });
         };

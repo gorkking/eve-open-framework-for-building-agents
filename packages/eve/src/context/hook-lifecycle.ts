@@ -17,6 +17,8 @@ export async function dispatchStreamEventHooks(input: {
   readonly ctx: ContextContainer;
   readonly registry: RuntimeHookRegistry;
   readonly event: MessageStreamEvent;
+  readonly abortSignal: AbortSignal;
+  readonly messages: readonly import("ai").ModelMessage[];
 }): Promise<void> {
   const typed = input.registry.streamEventsByType.get(input.event.type) ?? [];
   const wildcard = input.registry.streamEventsWildcard;
@@ -25,7 +27,7 @@ export async function dispatchStreamEventHooks(input: {
     return;
   }
 
-  const hookCtx = buildHookContext(input.ctx);
+  const hookCtx = buildHookContext(input.ctx, input.abortSignal, input.messages);
   for (const entry of typed) {
     await entry.handler(input.event, hookCtx);
   }
@@ -35,7 +37,11 @@ export async function dispatchStreamEventHooks(input: {
 }
 
 /** Builds the {@link HookContext} surfaced to one handler. */
-function buildHookContext(ctx: ContextContainer): HookContext {
+function buildHookContext(
+  ctx: ContextContainer,
+  abortSignal: AbortSignal,
+  messages: HookContext["messages"],
+): HookContext {
   const bundle = ctx.require(BundleKey);
   const channelAdapter = ctx.get(ChannelKey);
   const continuationToken = ctx.get(ContinuationTokenKey);
@@ -44,6 +50,7 @@ function buildHookContext(ctx: ContextContainer): HookContext {
 
   return {
     ...callbackCtx,
+    abortSignal,
     agent: {
       name: bundle.turnAgent.id,
       nodeId: bundle.nodeId,
@@ -52,5 +59,6 @@ function buildHookContext(ctx: ContextContainer): HookContext {
       kind,
       continuationToken,
     },
+    messages,
   };
 }

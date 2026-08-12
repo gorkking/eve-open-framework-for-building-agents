@@ -67,6 +67,8 @@ describe("dispatchStreamEventHooks", () => {
         events: {
           "session.completed": async (_event, hookContext) => {
             expect(hookContext.channel.continuationToken).toBe("test:continuation");
+            expect(hookContext.messages).toEqual([{ content: "ready", role: "user" }]);
+            expect(hookContext.abortSignal).toBe(abortController.signal);
             calls.push("typed");
           },
         },
@@ -80,10 +82,13 @@ describe("dispatchStreamEventHooks", () => {
       }),
     ]);
     const ctx = buildCtx();
+    const abortController = new AbortController();
 
     await contextStorage.run(ctx, () =>
       dispatchStreamEventHooks({
+        abortSignal: abortController.signal,
         ctx,
+        messages: [{ content: "ready", role: "user" }],
         registry,
         event: stampTestEvent({ type: "session.completed" }),
       }),
@@ -102,7 +107,9 @@ describe("dispatchStreamEventHooks", () => {
     await expect(
       contextStorage.run(ctx, () =>
         dispatchStreamEventHooks({
+          abortSignal: abortController.signal,
           ctx,
+          messages: [],
           registry: brokenRegistry,
           event: stampTestEvent({ type: "session.completed" }),
         }),

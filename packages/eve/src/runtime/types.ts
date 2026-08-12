@@ -1,3 +1,5 @@
+import type { ModelMessage } from "ai";
+
 import type { ChannelAdapter } from "#channel/adapter.js";
 import type { CompiledChannel } from "#channel/compiled-channel.js";
 import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
@@ -359,6 +361,10 @@ export interface ResolvedDynamicToolResolver extends Readonly<ModuleSourceRef> {
   readonly events: Readonly<
     Record<string, (event: unknown, ctx: unknown) => unknown | Promise<unknown>>
   >;
+  readonly buildContext?: (input: {
+    readonly abortSignal: AbortSignal;
+    readonly messages: readonly ModelMessage[];
+  }) => unknown | null;
   /**
    * Mount namespace when this resolver comes from an extension. Names of tools
    * the resolver produces are prefixed with `${extensionNamespace}__`.

@@ -346,6 +346,9 @@ function walkForExecuteProps(
     (node.arguments[0] as AstNode).type === "ObjectExpression"
   ) {
     const toolArg = node.arguments[0] as AstNode;
+    if (findProperty(toolArg, "__executeStepFn")) {
+      return;
+    }
     for (const prop of toolArg.properties ?? []) {
       if (
         prop.type === "Property" &&

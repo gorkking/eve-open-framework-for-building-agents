@@ -53,7 +53,7 @@ export type CreateRuntime = (config: {
  */
 export interface CreateExecutionNodeStepInput {
   /** Cancellation signal forwarded to the tool-loop harness. */
-  readonly abortSignal?: AbortSignal;
+  readonly abortSignal: AbortSignal;
   /**
    * Session-level capabilities propagated from the runtime. The
    * harness passes this through to `buildToolSet` so `ask_question`

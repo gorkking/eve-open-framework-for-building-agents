@@ -154,6 +154,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   "use step";
 
   let input = rawInput;
+  // Older durable turn inputs predate cancellation. Normalize that wire shape
+  // once so every lifecycle below receives one step-owned signal.
+  const abortSignal = input.abortSignal ?? AbortSignal.any([]);
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
@@ -348,6 +351,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           runtimeRevision: dynamicRuntimeRevision,
         }),
         refreshDynamicSessionToolsForRuntimeRevision({
+          abortSignal,
           ctx,
           resolvers: dynamicToolResolvers,
           event: refreshEvent,
@@ -362,6 +366,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   }
 
   const writer = input.parentWritable.getWriter();
+  let lifecycleMessages: readonly import("ai").ModelMessage[] = initialSession.history;
 
   // Stamp once: the persisted chunk and the hooks below must agree on the id.
   const emit = async (event: UnstampedMessageStreamEvent): Promise<MessageStreamEvent> => {
@@ -376,14 +381,21 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     event: UnstampedMessageStreamEvent,
     messages?: readonly import("ai").ModelMessage[],
   ): Promise<void> => {
+    if (messages !== undefined) lifecycleMessages = messages;
     const emitted = await emit(event);
-    await dispatchStreamEventHooks({ ctx, registry: hookRegistry, event: emitted });
+    await dispatchStreamEventHooks({
+      abortSignal,
+      ctx,
+      event: emitted,
+      messages: lifecycleMessages,
+      registry: hookRegistry,
+    });
     if (emitted.type !== "step.started") {
       await dispatchDynamicModelEvent({
         ctx,
         dynamicModel: effectiveAgent.turnAgent.dynamicModel,
         event: emitted,
-        messages: messages ?? [],
+        messages: lifecycleMessages,
         scope: {
           moduleMap: bundle.moduleMap,
           nodeId: bundle.nodeId,
@@ -394,26 +406,27 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       ctx,
       resolvers: dynamicSubagentResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
       persistentSessions: persistentSubagentSessions,
     });
     await dispatchDynamicToolEvent({
+      abortSignal,
       ctx,
       resolvers: dynamicToolResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
     });
     await dispatchDynamicSkillEvent({
       ctx,
       resolvers: dynamicSkillResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
     });
     await dispatchDynamicInstructionEvent({
       ctx,
       resolvers: dynamicInstructionsResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
     });
   };
 
@@ -424,7 +437,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // A signal already aborted at entry (cancellation during an in-line
     // runtime-action wait) must settle before the park-resume stages run,
     // or the pending batch would re-park and later re-dispatch.
-    throwIfTurnAborted(input.abortSignal);
+    throwIfTurnAborted(abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
@@ -471,7 +484,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
         });
 
         const step = createExecutionNodeStep({
-          abortSignal: input.abortSignal,
+          abortSignal,
           capabilities,
           clearOnly: input.input?.kind === "clear",
           compactOnly: input.input?.kind === "compact",

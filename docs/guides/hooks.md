@@ -35,10 +35,18 @@ helpers documented in [Session context](./session-context):
 
 ```ts
 interface HookContext extends SessionContext {
+  readonly abortSignal: AbortSignal;
   readonly agent: { readonly name: string; readonly nodeId?: string };
   readonly channel: { readonly kind?: string; readonly continuationToken?: string };
+  readonly messages: readonly ModelMessage[];
 }
 ```
+
+`messages` contains the latest durable model history available when the hook runs. Events that
+do not produce a new snapshot reuse the previous one, so the history may lag the event and may
+be empty for a new session. `abortSignal` tracks cancellation of the active turn. Hooks that run
+while settling a cancelled turn receive an already-aborted signal; use an independent signal or
+timeout for cleanup I/O that must continue after cancellation.
 
 That means a hook can access the current sandbox and release its backing
 compute at an application-defined boundary:
