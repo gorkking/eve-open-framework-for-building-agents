@@ -60,10 +60,12 @@ Local directory-form subagents may declare their own memory slots. Graph-node id
 
 ## Scope
 
-The low-level scope definition returns one ordered tuple of opaque, trusted identifiers or `null`:
+The low-level scope definition returns, or asynchronously resolves, one ordered tuple of opaque, trusted identifiers or `null`:
 
 ```ts
-type MemoryScopeDefinition = (context: MemoryScopeContext) => readonly MemoryScopePart[] | null;
+type MemoryScopeDefinition = (
+  context: MemoryScopeContext,
+) => readonly MemoryScopePart[] | null | Promise<readonly MemoryScopePart[] | null>;
 ```
 
 Scope parts come from trusted auth, application, or channel context. They cannot come from model input or unattested message fields. Parts have no built-in entity types, and no position has special meaning. `[userId, channelId]` means only that both values participate in the provider partition. `byPrincipal()` is sugar for the common authenticated-principal tuple.
@@ -81,7 +83,7 @@ interface MemoryScope {
 
 The key gives providers one collision-resistant partition identifier. The parts remain available when a vendor needs to map the partition onto its own user, workspace, or container concepts. Both are absent from model-facing schemas.
 
-eve resolves scope after admitting the turn but before any automatic compaction, then locks it through the completed-turn handler. For standalone manual compaction, eve resolves and locks scope for that operation from the session's trusted runtime context. Returning `null` makes the slot unavailable for the entire turn or manual operation: eve does not invoke its provider handlers or lower its tools. Missing values never fall back to a broader partition. Changing the meaning or order of scope parts is a provider data migration.
+eve awaits scope after admitting the turn but before any automatic compaction, then locks it through the completed-turn handler. This allows a resolver to consult an external authorization or tenancy service without exposing that lookup to the model. For standalone manual compaction, eve resolves and locks scope for that operation from the session's trusted runtime context. Returning `null` makes the slot unavailable for the entire turn or manual operation: eve does not invoke its provider handlers or lower its tools. Missing values never fall back to a broader partition. Changing the meaning or order of scope parts is a provider data migration.
 
 eve guarantees that every invocation for one slot within the turn or manual operation receives the same locked value. If a memory tool pauses for approval, eve retains that value for the pending invocation and accepts the approval response only from the principal that initiated it. A response from another principal fails before the tool is resolved or executed. The provider is responsible for actually applying the scope value to downstream storage and service calls; eve cannot enforce isolation inside provider code or an external service.
 
