@@ -10,6 +10,7 @@ import { defaultFileMemoryBackend } from "#public/memory/file/backends/default.j
 import {
   defineDynamic,
   defineMemoryProvider,
+  type MemoryMessage,
   type MemoryProvider,
   type MemoryProviderContext,
 } from "#public/memory/index.js";
@@ -107,14 +108,14 @@ export function fileMemory(options: FileMemoryOptions = {}): MemoryProvider {
 async function recallMemory(
   backend: MemoryDocumentBackend,
   context: MemoryProviderContext,
-): Promise<string | null> {
+): Promise<MemoryMessage | null> {
   const document = await readDocument({
     backend,
     key: context.memory.scope.key,
     signal: context.abortSignal,
   });
   const entries = parseMemoryDocument(document?.content ?? "");
-  return entries.length === 0 ? null : formatRecallContext(entries);
+  return entries.length === 0 ? null : { content: formatRecallContext(entries) };
 }
 
 async function saveMemory(input: {
