@@ -10,7 +10,7 @@ export async function respondToRequests(
   t: EveEvalContext,
   ...responses: InputResponse[]
 ): Promise<EveEvalTurn> {
-  return await t.respond(...responses);
+  return await t.respond(responses);
 }
 
 export async function sendAs(
@@ -18,7 +18,7 @@ export async function sendAs(
   message: string,
   authorization: string,
 ): Promise<EveEvalTurn> {
-  return await t.send({ headers: { authorization }, message });
+  return await t.send(message, { headers: { authorization } });
 }
 
 export async function respondAs(
@@ -26,10 +26,7 @@ export async function respondAs(
   response: InputResponse,
   authorization: string,
 ): Promise<EveEvalTurn> {
-  return await t.send({
-    headers: { authorization },
-    inputResponses: [response],
-  });
+  return await t.respond([response], { headers: { authorization } });
 }
 
 export async function sendCompoundDelivery(
@@ -39,5 +36,26 @@ export async function sendCompoundDelivery(
     readonly message: string;
   },
 ): Promise<CompoundDeliveryResult> {
-  return { session: t, turn: await t.send(input) };
+  const sessionId = t.sessionId;
+  const state = t.state;
+  if (sessionId === undefined || state === undefined) {
+    throw new Error("Compound delivery requires an active eval session.");
+  }
+
+  // The high-level client intentionally separates send() from respond().
+  // Exercise the protocol's compound envelope directly.
+  const response = await t.target.fetch(`/eve/v1/session/${encodeURIComponent(sessionId)}`, {
+    body: JSON.stringify(input),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+    signal: t.signal,
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Compound delivery failed (${String(response.status)}): ${await response.text()}`,
+    );
+  }
+
+  const live = t.target.watchTurn(sessionId, { startIndex: state.streamIndex });
+  return { session: t, turn: await live.result() };
 }

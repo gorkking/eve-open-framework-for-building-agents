@@ -134,14 +134,31 @@ export async function respond(
   session: EveEvalSession | EveEvalContext,
   response: InputResponse,
 ): Promise<EveEvalTurn> {
-  return await session.respond(response);
+  return await session.respond([response]);
 }
 
 export async function sendCompound(
   t: EveEvalContext,
   input: { readonly inputResponses: readonly InputResponse[]; readonly message: string },
 ): Promise<{ readonly session: EveEvalContext; readonly turn: EveEvalTurn }> {
-  return { session: t, turn: await t.send(input) };
+  const sessionId = t.sessionId;
+  const state = t.state;
+  if (sessionId === undefined || state === undefined) {
+    throw new Error("Compound delivery requires an active eval session.");
+  }
+
+  const response = await t.target.fetch(`/eve/v1/session/${encodeURIComponent(sessionId)}`, {
+    body: JSON.stringify(input),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+    signal: t.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Compound delivery failed (${String(response.status)}).`);
+  }
+
+  const live = t.target.watchTurn(sessionId, { startIndex: state.streamIndex });
+  return { session: t, turn: await live.result() };
 }
 
 export function expectWaiting(turn: EveEvalTurn, sessionId: string): void {
