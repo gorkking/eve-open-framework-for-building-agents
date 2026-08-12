@@ -5,9 +5,10 @@ const TOOL_NAME = "oauth-authorized-gate";
 
 export default defineEval({
   tags: ["real-model"],
+  metadata: { transition: "owner.auth.message.run-open" },
   description: "A message runs while candidate OAuth stays open, then OAuth settles the approval.",
   async test(t) {
-    const parked = await t.send(`Call the \`${TOOL_NAME}\` tool with marker "${MARKER}".`);
+    const _parked = await t.send(`Call the \`${TOOL_NAME}\` tool with marker "${MARKER}".`);
     const approval = t.requireInputRequest({ display: "confirmation", toolName: TOOL_NAME });
     const approvalTurn = await t.startRespond(
       [{ optionId: "approve", requestId: approval.requestId }],

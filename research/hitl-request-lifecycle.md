@@ -583,6 +583,56 @@ unless the entry says the sequence is exact.
 - **Observed:** the restored assistant output follows the intervening turns in
   history; the obligation is no longer open.
 
+#### owner.approval.candidate.coalesce-responder
+
+- **Given:** an authorizer-backed approval is open and one responder already
+  has an active candidate.
+- **When:** that responder submits another Approve before its candidate becomes
+  terminal.
+- **Then:** eve retains the existing candidate and opens neither a second
+  authorizer run nor a second authorization challenge.
+- **Observed:** one `approval.candidate(outcome: pending)` for the responder
+  and no duplicate terminal event.
+
+#### owner.approval.candidate.open-distinct-responders
+
+- **Given:** an authorizer-backed approval is open.
+- **When:** two distinct authenticated responders submit Approve before either
+  candidate reaches a terminal result.
+- **Then:** eve retains one active candidate for each responder. Their
+  authorizer and authorization lifecycles are independent until one settles
+  the shared approval.
+- **Observed:** two pending candidate events with distinct `candidateId` and
+  responder identity.
+
+#### owner.approval.candidate.reject
+
+- **Given:** an authorizer-backed approval is open.
+- **When:** its response authorizer returns `{ status: "rejected" }`.
+- **Then:** that candidate becomes rejected, the approval remains open, and no
+  tool runs.
+- **Observed:** one `approval.candidate(outcome: rejected)` and no
+  `approval.settled`.
+
+#### owner.approval.candidate.fail
+
+- **Given:** an authorizer-backed approval is open.
+- **When:** its response authorizer throws or exceeds its timeout.
+- **Then:** that candidate becomes failed, the approval remains open, and no
+  tool runs.
+- **Observed:** one `approval.candidate(outcome: failed)` and no
+  `approval.settled`.
+
+#### owner.approval.candidate.expire
+
+- **Given:** an authorizer-backed approval has an active candidate whose
+  deadline passes.
+- **When:** eve next coordinates the approval state.
+- **Then:** that candidate becomes timed out, the approval remains open, and a
+  later Approve may create a fresh candidate.
+- **Observed:** one `approval.candidate(outcome: timed-out)` and no
+  `approval.settled`.
+
 #### owner.approval.response.settle-cancel
 
 - **Given:** an approval is open.
@@ -605,6 +655,16 @@ unless the entry says the sequence is exact.
   `authorization.callback.rejected(reason: stale)` with the same
   `authorizationId` and `candidateId`.
 
+#### owner.approval.candidate.callback-rerun-authorizer
+
+- **Given:** an authorization-required candidate is pending.
+- **When:** its matching callback completes successfully.
+- **Then:** eve re-runs that candidate's response authorizer with the same
+  responder and candidate identity; it may settle, reject, fail, or request
+  authorization again.
+- **Observed:** `authorization.completed(candidateId)` precedes the resulting
+  candidate or settlement event.
+
 #### owner.approval.response.settle-race
 
 - **Given:** an approval is open and two terminal candidates race — an allowed
@@ -613,6 +673,15 @@ unless the entry says the sequence is exact.
   runs at most once and only when Allow wins and the group closes.
 - **Observed:** exactly one `input.responded`; the loser emits
   `input.response.rejected(reason: stale)`.
+
+#### owner.approval.candidate.stale-after-winner
+
+- **Given:** an approval has two active candidates.
+- **When:** one candidate settles the approval.
+- **Then:** eve archives every competing candidate as stale and neither a
+  callback nor later authorizer work for a loser can execute the tool.
+- **Observed:** the winner has one `approval.settled`; each loser has one
+  `approval.candidate(outcome: stale)`.
 
 #### owner.approval.response.reject-stale
 

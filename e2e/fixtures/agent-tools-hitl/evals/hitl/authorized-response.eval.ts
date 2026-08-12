@@ -5,9 +5,10 @@ const TOOL_NAME = "authorized-gate";
 
 export default defineEval({
   tags: ["real-model"],
+  metadata: { transition: "owner.approval.response.settle-allow" },
   description: "Authenticated response policy emits candidate and settlement before execution.",
   async test(t) {
-    const parked = await t.send(`Call the \`${TOOL_NAME}\` tool with marker "${MARKER}".`);
+    const _parked = await t.send(`Call the \`${TOOL_NAME}\` tool with marker "${MARKER}".`);
     const approval = t.requireInputRequest({ display: "confirmation", toolName: TOOL_NAME });
     parked.calledTool(TOOL_NAME, { status: "pending", count: 1 });
 
