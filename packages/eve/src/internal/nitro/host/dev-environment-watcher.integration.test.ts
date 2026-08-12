@@ -42,7 +42,7 @@ describe("development environment reload transactions", () => {
     expect(process.env.EVE_WATCH_ENV_SHELL).toBe("from-parent");
   });
 
-  it("loads, watches, fingerprints, and reloads collection-root env with child precedence", async () => {
+  it("loads, watches, fingerprints, and reloads collection-root env", async () => {
     const collectionRoot = await mkdtemp(join(tmpdir(), "eve-dev-env-collection-"));
     temporaryDirectories.push(collectionRoot);
     const appRoot = join(collectionRoot, "agents", "support");
@@ -57,20 +57,17 @@ describe("development environment reload transactions", () => {
     await loadDevelopmentEnvironmentFiles(appRoot);
 
     expect(process.env.EVE_WATCH_ENV_ROOT_ONLY).toBe("from-root");
-    expect(process.env.EVE_WATCH_ENV_SHARED).toBe("from-child");
-    expect(getDevelopmentEnvironmentFilePaths(appRoot)).toEqual([
-      ...environmentPaths(appRoot),
-      ...environmentPaths(collectionRoot),
-    ]);
+    expect(process.env.EVE_WATCH_ENV_SHARED).toBe("from-root");
+    expect(getDevelopmentEnvironmentFilePaths(appRoot)).toEqual(environmentPaths(collectionRoot));
     expect(readDevelopmentEnvironmentHostValues(appRoot)).toMatchObject({
       EVE_WATCH_ENV_ROOT_ONLY: "from-root",
-      EVE_WATCH_ENV_SHARED: "from-child",
+      EVE_WATCH_ENV_SHARED: "from-root",
     });
 
     await writeFile(join(collectionRoot, ".env.local"), "EVE_WATCH_ENV_ROOT_ONLY=updated\n");
     stageDevelopmentEnvironmentFiles(appRoot).commit();
     expect(process.env.EVE_WATCH_ENV_ROOT_ONLY).toBe("updated");
-    expect(process.env.EVE_WATCH_ENV_SHARED).toBe("from-child");
+    expect(process.env.EVE_WATCH_ENV_SHARED).toBeUndefined();
   });
 
   it("restores the complete prior environment when a candidate is rejected", async () => {
