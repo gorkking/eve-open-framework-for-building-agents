@@ -50,7 +50,7 @@ export interface MemoryProviderContext extends SessionContext {
 interface MemoryProviderTool {
   readonly approval?: ToolDefinition<never, unknown>["approval"];
   readonly description: ToolDefinition["description"];
-  execute(input: never, context: ToolContext): unknown;
+  execute(input: unknown, context: ToolContext): unknown;
   readonly inputSchema: ToolDefinition["inputSchema"];
   readonly outputSchema?: ToolDefinition["outputSchema"];
   readonly toModelOutput?: ToolDefinition<never, never>["toModelOutput"];
