@@ -16,6 +16,7 @@ import type {
 } from "#public/channels/github/githubChannel.js";
 import { splitGitHubCommentBody } from "#public/channels/github/limits.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
+import type { InputRequest } from "#runtime/input/types.js";
 
 const log = createLogger("github.defaults");
 
@@ -73,11 +74,12 @@ export function defaultOnComment(
 /** Options used by built-in GitHub event handlers. */
 export interface GitHubDefaultEventOptions {
   readonly api?: GitHubApiOptions;
+  readonly botName?: string;
   readonly credentials?: GitHubChannelCredentials;
   readonly progress?: GitHubProgressConfig;
 }
 
-/** Builds GitHub's built-in event handlers for acknowledgement and terminal output. */
+/** Builds GitHub's built-in event handlers for acknowledgement, HITL, and terminal output. */
 export function createDefaultEvents(options: GitHubDefaultEventOptions = {}): GitHubChannelEvents {
   return {
     async "turn.started"(_event, channel, ctx) {
@@ -90,6 +92,10 @@ export function createDefaultEvents(options: GitHubDefaultEventOptions = {}): Gi
       }
 
       await checkoutRepositoryForTurn(channel, ctx, options);
+    },
+
+    async "input.requested"(event, channel, _ctx) {
+      await postCommentChunks(channel, renderInputRequests(event.requests, options.botName));
     },
 
     async "message.completed"(event, channel, _ctx) {
@@ -121,6 +127,56 @@ export function createDefaultEvents(options: GitHubDefaultEventOptions = {}): Gi
       await postFailure(channel, message);
     },
   };
+}
+
+function renderInputRequests(
+  requests: readonly InputRequest[],
+  botName: string | undefined,
+): string {
+  return requests.map((request) => renderInputRequest(request, botName)).join("\n\n---\n\n");
+}
+
+function renderInputRequest(request: InputRequest, botName: string | undefined): string {
+  const lines = [request.prompt];
+  const approvalInput = formatApprovalInput(request);
+  if (approvalInput !== undefined) {
+    lines.push("", "Tool input:", "", ...approvalInput.split("\n").map((line) => `    ${line}`));
+  }
+
+  const options = request.options ?? [];
+  if (options.length > 0) {
+    lines.push(
+      "",
+      ...options.map((option, index) => {
+        const description = option.description ? ` - ${option.description}` : "";
+        return `${index + 1}. ${option.label}${description}`;
+      }),
+    );
+  }
+
+  lines.push("", inputReplyInstruction(request, options.length > 0, botName));
+  return lines.join("\n");
+}
+
+function formatApprovalInput(request: InputRequest): string | undefined {
+  if (request.kind !== "tool-approval") return undefined;
+  const json = JSON.stringify(request.action.input, null, 2);
+  return json === undefined || json === "{}" ? undefined : json;
+}
+
+function inputReplyInstruction(
+  request: InputRequest,
+  hasOptions: boolean,
+  botName: string | undefined,
+): string {
+  const answer = !hasOptions
+    ? "your answer"
+    : request.allowFreeform === true
+      ? "an option number, label, or custom answer"
+      : "an option number or label";
+  return botName
+    ? `Reply with \`@${botName} <${answer}>\`.`
+    : `Reply with the bot invocation token followed by ${answer}.`;
 }
 
 async function checkoutRepositoryForTurn(

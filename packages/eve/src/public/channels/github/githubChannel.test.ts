@@ -231,8 +231,8 @@ describe("githubChannel", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const [continuationToken, input] = send.mock.calls[0]!;
-    expect(input.message).toBe("help me");
-    expect(input.context).toEqual([expect.stringContaining("<github_context>")]);
+    expect(input.message).toContain("<github_context>");
+    expect(input.message).toContain("help me");
     expect(input.inputResponses).toBeUndefined();
     expect(continuationToken).toBe("repo:123:issue:5");
     expect(input).toMatchObject({
@@ -255,34 +255,6 @@ describe("githubChannel", () => {
         triggeringCommentId: 10,
       },
     });
-  });
-
-  it("keeps GitHub metadata separate from the comment text", async () => {
-    const channel = githubChannel({
-      botName: "testbot",
-      credentials: { webhookSecret: SECRET },
-    });
-    const { send } = await firePost(
-      channel,
-      signedRequest(
-        "issue_comment",
-        basePayload({
-          action: "created",
-          comment: {
-            body: "@testbot Yes",
-            html_url: "https://github.test/vercel/eve/issues/5#issuecomment-10",
-            id: 10,
-            user: { id: 1, login: "octocat", type: "User" },
-          },
-          issue: { number: 5 },
-        }),
-      ),
-    );
-
-    expect(send).toHaveBeenCalledTimes(1);
-    const [, input] = send.mock.calls[0]!;
-    expect(input.message).toBe("Yes");
-    expect(input.context).toEqual([expect.stringContaining("<github_context>")]);
   });
 
   it("dispatches Connect-forwarded issue comments without GitHub event headers", async () => {
@@ -309,10 +281,8 @@ describe("githubChannel", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const [continuationToken, input] = send.mock.calls[0]!;
-    expect(input.message).toBe("help me");
-    expect(input.context).toEqual([
-      expect.stringContaining("delivery_id: inferred:issue_comment:10:created"),
-    ]);
+    expect(input.message).toContain("delivery_id: inferred:issue_comment:10:created");
+    expect(input.message).toContain("help me");
     expect(continuationToken).toBe("repo:123:issue:5");
     expect(input).toMatchObject({
       auth: {
@@ -434,9 +404,8 @@ describe("githubChannel", () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://github.test/repos/vercel/eve/pulls/7");
     const [, input] = send.mock.calls[0]!;
-    expect(input.context?.[0]).toContain("<github_context>");
-    expect(input.context?.[1]).toContain("title: Add GitHub context");
-    expect(input.context?.[1]).toContain("head_sha: head-sha");
+    expect(input.context?.[0]).toContain("title: Add GitHub context");
+    expect(input.context?.[0]).toContain("head_sha: head-sha");
   });
 
   it("dispatches inline review comments to the review-thread token", async () => {
@@ -800,6 +769,140 @@ describe("githubChannel", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "https://github.test/repos/vercel/eve/issues/5/comments",
+    );
+  });
+
+  it("posts input requests as comment prompts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 77 })));
+    const adapter = withState(
+      getAdapter(
+        githubChannel({
+          api: { apiBaseUrl: "https://github.test", fetch: fetchMock },
+          botName: "testbot",
+          credentials: {
+            appId: "test-app",
+            webhookSecret: SECRET,
+          },
+        }),
+      ),
+      {
+        conversationKind: "issue",
+        installationId: 55,
+        issueNumber: 5,
+        owner: "vercel",
+        repo: "eve",
+        repositoryId: 123,
+      },
+    );
+    const ctx = buildAdapterContext(adapter, stubAccessor());
+
+    await callEvent(
+      adapter,
+      makeEvent("input.requested", {
+        requests: [
+          {
+            action: { callId: "call_1", input: {}, kind: "tool-call", toolName: "ask_question" },
+            allowFreeform: true,
+            kind: "question",
+            options: [
+              { description: "Ship the change", id: "yes", label: "Yes" },
+              { id: "no", label: "No" },
+            ],
+            prompt: "Should I continue?",
+            requestId: "call_1",
+          },
+        ],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "t1",
+      }),
+      ctx,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://github.test/repos/vercel/eve/issues/5/comments",
+    );
+    const body = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
+    expect(body.body).toBe(
+      [
+        "Should I continue?",
+        "",
+        "1. Yes - Ship the change",
+        "2. No",
+        "",
+        "Reply with `@testbot <an option number, label, or custom answer>`.",
+      ].join("\n"),
+    );
+  });
+
+  it("includes tool input in approval prompts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 77 })));
+    const adapter = withState(
+      getAdapter(
+        githubChannel({
+          api: { apiBaseUrl: "https://github.test", fetch: fetchMock },
+          botName: "testbot",
+          credentials: {
+            appId: "test-app",
+            webhookSecret: SECRET,
+          },
+        }),
+      ),
+      {
+        conversationKind: "issue",
+        installationId: 55,
+        issueNumber: 5,
+        owner: "vercel",
+        repo: "eve",
+        repositoryId: 123,
+      },
+    );
+    const ctx = buildAdapterContext(adapter, stubAccessor());
+
+    await callEvent(
+      adapter,
+      makeEvent("input.requested", {
+        requests: [
+          {
+            action: {
+              callId: "call_1",
+              input: { command: "rm old-file.txt" },
+              kind: "tool-call",
+              toolName: "bash",
+            },
+            kind: "tool-approval",
+            options: [
+              { id: "approve", label: "Approve" },
+              { id: "cancel", label: "Cancel" },
+            ],
+            prompt: "Approve tool call: bash",
+            requestId: "approval_1",
+          },
+        ],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "t1",
+      }),
+      ctx,
+    );
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
+    expect(body.body).toBe(
+      [
+        "Approve tool call: bash",
+        "",
+        "Tool input:",
+        "",
+        "    {",
+        '      "command": "rm old-file.txt"',
+        "    }",
+        "",
+        "1. Approve",
+        "2. Cancel",
+        "",
+        "Reply with `@testbot <an option number or label>`.",
+      ].join("\n"),
     );
   });
 
