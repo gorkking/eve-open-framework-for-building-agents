@@ -224,6 +224,9 @@ export interface SlackChannelState {
   pendingApprovalCards?: Record<string, SlackPendingApprovalCard>;
   pendingApprovalCandidateUsers?: Record<string, string>;
   approvalResponderUsers?: Record<string, string>;
+  /** Replaceable internal activity message for the active work graph. */
+  workActivityMessageTs?: string | null;
+  workActivityTurnId?: string | null;
 }
 
 /**
@@ -759,6 +762,8 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
       pendingApprovalCards: {},
       pendingApprovalCandidateUsers: {},
       approvalResponderUsers: {},
+      workActivityMessageTs: null,
+      workActivityTurnId: null,
     },
     fetchFile: slackFetchFile,
     metadata(state): SlackInstrumentationMetadata {
