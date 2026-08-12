@@ -61,7 +61,7 @@ eve allocates each new memory one index above the current highest index and neve
 
 The provider stores at most 100 memories by default. Configure `memoryLimit` to change that count. At the limit, a failed save tells the model to remove an outdated memory by index and retry. The provider tells the model to keep stable context and omit secrets, instructions, and current-task details. It does not run a hidden capture model or persist complete transcripts.
 
-On Vercel, the default backend stores private `MEMORY.md` objects in Vercel Blob. Attach a Blob store to the project so `BLOB_STORE_ID` and Vercel OIDC are available, or provide `BLOB_READ_WRITE_TOKEN`. Outside Vercel, development and test environments default to process-local memory. A production deployment outside Vercel must pass an explicit backend so it cannot silently run with memory that disappears on restart.
+On Vercel, the default backend stores private `MEMORY.md` objects in Vercel Blob when `BLOB_STORE_ID` or the legacy `BLOB_READ_WRITE_TOKEN` is available. The store-ID path authenticates with Vercel OIDC at request time. If the deployment does not have an attached Blob store, `fileMemory()` fails on its first storage operation instead of silently using process-local memory. Attach a Blob store to the project or pass an explicit backend. Outside Vercel, development and test environments default to process-local memory. A production deployment outside Vercel must pass an explicit backend so it cannot silently run with memory that disappears on restart.
 
 Pin Vercel Blob explicitly when you want to use it locally or customize credentials and pathnames:
 

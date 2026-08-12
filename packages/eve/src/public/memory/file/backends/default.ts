@@ -5,19 +5,23 @@ import { vercelBlob } from "#public/memory/file/backends/vercel-blob.js";
 
 /** Environment probe behind the default backend selection. */
 interface DefaultFileMemoryBackendProbes {
+  readonly hasVercelBlobStore: () => boolean;
   readonly isDeployedOnVercel: () => boolean;
   readonly isProduction: () => boolean;
 }
 
 const PRODUCTION_PROBES: DefaultFileMemoryBackendProbes = {
-  isDeployedOnVercel: () => Boolean(process.env.VERCEL),
+  hasVercelBlobStore: () =>
+    hasEnvironmentValue("BLOB_STORE_ID") || hasEnvironmentValue("BLOB_READ_WRITE_TOKEN"),
+  isDeployedOnVercel: () => hasEnvironmentValue("VERCEL"),
   isProduction: () => process.env.NODE_ENV === "production",
 };
 
 /**
- * Selects private Vercel Blob storage on Vercel and process-local storage for
- * development. Other production environments must configure a backend.
- * Selection is deferred and cached for the process lifetime.
+ * Selects private Vercel Blob storage when a Vercel deployment has an attached
+ * store, and process-local storage outside Vercel in development. Other
+ * production configurations must provide a backend. Selection is deferred and
+ * cached for the process lifetime.
  */
 export function defaultFileMemoryBackend(): MemoryDocumentBackend {
   return lazyBackend(() => selectDefaultFileMemoryBackend(PRODUCTION_PROBES));
@@ -27,11 +31,20 @@ export function defaultFileMemoryBackend(): MemoryDocumentBackend {
 function selectDefaultFileMemoryBackend(
   probes: DefaultFileMemoryBackendProbes,
 ): MemoryDocumentBackend {
-  if (probes.isDeployedOnVercel()) return vercelBlob();
+  if (probes.isDeployedOnVercel()) {
+    if (probes.hasVercelBlobStore()) return vercelBlob();
+    throw new Error(
+      "fileMemory() requires an attached Vercel Blob store on Vercel. Attach a Blob store or pass fileMemory({ backend }).",
+    );
+  }
   if (probes.isProduction()) {
     throw new Error(
       "fileMemory() requires an explicit backend outside Vercel in production. Pass fileMemory({ backend }).",
     );
   }
   return inMemory();
+}
+
+function hasEnvironmentValue(name: string): boolean {
+  return Boolean(process.env[name]?.trim());
 }
