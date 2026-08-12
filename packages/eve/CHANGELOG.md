@@ -1,5 +1,27 @@
 # eve
 
+## 0.33.3
+
+### Patch Changes
+
+- 22975d3: Keep GitHub comment text separate from channel metadata so option replies can resume pending input requests.
+
+## 0.33.2
+
+### Patch Changes
+
+- 89255bd: Update `@workflow/core` to `5.0.0-beta.41` to pick up event log corruption fixes.
+
+## 0.33.1
+
+### Patch Changes
+
+- 7dd64d3: Messages no longer wait behind pending tool approvals: a follow-up message now runs as an ordinary turn while the approval stays open and answerable, and a later structured answer still resolves the original tool call. Pending HITL batches are stored as an ordered collection, so a turn that runs while an approval is open can raise its own requests without overwriting it; multiple approval answers delivered together resume safely in order. Sessions wedged by the old deferral release the held message on their next delivery.
+- b1ce580: Add an opt-in Sign in with Vercel authentication variant for programmatically scaffolded Web Chat apps.
+- 7dd64d3: Keep task runs parked when unrelated messages arrive while tool approvals remain open, and resolve later text approval responses before replaying deferred messages. Invalid persisted input request kinds now fail closed.
+- e402672: Keep follow-up subagent dispatches in the active parent turn when a resumed runtime-action batch has lost its turn ID, preventing the session from failing while persisting the child handle.
+- 8d6afc3: Scope Vercel CLI authentication checks to an existing linked team project, preventing an unrelated default CLI scope from blocking integration setup.
+
 ## 0.33.0
 
 ### Minor Changes
