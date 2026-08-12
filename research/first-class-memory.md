@@ -126,6 +126,7 @@ eve guarantees that every invocation for one slot within the turn or manual oper
 ```ts
 import type { ModelMessage } from "ai";
 import type { SessionContext } from "eve/context";
+import type { HookEventMap } from "eve/hooks";
 import type { ToolDefinition } from "eve/tools";
 
 interface MemoryProviderContext extends SessionContext {
@@ -147,43 +148,25 @@ interface MemoryMessage {
 
 type MemoryEventResult = MemoryMessage | readonly MemoryMessage[] | null | void;
 
+type MemoryEventHandler<TEvent> = (
+  event: TEvent,
+  context: MemoryProviderContext,
+) => MemoryEventResult | Promise<MemoryEventResult>;
+
 interface MemoryProviderEvents {
-  readonly "session.started"?: (
-    event: SessionStartedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryEventResult | Promise<MemoryEventResult>;
-
-  readonly "turn.started"?: (
-    event: TurnStartedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryEventResult | Promise<MemoryEventResult>;
-
-  readonly "message.received"?: (
-    event: MessageReceivedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryEventResult | Promise<MemoryEventResult>;
-
-  readonly "compaction.requested"?: (
-    event: CompactionRequestedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryEventResult | Promise<MemoryEventResult>;
-
-  readonly "compaction.completed"?: (
-    event: CompactionCompletedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryEventResult | Promise<MemoryEventResult>;
-
-  readonly "turn.completed"?: (
-    event: TurnCompletedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryEventResult | Promise<MemoryEventResult>;
+  readonly "session.started"?: MemoryEventHandler<HookEventMap["session.started"]>;
+  readonly "turn.started"?: MemoryEventHandler<HookEventMap["turn.started"]>;
+  readonly "message.received"?: MemoryEventHandler<HookEventMap["message.received"]>;
+  readonly "compaction.requested"?: MemoryEventHandler<HookEventMap["compaction.requested"]>;
+  readonly "compaction.completed"?: MemoryEventHandler<HookEventMap["compaction.completed"]>;
+  readonly "turn.completed"?: MemoryEventHandler<HookEventMap["turn.completed"]>;
 }
 
 interface MemoryProviderTools {
   readonly kind: "eve:dynamic";
   readonly events: {
     readonly "step.started"?: (
-      event: StepStartedEvent,
+      event: HookEventMap["step.started"],
       context: MemoryProviderContext,
     ) => MemoryProviderToolSet | null | Promise<MemoryProviderToolSet | null>;
   };
