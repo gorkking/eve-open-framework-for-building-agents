@@ -34,6 +34,7 @@ import {
 } from "#execution/durable-session-store.js";
 import { createTurnWorkflowInput } from "#execution/durable-session-migrations/turn-workflow.js";
 import { dispatchTurnStep } from "#execution/dispatch-turn-step.js";
+import { resolveEffectiveOutputSchema } from "#execution/effective-output-schema.js";
 import { projectToDurableSession } from "#execution/session.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { defineTool } from "#public/definitions/tool.js";
@@ -41,7 +42,7 @@ import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { emitTerminalSessionFailureStep } from "#execution/terminal-session-failure-step.js";
 import { routeProxiedDeliverStep } from "#execution/route-proxied-deliver-step.js";
-import { resolveEffectiveOutputSchema, turnStep } from "#execution/workflow-steps.js";
+import { turnStep } from "#execution/workflow-steps.js";
 import {
   LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
   turnWorkflowReference,
