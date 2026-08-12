@@ -325,7 +325,7 @@ export interface ToolLoopHarnessConfig {
     readonly event: UnstampedMessageStreamEvent;
     readonly messages: readonly ModelMessage[];
   }) => Promise<void>;
-  /** Takes framework messages to append durably after the turn's initial compaction decision. */
+  /** Takes framework messages to append at the current durable lifecycle boundary. */
   readonly takePendingMessages?: () => readonly ModelMessage[];
   readonly dispatchDynamicModelEvent?: (input: {
     readonly ctx: AlsContext;

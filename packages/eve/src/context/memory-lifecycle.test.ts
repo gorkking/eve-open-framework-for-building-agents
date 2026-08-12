@@ -15,6 +15,7 @@ import {
   createCompactionRequestedEvent,
   createInputRequestedEvent,
   createMessageReceivedEvent,
+  createSessionStartedEvent,
   createTurnCompletedEvent,
   createTurnStartedEvent,
   stampMessageStreamEvent,
@@ -22,7 +23,7 @@ import {
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 
 describe("memory lifecycle", () => {
-  it("locks one scope and materializes messages returned from real turn events", async () => {
+  it("locks one scope and materializes messages returned from every provider event", async () => {
     const observed: Array<{ phase: string; messages: readonly ModelMessage[]; scopeKey: string }> =
       [];
     const provider = defineMemoryProvider({
@@ -33,6 +34,7 @@ describe("memory lifecycle", () => {
             phase: "requested",
             scopeKey: context.memory.scope.key,
           });
+          return "requested memory";
         },
         "compaction.completed"(_event, context) {
           observed.push({
@@ -40,6 +42,7 @@ describe("memory lifecycle", () => {
             phase: "completed",
             scopeKey: context.memory.scope.key,
           });
+          return "completed memory";
         },
         "message.received"(_event, context) {
           observed.push({
@@ -55,6 +58,7 @@ describe("memory lifecycle", () => {
             phase: "turn-completed",
             scopeKey: context.memory.scope.key,
           });
+          return "turn-completed memory";
         },
         "turn.started"(_event, context) {
           observed.push({
@@ -62,7 +66,15 @@ describe("memory lifecycle", () => {
             phase: "turn-started",
             scopeKey: context.memory.scope.key,
           });
-          return "turn memory";
+          return "opening memory";
+        },
+        "session.started"(_event, context) {
+          observed.push({
+            messages: context.messages,
+            phase: "session-started",
+            scopeKey: context.memory.scope.key,
+          });
+          return "opening memory";
         },
       },
     });
@@ -78,6 +90,7 @@ describe("memory lifecycle", () => {
     const hooks = createMemoryHookDefinitions([memory])[0]!;
     const before: ModelMessage[] = [{ content: "before", role: "user" }];
     const after: ModelMessage[] = [{ content: "checkpoint", role: "system" }];
+    const sessionStarted = stampMessageStreamEvent(createSessionStartedEvent());
     const turnStarted = stampMessageStreamEvent(
       createTurnStartedEvent({ sequence: 2, turnId: "turn-2" }),
     );
@@ -105,11 +118,21 @@ describe("memory lifecycle", () => {
       createMessageReceivedEvent({ message: "hello", sequence: 2, turnId: "turn-2" }),
     );
     const memoryMessages: readonly ModelMessage[] = [
-      { content: "turn memory", role: "user" },
+      { content: "opening memory", role: "user" },
+      { content: "opening memory", role: "user" },
       { content: "message memory", role: "user" },
+      { content: "requested memory", role: "user" },
+      { content: "completed memory", role: "user" },
     ];
 
     await contextStorage.run(ctx, async () => {
+      prepareMemoryLifecycleEvent({
+        ctx,
+        event: sessionStarted,
+        identity: { agentId: "agent-1", nodeId: "__root__" },
+        memories: [memory],
+      });
+      await hooks.events["session.started"]!(sessionStarted, hookContext(before));
       prepareMemoryLifecycleEvent({
         ctx,
         event: turnStarted,
@@ -133,9 +156,18 @@ describe("memory lifecycle", () => {
         turnCompleted,
         hookContext([...after, ...memoryMessages]),
       );
+      expect(takePendingMemoryMessages()).toEqual([
+        { content: "turn-completed memory", role: "user" },
+      ]);
+      await hooks.events["turn.completed"]!(
+        turnCompleted,
+        hookContext([...after, ...memoryMessages]),
+      );
+      expect(takePendingMemoryMessages()).toEqual([]);
     });
 
     expect(observed.map(({ phase }) => phase)).toEqual([
+      "session-started",
       "turn-started",
       "message-received",
       "requested",
@@ -143,6 +175,7 @@ describe("memory lifecycle", () => {
       "turn-completed",
     ]);
     expect(observed.map(({ messages }) => messages)).toEqual([
+      before,
       before,
       before,
       before,

@@ -83,6 +83,10 @@ export type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicSentinel<TRes
 
 /** Lifecycle handlers owned by a memory provider. */
 export interface MemoryProviderEvents {
+  readonly "session.started"?: (
+    event: HookEventMap["session.started"],
+    context: MemoryProviderContext,
+  ) => string | null | void | Promise<string | null | void>;
   readonly "turn.started"?: (
     event: HookEventMap["turn.started"],
     context: MemoryProviderContext,
@@ -94,15 +98,15 @@ export interface MemoryProviderEvents {
   readonly "compaction.requested"?: (
     event: HookEventMap["compaction.requested"],
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => string | null | void | Promise<string | null | void>;
   readonly "compaction.completed"?: (
     event: HookEventMap["compaction.completed"],
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => string | null | void | Promise<string | null | void>;
   readonly "turn.completed"?: (
     event: HookEventMap["turn.completed"],
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => string | null | void | Promise<string | null | void>;
 }
 
 /** Model-tool resolvers owned by a memory provider. */

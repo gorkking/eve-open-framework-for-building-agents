@@ -718,7 +718,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
               threshold: compacted.session.compaction.threshold,
               thresholdPercent: compacted.session.compaction.thresholdPercent,
             },
-            history: compacted.messages,
+            history: [...compacted.messages, ...(config.takePendingMessages?.() ?? [])],
           };
         } catch (error) {
           logError(log, "manual session compaction failed", error, {
@@ -950,7 +950,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         emissionState = await emitTurnEpilogue(emit, emissionState, config.mode);
         return {
           next: null,
-          session: setHarnessEmissionState(pending.session, emissionState),
+          session: setHarnessEmissionState(
+            appendPendingMessages(pending.session, config.takePendingMessages),
+            emissionState,
+          ),
         };
       }
 
@@ -2465,7 +2468,10 @@ async function handleStepResult(input: {
 
       if (config.mode === "conversation") {
         emissionState = await emitTurnEpilogue(emit, emissionState, config.mode);
-        parkedSession = setHarnessEmissionState(parkedSession, emissionState);
+        parkedSession = setHarnessEmissionState(
+          appendPendingMessages(parkedSession, config.takePendingMessages),
+          emissionState,
+        );
       }
     }
 
@@ -2524,11 +2530,14 @@ async function handleStepResult(input: {
     return {
       next: null,
       session: setHarnessEmissionState(
-        {
-          ...baseSession,
-          history: [...promptMessages],
-          state: setPendingAuthorization(baseSession.state, { challenges }),
-        },
+        appendPendingMessages(
+          {
+            ...baseSession,
+            history: [...promptMessages],
+            state: setPendingAuthorization(baseSession.state, { challenges }),
+          },
+          config.takePendingMessages,
+        ),
         emissionState,
       ),
     };
@@ -2577,6 +2586,7 @@ async function handleStepResult(input: {
       schema: nextSession.outputSchema,
       session: nextSession,
       stepOutput,
+      takePendingMessages: config.takePendingMessages,
     });
   }
 
@@ -2588,7 +2598,18 @@ async function handleStepResult(input: {
     schema: nextSession.outputSchema,
     session: nextSession,
     stepOutput,
+    takePendingMessages: config.takePendingMessages,
   });
+}
+
+function appendPendingMessages(
+  session: HarnessSession,
+  takePendingMessages: ToolLoopHarnessConfig["takePendingMessages"],
+): HarnessSession {
+  const messages = takePendingMessages?.() ?? [];
+  return messages.length === 0
+    ? session
+    : { ...session, history: [...session.history, ...messages] };
 }
 
 const OUTPUT_SCHEMA_NOT_FULFILLED = {
@@ -2655,6 +2676,7 @@ async function finishTaskTurn(input: {
   readonly schema: JsonObject | undefined;
   readonly session: HarnessSession;
   readonly stepOutput: string | null;
+  readonly takePendingMessages: ToolLoopHarnessConfig["takePendingMessages"];
 }): Promise<StepResult> {
   const { emit, history, result, schema, stepOutput } = input;
   let { emissionState, session } = input;
@@ -2662,6 +2684,7 @@ async function finishTaskTurn(input: {
   if (schema === undefined) {
     if (emit) {
       emissionState = await emitTurnEpilogue(emit, emissionState, "task", session.history);
+      session = appendPendingMessages(session, input.takePendingMessages);
       session = setHarnessEmissionState(session, emissionState);
     }
     return { next: { done: true, output: stepOutput ?? "" }, session };
@@ -2690,6 +2713,7 @@ async function finishTaskTurn(input: {
       "task",
       session.history,
     );
+    session = appendPendingMessages(session, input.takePendingMessages);
     session = setHarnessEmissionState(session, emissionState);
   }
   return { next: { done: true, output: structured }, session };
@@ -2708,6 +2732,7 @@ async function finishConversationTurn(input: {
   readonly schema: JsonObject | undefined;
   readonly session: HarnessSession;
   readonly stepOutput: string | null;
+  readonly takePendingMessages: ToolLoopHarnessConfig["takePendingMessages"];
 }): Promise<StepResult> {
   const { emit, history, result, schema, stepOutput } = input;
   let { emissionState, session } = input;
@@ -2715,6 +2740,7 @@ async function finishConversationTurn(input: {
   if (schema === undefined) {
     if (emit) {
       emissionState = await emitTurnEpilogue(emit, emissionState, "conversation", session.history);
+      session = appendPendingMessages(session, input.takePendingMessages);
       session = setHarnessEmissionState(session, emissionState);
     }
     const settledTurn = { output: stepOutput ?? "" } satisfies SettledTurn;
@@ -2746,6 +2772,7 @@ async function finishConversationTurn(input: {
       "conversation",
       session.history,
     );
+    session = appendPendingMessages(session, input.takePendingMessages);
     session = setHarnessEmissionState(session, emissionState);
   }
   const settledTurn = { output: structured } satisfies SettledTurn;

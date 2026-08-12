@@ -12,6 +12,7 @@ const MEMORY_EVENT_NAMES = new Set([
   "compaction.completed",
   "compaction.requested",
   "message.received",
+  "session.started",
   "turn.completed",
   "turn.started",
 ]);

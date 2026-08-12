@@ -23,15 +23,18 @@ import { toErrorMessage } from "#shared/errors.js";
 
 const log = createLogger("memory");
 const MEMORY_HOOK_EVENTS = [
+  "session.started",
   "turn.started",
   "message.received",
   "compaction.requested",
   "compaction.completed",
   "turn.completed",
 ] as const;
-const MEMORY_MESSAGE_EVENTS = new Set<keyof MemoryProviderEvents>([
+const FAIL_CLOSED_MEMORY_EVENTS = new Set<keyof MemoryProviderEvents>([
+  "session.started",
   "turn.started",
   "message.received",
+  "compaction.requested",
 ]);
 
 interface MemoryIdentity {
@@ -51,6 +54,11 @@ export function prepareMemoryLifecycleEvent(input: {
   if (input.memories.length === 0) return;
 
   switch (input.event.type) {
+    case "session.started": {
+      const session = input.ctx.require(SessionKey);
+      ensureTurnState(input, session.turn.sequence, session.turn.id);
+      return;
+    }
     case "turn.started": {
       const state = input.ctx.get(TurnMemoryStateKey);
       if (state?.pendingApprovalPrincipal !== undefined) {
@@ -67,6 +75,13 @@ export function prepareMemoryLifecycleEvent(input: {
           sequence: input.event.data.sequence,
           turnId: input.event.data.turnId,
         });
+        return;
+      }
+      if (
+        state !== undefined &&
+        state.sequence === input.event.data.sequence &&
+        state.turnId === input.event.data.turnId
+      ) {
         return;
       }
       input.ctx.set(
@@ -134,9 +149,10 @@ export function createMemoryHookDefinitions(
         if (active === null || (eventName === "turn.completed" && active.state.deferred)) {
           return;
         }
-        const messageEventKey = `${eventName}:${memory.slot}`;
+        const messageEventKey =
+          event.meta.id === undefined ? undefined : `${event.meta.id}:${memory.slot}`;
         if (
-          MEMORY_MESSAGE_EVENTS.has(eventName) &&
+          messageEventKey !== undefined &&
           active.state.handledMessageEvents.includes(messageEventKey)
         ) {
           return;
@@ -145,11 +161,9 @@ export function createMemoryHookDefinitions(
         const providerContext = buildMemoryProviderContext(active.slot, hookContext);
         try {
           const result = await invokeMemoryHook(handler, event, providerContext);
-          if (MEMORY_MESSAGE_EVENTS.has(eventName)) {
-            recordMemoryMessage(messageEventKey, memory.slot, result);
-          }
+          recordMemoryMessage(messageEventKey, memory.slot, result);
         } catch (error) {
-          if (eventName === "compaction.requested" || MEMORY_MESSAGE_EVENTS.has(eventName)) {
+          if (FAIL_CLOSED_MEMORY_EVENTS.has(eventName)) {
             throw error;
           }
           log.error(`Memory provider ${eventName} handler failed after settlement.`, {
@@ -174,7 +188,7 @@ export function createMemoryHookDefinitions(
   });
 }
 
-/** Takes memory messages returned by real turn events for durable materialization. */
+/** Takes memory messages returned by lifecycle events for durable materialization. */
 export function takePendingMemoryMessages(): readonly ModelMessage[] {
   const ctx = contextStorage.getStore();
   const state = ctx?.get(TurnMemoryStateKey);
@@ -298,14 +312,17 @@ function validateScopeParts(slot: string, parts: readonly string[]): void {
   }
 }
 
-function recordMemoryMessage(eventKey: string, slot: string, value: unknown): void {
+function recordMemoryMessage(eventKey: string | undefined, slot: string, value: unknown): void {
   const ctx = contextStorage.getStore();
   const state = ctx?.get(TurnMemoryStateKey);
   if (ctx === undefined || state === undefined) return;
   const content = normalizeMemoryMessage(slot, value);
   ctx.set(TurnMemoryStateKey, {
     ...state,
-    handledMessageEvents: [...state.handledMessageEvents, eventKey],
+    handledMessageEvents:
+      eventKey === undefined
+        ? state.handledMessageEvents
+        : [...state.handledMessageEvents, eventKey],
     pendingMessages:
       content === undefined ? state.pendingMessages : [...state.pendingMessages, content],
   });

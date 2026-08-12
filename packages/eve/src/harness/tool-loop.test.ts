@@ -765,9 +765,11 @@ describe("createToolLoopHarness", () => {
     const takePendingMessages = vi
       .fn<() => readonly ModelMessage[]>()
       .mockReturnValueOnce([{ content: "remembered context", role: "user" }])
+      .mockReturnValueOnce([{ content: "settled context", role: "user" }])
       .mockReturnValue([]);
+    const { emit } = createEventCollector();
     const runStep = createToolLoopHarness(
-      createTestConfig("conversation", undefined, { takePendingMessages }),
+      createTestConfig("conversation", emit, { takePendingMessages }),
     );
 
     const first = await runStep(createTestSession(), { message: "Hi" });
@@ -777,13 +779,14 @@ describe("createToolLoopHarness", () => {
       { content: "Hi", role: "user" },
       { content: "remembered context", role: "user" },
       { content: "Hello!", role: "assistant" },
+      { content: "settled context", role: "user" },
     ]);
     expect(second.session.history).toEqual([
       ...first.session.history,
       { content: "Follow up", role: "user" },
       { content: "Hello!", role: "assistant" },
     ]);
-    expect(takePendingMessages).toHaveBeenCalledTimes(2);
+    expect(takePendingMessages).toHaveBeenCalledTimes(4);
   });
 
   it("announces parked agents as user-role content before the user message, outside the system prompt", async () => {
@@ -8770,10 +8773,14 @@ describe("createToolLoopHarness", () => {
 
     const { emit, events } = createEventCollector();
     const onCompaction = vi.fn(() => []);
+    const takePendingMessages = vi.fn(() => [
+      { content: "refreshed memory", role: "user" as const },
+    ]);
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
         compactOnly: true,
         onCompaction,
+        takePendingMessages,
         resolveModel: vi
           .fn()
           .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
@@ -8795,11 +8802,15 @@ describe("createToolLoopHarness", () => {
     const result = await runStep(session);
 
     expect(result.next).toBeNull();
-    expect(result.session.history).toEqual(compactedHistory);
+    expect(result.session.history).toEqual([
+      ...compactedHistory,
+      { content: "refreshed memory", role: "user" },
+    ]);
     expect(result.session.compaction).toEqual({ recentWindowSize: 10, threshold: 100_000 });
     expect(shouldCompact).not.toHaveBeenCalled();
     expect(compactMessages).toHaveBeenCalledOnce();
     expect(onCompaction).toHaveBeenCalledOnce();
+    expect(takePendingMessages).toHaveBeenCalledOnce();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
     expect(getCompatibilityEventTypes(events)).toEqual([
       "compaction.requested",
