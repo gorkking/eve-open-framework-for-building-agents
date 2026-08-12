@@ -8,246 +8,352 @@ last_updated: "2026-08-05"
 
 ## Summary
 
-eve should represent progress independently from any channel presentation. Agent
-lifecycle facts reduce into a durable progress projection; delegated agents
-publish their projection to their parent, which incorporates it into its own
-projection. Only the root channel renders the resulting projection into an
-external presentation.
+eve should maintain a durable, framework-owned work graph for the active turn
+and its delegated work. The graph is derived from authoritative runtime
+lifecycle state, composes through child sessions, and remains independent of
+channel effects. A root channel may render a safe, selected view of that graph.
 
 ```text
-child lifecycle facts ──reduce──▶ child projection
-                                      │ durable child update
-                                      ▼
-parent facts + child projections ──reduce──▶ parent projection
-                                              │
-                                              ▼
-                                       channel renderer
-                                  indicator | message | blocks
+runtime lifecycle + direct child state
+                │
+                ▼
+       durable work graph
+                │
+                ▼
+    channel-specific presentation
 ```
 
-A Slack thread status is one possible rendering. A replaceable thread message,
-a Block Kit tree of parallel work, a terminal spinner, or no visible rendering
-are equally valid. Progress is desired state, not a command to call a specific
-channel API.
+The first implementation should prove this boundary using existing lifecycle
+facts and local subagents. It should not initially define a general progress
+platform around plans, arbitrary annotations, public client events, remote
+capability negotiation, or custom channel APIs.
 
-## Current Slack behavior
+A later PR should add action-local `reportProgress()` and automatic MCP progress
+adaptation after action ownership, child propagation, and rendering semantics
+are stable.
 
-Slack status text currently comes directly from channel event handlers in
-`public/channels/slack/defaults.ts`:
+## Problem
 
-| Source                                         | Current projection                                                                                                    |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| inbound mention or DM                          | `Thinking...` before runtime dispatch                                                                                 |
-| `turn.started`                                 | `Working...`                                                                                                          |
-| `reasoning.appended`                           | first non-empty reasoning line, locally throttled                                                                     |
-| `actions.requested`                            | preceding assistant narration when available, otherwise a label derived from the first requested action and `+N more` |
-| `message.completed`                            | preserve narration before tool calls; otherwise post the answer or clear an empty status                              |
-| `authorization.completed`                      | `Connected to <name>. Resuming...`                                                                                    |
-| terminal session/turn events and visible posts | stop or supersede the active status                                                                                   |
+Channels currently infer progress independently from low-level stream events.
+Slack, for example, derives status text from turn start, reasoning, assistant
+narration, action requests, authorization completion, visible output, and
+terminal events. The resulting state is implicit and channel-local.
 
-This is an implicit last-write-wins reducer spread across event handlers and
-`SlackChannelState` fields. `pendingToolCallMessage` carries narration across
-`message.completed` and `actions.requested`; `lastReasoningTyping*` implements
-presentation throttling. The status text is therefore derived from useful
-channel-neutral facts, but its reduction and Slack effect are interleaved.
+Delegated sessions make this boundary more visible. A parent knows that it
+started a child and eventually receives its terminal result, but the child's
+ordinary step and action lifecycle does not bubble through the parent. A channel
+that wants to show parallel delegated work must attach to child streams and
+rebuild ownership, ordering, and terminal state itself.
 
-## Existing event and delegation boundaries
+The missing primitive is not presentation text. It is durable work ownership:
 
-Normal root-agent stream events pass through the active channel adapter in
-`execution/workflow-steps.ts`. This gives Slack the facts above, but does not
-persist an explicit progress projection.
+> What work is currently active, waiting, or terminal, and what direct child
+> work does it own?
 
-Delegated agents run with the framework-owned subagent adapter. Today it only
-forwards child authorization and input-request events through the parent's
-durable turn inbox. The parent separately observes:
+## Design principles
 
-- `actions.requested`, which identifies the requested subagent call;
-- `subagent.called`, emitted after a durable child starts;
-- the terminal runtime-action result returned through the inbox.
+1. **Observed work is the core.** The graph records runtime truth: active turn,
+   model steps, actions, blockers, and delegated children.
+2. **Plans are separate intent.** A todo list may later attach to a turn, but it
+   does not define execution truth and does not imply action-to-plan-item edges.
+3. **The graph is desired state, not history.** The durable event stream remains
+   the complete audit trail.
+4. **Reduction is framework-owned.** Agents do not customize graph invariants,
+   retention, child revisions, or terminal precedence.
+5. **Children publish snapshots.** Parents receive versioned child state rather
+   than every raw child event.
+6. **Presentation belongs to channels.** The graph contains no Slack blocks,
+   message ids, API operations, or presentation-maintenance timers.
+7. **Blockers are first-class.** Waiting for input, authorization, or approval is
+   authoritative work state, not an absence of progress.
+8. **Terminal state wins.** Late or replayed updates cannot resurrect settled
+   actions or children.
 
-The child agent's ordinary turn, reasoning, action, and nested-subagent events
-do not bubble to the parent. The protocol contains inline `subagent.started`,
-`subagent.event`, and `subagent.completed` shapes, but delegated workflow
-subagents do not use those as a general child event stream. A hierarchical
-progress design therefore needs a new durable child-progress lane rather than
-assuming the parent can reduce its child's existing public stream.
+## Proposed v1 semantics
 
-PR [#1665](https://github.com/vercel/eve/pull/1665) adds another useful source:
-streaming tools may yield complete intermediate output snapshots, exposed as
-`action.partial`. This is an incremental tool-output data plane rather than a
-progress model. The snapshots are arbitrary tool output, can be much richer
-and more frequent than useful status changes, and are independently valuable
-to clients. Progress reduction may consume them without making every partial a
-progress revision or forwarding raw partials through the subagent tree.
+### Work graph
 
-## Design boundary
-
-The proposal separates four responsibilities:
-
-1. operations publish structured reports or partial-output projections;
-2. eve materializes deterministic canonical progress from existing turn, step,
-   action, blocker, plan, and child-session state;
-3. delegated sessions publish versioned canonical snapshots to their parent;
-4. the root channel selects, summarizes, and renders a presentation.
-
-Canonical progress is desired state, not an audit log and not presentation
-commands. The durable event stream remains the complete history. Channel state
-owns external message ids, capability fallbacks, and cached summaries.
-Platform-specific presentation maintenance, such as renewing an expiring Slack
-status, stays inside that channel implementation and is not part of the
-canonical progress or generic channel contract.
-
-## Public API design space
-
-The public API needs boundaries at four levels: producers contribute meaning,
-the agent materializes canonical state, delegated sessions publish canonical
-snapshots, and the root channel renders a presentation. These
-levels should not share one generic `reduce(event)` callback.
-
-### Canonical types
-
-Three shapes are plausible.
-
-#### Recursive activity tree
+The first graph is deliberately small and internal:
 
 ```ts
-interface ProgressSnapshot {
+type WorkPhase = "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+
+interface WorkSnapshot {
   readonly revision: number;
-  readonly root: ProgressScope;
+  readonly root: WorkScope;
 }
 
-interface ProgressScope {
-  readonly id: string;
-  readonly kind: "agent";
-  readonly name: string;
-  readonly phase: ProgressPhase;
-  readonly summary?: string;
-  readonly startedAt: string;
-  readonly updatedAt: string;
-  readonly turn?: ProgressTurn;
-}
-
-interface ProgressTurn {
-  readonly id: string;
-  readonly phase: ProgressPhase;
-  readonly plan?: ProgressPlan;
-  readonly steps: readonly ProgressStep[];
-  readonly blockers: readonly ProgressBlocker[];
-}
-
-interface ProgressStep {
-  readonly stepIndex: number;
-  readonly phase: ProgressPhase;
-  readonly label?: string;
-  readonly actions: readonly (ProgressAction | ProgressChild)[];
-}
-
-type ProgressActivity = ProgressAction | ProgressChild | ProgressPlan | ProgressBlocker;
-
-interface ProgressChild extends ProgressActivityBase {
-  readonly kind: "agent";
-  readonly callId: string;
+interface WorkScope {
   readonly sessionId: string;
-  readonly progress: ProgressScope;
+  readonly agentName: string;
+  readonly phase: WorkPhase;
+  readonly turn?: WorkTurn;
+}
+
+interface WorkTurn {
+  readonly turnId: string;
+  readonly phase: WorkPhase;
+  readonly steps: readonly WorkStep[];
+  readonly blockers: readonly WorkBlocker[];
+}
+
+interface WorkStep {
+  readonly stepIndex: number;
+  readonly phase: WorkPhase;
+  readonly actions: readonly WorkAction[];
+}
+
+interface WorkAction {
+  readonly callId: string;
+  readonly kind: "tool" | "skill" | "subagent" | "remote-agent";
+  readonly name: string;
+  readonly phase: WorkPhase;
+  readonly child?: WorkScope;
+}
+
+interface WorkBlocker {
+  readonly id: string;
+  readonly kind: "input" | "authorization" | "approval";
+  readonly phase: "blocked" | "completed" | "cancelled";
+  readonly ownerCallId?: string;
 }
 ```
 
-This is easiest for renderers and naturally represents nested agents. A session
-has at most one live turn projection; completed turn history stays in the event
-stream rather than accumulating in `ProgressScope`. Updating a deep child
-replaces a path and can duplicate large subtrees on the wire unless snapshots
-are bounded or structurally shared internally.
+The public names and exact serialization are not committed by v1. The initial
+shape should remain internal until two renderers consume it successfully.
 
-#### Normalized graph
+### Planless turns
+
+Every turn already has model-step and action boundaries. A planless graph uses
+those boundaries directly:
+
+```text
+turn [running]
+├── step 0 [completed]
+│   ├── search docs [completed]
+│   └── read source [completed]
+└── step 1 [running]
+    ├── run reproduction [running]
+    └── researcher [running]
+        └── child turn
+            └── inspect traces [running]
+```
+
+Actions observed under the same `stepIndex` are siblings. Because
+`actions.requested` may arrive incrementally, the reducer uses runtime action
+state—not one event batch—to determine which actions are concurrently active.
+A delegated action owns its child scope.
+
+The graph does not infer a plan, user intent, or a relationship between an
+action and a hypothetical task.
+
+### Blocked work
+
+A blocker belongs to the turn and may identify its owning action:
+
+```text
+turn [blocked]
+├── step 1 [completed]
+│   └── update feature flag [blocked]
+└── approval [blocked]
+    └── owner: update feature flag
+```
+
+When the blocker resolves, the same blocker settles and the turn resumes. It is
+not replaced with a new unrelated status.
+
+### Scope compaction
+
+The live graph is not an audit log:
+
+- retain all active and blocked actions;
+- retain completed actions while their step remains active;
+- collapse completed step internals to a step outcome when the turn advances;
+- retain failure/cancellation detail needed to explain the outcome;
+- retain active child scopes until their owning action settles;
+- remove the completed turn from the live session scope after settlement;
+- preserve the full sequence in the existing durable event stream.
+
+These rules are deterministic framework invariants, not authored retention
+settings.
+
+## Local child propagation
+
+A delegated local session reduces its own graph and publishes a versioned
+snapshot through the existing parent turn inbox topology:
 
 ```ts
-interface ProgressSnapshot {
+interface ChildWorkUpdate {
+  readonly kind: "subagent-work";
+  readonly callId: string;
+  readonly childSessionId: string;
   readonly revision: number;
-  readonly rootId: string;
-  readonly nodes: Readonly<Record<string, ProgressNode>>;
-}
-
-interface ProgressNode {
-  readonly id: string;
-  readonly parentId?: string;
-  readonly kind: "agent" | "action" | "plan" | "blocker";
-  readonly phase: ProgressPhase;
-  readonly children: readonly string[];
-  readonly report?: ProgressReport;
+  readonly snapshot: WorkSnapshot;
+  readonly subagentName: string;
 }
 ```
 
-This is compact, stable under replacement, and convenient for stale-revision
-checks. It is less pleasant for ordinary channel authors and exposes graph
-integrity concerns they should not need to maintain.
+The parent:
 
-#### Snapshot plus opaque extension contributions
+1. binds the update to a running child handle by `callId` and session id;
+2. rejects stale revisions;
+3. replaces the child snapshot on the owning action;
+4. increments its own revision only when desired state changes;
+5. republishes its snapshot upward when it is itself delegated;
+6. rejects every child update after the action becomes terminal.
 
-```ts
-interface ProgressActivity {
-  readonly id: string;
-  readonly kind: string;
-  readonly phase: ProgressPhase;
-  readonly label?: string;
-  readonly data?: JsonValue;
-}
+Terminal result delivery and work updates may race. Both orders must converge
+to the same terminal parent graph. Child progress delivery is best-effort and
+must not delay model execution or terminal settlement indefinitely.
+
+The v1 payload is runtime-internal. Its shape should avoid assumptions that
+would prevent later remote delivery, but v1 does not define public remote
+capability negotiation.
+
+## Initial Slack consumers
+
+Slack is the proving ground, not part of the graph contract.
+
+### Deterministic status renderer
+
+The first consumer selects one compact line from the graph while preserving
+current visible behavior where practical:
+
+```text
+Running the checkout reproduction…
 ```
 
-This is extensible but gives channels little portable structure. Every renderer
-would eventually switch on tool-specific `kind` values.
+For parallel work:
 
-The recommended public read shape is a recursive tree with a bounded canonical
-schema. The runtime may store or propagate it as a normalized graph. Domain data
-can ride in namespaced optional annotations, but core identity, phase, nesting,
-counts, timestamps, and errors remain portable.
+```text
+Researching three approaches…
+```
+
+The renderer owns:
+
+- human labels for known action kinds;
+- truncation and safe argument selection;
+- prioritizing blockers over active work;
+- summarizing parallel children;
+- clearing or superseding status after visible output;
+- all Slack API behavior and presentation maintenance.
+
+Reasoning-derived or model-narrated status can remain a separate Slack policy
+while the graph is evaluated; raw reasoning does not need to enter the v1 work
+graph.
+
+### Hierarchical activity-message spike
+
+The second consumer updates one Slack message from the same graph:
+
+```text
+Cold-start investigation
+
+✓ Dependency analysis
+  Found eager initialization
+
+◐ Bundle analysis
+  Running measurements
+
+! Runtime analysis
+  Waiting for access
+```
+
+This renderer validates that the graph contains enough information for the
+motivating nested-work use case. It should support:
+
+- parallel and nested local children;
+- active, blocked, completed, failed, and cancelled states;
+- stable in-place updates;
+- completed-scope collapse;
+- missing-message recovery;
+- terminal settlement.
+
+It may remain internal or experimental. The generic channel API should be
+extracted only after the status and activity renderers demonstrate a stable
+common input.
+
+## PR stack
+
+### PR 1 — Pure internal work graph
+
+Add a pure reducer over existing authoritative lifecycle facts:
+
+- turn and step lifecycle;
+- runtime action requests and results;
+- child dispatch and settlement;
+- input, authorization, and approval waits;
+- cancellation and failure.
+
+Establish stable action identity, planless step grouping, replay determinism,
+terminal precedence, and scope compaction. Add no visible behavior or public
+API.
+
+Acceptance criteria:
+
+- planless turns reduce identically across replay;
+- incremental action request events converge on runtime action state;
+- parallel actions retain independent `callId` identity;
+- blockers attach and settle without losing their owner;
+- late events cannot rewrite terminal actions;
+- completed step detail collapses deterministically.
+
+### PR 2 — Durable local-child composition
+
+Publish versioned local-child snapshots and compose them into the parent graph.
+
+Acceptance criteria:
+
+- two parallel children remain independent;
+- a nested child update bubbles one parent at a time;
+- stale revisions are ignored;
+- terminal result/update races converge;
+- cancellation settles descendant work;
+- propagation failure does not fail an active turn;
+- no public remote wire contract is introduced.
+
+### PR 3 — Internal Slack status consumer
+
+Render the work graph through Slack's existing compact status surface. Preserve
+visible defaults where practical and keep every Slack-specific concern inside
+the Slack package.
+
+Acceptance criteria:
+
+- simple tool calls show useful deterministic status;
+- parallel children collapse to compact copy;
+- blockers outrank generic running status;
+- terminal and visible-output behavior remains correct;
+- the work graph contains no Slack fields.
+
+### PR 4 — Internal Slack activity-message renderer
+
+Add an internal or experimental replaceable message that renders hierarchical
+work.
+
+Acceptance criteria:
+
+- simple planless turns are not blank;
+- parallel and nested children update stable rows in place;
+- completed scopes collapse while failures remain legible;
+- blockers render distinctly from running work;
+- terminal state settles the message;
+- the renderer requires no child stream attachment outside framework snapshot
+  propagation.
+
+### PR 5 — `reportProgress()` and automatic MCP adaptation
+
+After the graph and propagation path are proven, add action-local authored
+reports:
 
 ```ts
-type ProgressPhase = "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
-
 interface ProgressReport {
   readonly message?: string;
   readonly progress?: number;
   readonly total?: number;
   readonly unit?: string;
 }
-```
 
-`message` is semantic authored copy, not channel markup. `progress` is the
-amount completed, not necessarily a percentage; `total` uses the same scale.
-Numeric fields align with MCP progress notifications, while eve adds optional
-`unit` and permits message-only reports. Correlation is not public payload:
-authored tools inherit their active `callId`, and the MCP adapter privately maps
-`progressToken` to that call.
-
-Plans deserve a core canonical variant rather than a namespaced annotation:
-
-```ts
-interface ProgressPlan extends ProgressActivityBase {
-  readonly kind: "plan";
-  readonly title?: string;
-  readonly items: readonly ProgressPlanItem[];
-}
-
-interface ProgressPlanItem {
-  readonly id: string;
-  readonly label: string;
-  readonly description?: string;
-  readonly phase: "pending" | "running" | "completed" | "cancelled" | "failed";
-}
-```
-
-This supports plan cards, web checklists, and pinned TUI plans. The current
-framework todo schema has no plan title, description, or item id. A first-class
-plan contribution therefore requires a deliberate todo API change if stable
-item identity is part of the contract.
-
-### Producer APIs
-
-There are three useful producer shapes, and eve likely needs two of them.
-
-#### Explicit operation-local reporting
-
-```ts
 export default defineTool({
   async execute(input, ctx) {
     await ctx.reportProgress({
@@ -260,459 +366,120 @@ export default defineTool({
 });
 ```
 
-This is initially a `ToolContext` API: the active `callId` supplies ownership.
-It is natural for long operations that know when a meaningful milestone occurs.
-`reportProgress` must be asynchronous and revisioned. Its durability semantics must be explicit: it sends an out-of-band
-checkpoint rather than pretending an atomic tool step committed early. Rapid
-reports may coalesce latest-per-call while preserving the latest accepted
-checkpoint.
+`ToolContext.callId` supplies ownership. MCP `notifications/progress` enters the
+same internal action-report path by privately correlating `progressToken` to the
+active eve call.
 
-MCP tools get this path without authored configuration when their server emits
-`notifications/progress`. The MCP client supplies a private `progressToken`,
-correlates the notification back to the active eve `callId`, and submits the
-same internal report. MCP supplies no hierarchy; ordinary eve child snapshots
-carry the resulting action progress upward.
+This PR owns the hard durability semantics:
 
-#### Projection from tool lifecycle and partial output
+- define exactly what awaiting `reportProgress()` guarantees;
+- identify updates by call, execution attempt, and revision;
+- reject reports from stale attempts and terminal actions;
+- define whether numeric progress must be monotonic within one attempt;
+- coalesce rapid reports without losing the latest accepted snapshot;
+- prevent terminal settlement from being followed by a late resurrection;
+- bound propagation volume through nested parents;
+- remove MCP correlation state on settlement.
 
-```ts
-export default defineTool({
-  async *execute(input) {
-    yield { indexed: 250, total: 1_000 };
-    yield { indexed: 1_000, total: 1_000 };
-  },
-  progress: {
-    started(input) {
-      return { message: `Indexing ${input.collection}` };
-    },
-    updated(output) {
-      return {
-        progress: output.indexed,
-        total: output.total,
-        unit: "documents",
-      };
-    },
-    completed(output) {
-      return { message: `Indexed ${output.total} documents` };
-    },
-  },
-});
-```
+Acceptance criteria:
 
-This keeps a typed relation to tool input/output and lets `action.partial`
-remain a richer client stream. It cannot describe milestones that are not
-represented in yielded output.
+- report, crash, and retry do not regress or duplicate action state incorrectly;
+- a late report after terminal settlement is rejected;
+- rapid reports coalesce to the latest accepted report;
+- parallel tools report independently;
+- a nested child's report reaches the root renderer;
+- MCP progress reaches the same renderer without authored eve-specific code;
+- MCP servers that emit no progress retain useful lifecycle fallback.
 
-#### Generic progress tool
+This is the first PR likely to expose a new authored API and therefore needs
+public documentation, focused integration coverage, extension compatibility
+updates, and a changeset.
 
-A model-facing `report_progress` tool is useful for semantic work between tools,
-but should be additive. Requiring the model to narrate every operation is noisy
-and unreliable. Structured `todo` remains the better source for multi-step
-plans.
+## Follow-on hypotheses
 
-Recommended producer API: support explicit `ctx.reportProgress()` and an
-optional typed `progress` projector on `defineTool`. Both normalize to the same
-`ProgressReport`; the last accepted explicit report wins over an inferred
-partial contribution until another lifecycle boundary. The projector is a
-convenience for `action.partial`; explicit reporting remains the primary API.
+The following are deliberately outside the first five PRs.
 
-### Agent-level authoring
+### Structured plans
 
-The initial agent API should be zero-config:
+The framework todo is model-authored intent, not execution truth. A future
+change may add stable item ids, plan title, description, and merge-by-id, then
+attach an optional plan beside the observed step ladder:
 
 ```ts
-export default defineAgent({
-  model: "openai/gpt-5.4",
-});
-```
-
-A raw `(state, event) => state` replacement API is too easy to make lossy or
-break child and terminal invariants. Fixed retention counts are also the wrong
-abstraction: canonical progress is scoped around meaningful work, not a sliding
-window of recent events.
-
-Plans are optional. Today a turn has model-step and action-batch boundaries;
-it has a plan only when the model calls the framework `todo` tool. Without a
-plan, eve builds a faithful ladder from those existing boundaries:
-
-```text
-turn
-├── step 0 [completed]
-│   ├── search logs [completed]
-│   └── read source [completed]
-└── step 1 [running]
-    ├── researcher [running]
-    │   └── child progress…
-    └── run reproduction [running]
-```
-
-Actions observed under the same `stepIndex` are siblings; the runtime's action
-state determines which are concurrently active, since `actions.requested` may
-arrive incrementally. A subagent action owns its child scope. Optional pre-tool
-narration may label the step; otherwise channels derive mechanical copy from
-action names. When `todo` exists, the canonical turn also carries its structured
-plan:
-
-```text
-turn
-├── plan
-│   ├── Reproduce [completed]
-│   ├── Implement fix [running]
-│   └── Open PR [pending]
-└── steps
-    └── current step
-        ├── edit file [completed]
-        └── run tests [running]
-```
-
-The framework applies deterministic scope-based compaction:
-
-- retain every active or blocked action;
-- group planless actions by native step and action-batch boundaries rather than
-  inferring a plan;
-- keep the optional plan and native step ladder as orthogonal views: the current
-  protocol does not identify which action implements which todo item;
-- while a step is active, retain its completed actions;
-- when a step completes, retain its outcome and collapse internal action detail
-  from the live projection;
-- retain failed/cancelled detail sufficient to explain the outcome;
-- retain the current plan and active child scopes until their owning turn
-  settles;
-- leave the complete audit trail in the durable event stream.
-
-Whether completed scopes are expanded or hidden is channel presentation policy.
-`preferPlans` therefore does not belong on the agent definition either.
-Agent-authored semantic state enters through optional structured plans and
-`reportProgress()`, not a custom canonical reducer. Defer agent annotations and
-reducer middleware until adoption demonstrates information that cannot be
-expressed as a contribution.
-
-The canonical projection should be observable without being mutable:
-
-```ts
-export default defineHook({
-  events: {
-    "progress.updated"(event, ctx) {
-      console.info(event.data.progress.revision);
-    },
-  },
-});
-```
-
-This event fires only when canonical state changes, not for presentation-only
-channel maintenance.
-
-### Delegated-agent boundary
-
-The child-to-parent contract should remain framework-owned. Public authors read
-the same `ProgressSnapshot` whether a scope is root or nested; they do not send
-`subagent-progress` hook payloads themselves. A child may attach an authored
-semantic annotation or summary, but cannot choose what the parent discards.
-
-For remote agents, capability negotiation can accept either:
-
-```ts
-{
-  kind: ("progress.snapshot", revision, progress);
+interface ProgressPlan {
+  readonly id: string;
+  readonly title?: string;
+  readonly items: readonly ProgressPlanItem[];
 }
 ```
 
-or a coarse remote task status that eve adapts into one child node. Lack of
-progress capability leaves the child as a running node until its terminal
-result.
+No action-to-plan-item relationship should be inferred without an explicit
+protocol field.
 
-### Channel API
+### Generic channel API
 
-The initial channel surface is one effectful callback. It receives an extensible
-input object and owns presentation state in the channel's existing durable
-state:
+After two Slack consumers prove a stable input, extract the smallest generic
+channel hook from their common needs. Do not commit to a public
+`defineChannel({ progress() {} })` shape before that evidence exists.
 
-```ts
-interface ChannelProgressInput {
-  readonly progress: ProgressSnapshot;
-  readonly reason: "changed" | "terminal";
-}
-```
+### Public observation
 
-```ts
-export default defineChannel({
-  state: { progressMessageId: null },
-  async progress({ progress, reason }, channel, ctx) {
-    channel.state.progressMessageId = await upsertProgressMessage({
-      messageId: channel.state.progressMessageId,
-      progress,
-      reason,
-    });
-  },
-});
-```
+A future `progress.updated` hook or client event may expose snapshots to authored
+observers and web clients. Publishing the graph creates a durable protocol
+commitment and should follow stabilization.
 
-This fits existing channel event handlers and lets a channel post, update,
-delete, summarize, or intentionally ignore progress. Model-summary caching,
-create-versus-update state, and testability remain the author's responsibility.
-Built-in channel presets may internally split pure projection from effects and
-cache model-generated summaries by canonical fingerprint.
+### Remote child capability
 
-The callback runs only when canonical progress changes or terminates. A channel
-that needs presentation-only maintenance owns its timer and reuses its last
-rendered state without manufacturing a progress update.
+Remote agents eventually need capability negotiation or a coarse compatibility
+adapter. The local-child protocol should remain transportable, but v1 does not
+publish a remote wire format.
 
-For Slack, the built-in offers presets and an escape hatch:
+### Partial-output projection
 
-```ts
-slackChannel({
-  progress: slackProgress.status(),
-});
+Streaming tool output may later project into `ProgressReport`. The full
+`action.partial` stream remains independently valuable and should not be
+replaced by progress.
 
-slackChannel({
-  progress: slackProgress.message({
-    blocks(progress) {
-      return renderParallelAgentBlocks(progress);
-    },
-  }),
-});
+### Model summaries
 
-slackChannel({
-  progress: slackProgress.plan({
-    fallback: slackProgress.status(),
-  }),
-});
+A channel may eventually use a cheap model to summarize a bounded graph for its
+audience. Summarization is presentation-only, cached by graph fingerprint, and
+must fall back to deterministic copy. It never replaces canonical child state.
 
-slackChannel({
-  async progress({ progress, reason }, channel) {
-    await renderCustomSlackProgress({ channel, progress, reason });
-  },
-});
-```
+### Liveness
 
-`slackProgress.plan()` selects the optional canonical plan and falls back when
-a turn has none. `slackProgress.message()` updates a thread message.
-`slackProgress.status()` owns any Slack-specific status renewal internally.
-`progress: false` suppresses the built-in renderer without suppressing canonical
-progress or `progress.updated` observation.
+Remote liveness, elapsed-time decoration, and stall policy are operational
+concerns distinct from semantic work phase. Lack of recent activity must not be
+interpreted automatically as failure.
 
-### API recommendation
+## Verification strategy
 
-The smallest coherent first public surface is:
+Choose the narrowest test tier for each invariant:
 
-1. `ProgressReport`, `ProgressSnapshot`, and recursive read-only node types;
-2. `ctx.reportProgress()` for operation-local milestones and automatic MCP
-   progress adaptation;
-3. optional typed tool `progress` projectors;
-4. deterministic framework-owned scope reduction, with no initial agent config;
-5. `progress.updated` as an observe-only hook event;
-6. one effectful channel `progress({ progress, reason }, channel, ctx)` callback;
-7. Slack status, plan, and message presets built on the same canonical input.
+- pure reducer and compaction tests at the unit tier;
+- in-memory child composition and race tests at the integration tier;
+- workflow retry, cancellation, and durable inbox behavior at the scenario
+  tier where necessary;
+- deterministic fixture coverage for final Slack integration behavior.
 
-The runtime child propagation protocol remains internal until remote capability
-negotiation requires a public wire contract.
+The implementation stack is successful when:
 
-## Proposed semantic split
+- planless root work reduces deterministically;
+- nested local work composes without channel-side child stream readers;
+- stale or late updates cannot overwrite terminal state;
+- status and activity renderers consume the same graph;
+- the graph remains free of Slack state;
+- ordinary tools remain useful without authored progress reports;
+- PR 5 can add precise reports without changing graph ownership or child
+  propagation semantics.
 
-### Progress facts
+## Out of scope
 
-A progress fact records a meaningful lifecycle transition, not presentation
-instructions. Initial facts should cover:
-
-- turn and model-step started, completed, failed, or cancelled, preserving
-  `stepIndex`;
-- reasoning summary changed;
-- action batches requested and actions settled, keyed by call id;
-- authorization or human input required and resumed;
-- delegated child started, updated, and settled, keyed by call id and child
-  session id;
-- a streaming tool published a new intermediate output snapshot, keyed by call
-  id.
-
-Facts need stable identities and ordering coordinates. They must not contain
-Slack text, blocks, message timestamps, refresh intervals, or API operations.
-High-frequency stream deltas and tool partials may be ignored or coalesced
-before reduction, but the latest desired projection must cross the next durable
-boundary. A default reducer should not guess status text from arbitrary partial
-output. An authored tool projector can interpret its domain-specific snapshot
-and map
-`TOutput` to a small progress report without changing what clients or the model
-see.
-
-### Canonical agent projection
-
-The framework canonical reducer folds facts into durable agent state. It must be
-deterministic, side-effect free, and deliberately low-loss so workflow retries
-produce the same result and every parent receives enough structure to choose a
-different presentation. It may compact transport detail, such as replacing ten
-partials for one call with the latest typed contribution, but should retain
-active action identities, child projections, plan items, phases, timestamps,
-errors, and terminal outcomes.
-
-The public read shape is the recursive `ProgressSnapshot` above: agent scope,
-the live turn, its native step ladder, optional plan, actions, blockers, and
-nested child snapshots. The runtime may normalize this graph internally.
-
-Canonical reduction is framework-owned and zero-config. Do not expose an
-agent-level reducer initially: custom reduction could discard child progress,
-break terminal precedence, or make different agents publish incompatible
-snapshots. Opinionated selection and summarization belong in the channel
-callback.
-
-Do not require an agent author to reconstruct the action map, child revision
-checks, terminal precedence, or retention. Those are framework invariants.
-Agent-level authoring should add typed domain contributions, not collapse the
-graph to one display string. Tool-level projectors answer what one operation's
-output means; the canonical reducer combines and scope-compacts those
-contributions around native turns and steps, and optional plans when present,
-without deciding what a particular audience should see.
-
-A child may publish an explicit semantic summary because it understands its own
-domain, but that summary is one field alongside its canonical child projection,
-not a replacement for it. Automatically invoking a summarization model at each
-subagent boundary would add latency, cost, nondeterminism, and cumulative
-information loss. If a very wide tree eventually requires hierarchical model
-summaries, store them as optional derived annotations keyed by the source
-projection fingerprint and always propagate the source projection too.
-
-Do not expose a public agent reducer until the tree survives nested delegation
-without channel-specific fields and a concrete adoption cannot be expressed as
-a progress report or channel projection.
-
-### Channel renderer
-
-The root channel receives a complete desired projection and renders external
-state. It owns effectful and presentation-specific concerns:
-
-- select which canonical nodes matter for this channel and audience;
-- optionally summarize them with authored code or a cheap model;
-- choose an indicator, one updated message, multiple posts, or blocks;
-- create and remember external resource ids;
-- update or clear prior presentation;
-- truncate, throttle, and debounce according to platform limits;
-- decide how completed children remain visible.
-
-A model summarizer is an optional, best-effort presentation stage. Its input is
-the bounded canonical graph; its output may be cached by projection fingerprint
-in channel state. Failure falls back to deterministic copy.
-
-The renderer's durable channel state contains external ids, the last
-successfully rendered projection fingerprint, and any cached presentation.
-Canonical reducer state must not contain those values. Rendering is best-effort
-and must not fail the agent turn.
-
-## Hierarchical propagation
-
-Each session reduces its own facts. A delegated session sends a versioned
-snapshot when its desired projection changes:
-
-```ts
-interface ChildProgressUpdate {
-  readonly kind: "subagent-progress";
-  readonly callId: string;
-  readonly childSessionId: string;
-  readonly revision: number;
-  readonly projection: ProgressSnapshot;
-  readonly subagentName: string;
-}
-```
-
-The parent admits this through the same durable turn inbox ownership model used
-for child HITL and terminal results, but handles it as a separate payload. It
-rejects stale revisions, associates the child with the pending call, reduces
-the child snapshot into its own state, and publishes its new snapshot upward
-if it is itself delegated.
-
-Snapshots, rather than every raw child event, provide three properties:
-
-1. a parent never needs to replay the child's complete event history;
-2. nested trees compose one level at a time;
-3. update volume can be coalesced without losing current desired state.
-
-The snapshot must retain stable child and action identities so a channel can
-display parallel work rather than collapsing everything to the latest string.
-Parent canonical reduction embeds the child without lossy summarization; the
-root channel decides what to summarize, hide, reorder, or expand.
-
-Terminal delivery and progress delivery can race. Revisions and the terminal
-fact must make both orders converge to the same parent projection. A late child
-snapshot cannot resurrect a settled call.
-
-## Durability and ownership
-
-Reducer state belongs to the session's durable runtime state, not process-local
-maps or channel adapter state. Reduction occurs in the same durable step that
-observes the source lifecycle event. A changed delegated projection is then
-forwarded through a workflow hook step to its parent.
-
-The root channel renderer observes projections after they have been adopted
-into serialized context. Its effect checkpoint includes updated channel state.
-External APIs without idempotency still have an unavoidable response/checkpoint
-crash window; initial implementations should prefer naturally idempotent
-replace operations and explicitly document create-operation semantics rather
-than claiming exactly-once posts.
-
-Progress propagation must never block model execution or terminal settlement
-indefinitely. Failed parent notification or channel rendering is diagnostic;
-the latest durable projection can be retried or superseded by a newer revision.
-
-## Open decisions
-
-1. Is `progress.updated` part of the public client stream, only an authored
-   hook event, or both? Publishing snapshots helps non-channel clients but
-   creates a long-lived protocol contract.
-2. Which reasoning representation is safe and useful as progress? Raw reasoning
-   may be unsupported by some providers and inappropriate to expose verbatim.
-3. Should a custom channel that uses model summarization receive a framework
-   cache helper, or own caching in durable channel state?
-4. How are reducer versions pinned and migrated for sessions spanning
-   deployments?
-5. What coalescing boundary prevents reasoning deltas from producing excessive
-   workflow steps while preserving prompt updates?
-6. Besides `reportProgress()` and structured plans, is another typed
-   domain-specific contribution needed?
-7. Should typed tool projectors for `action.partial` ship initially, or follow
-   the explicit `reportProgress()` API?
-8. At what boundary are rapid tool partials coalesced so clients retain the
-   full incremental stream while parent progress receives only meaningful
-   snapshots?
-9. At which turn/step settlement boundary should completed child internals
-   collapse, especially when persistent subagent sessions are continued by a
-   later call?
-10. Is elapsed time a renderer projection over durable `startedAt`, or semantic
-    progress? It should not require a new child revision every minute.
-11. How should remote liveness observations enter progress without confusing
-    "no recent event" with failure?
-12. Should the framework todo gain stable item ids, title, and description, or
-    should richer plans remain a separate contribution? How should parent and
-    child plans settle for channel renderers?
-13. What size bound on the canonical graph permits low-loss propagation without
-    unbounded session growth? Retention should be explicit and deterministic,
-    not delegated to a summarization model.
-14. Does the channel summarizer receive auth/audience metadata so it can avoid
-    exposing child details inappropriate for a shared thread, or must the
-    canonical projection be visibility-labeled before it reaches the channel?
-
-## Implementation sequence
-
-1. Add pure internal progress facts, native turn/step/action scopes, optional
-   plan projection, durable reducer state, and tests for planless and planned
-   root sessions. Do not change channel output.
-2. Add `reportProgress()`, automatic MCP adaptation, and optional partial-output
-   projection behind the same action-local report path.
-3. Add a versioned child-progress hook payload and prove nested, parallel,
-   stale-update, terminal-race, retry, and cancellation semantics.
-4. Feed root projections to the channel progress callback and adapt Slack's
-   existing status behavior as the first renderer without changing visible
-   defaults.
-5. Spike Slack plan and message presets, including a parallel-child block
-   renderer. Use them to validate the projection shape.
-6. Only then expose public APIs, documentation, and a changeset.
-
-## Verification
-
-- planless native step/action ladders and optional plans reduce deterministically
-  across replay;
-- two parallel child calls retain independent identities and ordering;
-- nested child updates bubble one parent at a time to the root;
-- stale or late child revisions cannot overwrite terminal state;
-- reducer and propagation failures do not fail an active turn;
-- a renderer retry does not alter reducer state or emit a new child revision;
-- indicator and message/block renderers consume the same projection;
-- existing Slack-visible behavior remains unchanged until a renderer is
-  explicitly selected.
+- a custom agent reducer;
+- authored retention counts;
+- inferred action-to-plan-item ownership;
+- raw reasoning in the work graph;
+- exactly-once external message creation;
+- public remote-agent progress negotiation in v1;
+- automatic model summarization in canonical reduction;
+- replacing the durable event stream with the live work graph.
