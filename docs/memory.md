@@ -30,16 +30,19 @@ export default defineMemory({
 });
 ```
 
-`byPrincipal()` partitions the slot by the authenticated caller and disables it for unauthenticated turns. For another trusted partition, supply a scope resolver that returns an ordered tuple of non-empty strings or `null`:
+`byPrincipal()` partitions the slot by the authenticated caller and disables it for unauthenticated turns. For another trusted partition, supply a scope resolver that returns or asynchronously resolves an ordered tuple of non-empty strings or `null`:
 
 ```ts
-scope(ctx) {
-  const workspaceId = ctx.session.auth.current?.attributes.workspace_id;
-  return typeof workspaceId === "string" ? [workspaceId] : null;
+async scope(ctx) {
+  const principal = ctx.session.auth.current;
+  const workspaceId = await resolveWorkspaceId(principal, {
+    signal: ctx.abortSignal,
+  });
+  return workspaceId === null ? null : [workspaceId];
 }
 ```
 
-eve hashes the application, environment, graph node, slot, and tuple into `ctx.memory.scope.key`. The original tuple remains available as `ctx.memory.scope.parts`. Scope is resolved once and locked through the turn; the model never supplies either value.
+eve awaits the resolver once, then hashes the application, environment, graph node, slot, and tuple into `ctx.memory.scope.key`. The original tuple remains available as `ctx.memory.scope.parts`. The locked scope is reused through the turn; the model never supplies either value. Use `ctx.abortSignal` to cancel external scope lookups when the turn or manual operation stops.
 
 If a memory tool pauses for approval, the pending call keeps its locked scope. Only the principal that initiated the call can answer the approval request; a response from another principal fails before eve resolves or executes the tool.
 

@@ -45,18 +45,19 @@ interface MemoryIdentity {
 type MemoryMessageResult = string | null | void;
 
 /** Locks memory scopes before ordinary hook and dynamic dispatch. */
-export function prepareMemoryLifecycleEvent(input: {
+export async function prepareMemoryLifecycleEvent(input: {
+  readonly abortSignal: AbortSignal;
   readonly ctx: AlsContext;
   readonly event: MessageStreamEvent;
   readonly identity: MemoryIdentity;
   readonly memories: readonly ResolvedMemoryDefinition[];
-}): void {
+}): Promise<void> {
   if (input.memories.length === 0) return;
 
   switch (input.event.type) {
     case "session.started": {
       const session = input.ctx.require(SessionKey);
-      ensureTurnState(input, session.turn.sequence, session.turn.id);
+      await ensureTurnState(input, session.turn.sequence, session.turn.id);
       return;
     }
     case "turn.started": {
@@ -84,15 +85,14 @@ export function prepareMemoryLifecycleEvent(input: {
       ) {
         return;
       }
-      input.ctx.set(
-        TurnMemoryStateKey,
-        resolveTurnState({
-          identity: input.identity,
-          memories: input.memories,
-          sequence: input.event.data.sequence,
-          turnId: input.event.data.turnId,
-        }),
-      );
+      const nextState = await resolveTurnState({
+        abortSignal: input.abortSignal,
+        identity: input.identity,
+        memories: input.memories,
+        sequence: input.event.data.sequence,
+        turnId: input.event.data.turnId,
+      });
+      input.ctx.set(TurnMemoryStateKey, nextState);
       return;
     }
     case "input.requested": {
@@ -119,7 +119,7 @@ export function prepareMemoryLifecycleEvent(input: {
     }
     case "compaction.requested":
     case "compaction.completed":
-      ensureTurnState(input, input.event.data.sequence, input.event.data.turnId);
+      await ensureTurnState(input, input.event.data.sequence, input.event.data.turnId);
       return;
     default:
       return;
@@ -231,17 +231,18 @@ function getActiveMemory(
   return state === undefined || active === undefined ? null : { slot: active, state };
 }
 
-function resolveTurnState(input: {
+async function resolveTurnState(input: {
+  readonly abortSignal: AbortSignal;
   readonly identity: MemoryIdentity;
   readonly memories: readonly ResolvedMemoryDefinition[];
   readonly sequence: number;
   readonly turnId: string;
-}): DurableTurnMemoryState {
-  const callbackContext = buildCallbackContext();
+}): Promise<DurableTurnMemoryState> {
+  const callbackContext = { ...buildCallbackContext(), abortSignal: input.abortSignal };
   const slots: DurableMemorySlotState[] = [];
 
   for (const memory of input.memories) {
-    const parts = memory.scope(callbackContext);
+    const parts = await memory.scope(callbackContext);
     if (parts === null) continue;
     validateScopeParts(memory.slot, parts);
     slots.push({
@@ -260,18 +261,19 @@ function resolveTurnState(input: {
   };
 }
 
-function ensureTurnState(
+async function ensureTurnState(
   input: {
     readonly ctx: AlsContext;
+    readonly abortSignal: AbortSignal;
     readonly identity: MemoryIdentity;
     readonly memories: readonly ResolvedMemoryDefinition[];
   },
   sequence: number,
   turnId: string,
-): DurableTurnMemoryState {
+): Promise<DurableTurnMemoryState> {
   const existing = input.ctx.get(TurnMemoryStateKey);
   if (existing !== undefined) return existing;
-  const state = resolveTurnState({ ...input, sequence, turnId });
+  const state = await resolveTurnState({ ...input, sequence, turnId });
   input.ctx.set(TurnMemoryStateKey, state);
   return state;
 }

@@ -22,18 +22,18 @@ export interface MemoryScope {
 }
 
 /** Trusted authored context available while resolving a memory partition. */
-export type MemoryScopeContext = SessionContext;
+export interface MemoryScopeContext extends SessionContext {
+  /** Aborts when the active turn or manual operation is cancelled. */
+  readonly abortSignal: AbortSignal;
+}
 
 /** Resolves one trusted provider partition, or disables the slot for this turn. */
 export type MemoryScopeDefinition = (
   context: MemoryScopeContext,
-) => readonly MemoryScopePart[] | null;
-
-/** Shared authored callback context for memory provider lifecycle handlers. */
-export type MemoryCallbackContext = SessionContext;
+) => readonly MemoryScopePart[] | null | Promise<readonly MemoryScopePart[] | null>;
 
 /** Memory-specific context supplied to every provider handler and tool resolver. */
-export interface MemoryProviderContext extends MemoryCallbackContext {
+export interface MemoryProviderContext extends SessionContext {
   /** Aborts when the active turn is cancelled. */
   readonly abortSignal: AbortSignal;
   /** Complete durable model history selected for this lifecycle point. */
@@ -46,15 +46,16 @@ export interface MemoryProviderContext extends MemoryCallbackContext {
   };
 }
 
-/** One provider-owned model tool resolved for a memory lifecycle boundary. */
-interface MemoryProviderTool {
-  readonly description: string;
-  execute(input: unknown, context: ToolContext): unknown;
-  readonly inputSchema: ToolDefinition["inputSchema"];
-}
-
 /** Provider-owned model tools for one memory lifecycle boundary. */
-export type MemoryProviderToolSet = Readonly<Record<string, MemoryProviderTool>>;
+interface MemoryProviderTool {
+  readonly approval?: ToolDefinition<never, unknown>["approval"];
+  readonly description: ToolDefinition["description"];
+  execute(input: never, context: ToolContext): unknown;
+  readonly inputSchema: ToolDefinition["inputSchema"];
+  readonly outputSchema?: ToolDefinition["outputSchema"];
+  readonly toModelOutput?: ToolDefinition<never, never>["toModelOutput"];
+}
+type MemoryProviderToolSet = Readonly<Record<string, MemoryProviderTool>>;
 
 interface MemoryDynamicEventMap {
   readonly "step.started": HookEventMap["step.started"];
@@ -77,7 +78,7 @@ type MemoryDynamicResult<TEvents extends MemoryDynamicEvents> = Awaited<
 >;
 
 /** The standard dynamic sentinel with memory-specific events and callback context. */
-export type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicSentinel<TResult>, "events"> & {
+type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicSentinel<TResult>, "events"> & {
   readonly events: MemoryDynamicEvents<TResult>;
 };
 
@@ -110,7 +111,7 @@ export interface MemoryProviderEvents {
 }
 
 /** Model-tool resolvers owned by a memory provider. */
-export type MemoryProviderTools = MemoryDynamicSentinel<MemoryProviderToolSet | null>;
+type MemoryProviderTools = MemoryDynamicSentinel<MemoryProviderToolSet | null>;
 
 /** Provider-owned behavior attached to one or more authored memory slots. */
 export interface MemoryProvider {

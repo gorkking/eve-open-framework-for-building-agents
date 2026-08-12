@@ -1,5 +1,7 @@
+import { z } from "#compiled/zod/index.js";
 import { describe, expect, it } from "vitest";
 
+import { defineTool } from "#public/definitions/tool.js";
 import type { MemoryScopeContext } from "#public/memory/index.js";
 import {
   byPrincipal,
@@ -10,6 +12,7 @@ import {
 
 function scopeContext(principalId?: string): MemoryScopeContext {
   return {
+    abortSignal: new AbortController().signal,
     session: {
       auth: {
         current:
@@ -48,14 +51,32 @@ describe("memory authoring", () => {
   it("uses the standard dynamic sentinel for provider tools", () => {
     const tools = defineDynamic({
       events: {
-        "step.started": () => null,
+        "step.started": () => ({
+          save: defineTool({
+            description: "Save memory",
+            execute: ({ text }) => ({ stored: text }),
+            inputSchema: z.object({ text: z.string() }),
+            toModelOutput: ({ stored }) => ({ type: "text", value: stored }),
+          }),
+        }),
       },
     });
+    const provider = defineMemoryProvider({ tools });
 
     expect(tools).toMatchObject({
       kind: "eve:dynamic",
       events: { "step.started": expect.any(Function) },
     });
+    expect(provider.tools).toBe(tools);
+  });
+
+  it("allows scope to resolve asynchronously", async () => {
+    const definition = defineMemory({
+      provider: defineMemoryProvider({}),
+      scope: async (context) => [await Promise.resolve(context.session.id)],
+    });
+
+    await expect(definition.scope(scopeContext())).resolves.toEqual(["session-1"]);
   });
 
   it("derives a trusted principal tuple and disables unauthenticated turns", () => {

@@ -384,7 +384,8 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   ): Promise<void> => {
     if (messages !== undefined) lifecycleMessages = messages;
     const emitted = await emit(event);
-    prepareMemoryLifecycleEvent({
+    await prepareMemoryLifecycleEvent({
+      abortSignal,
       ctx,
       event: emitted,
       identity: {

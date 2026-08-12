@@ -26,6 +26,7 @@ describe("memory lifecycle", () => {
   it("locks one scope and materializes messages returned from every provider event", async () => {
     const observed: Array<{ phase: string; messages: readonly ModelMessage[]; scopeKey: string }> =
       [];
+    const scopeSignal = new AbortController().signal;
     const provider = defineMemoryProvider({
       events: {
         "compaction.requested"(_event, context) {
@@ -81,7 +82,10 @@ describe("memory lifecycle", () => {
     const memory: ResolvedMemoryDefinition = {
       logicalPath: "memory/user.ts",
       provider,
-      scope: () => ["user-1"],
+      scope: async (context) => {
+        expect(context.abortSignal).toBe(scopeSignal);
+        return ["user-1"];
+      },
       slot: "user",
       sourceId: "memory/user.ts",
       sourceKind: "module",
@@ -126,14 +130,16 @@ describe("memory lifecycle", () => {
     ];
 
     await contextStorage.run(ctx, async () => {
-      prepareMemoryLifecycleEvent({
+      await prepareMemoryLifecycleEvent({
+        abortSignal: scopeSignal,
         ctx,
         event: sessionStarted,
         identity: { agentId: "agent-1", nodeId: "__root__" },
         memories: [memory],
       });
       await hooks.events["session.started"]!(sessionStarted, hookContext(before));
-      prepareMemoryLifecycleEvent({
+      await prepareMemoryLifecycleEvent({
+        abortSignal: new AbortController().signal,
         ctx,
         event: turnStarted,
         identity: { agentId: "agent-1", nodeId: "__root__" },
@@ -146,7 +152,8 @@ describe("memory lifecycle", () => {
 
       expect(takePendingMemoryMessages()).toEqual(memoryMessages);
       expect(takePendingMemoryMessages()).toEqual([]);
-      prepareMemoryLifecycleEvent({
+      await prepareMemoryLifecycleEvent({
+        abortSignal: new AbortController().signal,
         ctx,
         event: turnCompleted,
         identity: { agentId: "agent-1", nodeId: "__root__" },
@@ -186,7 +193,7 @@ describe("memory lifecycle", () => {
     expect(ctx.require(TurnMemoryStateKey).slots).toHaveLength(1);
   });
 
-  it("keeps memory approval scope for the initiating principal", () => {
+  it("keeps memory approval scope for the initiating principal", async () => {
     const memory: ResolvedMemoryDefinition = {
       logicalPath: "memory/user.ts",
       provider: defineMemoryProvider({}),
@@ -216,8 +223,9 @@ describe("memory lifecycle", () => {
         turnId: "turn-2",
       }),
     );
-    const prepare = (event: Parameters<typeof prepareMemoryLifecycleEvent>[0]["event"]): void =>
+    const prepare = (event: Parameters<typeof prepareMemoryLifecycleEvent>[0]["event"]) =>
       prepareMemoryLifecycleEvent({
+        abortSignal: new AbortController().signal,
         ctx,
         event,
         identity: { agentId: "agent-1", nodeId: "__root__" },
@@ -226,13 +234,13 @@ describe("memory lifecycle", () => {
     const turnStarted = (sequence: number) =>
       stampMessageStreamEvent(createTurnStartedEvent({ sequence, turnId: `turn-${sequence}` }));
 
-    contextStorage.run(ctx, () => {
-      prepare(turnStarted(2));
+    await contextStorage.run(ctx, async () => {
+      await prepare(turnStarted(2));
       const scopeKey = ctx.require(TurnMemoryStateKey).slots[0]!.scope.key;
-      prepare(requested);
+      await prepare(requested);
 
       setSession(ctx, "user-1", 3);
-      prepare(turnStarted(3));
+      await prepare(turnStarted(3));
       expect(ctx.require(TurnMemoryStateKey)).toMatchObject({
         deferred: false,
         sequence: 3,
@@ -240,9 +248,9 @@ describe("memory lifecycle", () => {
         turnId: "turn-3",
       });
 
-      prepare(requested);
+      await prepare(requested);
       setSession(ctx, "user-2", 4);
-      expect(() => prepare(turnStarted(4))).toThrow(
+      await expect(prepare(turnStarted(4))).rejects.toThrow(
         /must be resumed by the principal that initiated it/u,
       );
     });

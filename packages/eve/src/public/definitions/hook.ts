@@ -107,9 +107,9 @@ export type StreamEventHooks<TKey extends HookEventKey = HookEventKey> = {
  *
  * Hook files declare stream-event subscribers (under `events:`) that
  * fire after eve has accepted and durably recorded each event.
- * Handlers are observe-only: they cannot inject model context. To
- * contribute runtime model messages, use `defineDynamic` +
- * `defineInstructions` in `agent/instructions/`.
+ * Handlers are observe-only: they cannot inject model context. Dynamic
+ * instructions contribute system context; memory providers contribute
+ * durable user-context messages.
  */
 export interface HookDefinition<TKey extends HookEventKey = HookEventKey> {
   readonly events?: StreamEventHooks<TKey>;
