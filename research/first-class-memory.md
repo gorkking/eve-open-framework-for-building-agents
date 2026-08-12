@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1510
 status: proposed
-last_updated: "2026-08-11"
+last_updated: "2026-08-12"
 ---
 
 # First-class memory
@@ -18,9 +18,10 @@ eve owns only two pieces:
 The provider owns everything else: storage, recall, capture, model tools, formatting, extraction, ranking, limits, retention, and any record or document model. A hosted semantic service and a pair of bounded text files can therefore implement the same memory slot without pretending to share lower-level semantics.
 
 ```text
+turn started           scope + session      ---> events ---> durable user message or side effects
+message received       scope + session      ---> events ---> durable user message or side effects
 compaction requested   scope + pre-session  ---> events ---> provider side effects
 compaction completed   scope + post-session ---> events ---> provider side effects
-turn prepared          scope + session      ---> events ---> transient context
 step started           scope + session      ---> tools  ---> scoped model tools
 turn completed         scope + session      ---> events ---> provider side effects
 ```
@@ -102,14 +103,22 @@ interface MemoryProviderContext extends MemoryCallbackContext {
   readonly abortSignal: AbortSignal;
 }
 
-interface MemoryTurnPreparedResult {
-  /** Provider-formatted text appended as transient turn context. */
-  readonly context?: string;
-}
+type MemoryMessage = string;
+type MemoryMessageResult = MemoryMessage | null | void;
 
 type MemoryProviderToolSet = Readonly<Record<string, ToolDefinition>>;
 
 interface MemoryProviderEvents {
+  readonly "turn.started"?: (
+    event: TurnStartedEvent,
+    context: MemoryProviderContext,
+  ) => MemoryMessageResult | Promise<MemoryMessageResult>;
+
+  readonly "message.received"?: (
+    event: MessageReceivedEvent,
+    context: MemoryProviderContext,
+  ) => MemoryMessageResult | Promise<MemoryMessageResult>;
+
   readonly "compaction.requested"?: (
     event: CompactionRequestedEvent,
     context: MemoryProviderContext,
@@ -119,11 +128,6 @@ interface MemoryProviderEvents {
     event: CompactionCompletedEvent,
     context: MemoryProviderContext,
   ) => void | Promise<void>;
-
-  readonly "turn.prepared"?: (
-    event: TurnPreparedEvent,
-    context: MemoryProviderContext,
-  ) => MemoryTurnPreparedResult | null | Promise<MemoryTurnPreparedResult | null>;
 
   readonly "turn.completed"?: (
     event: TurnCompletedEvent,
@@ -144,7 +148,7 @@ interface MemoryProvider {
 }
 ```
 
-Both maps and every handler within them are optional. A provider may contribute only context, only tools, only completed-turn side effects, or any combination. eve does not infer missing behavior or add default tools.
+Both maps and every handler within them are optional. A provider may contribute only memory messages, only tools, only completed-turn side effects, or any combination. eve does not infer missing behavior or add default tools.
 
 Every handler receives an ordinary typed eve event and authored callback context extended with the path-derived slot, locked scope, message snapshot, and cancellation signal. Scope does not depend on ambient model input.
 
@@ -156,10 +160,8 @@ import { service } from "./service";
 
 export const memory = defineMemoryProvider({
   events: {
-    async "turn.prepared"(_event, ctx) {
-      return {
-        context: await service.recall(ctx.memory.scope, ctx.messages),
-      };
+    async "message.received"(event, ctx) {
+      return service.recall(ctx.memory.scope, event.data.message, ctx.messages);
     },
     async "turn.completed"(_event, ctx) {
       await service.capture(ctx.memory.scope, ctx.messages);
@@ -173,7 +175,7 @@ export const memory = defineMemoryProvider({
 });
 ```
 
-The provider decides what each handler means. A compaction handler need not extract, a prepared-turn handler need not search, a completed-turn handler need not persist, and tools need not manipulate memory.
+The provider decides what each handler means. A turn handler need not recall, a compaction handler need not extract, a completed-turn handler need not persist, and tools need not manipulate memory.
 
 ## Lifecycle
 
@@ -183,15 +185,17 @@ eve dispatches the existing `compaction.requested` event before each automatic o
 
 After the compacted checkpoint has been written to durable history, eve dispatches `compaction.completed`. Each handler receives the settled post-compaction durable history. The event occurs only after successful compaction; a failed summarization preserves the prior history and does not emit it. Provider tools are not resolved at either boundary because compaction does not invoke the agent model.
 
-Both snapshots exclude transient provider context. If compaction occurs later in a multi-step turn, eve keeps the prepared-turn context separate from the compaction input and reapplies it to the remaining model steps without writing it into the checkpoint.
+Both snapshots include memory messages that were already materialized into durable history. Memory messages returned by the opening `turn.started` and `message.received` handlers remain pending until the turn's initial compaction decision finishes, so a newly recalled message is not immediately summarized before the first model call.
 
-### Turn preparation
+### Memory messages
 
-After turn admission and any required initial compaction, eve dispatches `turn.prepared` to the `events` map of each slot whose scope resolved at turn start. This is a new provider-resolution event rather than the existing stream `turn.started`: its name reflects that the newest input has been admitted and the model history has already been compacted. The event context includes that input and every model-visible user, assistant, and tool message retained after compaction.
+eve dispatches memory providers through the existing `turn.started` and `message.received` session events. A provider that does not need the incoming message can recall on `turn.started`. A provider that does need it can recall on `message.received`, whose event data contains the accepted message and structured parts. No memory-only lifecycle event is added.
 
-The event handler runs before the tool resolver for the same slot. A non-empty `context` result becomes one transient user-context message appended at the prompt tail. Results from several slots appear in stable slot-path order. Providers own all formatting and attribution within their returned text.
+A non-empty string returned from either handler becomes one ordinary `role: "user"` model message. eve appends those messages after the turn's initial compaction decision in event order and stable slot-path order. Providers own all formatting and attribution within their returned text.
 
-Recalled context is not a system instruction. Keeping it at the prompt tail leaves authored instructions and the prior conversation prefix stable for prompt caching. It also remains transient: eve does not write it to durable session history, include it in later capture input, or restore it on replay as conversation authored by the user.
+Memory messages are durable session history. Every later model step and turn sees the same message until compaction or context clearing removes it, so each request extends the previous prompt prefix for stable prompt caching. The messages also appear in later provider message snapshots and compaction input. They remain distinct from dynamic instructions, which eve hoists into the system prompt without writing them to model history.
+
+eve materializes each returned string once. Model retries, tool-loop steps, workflow step replay, and approval resume reuse the message already in history instead of calling the handler again or appending a duplicate. Memory messages are model context rather than new channel input, so materializing one does not emit another `message.received` event.
 
 eve resolves `tools["step.started"]` before each model call. Its most recent result owns that provider's tool set, and `null` clears it. A provider returns tool keys such as `forget` or `propose`; eve lowers them as `<memory-slot>__<provider-tool>`, for example `user__forget`. Qualification is unconditional, so adding another memory slot never renames an existing tool or creates a collision when two slots use the same provider.
 
@@ -199,7 +203,7 @@ The model never supplies slot identity or scope. eve binds the resolved invocati
 
 ### Turn completion
 
-After `turn.completed`, eve dispatches the event to `events["turn.completed"]` for every slot that resolved during turn preparation. The handler receives the same locked scope and the complete settled durable model history, including assistant tool calls and tool results. It does not receive transient context returned by `events["turn.prepared"]`.
+After `turn.completed`, eve dispatches the event to `events["turn.completed"]` for every slot that resolved at turn start. The handler receives the same locked scope and the complete settled durable model history, including materialized memory messages, assistant tool calls, and tool results.
 
 eve awaits the completed-turn handlers before emitting `session.waiting` in conversation mode or `session.completed` in task mode. A caller that starts the next turn after the ready boundary therefore observes acknowledged provider state. The handler does not run for failed, cancelled, abandoned, deferred, or adapter-consumed turns, nor for manual clear or compaction boundaries that did not complete a turn.
 
@@ -207,7 +211,7 @@ The provider decides whether the handler stores the whole session, extracts sele
 
 ### Failures
 
-A `turn.prepared` event-handler failure fails the turn. A `step.started` tool-resolution failure fails that step. Memory is an authored capability, so silently running with a different prompt or tool set would violate the agent definition.
+A `turn.started` or `message.received` memory-handler failure fails the turn. A `step.started` tool-resolution failure fails that step. Memory is an authored capability, so silently running with a different prompt or tool set would violate the agent definition.
 
 A `compaction.requested` handler failure aborts the compaction before durable history changes. Automatic compaction fails the active turn or step; manual compaction emits a diagnostic and returns to `session.waiting` with the previous history. A `compaction.completed` handler failure occurs after the durable checkpoint and cannot roll it back; eve emits a diagnostic and continues the active turn or ready boundary.
 
@@ -219,7 +223,7 @@ V1 includes two reference providers to prove that the framework boundary does no
 
 ### Supermemory
 
-On `turn.prepared`, the Supermemory provider sends the resolved scope and visible session history to Supermemory. Supermemory decides what is relevant, and the handler returns the fully formatted text that eve injects. eve does not understand Supermemory profiles, containers, documents, search, or extraction.
+On `message.received`, the Supermemory provider sends the resolved scope, incoming message, and visible session history to Supermemory. Supermemory decides what is relevant, and the handler returns the fully formatted text that eve persists as a user message. eve does not understand Supermemory profiles, containers, documents, search, or extraction.
 
 The provider's tool map may expose scoped search, save, forget, profile, or proposal tools, or another capability entirely. eve only qualifies and scope-binds the returned definitions.
 
@@ -227,7 +231,7 @@ On `turn.completed`, the provider sends the settled session to Supermemory. Supe
 
 ### Blob documents
 
-The blob provider stores bounded `USER.md`- and `MEMORY.md`-style text documents under the resolved scope. Its `turn.prepared` handler reads the documents and returns their provider-formatted contents directly; it requires no search, embeddings, or record schema.
+The blob provider stores bounded `USER.md`- and `MEMORY.md`-style text documents under the resolved scope. Its `turn.started` handler reads the documents and returns their provider-formatted contents directly; it requires no incoming message, search, embeddings, or record schema.
 
 The provider owns any tools for editing, consolidating, or clearing those documents. Its `turn.completed` handler may rewrite them from the settled session and enforce provider-configured size limits. File layout, truncation or consolidation policy, concurrency, and blob-store behavior remain internal to the provider.
 
@@ -239,11 +243,11 @@ This provider demonstrates that simple bounded text can participate in the same 
 - Scope is resolved from trusted runtime context, locked for the turn, and never accepted from model input.
 - The same provider can back several slots without sharing eve scope keys or colliding model tools.
 - `events["compaction.requested"]` sees the complete pre-compaction durable history, while `events["compaction.completed"]` sees the successfully checkpointed durable history.
-- `events["turn.prepared"]` sees the post-compaction visible session including the newest input and may contribute transient tail context in deterministic slot order.
-- Transient prepared-turn context appears in neither compaction snapshot nor durable history.
+- `events["turn.started"]` and `events["message.received"]` may each contribute one durable user message in deterministic event and slot order.
+- Materialized memory messages remain in later model requests, provider snapshots, and compaction input until compaction or context clearing removes them.
 - Provider tools are unconditionally slot-qualified and bound to the same locked scope as provider event handlers.
-- `events["turn.completed"]` sees the completed durable session without prepared-turn transient context and settles before the next ready boundary.
-- Prepared-turn event and tool-resolution failures fail the active turn or step; completed-turn event failures cannot rewrite the response or suppress the ready boundary.
+- `events["turn.completed"]` sees the completed durable session including memory messages and settles before the next ready boundary.
+- Memory-event and tool-resolution failures fail the active turn or step; completed-turn event failures cannot rewrite the response or suppress the ready boundary.
 - Providers, not eve, define persistence, consistency after provider acknowledgment, retention, erasure, and administrative behavior.
 
 ## Non-goals
@@ -258,7 +262,7 @@ This provider demonstrates that simple bounded text can participate in the same 
 
 ## Implementation contract follow-up
 
-Before V1 implementation lands, follow-up plans must fix the exact public type names, introduce the `turn.prepared` resolution point, connect provider handlers to the existing compaction events, define event/tool-map compilation and durable-replay mechanics, specify scope-part encoding, diagnostics and cancellation, and add tests for lifecycle ordering and isolation. Supermemory and blob storage each need a provider-specific plan for configuration and operational behavior without expanding the core memory contract.
+Before V1 implementation lands, follow-up plans must fix the exact public type names, connect provider handlers to the existing session and compaction events, define event/tool-map compilation and durable message replay mechanics, specify scope-part encoding, diagnostics and cancellation, and add tests for lifecycle ordering and isolation. Supermemory and blob storage each need a provider-specific plan for configuration and operational behavior without expanding the core memory contract.
 
 ## Primary references
 
