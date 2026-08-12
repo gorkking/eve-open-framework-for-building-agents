@@ -4,6 +4,7 @@ import { createAgentSourceManifest, createModuleSourceRef } from "#discover/mani
 import { defineDynamic } from "#public/definitions/tool.js";
 import { compileAgentConfig } from "#compiler/normalize-agent-config.js";
 import type { ManifestCompileContext } from "#compiler/normalize-helpers.js";
+import { authoredModuleNamespaceResolver } from "#internal/authored-module-loader.js";
 
 const mocks = vi.hoisted(() => ({
   loadModuleBackedDefinition: vi.fn(),
@@ -40,7 +41,10 @@ describe("compileAgentConfig", () => {
     });
 
     const modelCatalog = createModelCatalog();
-    const compiled = await compileAgentConfig(manifest, { modelCatalog });
+    const compiled = await compileAgentConfig(manifest, {
+      modelCatalog,
+      moduleResolver: authoredModuleNamespaceResolver,
+    });
 
     expect(compiled.model).toBeUndefined();
     expect(compiled.dynamicModel).toEqual({
@@ -65,7 +69,10 @@ describe("compileAgentConfig", () => {
 
     const compiled = await compileAgentConfig(
       manifest,
-      { modelCatalog: createModelCatalog() },
+      {
+        modelCatalog: createModelCatalog(),
+        moduleResolver: authoredModuleNamespaceResolver,
+      },
       {
         definition: {
           model: "openai/gpt-5.5",

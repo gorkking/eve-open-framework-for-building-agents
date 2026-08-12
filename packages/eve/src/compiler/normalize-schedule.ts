@@ -35,6 +35,7 @@ export async function compileScheduleDefinition(
             agentRoot,
             externalDependencies: options.externalDependencies,
             kind: "schedule",
+            moduleResolver: options.moduleResolver,
             source,
           }),
           `Expected the schedule export "${source.exportName ?? "default"}" from "${source.logicalPath}" to match the public eve shape.`,

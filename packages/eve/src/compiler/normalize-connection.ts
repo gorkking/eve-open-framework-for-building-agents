@@ -37,6 +37,7 @@ export async function compileConnectionDefinition(
     agentRoot,
     externalDependencies: options.externalDependencies,
     kind: "connection",
+    moduleResolver: options.moduleResolver,
     source,
   });
   const protocol = readConnectionProtocol(loaded);

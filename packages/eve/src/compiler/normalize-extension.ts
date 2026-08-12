@@ -11,7 +11,10 @@ import type {
   CompiledToolDefinition,
 } from "#compiler/manifest.js";
 import { compileConnectionDefinition } from "#compiler/normalize-connection.js";
-import type { ManifestCompileContext } from "#compiler/normalize-helpers.js";
+import type {
+  ManifestCompileContext,
+  ModuleBackedDefinitionLoadOptions,
+} from "#compiler/normalize-helpers.js";
 import { compileHookEntry } from "#compiler/normalize-hook.js";
 import { compileInstructionsEntry } from "#compiler/normalize-instructions.js";
 import { compileSkillSource } from "#compiler/normalize-skill.js";
@@ -51,7 +54,10 @@ export async function compileExtensionContributions(input: {
   readonly externalDependencies: readonly string[];
 }): Promise<CompiledExtensionContributions> {
   const { mount, consumerAgentRoot } = input;
-  const options = { externalDependencies: input.externalDependencies };
+  const options = {
+    externalDependencies: input.externalDependencies,
+    moduleResolver: input.context.moduleResolver,
+  };
 
   const base = await composeManifestContributions({
     manifest: mount.manifest,
@@ -147,9 +153,7 @@ export function applyOverrideDisables(input: {
   };
 }
 
-interface ComposeOptions {
-  readonly externalDependencies: readonly string[];
-}
+type ComposeOptions = ModuleBackedDefinitionLoadOptions;
 
 /**
  * Compiles one agent-shaped manifest into namespaced extension contributions

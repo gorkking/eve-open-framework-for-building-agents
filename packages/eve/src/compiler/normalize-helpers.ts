@@ -6,7 +6,8 @@ import {
 } from "#internal/authored-module.js";
 import {
   type AuthoredModuleLoadOptions,
-  loadAuthoredModuleNamespace,
+  type AuthoredModuleNamespaceResolver,
+  authoredModuleNamespaceResolver,
 } from "#internal/authored-module-loader.js";
 import { toErrorMessage } from "#shared/errors.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
@@ -22,10 +23,12 @@ import type { CompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.
  */
 export interface ManifestCompileContext {
   readonly modelCatalog: CompiledRuntimeModelCatalogLoader;
+  readonly moduleResolver: AuthoredModuleNamespaceResolver;
 }
 
 export interface ModuleBackedDefinitionLoadOptions {
   readonly externalDependencies?: AuthoredModuleLoadOptions["externalDependencies"];
+  readonly moduleResolver?: AuthoredModuleNamespaceResolver;
 }
 
 /**
@@ -42,9 +45,10 @@ export async function loadModuleBackedDefinition(input: {
   readonly displayPath?: string;
   readonly externalDependencies?: ModuleBackedDefinitionLoadOptions["externalDependencies"];
   readonly kind: string;
+  readonly moduleResolver?: AuthoredModuleNamespaceResolver;
   readonly source: ModuleSourceRef;
 }): Promise<unknown> {
-  const moduleNamespace = await loadAuthoredModuleNamespace(
+  const moduleNamespace = await (input.moduleResolver ?? authoredModuleNamespaceResolver).load(
     join(input.agentRoot, input.source.logicalPath),
     { externalDependencies: input.externalDependencies },
   );

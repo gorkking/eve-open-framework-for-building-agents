@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type { AgentSourceManifest } from "#discover/manifest.js";
 import { mountRefNamespace, packageStateNamespace } from "#discover/extensions.js";
 import {
@@ -31,6 +33,11 @@ import { compileScheduleDefinition } from "#compiler/normalize-schedule.js";
 import { compileSkillSource } from "#compiler/normalize-skill.js";
 import { compileSubagentGraph } from "#compiler/normalize-subagent.js";
 import { compileToolEntry } from "#compiler/normalize-tool.js";
+import {
+  authoredModuleNamespaceResolver,
+  createAuthoredModuleGraphResolver,
+  type AuthoredModuleGraphEntry,
+} from "#internal/authored-module-loader.js";
 
 /**
  * Compiles one discovery manifest into the normalized manifest loaded by the runtime.
@@ -40,6 +47,7 @@ export async function compileAgentManifest(
 ): Promise<CompiledAgentManifest> {
   const context: ManifestCompileContext = {
     modelCatalog: createCompiledRuntimeModelCatalogLoader(manifest.appRoot),
+    moduleResolver: authoredModuleNamespaceResolver,
   };
   const compiledNode = await compileAgentNodeManifest(manifest, context);
   const subagentGraph = await compileSubagentGraph({
@@ -104,9 +112,14 @@ async function compileAgentResources(
   options: { readonly externalDependencies?: readonly string[] } = {},
 ): Promise<CompiledAgentResources> {
   const externalDependencies = [...(options.externalDependencies ?? [])];
+  const moduleResolver = createAuthoredModuleGraphResolver(
+    collectAuthoredDefinitionGraphEntries(manifest, externalDependencies),
+  );
+  const resourceContext: ManifestCompileContext = { ...context, moduleResolver };
+  const loadOptions = { externalDependencies, moduleResolver };
   const compiledToolEntries = await Promise.all(
     manifest.tools.map((toolSource) =>
-      compileToolEntry(manifest.agentRoot, toolSource, { externalDependencies }),
+      compileToolEntry(manifest.agentRoot, toolSource, loadOptions),
     ),
   );
   const tools: CompiledToolDefinition[] = [];
@@ -131,7 +144,7 @@ async function compileAgentResources(
 
   const compiledChannelResults = await Promise.all(
     manifest.channels.map((channelSource) =>
-      compileChannelDefinition(manifest.agentRoot, channelSource, { externalDependencies }),
+      compileChannelDefinition(manifest.agentRoot, channelSource, loadOptions),
     ),
   );
 
@@ -142,7 +155,7 @@ async function compileAgentResources(
 
   const compiledSkillEntries = await Promise.all(
     manifest.skills.map((skillSource) =>
-      compileSkillSource(manifest.agentRoot, skillSource, { externalDependencies }),
+      compileSkillSource(manifest.agentRoot, skillSource, loadOptions),
     ),
   );
   const skills: CompiledSkillDefinition[] = [];
@@ -158,7 +171,7 @@ async function compileAgentResources(
 
   const compiledInstructionsEntries = await Promise.all(
     manifest.instructions.map((source) =>
-      compileInstructionsEntry(manifest.agentRoot, source, { externalDependencies }),
+      compileInstructionsEntry(manifest.agentRoot, source, loadOptions),
     ),
   );
   const staticInstructions: CompiledInstructionsDefinition[] = [];
@@ -174,13 +187,13 @@ async function compileAgentResources(
 
   const connections = await Promise.all(
     manifest.connections.map((connectionSource) =>
-      compileConnectionDefinition(manifest.agentRoot, connectionSource, { externalDependencies }),
+      compileConnectionDefinition(manifest.agentRoot, connectionSource, loadOptions),
     ),
   );
   const hooks = manifest.hooks.map((hookSource) => compileHookEntry(hookSource));
   const schedules = await Promise.all(
     manifest.schedules.map((scheduleSource) =>
-      compileScheduleDefinition(manifest.agentRoot, scheduleSource, { externalDependencies }),
+      compileScheduleDefinition(manifest.agentRoot, scheduleSource, loadOptions),
     ),
   );
 
@@ -196,7 +209,7 @@ async function compileAgentResources(
   )) {
     const contributions = await compileExtensionContributions({
       mount,
-      context,
+      context: resourceContext,
       consumerAgentRoot: manifest.agentRoot,
       externalDependencies,
     });
@@ -263,9 +276,7 @@ async function compileAgentResources(
     sandbox:
       manifest.sandbox === null
         ? null
-        : await compileSandboxDefinition(manifest.agentRoot, manifest.sandbox, {
-            externalDependencies,
-          }),
+        : await compileSandboxDefinition(manifest.agentRoot, manifest.sandbox, loadOptions),
     sandboxWorkspaces: manifest.sandboxWorkspaces.map((workspace) => ({
       logicalPath: workspace.logicalPath,
       rootEntries: [...workspace.rootEntries],
@@ -278,6 +289,39 @@ async function compileAgentResources(
     instructions: composedInstructions,
     tools,
   });
+}
+
+function collectAuthoredDefinitionGraphEntries(
+  manifest: AgentSourceManifest,
+  externalDependencies: readonly string[],
+): AuthoredModuleGraphEntry[] {
+  const entries: AuthoredModuleGraphEntry[] = [];
+  const addManifest = (sourceManifest: AgentSourceManifest, packageRoot: string): void => {
+    const sources = [
+      ...sourceManifest.tools,
+      ...sourceManifest.channels,
+      ...sourceManifest.connections,
+      ...sourceManifest.instructions,
+      ...sourceManifest.schedules,
+      ...sourceManifest.skills,
+      ...(sourceManifest.sandbox === null ? [] : [sourceManifest.sandbox]),
+    ];
+    for (const source of sources) {
+      if (source.sourceKind !== "module") continue;
+      entries.push({
+        modulePath: join(sourceManifest.agentRoot, source.logicalPath),
+        options: { externalDependencies },
+        packageRoot,
+      });
+    }
+  };
+
+  addManifest(manifest, manifest.appRoot);
+  for (const mount of manifest.resolvedExtensions) {
+    addManifest(mount.manifest, mount.packageRoot);
+    if (mount.overrides !== undefined) addManifest(mount.overrides, manifest.appRoot);
+  }
+  return entries;
 }
 
 function compileExtensionMounts(manifest: AgentSourceManifest): CompiledExtensionMount[] {

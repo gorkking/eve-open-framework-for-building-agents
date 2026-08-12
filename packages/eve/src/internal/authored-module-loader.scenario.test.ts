@@ -8,12 +8,64 @@ import { compileAgentManifest } from "#compiler/normalize-manifest.js";
 import { discoverAgent } from "#discover/discover-agent.js";
 import {
   bundleAuthoredModuleForGeneration,
+  createAuthoredModuleGraphResolver,
   loadAuthoredModuleNamespace,
 } from "#internal/authored-module-loader.js";
+import {
+  EveRolldownBuildProfiler,
+  runWithEveRolldownBuildProfiler,
+} from "#internal/bundler/build-profile.js";
 import { useScenarioApp } from "#internal/testing/scenario-app.js";
 
 describe("loadAuthoredModuleNamespace", () => {
   const scenarioApp = useScenarioApp();
+
+  it("loads compatible definitions through one shared module graph", async () => {
+    const app = await scenarioApp({
+      files: {
+        "agent/lib/shared.ts": [
+          'const key = "__eveSharedAuthoredGraphEvaluations";',
+          "const globals = globalThis as Record<string, number>;",
+          "globals[key] = (globals[key] ?? 0) + 1;",
+          "export const evaluation = globals[key];",
+          "",
+        ].join("\n"),
+        "agent/tools/first.ts": [
+          'import { evaluation } from "../lib/shared";',
+          'export default { name: "first", evaluation };',
+          "",
+        ].join("\n"),
+        "agent/tools/second.ts": [
+          'import { evaluation } from "../lib/shared";',
+          'export default { name: "second", evaluation };',
+          "",
+        ].join("\n"),
+      },
+      name: "shared-authored-module-graph",
+    });
+    const firstPath = join(app.appRoot, "agent", "tools", "first.ts");
+    const secondPath = join(app.appRoot, "agent", "tools", "second.ts");
+    const resolver = createAuthoredModuleGraphResolver([
+      { modulePath: firstPath },
+      { modulePath: secondPath },
+    ]);
+    const profiler = new EveRolldownBuildProfiler();
+    const globals = globalThis as Record<string, unknown>;
+    delete globals.__eveSharedAuthoredGraphEvaluations;
+
+    const [first, second] = await runWithEveRolldownBuildProfiler(
+      profiler,
+      async () => await Promise.all([resolver.load(firstPath), resolver.load(secondPath)]),
+    );
+
+    expect(first.default).toEqual({ evaluation: 1, name: "first" });
+    expect(second.default).toEqual({ evaluation: 1, name: "second" });
+    expect(globals.__eveSharedAuthoredGraphEvaluations).toBe(1);
+    expect(profiler.finish()).toMatchObject({
+      categories: [{ category: "authored-module", invocations: 1 }],
+      invocations: 1,
+    });
+  });
 
   it("preserves cached channel identity for relative channel imports", async () => {
     const app = await scenarioApp({

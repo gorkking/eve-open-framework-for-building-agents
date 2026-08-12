@@ -72,6 +72,7 @@ export async function compileSkillSource(
     agentRoot,
     externalDependencies: options.externalDependencies,
     kind: "skill",
+    moduleResolver: options.moduleResolver,
     source,
   });
 

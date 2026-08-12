@@ -48,6 +48,7 @@ export async function compileAgentConfig(
             agentRoot: manifest.agentRoot,
             displayPath: configModulePath!,
             kind: "agent config",
+            moduleResolver: context.moduleResolver,
             source: configModule,
           }),
     configModule === undefined

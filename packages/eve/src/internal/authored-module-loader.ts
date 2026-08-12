@@ -51,6 +51,23 @@ export interface AuthoredModuleLoadOptions {
   readonly extensionScopeNamespace?: string;
 }
 
+/** Resolves authored module namespaces for compiler normalization. */
+export interface AuthoredModuleNamespaceResolver {
+  load(modulePath: string, options?: AuthoredModuleLoadOptions): Promise<Record<string, unknown>>;
+}
+
+/** One module included in a shared compile-time authored graph. */
+export interface AuthoredModuleGraphEntry {
+  readonly modulePath: string;
+  readonly options?: AuthoredModuleLoadOptions;
+  readonly packageRoot?: string;
+}
+
+/** Default resolver used for config modules and standalone compiler calls. */
+export const authoredModuleNamespaceResolver: AuthoredModuleNamespaceResolver = {
+  load: loadAuthoredModuleNamespace,
+};
+
 function getChannelModuleCache(): Map<string, unknown> | undefined {
   return (globalThis as Record<string, unknown>)[CHANNEL_MODULE_CACHE_KEY] as
     | Map<string, unknown>
@@ -138,6 +155,65 @@ function createFileImportSpecifier(modulePath: string): string {
   return normalizedPath;
 }
 
+interface AuthoredModuleGraphGroup {
+  readonly modulePaths: string[];
+  readonly options: AuthoredModuleLoadOptions;
+  readonly packageRoot: string;
+  promise?: Promise<ReadonlyMap<string, Record<string, unknown>>>;
+}
+
+/**
+ * Creates a node-scoped resolver that bundles compatible authored definitions
+ * as one graph. Entries outside the declared scope retain standalone loading.
+ */
+export function createAuthoredModuleGraphResolver(
+  entries: readonly AuthoredModuleGraphEntry[],
+): AuthoredModuleNamespaceResolver {
+  const groups = new Map<string, AuthoredModuleGraphGroup>();
+  const entryGroups = new Map<string, AuthoredModuleGraphGroup>();
+
+  for (const entry of entries) {
+    const modulePath = resolve(entry.modulePath);
+    const options = entry.options ?? {};
+    const packageRoot = entry.packageRoot ?? resolveAuthoredPackageRoot(modulePath);
+    const groupKey = createAuthoredModuleGraphGroupKey(packageRoot, options);
+    let group = groups.get(groupKey);
+    if (group === undefined) {
+      group = { modulePaths: [], options, packageRoot };
+      groups.set(groupKey, group);
+    }
+    group.modulePaths.push(modulePath);
+    entryGroups.set(createInFlightModuleLoadKey(modulePath, options), group);
+  }
+
+  return {
+    async load(modulePath, options = {}) {
+      const resolvedPath = resolve(modulePath);
+      const group = entryGroups.get(createInFlightModuleLoadKey(resolvedPath, options));
+      if (group === undefined) return await loadAuthoredModuleNamespace(resolvedPath, options);
+
+      group.promise ??= loadAuthoredModuleGraph(
+        group.modulePaths,
+        group.options,
+        group.packageRoot,
+      );
+      const modules = await group.promise;
+      const moduleNamespace = modules.get(resolvedPath);
+      if (moduleNamespace === undefined) {
+        throw new Error(`Shared authored module graph omitted "${resolvedPath}".`);
+      }
+      return moduleNamespace;
+    },
+  };
+}
+
+function createAuthoredModuleGraphGroupKey(
+  packageRoot: string,
+  options: AuthoredModuleLoadOptions,
+): string {
+  return `${resolve(packageRoot)}\0${normalizeExternalDependencies(options.externalDependencies).join("\0")}\0${options.extensionScopeNamespace ?? ""}`;
+}
+
 /**
  * Bundles one authored entry for immediate dev/eval loading. Package dependencies
  * remain external while relative authored source is inlined.
@@ -155,6 +231,90 @@ export async function bundleAuthoredModuleCode(
     plugins: [],
     sourcemap: "inline",
   });
+}
+
+async function loadAuthoredModuleGraph(
+  modulePaths: readonly string[],
+  options: AuthoredModuleLoadOptions,
+  packageRoot: string,
+): Promise<ReadonlyMap<string, Record<string, unknown>>> {
+  const uniqueModulePaths = [
+    ...new Set(modulePaths.map((modulePath) => resolve(modulePath))),
+  ].sort();
+  const firstModulePath = uniqueModulePaths[0];
+  if (firstModulePath === undefined) return new Map();
+
+  const resolvedPackageRoot = resolve(packageRoot);
+  const virtualEntryId = `\0eve-authored-module-graph:${createHash("sha1")
+    .update(uniqueModulePaths.join("\0"))
+    .digest("hex")}`;
+  const virtualEntrySource = [
+    ...uniqueModulePaths.map(
+      (modulePath, index) =>
+        `import * as module_${index} from ${JSON.stringify(modulePath.replaceAll("\\", "/"))};`,
+    ),
+    `export default {${uniqueModulePaths
+      .map((modulePath, index) => `${JSON.stringify(modulePath)}:module_${index}`)
+      .join(",")}};`,
+  ].join("\n");
+  const code = await buildAuthoredModuleBundle(firstModulePath, options, {
+    channelIdentity: true,
+    input: virtualEntryId,
+    packageRoot: resolvedPackageRoot,
+    packageBoundaryPlugin: createRuntimeLoaderPackageBoundaryPlugin({
+      externalDependencies: normalizeExternalDependencies(options.externalDependencies),
+      packageRoot: resolvedPackageRoot,
+    }),
+    plugins: [
+      createVirtualGenerationModuleMapPlugin({ id: virtualEntryId, source: virtualEntrySource }),
+    ],
+    sourcemap: "inline",
+  });
+  const graphHash = createHash("sha1")
+    .update(resolvedPackageRoot)
+    .update("\0")
+    .update(uniqueModulePaths.join("\0"))
+    .update("\0")
+    .update(normalizeExternalDependencies(options.externalDependencies).join("\0"))
+    .update("\0")
+    .update(options.extensionScopeNamespace ?? "")
+    .update("\0")
+    .update(code)
+    .digest("hex");
+  const bundleDirectoryPath = join(resolvedPackageRoot, AUTHORED_MODULE_BUNDLE_DIRECTORY_PATH);
+  const bundlePath = join(bundleDirectoryPath, `graph-${graphHash}.mjs`);
+
+  if (!existsSync(bundlePath)) {
+    mkdirSync(bundleDirectoryPath, { recursive: true });
+    writeFileSync(bundlePath, code);
+  }
+
+  let loaded: unknown;
+  try {
+    loaded = await import(`${createFileImportSpecifier(bundlePath)}?v=${graphHash}`);
+  } catch (error) {
+    throw createAuthoredModuleEvaluationError(firstModulePath, error);
+  }
+
+  const graphNamespace = expectObjectRecord(
+    loaded,
+    `Expected shared authored module graph for "${resolvedPackageRoot}" to export a module namespace object.`,
+  );
+  const graph = expectObjectRecord(
+    graphNamespace.default,
+    `Expected shared authored module graph for "${resolvedPackageRoot}" to export its module map as default.`,
+  );
+  const modules = new Map<string, Record<string, unknown>>();
+  for (const modulePath of uniqueModulePaths) {
+    modules.set(
+      modulePath,
+      expectObjectRecord(
+        graph[modulePath],
+        `Expected shared authored module graph for "${resolvedPackageRoot}" to include "${modulePath}".`,
+      ),
+    );
+  }
+  return modules;
 }
 
 /**
@@ -344,13 +504,15 @@ async function buildAuthoredModuleBundle(
   options: AuthoredModuleLoadOptions,
   configuration: {
     readonly channelIdentity: boolean;
+    readonly input?: string;
+    readonly packageRoot?: string;
     readonly packageBoundaryPlugin: Record<string, unknown>;
     readonly plugins: readonly Record<string, unknown>[];
     readonly sourcemap: false | "inline";
   },
 ): Promise<string> {
   const channelCache = configuration.channelIdentity ? getChannelModuleCache() : undefined;
-  const packageRoot = resolveAuthoredPackageRoot(modulePath);
+  const packageRoot = configuration.packageRoot ?? resolveAuthoredPackageRoot(modulePath);
   const tsconfigPath = resolveAuthoredTsConfigPath(packageRoot);
   const channelIdentityPlugin =
     channelCache && channelCache.size > 0
@@ -420,7 +582,7 @@ async function buildAuthoredModuleBundle(
       `authored module for "${modulePath}"`,
       {
         cwd: packageRoot,
-        input: modulePath,
+        input: configuration.input ?? modulePath,
         platform: "node",
         plugins,
         resolve: {

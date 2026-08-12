@@ -68,6 +68,7 @@ export async function compileInstructionsEntry(
     agentRoot,
     externalDependencies: options.externalDependencies,
     kind: "instructions",
+    moduleResolver: options.moduleResolver,
     source,
   });
 

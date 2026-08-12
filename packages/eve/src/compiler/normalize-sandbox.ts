@@ -26,6 +26,7 @@ export async function compileSandboxDefinition(
       agentRoot,
       externalDependencies: options.externalDependencies,
       kind: "sandbox",
+      moduleResolver: options.moduleResolver,
       source,
     }),
     message,

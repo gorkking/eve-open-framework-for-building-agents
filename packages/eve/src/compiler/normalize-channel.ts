@@ -30,6 +30,7 @@ export async function compileChannelDefinition(
     agentRoot,
     externalDependencies: options.externalDependencies,
     kind: "channel",
+    moduleResolver: options.moduleResolver,
     source,
   });
 

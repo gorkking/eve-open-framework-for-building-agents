@@ -43,6 +43,7 @@ export async function compileToolEntry(
       agentRoot,
       externalDependencies: options.externalDependencies,
       kind: "tool",
+      moduleResolver: options.moduleResolver,
       source,
     }),
     `Expected the tool export "${source.exportName ?? "default"}" from "${source.logicalPath}" to match the public eve shape.`,

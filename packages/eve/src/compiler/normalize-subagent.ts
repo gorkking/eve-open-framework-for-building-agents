@@ -148,6 +148,7 @@ async function compileSubagentDefinition(input: {
     displayPath: configModuleSource.logicalPath,
     externalDependencies: input.externalDependencies,
     kind: "subagent config",
+    moduleResolver: input.context.moduleResolver,
     source: configModule,
   });
   const dynamic = normalizeDynamicSubagentDefinition(
