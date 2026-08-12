@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1224
 status: proposed
-last_updated: "2026-08-10"
+last_updated: "2026-08-11"
 ---
 
 # HITL requests must not wedge sessions
@@ -74,11 +74,10 @@ Each obligation is a small state machine. Terms:
 
 ```text
 Approval(id)   open ──accepted allow──────────▶ settled(allowed)
-               open ──accepted deny───────────▶ settled(denied)
                open ──authenticated cancel────▶ settled(cancelled)
                open ──owning turn cancelled───▶ dismissed(cancelled)
                open ──session ended───────────▶ dismissed(session-ended)
-               open ──rejected candidate──────▶ open        (event only)
+               open ──rejected / failed───────▶ open        (candidate event only)
 
 Question(id)   open ──accepted answer─────────▶ settled(answered)
                open ──originating-actor msg───▶ dismissed(superseded)
@@ -108,13 +107,13 @@ are stale and later dismissals are no-ops. A client-supplied idempotency key
 is possible later as an optional, additive field.
 
 **Adjudication.** For approvals, the response policy decides on a correlated
-candidate: accept or reject. An accepted candidate settles the obligation with
-the outcome its value carries (`allowed` or `denied`). A rejected candidate
-never settles: the obligation stays open for an authorized responder, and the
-rejection becomes turn context so the agent can react. Allow uses the tool's
-response authorizer. Cancel requires an authenticated actor and bypasses the
-Allow authorizer. Question answers and Limit Continue/Stop use their owning
-tool or runtime gate. Policy throw or timeout is not an adjudication.
+candidate: allow or reject. An allowed candidate settles the obligation as
+`allowed`. A rejected candidate never settles: the obligation stays open for
+another responder, and the rejection becomes turn context so the agent can
+react. Allow uses the tool's response authorizer. Cancel requires an
+authenticated actor and bypasses the Allow authorizer. Question answers and
+Limit Continue/Stop use their owning tool or runtime gate. Policy throw or
+timeout is not an adjudication.
 
 - **Response:** a structured `InputResponse` naming an open `requestId`. Only
   channels construct responses, from an explicit user interaction with the
@@ -123,6 +122,53 @@ tool or runtime gate. Policy throw or timeout is not an adjudication.
 - **Message:** any delivery content that is not a response. The runtime never
   reinterprets message text as a response. Whether a message semantically
   relates to an open obligation is the agent's job inside the turn.
+
+### Authorized approval responses — current implementation
+
+The response-authorizer work on this stack implements the approval portion of
+this model before the single interpreter exists. A tool may use
+`approval: { request, response }`: `request` decides whether to ask, and
+`response` decides whether a submitted **Approve** is allowed for its verified
+responder. A function-form approval has no response authorizer, so its
+Approve settles directly as before.
+
+For an authorizer-backed request, an authenticated Approve creates one durable
+candidate per `{ requestId, responder identity }` while that responder's
+candidate is active. Repeated Approve deliveries from that responder coalesce;
+different responders may be evaluated concurrently. This is the shipped
+identity rule, not yet the target `{ requestId, deliveryId }` identity above.
+The first allowed candidate atomically settles the shared approval and makes
+all competitors stale. Rejected, failed, and timed-out candidates only close
+their own attempt; the shared approval remains open. Cancel is authenticated,
+bypasses the response authorizer, and atomically settles the shared approval
+as cancelled.
+
+A response authorizer receives the responder-bound `auth` capability. If it
+needs credentials, `auth.getToken()` parks that candidate on a private
+connection-authorization challenge. The challenge carries the candidate ID;
+a callback re-runs the response authorizer for the same responder. Cancel or
+another winning candidate closes outstanding candidate challenges, and a late
+callback is stale. Candidate expiry is ten minutes; authorizer failure or a
+ten-second authorizer timeout fails that candidate closed without closing the
+approval.
+
+The shipped stream vocabulary is deliberately additive while the target
+lifecycle-event family below is still gated:
+
+- `approval.candidate` reports a responder-bound candidate as `pending`,
+  `rejected`, `failed`, `timed-out`, or `stale`. It carries `candidateId`,
+  `requestId`, and `responderPrincipalId`; its reason is safe for that
+  responder only.
+- `approval.settled` is the shared terminal event. It carries `requestId`,
+  `responderPrincipalId`, and `approved` or `cancelled`.
+- A candidate's authorization challenge uses the existing
+  `authorization.required` / `authorization.completed` events correlated by
+  `candidateId`.
+
+Channels keep shared approval controls visible after an Approve candidate is
+submitted and remove them only after `approval.settled`. Candidate progress
+and its authorization challenge are responder-scoped; an owner or projector
+must not present them as a public shared decision.
 
 ### Groups and continuations
 
@@ -273,9 +319,11 @@ context, so injected tool output cannot forge consent.
 
 ## API changes
 
-### Stream events
+### Target stream events
 
-Events are the observable trace of transitions — one vocabulary, not two:
+The following is the end-state vocabulary that replaces the temporary
+`approval.candidate` / `approval.settled` overlay above. Events are the
+observable trace of transitions — one vocabulary, not two:
 
 | Transition                                                                            | Event                                                    |
 | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
@@ -309,7 +357,7 @@ type InputResponseLifecycleData = InputLifecycleData & {
 
 type InputRespondedData = InputResponseLifecycleData & {
   response: InputResponse;
-  outcome: "allowed" | "denied" | "cancelled" | "answered" | "continued" | "stopped";
+  outcome: "allowed" | "cancelled" | "answered" | "continued" | "stopped";
 };
 
 type InputResponseRejectedData = InputResponseLifecycleData & {
@@ -493,16 +541,6 @@ unless the entry says the sequence is exact.
   `responder: null`. The fallback never fabricates a verified principal for
   response policy.
 
-#### owner.approval.response.settle-deny
-
-- **Given:** an approval is open.
-- **When:** an actor sends an explicitly correlated Deny response accepted by
-  the response policy.
-- **Then:** the approval settles as denied and the tool does not run. The
-  group's continuation fires only when every sibling is terminal.
-- **Observed:** `input.responded(outcome: denied)` precedes the rejected
-  `action.result` for the tool call.
-
 #### owner.approval.response.settle-allow-after-turns
 
 - **Given:** an approval is the last open member of its group and unrelated
@@ -537,8 +575,8 @@ unless the entry says the sequence is exact.
 
 #### owner.approval.response.settle-race
 
-- **Given:** an approval is open and two accepted candidates race — Allow vs
-  authenticated Cancel, or two allowed responders.
+- **Given:** an approval is open and two terminal candidates race — an allowed
+  responder vs authenticated Cancel, or two allowed responders.
 - **Then:** exactly one terminal outcome wins; the loser is stale. The tool
   runs at most once and only when Allow wins and the group closes.
 - **Observed:** exactly one `input.responded`; the loser emits
@@ -947,6 +985,12 @@ contract:
   (`owner.approval.message.run-open`); question supersession is not
   actor-scoped (`owner.question.message.run-open-other-actor`); multi-batch
   question dismissal is suppressed rather than per-group.
+- **Authorized approval responses** — this stack persists responder-bound
+  candidates, runs response authorizers, binds authorization challenges to a
+  candidate, atomically settles Allow/Cancel races, and projects the resulting
+  lifecycle events from subagents. It intentionally remains a separate
+  coordinator (`harness/approval-delivery-coordinator.ts`) until candidate
+  state, authorization, and request groups move into `interaction/`.
 
 ### Consolidation: one interpreter
 
@@ -962,6 +1006,7 @@ single seam ever saw the whole state.
 | stale-response conversion (a second interpreter) | [`harness/stale-input-responses.ts`](../packages/eve/src/harness/stale-input-responses.ts)                                                                                                               |
 | required/dismissable classification              | [`harness/input-request-class.ts`](../packages/eve/src/harness/input-request-class.ts)                                                                                                                   |
 | limit prompt creation + resolution special cases | [`harness/session-limit-enforcement.ts`](../packages/eve/src/harness/session-limit-enforcement.ts), [`harness/session-limit-continuation.ts`](../packages/eve/src/harness/session-limit-continuation.ts) |
+| approval candidate coordination                  | [`harness/approval-candidates.ts`](../packages/eve/src/harness/approval-candidates.ts), [`harness/approval-delivery-coordinator.ts`](../packages/eve/src/harness/approval-delivery-coordinator.ts)       |
 | challenge storage + callback pairing             | [`harness/authorization.ts`](../packages/eve/src/harness/authorization.ts), [`execution/workflow-steps.ts`](../packages/eve/src/execution/workflow-steps.ts)                                             |
 | callback wait scheduling                         | [`execution/workflow-entry.ts`](../packages/eve/src/execution/workflow-entry.ts), window gating in [`execution/session-command-inbox.ts`](../packages/eve/src/execution/session-command-inbox.ts)        |
 | projection routing                               | [`harness/proxy-input-requests.ts`](../packages/eve/src/harness/proxy-input-requests.ts), [`execution/subagent-hitl-proxy.ts`](../packages/eve/src/execution/subagent-hitl-proxy.ts)                     |
@@ -1015,9 +1060,9 @@ Each lands alone with its own gate; after stage 4, every remaining contract
 behavior is a diff to `interpret.ts` and its unit matrix.
 
 1. **Store extraction.** `obligations.ts` unifies pending batches,
-   `pendingAuthorization`, and the limit prompt into one shape, with
-   candidate records and generations. Pure data; existing suite unchanged;
-   read shims for both legacy keys.
+   `pendingAuthorization`, the existing approval candidate records, and the
+   limit prompt into one shape, with generations. Pure data; existing suite
+   unchanged; read shims for both legacy keys.
 2. **Interpreter extraction.** `interpret.ts` absorbs `resolvePendingInput`,
    stale conversion, and limit resolution, behavior-preserving; the existing
    unit matrices move with it. Text matching enters as an explicit,
@@ -1064,14 +1109,16 @@ response resumes a disposed child hook and fails the parent.
 - [#1095](https://github.com/vercel/eve/issues/1095) — settlement events are
   PR #1368.
 - [#1021](https://github.com/vercel/eve/issues/1021) — responder
-  authorization, owned by PR #1368.
+  authorization is implemented by this stack; consolidating it into the one
+  interpreter remains in scope here.
 - [#1658](https://github.com/vercel/eve/issues/1658) — OpenAI provider
   transcript-shape bug; not fixed here.
 
 ## Related work
 
-- [PR #1368](https://github.com/vercel/eve/pull/1368): responder identity,
-  authorization, Allow, Cancel, and request settlement.
+- The authorized approval-response stack: responder identity, authorization,
+  Allow, Cancel, candidate lifecycle, and request settlement. Its durable
+  coordinator is an input to this plan, not a second end-state interpreter.
 - [PR #1231](https://github.com/vercel/eve/pull/1231): makes every message
   replace unresolved input. Replacing another actor's request breaks
   ownership.
