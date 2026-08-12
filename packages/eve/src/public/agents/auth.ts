@@ -1,4 +1,4 @@
-import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { getVercelOidcToken } from "#internal/vercel-oidc.js";
 
 import type { TokenValue } from "#client/types.js";
 

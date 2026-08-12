@@ -838,6 +838,11 @@ export async function createProductionApplicationNitro(
   });
   await writeEveVersionedCacheMetadata(options.buildDir);
 
+  if (preset === "vercel") {
+    nitro.options.alias["#internal/vercel-oidc.js"] = resolvePackageSourceFilePath(
+      "src/internal/vercel-oidc-hosted.ts",
+    );
+  }
   configureSharedApplicationNitro(nitro, preparedHost);
   configureNitroStepPlugins(nitro, join(preparedHost.workflowBuildDir, "steps.mjs"));
 

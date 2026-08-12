@@ -18,6 +18,7 @@ import {
 } from "#compiler/manifest.js";
 import {
   resolvePackageSourceDirectoryPath,
+  resolvePackageSourceFilePath,
   resolvePackageRoot,
   resolveInstalledPackageInfo,
   resolveWorkflowModulePath,
@@ -390,6 +391,9 @@ describe("application Nitro creation", () => {
       maxDuration: "max",
       experimentalTriggers: [expect.objectContaining({ type: "queue/v2beta" })],
     });
+    expect(nitroStub.nitro.options.alias["#internal/vercel-oidc.js"]).toBe(
+      resolvePackageSourceFilePath("src/internal/vercel-oidc-hosted.ts"),
+    );
   });
 
   it("enables websockets without overriding the Vercel entry format", async () => {

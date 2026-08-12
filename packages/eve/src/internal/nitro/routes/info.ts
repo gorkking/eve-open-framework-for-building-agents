@@ -1,4 +1,4 @@
-import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { getVercelOidcToken } from "#internal/vercel-oidc.js";
 import { hasEnvValue } from "#internal/resolve-model-endpoint-status.js";
 import { buildAgentInfoResponseFromManifest } from "#internal/nitro/routes/agent-info/build-agent-info-response-from-manifest.js";
 import {

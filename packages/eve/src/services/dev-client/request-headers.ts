@@ -1,4 +1,4 @@
-import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { getVercelOidcToken } from "#internal/vercel-oidc.js";
 import { readVercelProjectLink } from "#internal/vercel/project-link.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { z } from "zod";

@@ -1,4 +1,4 @@
-import { getVercelOidcToken } from "#compiled/@vercel/oidc/index.js";
+import { getVercelOidcToken } from "#internal/vercel-oidc.js";
 import { decodeVercelOidcTokenClaims } from "#shared/vercel-project.js";
 import { withPackageUserAgent } from "#internal/user-agent.js";
 import type { VercelCreateOptions } from "#execution/sandbox/bindings/vercel-sdk-types.js";
