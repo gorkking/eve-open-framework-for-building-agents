@@ -20,7 +20,7 @@ import {
   convertStepsManifest,
   convertWorkflowsManifest,
   createEvePackageImportsPlugin,
-  createWorkflowImport,
+  createWorkflowDiscovery,
   createWorkflowNodeBuiltinGuardPlugin,
   createWorkflowPseudoPackagePlugin,
   createWorkflowTransformPlugin,
@@ -38,10 +38,7 @@ import {
   WORKFLOW_BUILDER_DEFERRED_PACKAGES,
   WORKFLOW_STEP_EXTERNAL_PACKAGES,
 } from "#internal/workflow-bundle/vercel-workflow-output.js";
-import {
-  detectWorkflowPatterns,
-  type WorkflowManifest,
-} from "#internal/workflow-bundle/workflow-builders.js";
+import type { WorkflowManifest } from "#internal/workflow-bundle/workflow-builders.js";
 import { deriveEveWorkflowQueueNamespace } from "#internal/workflow/queue-namespace.js";
 
 export class WorkflowBundleBuilder {
@@ -49,7 +46,6 @@ export class WorkflowBundleBuilder {
   readonly #outDir: string;
   readonly #queueNamespace: string;
   protected readonly config: WorkflowBundleBuilderConfig;
-  readonly #discoveredEntries = new WeakMap<readonly string[], WorkflowBundleDiscoveredEntries>();
 
   constructor(options: WorkflowBundleBuilderOptions) {
     const dirs = [resolvePackageSourceDirectoryPath("src/execution")];
@@ -94,16 +90,14 @@ export class WorkflowBundleBuilder {
     const tsconfigPath = await this.findTsConfigPath();
 
     await mkdir(this.#outDir, { recursive: true });
-    const discoveredEntries = await this.discoverEntries(inputFiles, this.#outDir, tsconfigPath);
 
     const workflowsOutfile = join(this.#outDir, "workflows.mjs");
-    const { manifest: workflowsManifest } = await this.createWorkflowsBundle({
+    const {
       discoveredEntries,
-      // eve owns dev rebuilds through `dev-authored-source-watcher`.
-      keepInterimBundleContext: false,
+      manifest: workflowsManifest,
+      stepManifest,
+    } = await this.createWorkflowsBundle({
       outfile: workflowsOutfile,
-      bundleFinalOutput: false,
-      format: "esm",
       inputFiles,
       tsconfigPath,
     });
@@ -111,6 +105,7 @@ export class WorkflowBundleBuilder {
     const stepsManifest = await writeNitroStepEntrypoint({
       builtinsPath: resolveWorkflowModulePath("workflow/internal/builtins"),
       discoveredEntries,
+      manifest: stepManifest,
       outfile: stepsOutfile,
       preferAbsoluteFileImports: true,
       projectRoot: this.config.projectRoot ?? this.config.workingDir,
@@ -123,6 +118,7 @@ export class WorkflowBundleBuilder {
       await writeNitroStepEntrypoint({
         builtinsPath: resolveWorkflowModulePath("workflow/internal/builtins"),
         discoveredEntries,
+        manifest: stepManifest,
         outfile: nitroStepOutfile,
         preferAbsoluteFileImports: true,
         projectRoot: this.config.projectRoot ?? this.config.workingDir,
@@ -205,65 +201,24 @@ export class WorkflowBundleBuilder {
     return files.flat();
   }
 
-  protected async discoverEntries(
-    inputs: readonly string[],
-    _outdir: string,
-    _tsconfigPath?: string,
-  ): Promise<WorkflowBundleDiscoveredEntries> {
-    const cached = this.#discoveredEntries.get(inputs);
-
-    if (cached !== undefined) {
-      return cached;
-    }
-
-    const discovered: WorkflowBundleDiscoveredEntries = {
+  protected async createWorkflowsBundle({
+    inputFiles,
+    outfile,
+    tsconfigPath,
+  }: WorkflowBundleCreateWorkflowsBundleOptions): Promise<WorkflowBundleCreateWorkflowsBundleResult> {
+    const discoveredEntries: WorkflowBundleDiscoveredEntries = {
       discoveredSerdeFiles: [],
       discoveredSteps: [],
       discoveredWorkflows: [],
     };
-
-    for (const filePath of inputs) {
-      const source = await readFile(filePath, "utf8");
-      const patterns = detectWorkflowPatterns(source);
-
-      if (patterns.hasUseStep) {
-        discovered.discoveredSteps.push(filePath);
-      }
-
-      if (patterns.hasUseWorkflow) {
-        discovered.discoveredWorkflows.push(filePath);
-      }
-
-      if (patterns.hasSerde) {
-        discovered.discoveredSerdeFiles.push(filePath);
-      }
-    }
-
-    this.#discoveredEntries.set(inputs, discovered);
-    return discovered;
-  }
-
-  protected async createWorkflowsBundle({
-    bundleFinalOutput = true,
-    discoveredEntries,
-    format = "cjs",
-    inputFiles,
-    keepInterimBundleContext = this.config.watch,
-    outfile,
-    tsconfigPath,
-  }: WorkflowBundleCreateWorkflowsBundleOptions): Promise<WorkflowBundleCreateWorkflowsBundleResult> {
-    const discovered =
-      discoveredEntries ?? (await this.discoverEntries(inputFiles, dirname(outfile), tsconfigPath));
-    const workflowFiles = [...discovered.discoveredWorkflows].sort();
-    const workflowFileSet = new Set(workflowFiles);
-    const serdeOnlyFiles = [...discovered.discoveredSerdeFiles]
-      .sort()
-      .filter((filePath) => !workflowFileSet.has(filePath));
     const workflowManifest: WorkflowManifest = {};
-    const virtualEntrySource = [
-      ...workflowFiles.map((filePath) => createWorkflowImport(filePath, this.config.workingDir)),
-      ...serdeOnlyFiles.map((filePath) => createWorkflowImport(filePath, this.config.workingDir)),
-    ].join("\n");
+    const discovery = createWorkflowDiscovery({
+      discoveredEntries,
+      inputFiles,
+      manifest: workflowManifest,
+      projectRoot: this.transformProjectRoot,
+      workingDir: this.config.workingDir,
+    });
     const interimBundle = await buildSingleRolldownChunk(
       `intermediate workflow bundle for "${outfile}"`,
       {
@@ -271,13 +226,14 @@ export class WorkflowBundleBuilder {
         input: WORKFLOW_VIRTUAL_ENTRY_ID,
         platform: "neutral",
         plugins: [
-          createWorkflowVirtualEntryPlugin(virtualEntrySource),
+          discovery.plugin,
+          createWorkflowVirtualEntryPlugin(discovery.entrySource),
           createWorkflowPseudoPackagePlugin(),
           createEvePackageImportsPlugin(this.config.workingDir, { workflowCondition: true }),
           createWorkflowTransformPlugin({
             manifest: workflowManifest,
             projectRoot: this.transformProjectRoot,
-            sideEffectFiles: [...workflowFiles, ...serdeOnlyFiles],
+            sideEffectFiles: discovery.runtimeSideEffectFiles,
             workingDir: this.config.workingDir,
           }),
           // Must run after the transform so `"use step"` bodies are already
@@ -301,32 +257,17 @@ export class WorkflowBundleBuilder {
     );
 
     await bundleFinalWorkflowOutput({
-      bundleFinalOutput,
       code: interimBundle.code,
-      format,
       outfile,
       queueNamespace: this.#queueNamespace,
-      workingDir: this.config.workingDir,
     });
 
-    if (keepInterimBundleContext) {
-      return {
-        bundleFinal: async (interimBundleResult: string) => {
-          await bundleFinalWorkflowOutput({
-            bundleFinalOutput,
-            code: interimBundleResult,
-            format,
-            outfile,
-            queueNamespace: this.#queueNamespace,
-            workingDir: this.config.workingDir,
-          });
-        },
-        interimBundleCtx: undefined,
-        manifest: workflowManifest,
-      };
-    }
-
-    return { manifest: workflowManifest };
+    normalizeDiscoveredEntries(discoveredEntries);
+    return {
+      discoveredEntries,
+      manifest: workflowManifest,
+      stepManifest: workflowManifest,
+    };
   }
 
   protected async createManifest({
@@ -353,6 +294,17 @@ export class WorkflowBundleBuilder {
   async #getBuildInputFiles(): Promise<string[]> {
     return await this.getInputFiles();
   }
+}
+
+function normalizeDiscoveredEntries(entries: WorkflowBundleDiscoveredEntries): void {
+  normalizeDiscoveredPaths(entries.discoveredSerdeFiles);
+  normalizeDiscoveredPaths(entries.discoveredSteps);
+  normalizeDiscoveredPaths(entries.discoveredWorkflows);
+}
+
+function normalizeDiscoveredPaths(paths: string[]): void {
+  paths.splice(0, paths.length, ...new Set(paths));
+  paths.sort();
 }
 
 async function addStepRegistrationsImport(

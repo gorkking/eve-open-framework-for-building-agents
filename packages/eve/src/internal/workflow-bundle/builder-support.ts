@@ -1,6 +1,6 @@
 import { builtinModules } from "node:module";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
 import { atomicWriteFile } from "#shared/atomic-write-file.js";
@@ -9,6 +9,7 @@ import { buildSingleRolldownChunk } from "#internal/bundler/nitro-rolldown.js";
 import { resolveWorkflowModulePath } from "#internal/application/package.js";
 import {
   applyWorkflowTransform,
+  detectWorkflowPatterns,
   getImportPath,
   type WorkflowManifest,
 } from "#internal/workflow-bundle/workflow-builders.js";
@@ -78,19 +79,15 @@ export interface WorkflowBundleDiscoveredEntries {
 }
 
 export interface WorkflowBundleCreateWorkflowsBundleOptions {
-  readonly bundleFinalOutput?: boolean;
-  readonly discoveredEntries?: WorkflowBundleDiscoveredEntries;
-  readonly format?: "cjs" | "esm";
   readonly inputFiles: readonly string[];
-  readonly keepInterimBundleContext?: boolean;
   readonly outfile: string;
   readonly tsconfigPath?: string;
 }
 
 export interface WorkflowBundleCreateWorkflowsBundleResult {
-  readonly bundleFinal?: (interimBundleResult: string) => Promise<void>;
-  readonly interimBundleCtx?: undefined;
+  readonly discoveredEntries: WorkflowBundleDiscoveredEntries;
   readonly manifest: WorkflowManifest;
+  readonly stepManifest?: WorkflowManifest;
 }
 
 interface WorkflowGraph {
@@ -98,10 +95,16 @@ interface WorkflowGraph {
   readonly nodes: readonly unknown[];
 }
 
+interface WorkflowRolldownPluginContext {
+  readonly fs: {
+    readFile(path: string, options: { encoding: "utf8" }): Promise<string>;
+  };
+}
+
 interface WorkflowRolldownPlugin {
   readonly name: string;
   readonly resolveId?: (source: string, importer?: string) => unknown;
-  readonly load?: (id: string) => unknown;
+  readonly load?: (this: WorkflowRolldownPluginContext, id: string) => unknown;
   readonly transform?: (code: string, id: string) => unknown;
 }
 
@@ -258,25 +261,92 @@ export function createEvePackageImportsPlugin(
   };
 }
 
+export function createWorkflowDiscovery(input: {
+  readonly discoveredEntries: WorkflowBundleDiscoveredEntries;
+  readonly inputFiles: readonly string[];
+  readonly manifest: WorkflowManifest;
+  readonly projectRoot: string;
+  readonly workingDir: string;
+}): {
+  readonly entrySource: string;
+  readonly plugin: WorkflowRolldownPlugin;
+  readonly runtimeSideEffectFiles: Set<string>;
+} {
+  const discoveryIds = new Map(
+    input.inputFiles.map((filePath, index) => [`\0eve-workflow-discovery:${index}`, filePath]),
+  );
+  const sources = new Map<string, string>();
+  const runtimeSideEffectFiles = new Set<string>();
+
+  return {
+    entrySource: [...discoveryIds.keys()]
+      .map((discoveryId) => `import ${JSON.stringify(discoveryId)};`)
+      .join("\n"),
+    plugin: {
+      name: "eve-workflow-discovery",
+      resolveId(id: string) {
+        return discoveryIds.has(id) ? { id } : undefined;
+      },
+      async load(id: string) {
+        const filePath = discoveryIds.get(id);
+        if (filePath === undefined) {
+          const code = sources.get(id);
+          return code === undefined ? undefined : { code };
+        }
+
+        const code = await this.fs.readFile(filePath, { encoding: "utf8" });
+        sources.set(filePath, code);
+        const patterns = detectWorkflowPatterns(code);
+        if (patterns.hasUseStep) input.discoveredEntries.discoveredSteps.push(filePath);
+        if (patterns.hasUseWorkflow) input.discoveredEntries.discoveredWorkflows.push(filePath);
+        if (patterns.hasSerde) input.discoveredEntries.discoveredSerdeFiles.push(filePath);
+        if (!patterns.hasUseWorkflow && !patterns.hasSerde) {
+          if (patterns.hasUseStep) {
+            const relativeFilepath = createManifestRelativeFilepath(input.workingDir, filePath);
+            const transformed = await applyWorkflowTransform(
+              relativeFilepath,
+              code,
+              "workflow",
+              filePath,
+              input.projectRoot,
+            );
+            mergeWorkflowManifest(input.manifest, transformed.workflowManifest);
+          }
+          return { code: "", moduleSideEffects: false, moduleType: "js" };
+        }
+        if (patterns.hasUseWorkflow || patterns.hasSerde) {
+          runtimeSideEffectFiles.add(filePath.replaceAll("\\", "/"));
+        }
+        return {
+          code: `import ${JSON.stringify(filePath.replaceAll("\\", "/"))};`,
+          moduleSideEffects: true,
+          moduleType: "js",
+        };
+      },
+    },
+    runtimeSideEffectFiles,
+  };
+}
+
 export function createWorkflowTransformPlugin(input: {
   manifest: WorkflowManifest;
   mode?: "step" | "workflow";
   projectRoot: string;
-  sideEffectFiles?: readonly string[];
+  sideEffectFiles?: Set<string> | readonly string[];
   workingDir: string;
 }): WorkflowRolldownPlugin {
-  const sideEffectFiles = new Set(
-    input.sideEffectFiles?.map((filePath) => filePath.replaceAll("\\", "/")) ?? [],
-  );
+  const sideEffectFiles =
+    input.sideEffectFiles instanceof Set
+      ? input.sideEffectFiles
+      : new Set(input.sideEffectFiles?.map((filePath) => filePath.replaceAll("\\", "/")) ?? []);
 
   return {
     name: "eve-workflow-transform",
-    async load(id: string) {
-      if (!isJavaScriptLikePath(id)) {
-        return undefined;
-      }
+    async transform(code: string, id: string) {
+      if (!isJavaScriptLikePath(id)) return undefined;
 
-      const code = await readFile(id, "utf8");
+      const normalizedId = id.replaceAll("\\", "/");
+
       const relativeFilepath = createManifestRelativeFilepath(input.workingDir, id);
       const transformed = await applyWorkflowTransform(
         relativeFilepath,
@@ -293,7 +363,7 @@ export function createWorkflowTransformPlugin(input: {
       return {
         code: transformed.code,
         map: null,
-        moduleSideEffects: sideEffectFiles.has(id.replaceAll("\\", "/")) || undefined,
+        moduleSideEffects: sideEffectFiles.has(normalizedId) || undefined,
       };
     },
   };
@@ -389,12 +459,9 @@ export function createWorkflowNodeBuiltinGuardPlugin(): WorkflowRolldownPlugin {
 }
 
 export async function bundleFinalWorkflowOutput(input: {
-  bundleFinalOutput: boolean;
   code: string;
-  format: "cjs" | "esm";
   outfile: string;
   queueNamespace: string;
-  workingDir: string;
 }): Promise<void> {
   const workflowBundleCode = input.code.endsWith("\n") ? input.code : `${input.code}\n`;
   const workflowRuntimePath = resolveWorkflowModulePath("workflow/runtime").replaceAll("\\", "/");
@@ -406,28 +473,7 @@ const workflowCode = \`${workflowBundleCode.replace(/[\\`$]/g, "\\$&")}\`;
 
 export const POST = workflowEntrypoint(workflowCode, { namespace: ${JSON.stringify(input.queueNamespace)} });`;
 
-  if (!input.bundleFinalOutput) {
-    await writeWorkflowBundleAtomically(input.outfile, workflowFunctionCode);
-    return;
-  }
-
-  const chunk = await buildSingleRolldownChunk(
-    `final workflow bundle for "${input.outfile}"`,
-    {
-      cwd: input.workingDir,
-      input: WORKFLOW_VIRTUAL_ENTRY_ID,
-      external: (source: string) => source === "@aws-sdk/credential-provider-web-identity",
-      platform: "node",
-      plugins: [createWorkflowVirtualEntryPlugin(workflowFunctionCode)],
-      output: {
-        comments: false,
-        format: input.format,
-        sourcemap: false,
-      },
-    },
-    "workflow-final",
-  );
-  await writeWorkflowBundleAtomically(input.outfile, chunk.code);
+  await writeWorkflowBundleAtomically(input.outfile, workflowFunctionCode);
 }
 
 export function convertStepsManifest(steps: WorkflowManifest["steps"]): Record<string, unknown> {

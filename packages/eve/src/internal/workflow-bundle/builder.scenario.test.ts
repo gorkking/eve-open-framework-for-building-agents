@@ -59,12 +59,22 @@ class StepEntryOnlyWorkflowBundleBuilder extends WorkflowBundleBuilder {
   }
 
   protected override async createWorkflowsBundle(): Promise<{
-    bundleFinal?: (interimBundleResult: string) => Promise<void>;
-    interimBundleCtx?: undefined;
+    discoveredEntries: {
+      discoveredSerdeFiles: string[];
+      discoveredSteps: string[];
+      discoveredWorkflows: string[];
+    };
     manifest: Record<string, never>;
   }> {
     this.workflowBundleCalls += 1;
-    return { manifest: {} };
+    return {
+      discoveredEntries: {
+        discoveredSerdeFiles: [],
+        discoveredSteps: [...this.inputFiles],
+        discoveredWorkflows: [],
+      },
+      manifest: {},
+    };
   }
 }
 
@@ -235,6 +245,11 @@ describe("WorkflowBundleBuilder", () => {
 
     class TemplateLiteralWorkflowBundleBuilder extends FixtureWorkflowBundleBuilder {
       protected override async createWorkflowsBundle({ outfile }: { outfile: string }): Promise<{
+        discoveredEntries: {
+          discoveredSerdeFiles: string[];
+          discoveredSteps: string[];
+          discoveredWorkflows: string[];
+        };
         manifest: Record<string, never>;
       }> {
         const workflowBundleCode = [
@@ -256,7 +271,14 @@ describe("WorkflowBundleBuilder", () => {
           ].join("\n"),
         );
 
-        return { manifest: {} };
+        return {
+          discoveredEntries: {
+            discoveredSerdeFiles: [],
+            discoveredSteps: [...this.inputFiles],
+            discoveredWorkflows: [],
+          },
+          manifest: {},
+        };
       }
     }
 
@@ -317,6 +339,63 @@ describe("WorkflowBundleBuilder", () => {
       const workflowsModule = await import(pathToFileURL(join(outDir, "workflows.mjs")).href);
 
       expect(typeof workflowsModule.POST).toBe("function");
+    } finally {
+      await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("ignores unrelated input files while discovering workflow roots", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-bundle-unrelated-input-"));
+    const outDir = join(tempRoot, "workflow-build");
+    const flowFilePath = join(tempRoot, "flow.ts");
+    const unrelatedFilePath = join(tempRoot, "unrelated.ts");
+    const compiledArtifactsBootstrapPath = join(tempRoot, "compiled-artifacts-bootstrap.mjs");
+
+    try {
+      await Promise.all([
+        writeFile(compiledArtifactsBootstrapPath, "export const installed = true;\n"),
+        writeFile(
+          flowFilePath,
+          [
+            "export async function safeFlow() {",
+            '  "use workflow";',
+            '  return "ok";',
+            "}",
+            "",
+          ].join("\n"),
+        ),
+        writeFile(
+          unrelatedFilePath,
+          [
+            'import { inspect } from "node:util";',
+            "export const value = inspect({ ok: true });",
+            "",
+          ].join("\n"),
+        ),
+      ]);
+
+      const builder = new FixtureWorkflowBundleBuilder(
+        {
+          agentName: "test-agent",
+          appRoot: tempRoot,
+          compiledArtifactsBootstrapPath,
+          outDir,
+          rootDir: tempRoot,
+          watch: false,
+        },
+        [flowFilePath, unrelatedFilePath],
+      );
+
+      await builder.build();
+
+      const workflowsSource = await readFile(join(outDir, "workflows.mjs"), "utf8");
+      const encodedChunksMatch = workflowsSource.match(
+        /Buffer\.from\((\[[\s\S]*?\])\.join\(""\), "base64"\)\.toString\("utf8"\)/,
+      );
+      const encodedChunks = JSON.parse(encodedChunksMatch?.[1] ?? "[]") as string[];
+      const workflowCode = Buffer.from(encodedChunks.join(""), "base64").toString("utf8");
+      expect(workflowCode).toContain("safeFlow");
+      expect(workflowCode).not.toContain("node:util");
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
     }
