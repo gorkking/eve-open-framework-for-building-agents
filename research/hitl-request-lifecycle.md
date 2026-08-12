@@ -123,34 +123,62 @@ timeout is not an adjudication.
   reinterprets message text as a response. Whether a message semantically
   relates to an open obligation is the agent's job inside the turn.
 
-### Authorized approval responses — current implementation
+### Authorized approval responses — shipped approval state machine
 
-The response-authorizer work on this stack implements the approval portion of
-this model before the single interpreter exists. A tool may use
-`approval: { request, response }`: `request` decides whether to ask, and
-`response` decides whether a submitted **Approve** is allowed for its verified
-responder. A function-form approval has no response authorizer, so its
-Approve settles directly as before.
+The response-authorizer stack implements one durable state machine inside the
+larger model. A tool may use `approval: { request, response }`: `request`
+decides whether to ask, and `response` decides whether a submitted **Approve**
+is allowed for its verified responder. A function-form approval has no response
+authorizer, so an authenticated structured Approve settles directly as before.
 
-For an authorizer-backed request, an authenticated Approve creates one durable
-candidate per `{ requestId, responder identity }` while that responder's
-candidate is active. Repeated Approve deliveries from that responder coalesce;
-different responders may be evaluated concurrently. This is the shipped
-identity rule, not yet the target `{ requestId, deliveryId }` identity above.
-The first allowed candidate atomically settles the shared approval and makes
-all competitors stale. Rejected, failed, and timed-out candidates only close
+The coordinator owns a durable approval audit state alongside the pending
+request batches:
+
+```text
+ApprovalAuditState
+  activeCandidates  candidateId -> { requestId, responder, status,
+                                     expiresAt, authorizationChallenges? }
+  candidateHistory  terminal candidate records
+  settlements       requestId -> { allowed | cancelled, actor, candidateId? }
+
+open request + authenticated Approve
+  -> no response authorizer: settle allowed
+  -> response authorizer: active candidate(pending)
+
+active candidate(pending) -- authorizer allowed -----------------> settlement(allowed)
+active candidate(pending) -- authorizer rejected / failed / timeout -> history; request open
+active candidate(pending) -- needs credentials ------------------> candidate(authorization-required)
+candidate(authorization-required) -- matching callback ----------> re-run authorizer
+any open request -- authenticated Cancel -------------------------> settlement(cancelled)
+settlement -------------------------------------------------------> all sibling candidates stale
+```
+
+For an authorizer-backed request, an authenticated Approve creates one active
+candidate per `{ requestId, responder identity }`. Repeated Approve deliveries
+from that responder coalesce while its candidate is active; different
+responders may be evaluated concurrently. This is the shipped identity rule,
+not yet the target `{ requestId, deliveryId }` identity above. The first
+allowed candidate atomically settles the shared approval and archives all
+competitors as stale. Rejected, failed, and timed-out candidates only close
 their own attempt; the shared approval remains open. Cancel is authenticated,
 bypasses the response authorizer, and atomically settles the shared approval
 as cancelled.
 
-A response authorizer receives the responder-bound `auth` capability. If it
-needs credentials, `auth.getToken()` parks that candidate on a private
-connection-authorization challenge. The challenge carries the candidate ID;
-a callback re-runs the response authorizer for the same responder. Cancel or
-another winning candidate closes outstanding candidate challenges, and a late
-callback is stale. Candidate expiry is ten minutes; authorizer failure or a
-ten-second authorizer timeout fails that candidate closed without closing the
-approval.
+A response authorizer receives a responder-bound `auth` capability. If it
+needs credentials, `auth.getToken()` parks that candidate on a
+candidate-correlated connection-authorization challenge. A callback re-runs
+the response authorizer for the same responder. Cancel or another winning
+candidate closes outstanding candidate challenges, and a late callback is
+stale. Candidate expiry is ten minutes; authorizer failure or a ten-second
+authorizer timeout fails that candidate without closing the approval.
+
+The coordinator deliberately commits candidate creation or Cancel before it
+runs an authorizer. A later coordination pass runs pending candidates, commits
+the result, and only then the tool loop projects lifecycle events. This keeps
+Cancel and competing candidates atomic even when an authorizer is slow or
+parks for OAuth. It also means the approval state machine is real today, while
+its pending batches, authorization state, and routing are still separate
+stores and coordinators.
 
 The shipped stream vocabulary is deliberately additive while the target
 lifecycle-event family below is still gated:
@@ -398,18 +426,22 @@ ignore unknown event types — the default reducer returns state unchanged
 optional added field on existing authorization events. `cancelled` is an
 additive `AuthorizationOutcome` value.
 
-**One settlement family.** If PR #1368's settlement events land first,
-`input.responded` is that family generalized to every request kind — not a
-competing event. Exactly one settlement event family may exist on the wire.
+**One settlement family.** The shipped `approval.settled` event covers the
+current approval coordinator. The target `input.responded` family generalizes
+that terminal settlement to every request kind; it replaces rather than
+competes with `approval.settled`. Exactly one terminal settlement family may
+exist on the wire after the lifecycle-event stage.
 
 ### Durable state
 
 **Durable state.** The pending-batch collection shipped in [#1868] with a
-read shim for the legacy singleton key; the remaining state changes (candidate
-records, limit generations, auth groups) ride the documented snapshot
-versioning convention. Legacy `deferredStepInput` content — messages wedged
-behind an approval before the mitigation — releases as an ordinary message
-turn on the first delivery after upgrade.
+read shim for the legacy singleton key. The approval coordinator now persists
+candidate records, terminal candidate history, and one settlement record per
+request in its own durable state. Limit generations and AuthGroups remain
+future store work and use the documented snapshot versioning convention.
+Legacy `deferredStepInput` content — messages wedged behind an approval before
+the mitigation — releases as an ordinary message turn on the first delivery
+after upgrade.
 
 ### Transport
 
@@ -443,7 +475,7 @@ Every label below names one construct; target-state constructs are marked.
 | driver         | [`runDriverLoop`](../packages/eve/src/execution/workflow-entry.ts)                                                                     |
 | turn step      | [`turnStep`](../packages/eve/src/execution/workflow-steps.ts)                                                                          |
 | interpreter    | `interaction/interpret.ts` (target; today split across `resolvePendingInput`, stale conversion, limit resolution, callback extraction) |
-| store          | `interaction/obligations.ts` (target; today `pending-input-batches`, `pendingAuthorization`, the limit-prompt batch)                   |
+| store          | `interaction/obligations.ts` (target; today pending batches, approval audit state, `pendingAuthorization`, and the limit-prompt batch) |
 | executor       | tool-loop transcript assembly, tool execution, model calls                                                                             |
 
 ### Call graph
@@ -994,10 +1026,11 @@ contract:
 
 ### Consolidation: one interpreter
 
-The machine above is currently implemented nowhere and enforced everywhere:
-interpretation logic is smeared across ten modules, each owning a fragment of
-the transition table. That dispersion is why both wedges could exist — no
-single seam ever saw the whole state.
+The complete machine above is not yet implemented in one place. The approval
+coordinator is a durable state machine, but interpretation across requests,
+batches, challenges, limits, and routes is still smeared across ten modules.
+That dispersion is why both wedges could exist — no single seam sees the whole
+state.
 
 | Fragment                                         | Today lives in                                                                                                                                                                                           |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1059,10 +1092,11 @@ survives at most as plan persistence across internal steps.
 Each lands alone with its own gate; after stage 4, every remaining contract
 behavior is a diff to `interpret.ts` and its unit matrix.
 
-1. **Store extraction.** `obligations.ts` unifies pending batches,
-   `pendingAuthorization`, the existing approval candidate records, and the
-   limit prompt into one shape, with generations. Pure data; existing suite
-   unchanged; read shims for both legacy keys.
+1. **Store extraction.** `obligations.ts` unifies pending batches, the
+   existing approval audit state, `pendingAuthorization`, and the limit prompt
+   into one shape, with generations. It preserves the coordinator's active
+   candidates, terminal history, and settlement records; read shims cover both
+   legacy keys.
 2. **Interpreter extraction.** `interpret.ts` absorbs `resolvePendingInput`,
    stale conversion, and limit resolution, behavior-preserving; the existing
    unit matrices move with it. Text matching enters as an explicit,
@@ -1106,8 +1140,8 @@ response resumes a disposed child hook and fails the parent.
 
 - [#786](https://github.com/vercel/eve/issues/786) — consumed-as-answer half
   is fixed; mid-turn steering is out of scope.
-- [#1095](https://github.com/vercel/eve/issues/1095) — settlement events are
-  PR #1368.
+- [#1095](https://github.com/vercel/eve/issues/1095) — the approval settlement
+  event shipped; its generalization to every obligation remains in this plan.
 - [#1021](https://github.com/vercel/eve/issues/1021) — responder
   authorization is implemented by this stack; consolidating it into the one
   interpreter remains in scope here.
