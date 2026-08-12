@@ -39,6 +39,24 @@ function scopeContext(principalId?: string): MemoryScopeContext {
 }
 
 describe("memory authoring", () => {
+  it("accepts structured single and array event results", () => {
+    defineMemoryProvider({
+      events: {
+        "session.started": () => ({ content: "session memory" }),
+        "turn.started": () => [{ content: "first" }, { content: "second" }],
+      },
+    });
+  });
+
+  it("rejects bare string event results", () => {
+    defineMemoryProvider({
+      events: {
+        // @ts-expect-error Memory messages use the structured result contract.
+        "turn.started": () => "memory",
+      },
+    });
+  });
+
   it("defines providers and slots without rewriting them", () => {
     const events = {};
     const provider = defineMemoryProvider({ events });

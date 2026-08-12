@@ -46,6 +46,14 @@ export interface MemoryProviderContext extends SessionContext {
   };
 }
 
+/** One provider-owned message to materialize into durable model history. */
+export interface MemoryMessage {
+  readonly content: string;
+}
+
+/** Messages materialized by one memory lifecycle event, or no materialization. */
+export type MemoryEventResult = MemoryMessage | readonly MemoryMessage[] | null | void;
+
 /** Provider-owned model tools for one memory lifecycle boundary. */
 interface MemoryProviderTool {
   readonly approval?: ToolDefinition<never, unknown>["approval"];
@@ -82,32 +90,19 @@ type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicSentinel<TResult>, "
   readonly events: MemoryDynamicEvents<TResult>;
 };
 
+type MemoryEventHandler<TEvent> = (
+  event: TEvent,
+  context: MemoryProviderContext,
+) => MemoryEventResult | Promise<MemoryEventResult>;
+
 /** Lifecycle handlers owned by a memory provider. */
 export interface MemoryProviderEvents {
-  readonly "session.started"?: (
-    event: HookEventMap["session.started"],
-    context: MemoryProviderContext,
-  ) => string | null | void | Promise<string | null | void>;
-  readonly "turn.started"?: (
-    event: HookEventMap["turn.started"],
-    context: MemoryProviderContext,
-  ) => string | null | void | Promise<string | null | void>;
-  readonly "message.received"?: (
-    event: HookEventMap["message.received"],
-    context: MemoryProviderContext,
-  ) => string | null | void | Promise<string | null | void>;
-  readonly "compaction.requested"?: (
-    event: HookEventMap["compaction.requested"],
-    context: MemoryProviderContext,
-  ) => string | null | void | Promise<string | null | void>;
-  readonly "compaction.completed"?: (
-    event: HookEventMap["compaction.completed"],
-    context: MemoryProviderContext,
-  ) => string | null | void | Promise<string | null | void>;
-  readonly "turn.completed"?: (
-    event: HookEventMap["turn.completed"],
-    context: MemoryProviderContext,
-  ) => string | null | void | Promise<string | null | void>;
+  readonly "session.started"?: MemoryEventHandler<HookEventMap["session.started"]>;
+  readonly "turn.started"?: MemoryEventHandler<HookEventMap["turn.started"]>;
+  readonly "message.received"?: MemoryEventHandler<HookEventMap["message.received"]>;
+  readonly "compaction.requested"?: MemoryEventHandler<HookEventMap["compaction.requested"]>;
+  readonly "compaction.completed"?: MemoryEventHandler<HookEventMap["compaction.completed"]>;
+  readonly "turn.completed"?: MemoryEventHandler<HookEventMap["turn.completed"]>;
 }
 
 /** Model-tool resolvers owned by a memory provider. */

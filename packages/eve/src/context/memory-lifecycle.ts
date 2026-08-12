@@ -13,6 +13,7 @@ import {
 import { createLogger } from "#internal/logging.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
 import type {
+  MemoryEventResult,
   MemoryProviderContext,
   MemoryProviderEvents,
   MemoryScope,
@@ -41,8 +42,6 @@ interface MemoryIdentity {
   readonly agentId: string;
   readonly nodeId: string;
 }
-
-type MemoryMessageResult = string | null | void;
 
 /** Locks memory scopes before ordinary hook and dynamic dispatch. */
 export async function prepareMemoryLifecycleEvent(input: {
@@ -161,7 +160,7 @@ export function createMemoryHookDefinitions(
         const providerContext = buildMemoryProviderContext(active.slot, hookContext);
         try {
           const result = await invokeMemoryHook(handler, event, providerContext);
-          recordMemoryMessage(messageEventKey, memory.slot, result);
+          recordMemoryMessages(messageEventKey, memory.slot, result);
         } catch (error) {
           if (FAIL_CLOSED_MEMORY_EVENTS.has(eventName)) {
             throw error;
@@ -314,11 +313,11 @@ function validateScopeParts(slot: string, parts: readonly string[]): void {
   }
 }
 
-function recordMemoryMessage(eventKey: string | undefined, slot: string, value: unknown): void {
+function recordMemoryMessages(eventKey: string | undefined, slot: string, value: unknown): void {
   const ctx = contextStorage.getStore();
   const state = ctx?.get(TurnMemoryStateKey);
   if (ctx === undefined || state === undefined) return;
-  const content = normalizeMemoryMessage(slot, value);
+  const contents = normalizeMemoryMessages(slot, value);
   ctx.set(TurnMemoryStateKey, {
     ...state,
     handledMessageEvents:
@@ -326,27 +325,38 @@ function recordMemoryMessage(eventKey: string | undefined, slot: string, value: 
         ? state.handledMessageEvents
         : [...state.handledMessageEvents, eventKey],
     pendingMessages:
-      content === undefined ? state.pendingMessages : [...state.pendingMessages, content],
+      contents.length === 0 ? state.pendingMessages : [...state.pendingMessages, ...contents],
   });
 }
 
-function normalizeMemoryMessage(slot: string, value: unknown): string | undefined {
-  if (value === null || value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new TypeError(`Memory provider "${slot}" returned a non-string memory message.`);
-  }
-  return value.trim().length === 0 ? undefined : value;
+function normalizeMemoryMessages(slot: string, value: unknown): readonly string[] {
+  if (value === null || value === undefined) return [];
+  const messages = Array.isArray(value) ? value : [value];
+  return messages.flatMap((message) => {
+    if (typeof message !== "object" || message === null || Array.isArray(message)) {
+      throw new TypeError(
+        `Memory provider "${slot}" must return { content: string }, an array of messages, null, or undefined.`,
+      );
+    }
+    const content = (message as { readonly content?: unknown }).content;
+    if (typeof content !== "string") {
+      throw new TypeError(
+        `Memory provider "${slot}" must return { content: string }, an array of messages, null, or undefined.`,
+      );
+    }
+    return content.trim().length === 0 ? [] : [content];
+  });
 }
 
 async function invokeMemoryHook(
   handler: NonNullable<MemoryProviderEvents[keyof MemoryProviderEvents]>,
   event: MessageStreamEvent,
   context: MemoryProviderContext,
-): Promise<MemoryMessageResult> {
+): Promise<MemoryEventResult> {
   return await (
     handler as (
       event: MessageStreamEvent,
       context: MemoryProviderContext,
-    ) => MemoryMessageResult | Promise<MemoryMessageResult>
+    ) => MemoryEventResult | Promise<MemoryEventResult>
   )(event, context);
 }

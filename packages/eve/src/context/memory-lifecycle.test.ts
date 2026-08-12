@@ -9,7 +9,7 @@ import {
   takePendingMemoryMessages,
 } from "#context/memory-lifecycle.js";
 import type { HookContext } from "#public/definitions/hook.js";
-import { defineMemoryProvider } from "#public/memory/index.js";
+import { defineMemoryProvider, type MemoryProvider } from "#public/memory/index.js";
 import {
   createCompactionCompletedEvent,
   createCompactionRequestedEvent,
@@ -35,7 +35,7 @@ describe("memory lifecycle", () => {
             phase: "requested",
             scopeKey: context.memory.scope.key,
           });
-          return "requested memory";
+          return { content: "requested memory" };
         },
         "compaction.completed"(_event, context) {
           observed.push({
@@ -43,7 +43,7 @@ describe("memory lifecycle", () => {
             phase: "completed",
             scopeKey: context.memory.scope.key,
           });
-          return "completed memory";
+          return { content: "completed memory" };
         },
         "message.received"(_event, context) {
           observed.push({
@@ -51,7 +51,7 @@ describe("memory lifecycle", () => {
             phase: "message-received",
             scopeKey: context.memory.scope.key,
           });
-          return "message memory";
+          return [{ content: "message memory 1" }, { content: "message memory 2" }];
         },
         "turn.completed"(_event, context) {
           observed.push({
@@ -59,7 +59,7 @@ describe("memory lifecycle", () => {
             phase: "turn-completed",
             scopeKey: context.memory.scope.key,
           });
-          return "turn-completed memory";
+          return { content: "turn-completed memory" };
         },
         "turn.started"(_event, context) {
           observed.push({
@@ -67,7 +67,7 @@ describe("memory lifecycle", () => {
             phase: "turn-started",
             scopeKey: context.memory.scope.key,
           });
-          return "opening memory";
+          return { content: "opening memory" };
         },
         "session.started"(_event, context) {
           observed.push({
@@ -75,7 +75,7 @@ describe("memory lifecycle", () => {
             phase: "session-started",
             scopeKey: context.memory.scope.key,
           });
-          return "opening memory";
+          return { content: "opening memory" };
         },
       },
     });
@@ -124,7 +124,8 @@ describe("memory lifecycle", () => {
     const memoryMessages: readonly ModelMessage[] = [
       { content: "opening memory", role: "user" },
       { content: "opening memory", role: "user" },
-      { content: "message memory", role: "user" },
+      { content: "message memory 1", role: "user" },
+      { content: "message memory 2", role: "user" },
       { content: "requested memory", role: "user" },
       { content: "completed memory", role: "user" },
     ];
@@ -252,6 +253,37 @@ describe("memory lifecycle", () => {
       setSession(ctx, "user-2", 4);
       await expect(prepare(turnStarted(4))).rejects.toThrow(
         /must be resumed by the principal that initiated it/u,
+      );
+    });
+  });
+
+  it("rejects legacy bare string event results at runtime", async () => {
+    const provider: MemoryProvider = defineMemoryProvider({ events: {} });
+    Object.assign(provider.events!, { "turn.started": () => "legacy memory" });
+    const memory: ResolvedMemoryDefinition = {
+      logicalPath: "memory/user.ts",
+      provider,
+      scope: () => ["user-1"],
+      slot: "user",
+      sourceId: "memory/user.ts",
+      sourceKind: "module",
+    };
+    const ctx = createContext();
+    const event = stampMessageStreamEvent(
+      createTurnStartedEvent({ sequence: 2, turnId: "turn-2" }),
+    );
+    const hook = createMemoryHookDefinitions([memory])[0]!.events["turn.started"]!;
+
+    await contextStorage.run(ctx, async () => {
+      await prepareMemoryLifecycleEvent({
+        abortSignal: new AbortController().signal,
+        ctx,
+        event,
+        identity: { agentId: "agent-1", nodeId: "__root__" },
+        memories: [memory],
+      });
+      await expect(hook(event, hookContext([]))).rejects.toThrow(
+        'Memory provider "user" must return { content: string }, an array of messages, null, or undefined.',
       );
     });
   });

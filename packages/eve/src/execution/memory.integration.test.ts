@@ -28,7 +28,7 @@ describe("first-class memory integration", () => {
         "message.received"(_event, context) {
           recalledScopeKeys.push(context.memory.scope.key);
           const recalled = stored.get(context.memory.scope.key);
-          return recalled ?? null;
+          return recalled === undefined ? null : { content: recalled };
         },
         "turn.completed"(_event, context) {
           completedSnapshots.push(JSON.stringify(context.messages));

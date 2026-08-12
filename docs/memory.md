@@ -57,7 +57,8 @@ import { service } from "./service";
 export const userMemory = defineMemoryProvider({
   events: {
     async "message.received"(event, ctx) {
-      return service.recall(ctx.memory.scope, event.data.message, ctx.messages);
+      const content = await service.recall(ctx.memory.scope, event.data.message, ctx.messages);
+      return content === null ? null : { content };
     },
     async "turn.completed"(_event, ctx) {
       await service.capture(ctx.memory.scope, ctx.messages);
@@ -66,7 +67,7 @@ export const userMemory = defineMemoryProvider({
 });
 ```
 
-A non-empty string returned from any provider event becomes one `role: "user"` message in durable session history. Use `session.started` for context recalled once per session, `turn.started` for context recalled on every turn, and `message.received` when recall depends on the accepted message and its structured parts. Compaction events can vend context around a checkpoint, and `turn.completed` can append context for the next turn.
+A provider event returns a `MemoryMessage` (`{ content }`), an ordered `MemoryMessage[]`, or no result. Each non-empty `content` becomes a separate `role: "user"` message in durable session history. Use `session.started` for context recalled once per session, `turn.started` for context recalled on every turn, and `message.received` when recall depends on the accepted message and its structured parts. Compaction events can vend context around a checkpoint, and `turn.completed` can append context for the next turn.
 
 eve appends opening-event memory messages after the turn's initial compaction decision, compaction-event messages after the pass, and completed-turn messages to the settled history. Later model steps and turns retain them until compaction or context clearing removes them, which keeps each request as an extension of the previous prompt for stable prompt caching. They are included in later provider snapshots and compaction input. Unlike dynamic instructions, memory messages are not hoisted into the system prompt. eve materializes each event result once but does not compare or deduplicate content returned by different events.
 
@@ -103,15 +104,15 @@ Memory tools use the same `defineDynamic` primitive and lifecycle scoping as oth
 
 ## Lifecycle
 
-| Boundary               | Provider input                             | Behavior                                                              |
-| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
-| `session.started`      | Initial durable session history            | May return one durable user message                                   |
-| `turn.started`         | Durable history before the incoming input  | May return one durable user message                                   |
-| `message.received`     | Accepted incoming message and history      | May return one durable user message                                   |
-| `compaction.requested` | Complete durable history before compaction | May return a durable user message; a failure aborts the pass          |
-| `compaction.completed` | Successfully checkpointed durable history  | May return a durable user message; failures cannot roll back the pass |
-| `step.started`         | Current model-visible durable history      | May replace or clear the slot's tools for that model call             |
-| `turn.completed`       | Complete settled durable history           | May return a durable user message for the next turn                   |
+| Boundary               | Provider input                             | Behavior                                                     |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------ |
+| `session.started`      | Initial durable session history            | May return durable user messages                             |
+| `turn.started`         | Durable history before the incoming input  | May return durable user messages                             |
+| `message.received`     | Accepted incoming message and history      | May return durable user messages                             |
+| `compaction.requested` | Complete durable history before compaction | May return user messages; a failure aborts the pass          |
+| `compaction.completed` | Successfully checkpointed durable history  | May return user messages; failures cannot roll back the pass |
+| `step.started`         | Current model-visible durable history      | May replace or clear the slot's tools for that model call    |
+| `turn.completed`       | Complete settled durable history           | May return durable user messages for the next turn           |
 
 Completed-turn handlers do not run for failed, cancelled, adapter-consumed, or input-deferred turns. A provider is responsible for persistence, retry/idempotency, retention, erasure, and applying the supplied scope to every downstream operation.
 
