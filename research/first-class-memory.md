@@ -18,12 +18,13 @@ eve owns only two pieces:
 The provider owns everything else: storage, recall, capture, model tools, formatting, extraction, ranking, limits, retention, and any record or document model. A hosted semantic service and a pair of bounded text files can therefore implement the same memory slot without pretending to share lower-level semantics.
 
 ```text
+session started        scope + session      ---> events ---> durable user message or side effects
 turn started           scope + session      ---> events ---> durable user message or side effects
 message received       scope + session      ---> events ---> durable user message or side effects
-compaction requested   scope + pre-session  ---> events ---> provider side effects
-compaction completed   scope + post-session ---> events ---> provider side effects
+compaction requested   scope + pre-session  ---> events ---> durable user message or side effects
+compaction completed   scope + post-session ---> events ---> durable user message or side effects
 step started           scope + session      ---> tools  ---> scoped model tools
-turn completed         scope + session      ---> events ---> provider side effects
+turn completed         scope + session      ---> events ---> durable user message or side effects
 ```
 
 This document defines that authoring boundary and its observable lifecycle. Provider packaging, vendor configuration, and provider-specific persistence remain follow-up work.
@@ -109,6 +110,11 @@ type MemoryMessageResult = MemoryMessage | null | void;
 type MemoryProviderToolSet = Readonly<Record<string, ToolDefinition>>;
 
 interface MemoryProviderEvents {
+  readonly "session.started"?: (
+    event: SessionStartedEvent,
+    context: MemoryProviderContext,
+  ) => MemoryMessageResult | Promise<MemoryMessageResult>;
+
   readonly "turn.started"?: (
     event: TurnStartedEvent,
     context: MemoryProviderContext,
@@ -122,17 +128,17 @@ interface MemoryProviderEvents {
   readonly "compaction.requested"?: (
     event: CompactionRequestedEvent,
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => MemoryMessageResult | Promise<MemoryMessageResult>;
 
   readonly "compaction.completed"?: (
     event: CompactionCompletedEvent,
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => MemoryMessageResult | Promise<MemoryMessageResult>;
 
   readonly "turn.completed"?: (
     event: TurnCompletedEvent,
     context: MemoryProviderContext,
-  ) => void | Promise<void>;
+  ) => MemoryMessageResult | Promise<MemoryMessageResult>;
 }
 
 interface MemoryProviderTools {
@@ -181,21 +187,21 @@ The provider decides what each handler means. A turn handler need not recall, a 
 
 ### Compaction
 
-eve dispatches the existing `compaction.requested` event before each automatic or manual compaction pass. Each resolved slot receives the complete durable message history about to be compacted, before any message is summarized or removed. eve awaits the handlers in stable slot-path order before starting compaction, allowing a provider to extract, snapshot, or persist information that the checkpoint may omit. Handlers are side-effect-only and cannot alter eve's compaction input or algorithm.
+eve dispatches the existing `compaction.requested` event before each automatic or manual compaction pass. Each resolved slot receives the complete durable message history about to be compacted, before any message is summarized or removed. eve awaits the handlers in stable slot-path order before starting compaction, allowing a provider to extract, snapshot, persist, or vend information that the checkpoint may omit. Returned memory messages do not alter eve's compaction input or algorithm; eve appends them after a successful pass.
 
-After the compacted checkpoint has been written to durable history, eve dispatches `compaction.completed`. Each handler receives the settled post-compaction durable history. The event occurs only after successful compaction; a failed summarization preserves the prior history and does not emit it. Provider tools are not resolved at either boundary because compaction does not invoke the agent model.
+After the compacted checkpoint has been written to durable history, eve dispatches `compaction.completed`. Each handler receives the settled post-compaction durable history and may return a memory message to append after the checkpoint. The event occurs only after successful compaction; a failed summarization preserves the prior history and does not emit it. Provider tools are not resolved at either boundary because compaction does not invoke the agent model.
 
-Both snapshots include memory messages that were already materialized into durable history. Memory messages returned by the opening `turn.started` and `message.received` handlers remain pending until the turn's initial compaction decision finishes, so a newly recalled message is not immediately summarized before the first model call.
+Both snapshots include memory messages that were already materialized into durable history. Memory messages returned by the opening `session.started`, `turn.started`, and `message.received` handlers remain pending until the turn's initial compaction decision finishes, so newly recalled messages are not immediately summarized before the first model call. Messages returned from either compaction event append after a successful automatic or manual pass.
 
 ### Memory messages
 
-eve dispatches memory providers through the existing `turn.started` and `message.received` session events. A provider that does not need the incoming message can recall on `turn.started`. A provider that does need it can recall on `message.received`, whose event data contains the accepted message and structured parts. No memory-only lifecycle event is added.
+eve dispatches memory providers through existing session and compaction events. A provider may recall once on `session.started`, on every `turn.started`, in response to `message.received`, after compaction, or at another supported lifecycle boundary. No memory-only lifecycle event is added.
 
-A non-empty string returned from either handler becomes one ordinary `role: "user"` model message. eve appends those messages after the turn's initial compaction decision in event order and stable slot-path order. Providers own all formatting and attribution within their returned text.
+A non-empty string returned from any provider event handler becomes one ordinary `role: "user"` model message. eve appends messages in event order and stable slot-path order at the next durable boundary: opening-event messages after the initial compaction decision, compaction-event messages after the pass, and completed-turn messages to the settled history for the next turn. Providers own all formatting and attribution within their returned text.
 
 Memory messages are durable session history. Every later model step and turn sees the same message until compaction or context clearing removes it, so each request extends the previous prompt prefix for stable prompt caching. The messages also appear in later provider message snapshots and compaction input. They remain distinct from dynamic instructions, which eve hoists into the system prompt without writing them to model history.
 
-eve materializes each returned string once. Model retries, tool-loop steps, workflow step replay, and approval resume reuse the message already in history instead of calling the handler again or appending a duplicate. Memory messages are model context rather than new channel input, so materializing one does not emit another `message.received` event.
+eve materializes each event result once. Model retries, tool-loop steps, workflow step replay, and approval resume reuse the message already in history instead of appending the same event result again. Memory messages are model context rather than new channel input, so materializing one does not emit another `message.received` event. eve does not compare or deduplicate content returned by different events.
 
 eve resolves `tools["step.started"]` before each model call. Its most recent result owns that provider's tool set, and `null` clears it. A provider returns tool keys such as `forget` or `propose`; eve lowers them as `<memory-slot>__<provider-tool>`, for example `user__forget`. Qualification is unconditional, so adding another memory slot never renames an existing tool or creates a collision when two slots use the same provider.
 
@@ -203,7 +209,7 @@ The model never supplies slot identity or scope. eve binds the resolved invocati
 
 ### Turn completion
 
-After `turn.completed`, eve dispatches the event to `events["turn.completed"]` for every slot that resolved at turn start. The handler receives the same locked scope and the complete settled durable model history, including materialized memory messages, assistant tool calls, and tool results.
+After `turn.completed`, eve dispatches the event to `events["turn.completed"]` for every resolved slot. The handler receives the same locked scope and the complete settled durable model history, including materialized memory messages, assistant tool calls, and tool results. A returned memory message appends after that snapshot and is available on the next turn.
 
 eve awaits the completed-turn handlers before emitting `session.waiting` in conversation mode or `session.completed` in task mode. A caller that starts the next turn after the ready boundary therefore observes acknowledged provider state. The handler does not run for failed, cancelled, abandoned, deferred, or adapter-consumed turns, nor for manual clear or compaction boundaries that did not complete a turn.
 
@@ -211,7 +217,7 @@ The provider decides whether the handler stores the whole session, extracts sele
 
 ### Failures
 
-A `turn.started` or `message.received` memory-handler failure fails the turn. A `step.started` tool-resolution failure fails that step. Memory is an authored capability, so silently running with a different prompt or tool set would violate the agent definition.
+A `session.started`, `turn.started`, or `message.received` memory-handler failure fails the turn. A `step.started` tool-resolution failure fails that step. Memory is an authored capability, so silently running with a different prompt or tool set would violate the agent definition.
 
 A `compaction.requested` handler failure aborts the compaction before durable history changes. Automatic compaction fails the active turn or step; manual compaction emits a diagnostic and returns to `session.waiting` with the previous history. A `compaction.completed` handler failure occurs after the durable checkpoint and cannot roll it back; eve emits a diagnostic and continues the active turn or ready boundary.
 
@@ -231,7 +237,7 @@ On `turn.completed`, the provider sends the settled session to Supermemory. Supe
 
 ### Blob documents
 
-The blob provider stores bounded `USER.md`- and `MEMORY.md`-style text documents under the resolved scope. Its `turn.started` handler reads the documents and returns their provider-formatted contents directly; it requires no incoming message, search, embeddings, or record schema.
+The blob provider stores bounded `USER.md`- and `MEMORY.md`-style text documents under the resolved scope. Its `session.started` handler reads the documents and returns their provider-formatted contents directly, while `compaction.completed` refreshes that materialized snapshot after compaction. It requires no incoming message, search, embeddings, or record schema.
 
 The provider owns any tools for editing, consolidating, or clearing those documents. Its `turn.completed` handler may rewrite them from the settled session and enforce provider-configured size limits. File layout, truncation or consolidation policy, concurrency, and blob-store behavior remain internal to the provider.
 
@@ -243,7 +249,7 @@ This provider demonstrates that simple bounded text can participate in the same 
 - Scope is resolved from trusted runtime context, locked for the turn, and never accepted from model input.
 - The same provider can back several slots without sharing eve scope keys or colliding model tools.
 - `events["compaction.requested"]` sees the complete pre-compaction durable history, while `events["compaction.completed"]` sees the successfully checkpointed durable history.
-- `events["turn.started"]` and `events["message.received"]` may each contribute one durable user message in deterministic event and slot order.
+- Every supported provider event may contribute one durable user message in deterministic event and slot order.
 - Materialized memory messages remain in later model requests, provider snapshots, and compaction input until compaction or context clearing removes them.
 - Provider tools are unconditionally slot-qualified and bound to the same locked scope as provider event handlers.
 - `events["turn.completed"]` sees the completed durable session including memory messages and settles before the next ready boundary.
