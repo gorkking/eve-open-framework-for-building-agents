@@ -6,11 +6,12 @@ import { gzipSync } from "node:zlib";
 import {
   type EveRolldownBuildProfile,
   EveRolldownBuildProfiler,
+  type NitroRolldownBuildProfile,
   runWithEveRolldownBuildProfiler,
 } from "#internal/bundler/build-profile.js";
 
 /** Version of the machine-readable `eve build --profile` report schema. */
-export const APPLICATION_BUILD_PROFILE_SCHEMA_VERSION = 2 as const;
+export const APPLICATION_BUILD_PROFILE_SCHEMA_VERSION = 3 as const;
 
 /** Deployment target represented by one build profile. */
 export type ApplicationBuildProfileTarget = "local" | "vercel";
@@ -40,6 +41,7 @@ export interface ApplicationBuildProfileOutput {
 /** Timing data gathered while an application build runs. */
 export interface ApplicationBuildProfileTiming {
   readonly durationMs: number;
+  readonly nitro: NitroRolldownBuildProfile;
   readonly phases: readonly ApplicationBuildProfilePhase[];
   readonly rolldown: EveRolldownBuildProfile;
 }
@@ -48,6 +50,7 @@ export interface ApplicationBuildProfileTiming {
 export interface ApplicationBuildProfile {
   readonly durationMs: number;
   readonly kind: "eve-build-profile";
+  readonly nitro: NitroRolldownBuildProfile;
   readonly output: ApplicationBuildProfileOutput;
   readonly phases: readonly ApplicationBuildProfilePhase[];
   readonly rolldown: EveRolldownBuildProfile;
@@ -149,6 +152,7 @@ export class ApplicationBuildProfiler {
     this.#finished = true;
     return {
       durationMs: roundDuration(this.#now() - this.#startedAt),
+      nitro: this.#rolldown.finishNitro(),
       phases: [...this.#phases],
       rolldown: this.#rolldown.finish(),
     };
@@ -164,6 +168,7 @@ export function createApplicationBuildProfile(input: {
   return {
     durationMs: input.timing.durationMs,
     kind: "eve-build-profile",
+    nitro: input.timing.nitro,
     output: input.output,
     phases: input.timing.phases,
     rolldown: input.timing.rolldown,

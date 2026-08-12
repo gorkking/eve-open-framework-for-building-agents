@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EveRolldownBuildProfiler,
   profileEveRolldownBuild,
+  profileNitroRolldownBundle,
   runWithEveRolldownBuildProfiler,
 } from "./build-profile.js";
 
@@ -35,6 +36,46 @@ describe("EveRolldownBuildProfiler", () => {
       moduleOccurrences: 6,
       totalInvocationDurationMs: 35.1,
       uniqueModules: 4,
+    });
+  });
+
+  it("aggregates and ranks the Nitro server graph", () => {
+    const profiler = new EveRolldownBuildProfiler();
+
+    runWithEveRolldownBuildProfiler(profiler, () => {
+      profileNitroRolldownBundle(2, [
+        { group: "npm:undici", id: "npm:undici/index.js", renderedLength: 200 },
+        { group: "eve:runtime", id: "eve:runtime/session.js", renderedLength: 50 },
+      ]);
+      profileNitroRolldownBundle(1, [
+        { group: "eve:runtime", id: "eve:runtime/session.js", renderedLength: 25 },
+      ]);
+    });
+
+    expect(profiler.finishNitro()).toEqual({
+      chunks: 3,
+      groups: [
+        {
+          group: "npm:undici",
+          moduleOccurrences: 1,
+          renderedLength: 200,
+          uniqueModules: 1,
+        },
+        {
+          group: "eve:runtime",
+          moduleOccurrences: 2,
+          renderedLength: 75,
+          uniqueModules: 1,
+        },
+      ],
+      invocations: 2,
+      largestModules: [
+        { id: "npm:undici/index.js", renderedLength: 200 },
+        { id: "eve:runtime/session.js", renderedLength: 75 },
+      ],
+      moduleOccurrences: 3,
+      renderedLength: 275,
+      uniqueModules: 2,
     });
   });
 

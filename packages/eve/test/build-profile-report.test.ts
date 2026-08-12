@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 interface BuildProfile {
   durationMs: number;
   kind: "eve-build-profile";
+  nitro?: unknown;
   rolldown?: unknown;
   phases: Array<{
     durationMs: number;
     name: string;
   }>;
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   target: "local" | "vercel";
 }
 
@@ -133,7 +134,7 @@ describe("build profile report", () => {
     expect(markdown).toContain("| `output.publish` | — | 40.0 ms | — |");
   });
 
-  it("compares a version 2 profile with a version 1 baseline", async () => {
+  it("compares a version 3 profile with a version 1 baseline", async () => {
     const { createBuildProfileReport } = await loadBuildProfileReportModule();
     const report = createBuildProfileReport({
       appLabel: "e2e/fixtures/agent-tools",
@@ -145,8 +146,17 @@ describe("build profile report", () => {
         ...createProfile({
           durationMs: 500,
           phases: [{ durationMs: 400, name: "nitro.bundle" }],
-          schemaVersion: 2,
+          schemaVersion: 3,
         }),
+        nitro: {
+          chunks: 1,
+          groups: [],
+          invocations: 1,
+          largestModules: [],
+          moduleOccurrences: 10,
+          renderedLength: 1_000,
+          uniqueModules: 10,
+        },
         rolldown: {
           categories: [],
           invocations: 0,
@@ -158,9 +168,10 @@ describe("build profile report", () => {
     });
 
     expect(report.baseline?.profile.schemaVersion).toBe(1);
-    expect(report.current.profile.schemaVersion).toBe(2);
+    expect(report.current.profile.schemaVersion).toBe(3);
     expect(report.comparison?.durationMs.delta).toBe(-100);
     expect(JSON.stringify(report)).not.toContain("rolldown");
+    expect(JSON.stringify(report)).not.toContain('"nitro":');
   });
 
   it("renders the current profile without a baseline", async () => {

@@ -20,6 +20,15 @@ describe("ApplicationBuildProfiler", () => {
 
     expect(profiler.finish()).toEqual({
       durationMs: 100,
+      nitro: {
+        chunks: 0,
+        groups: [],
+        invocations: 0,
+        largestModules: [],
+        moduleOccurrences: 0,
+        renderedLength: 0,
+        uniqueModules: 0,
+      },
       phases: [
         { durationMs: 23.5, name: "host.prepare" },
         { durationMs: 76.5, name: "nitro.all.bundle" },
@@ -47,6 +56,15 @@ describe("ApplicationBuildProfiler", () => {
 
     expect(profiler.finish()).toEqual({
       durationMs: 15,
+      nitro: {
+        chunks: 0,
+        groups: [],
+        invocations: 0,
+        largestModules: [],
+        moduleOccurrences: 0,
+        renderedLength: 0,
+        uniqueModules: 0,
+      },
       phases: [{ durationMs: 15, name: "nitro.all.bundle" }],
       rolldown: {
         categories: [],
@@ -74,6 +92,22 @@ describe("createApplicationBuildProfile", () => {
         target: "vercel",
         timing: {
           durationMs: 125.4,
+          nitro: {
+            chunks: 2,
+            groups: [
+              {
+                group: "eve:runtime",
+                moduleOccurrences: 2,
+                renderedLength: 42,
+                uniqueModules: 2,
+              },
+            ],
+            invocations: 1,
+            largestModules: [{ id: "eve:runtime/session.js", renderedLength: 30 }],
+            moduleOccurrences: 2,
+            renderedLength: 42,
+            uniqueModules: 2,
+          },
           phases: [{ durationMs: 100, name: "nitro.flow.bundle" }],
           rolldown: {
             categories: [],
@@ -87,6 +121,22 @@ describe("createApplicationBuildProfile", () => {
     ).toEqual({
       durationMs: 125.4,
       kind: "eve-build-profile",
+      nitro: {
+        chunks: 2,
+        groups: [
+          {
+            group: "eve:runtime",
+            moduleOccurrences: 2,
+            renderedLength: 42,
+            uniqueModules: 2,
+          },
+        ],
+        invocations: 1,
+        largestModules: [{ id: "eve:runtime/session.js", renderedLength: 30 }],
+        moduleOccurrences: 2,
+        renderedLength: 42,
+        uniqueModules: 2,
+      },
       output: {
         files: 3,
         functionBundles: [

@@ -23,6 +23,7 @@ import {
   configureProductionNitroRoutes,
 } from "#internal/nitro/host/configure-nitro-routes.js";
 import { applyEveCronHandlerRoute } from "#internal/nitro/host/cron-handler-route.js";
+import { createNitroBuildProfilePlugin } from "#internal/nitro/host/nitro-build-profile-plugin.js";
 import { createNitroBundlerConfig } from "#internal/nitro/host/nitro-bundler-config.js";
 import {
   createOptionalEngineDependencyPlugin,
@@ -636,6 +637,10 @@ function createApplicationNitroBundlerConfiguration(
     compiledSandboxBackendPrunePlugin,
     createOptionalEngineDependencyPlugin(unconfiguredOptionalEnginePackages),
     extensionScopePlugin,
+    createNitroBuildProfilePlugin({
+      appRoot: preparedHost.appRoot,
+      packageRoot: resolvePackageRoot(),
+    }),
   ].filter((plugin) => plugin !== null);
   const nitroRolldownConfig = createNitroBundlerConfig(nitroBundlerPlugins);
   const nitroRollupConfig = createNitroBundlerConfig(nitroBundlerPlugins);

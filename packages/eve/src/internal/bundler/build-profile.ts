@@ -20,6 +20,31 @@ export interface EveRolldownBuildCategoryProfile {
   readonly uniqueModules: number;
 }
 
+/** One normalized module represented in Nitro's hosted server graph. */
+export interface NitroRolldownModuleProfile {
+  readonly id: string;
+  readonly renderedLength: number;
+}
+
+/** One package or eve subsystem represented in Nitro's hosted server graph. */
+export interface NitroRolldownModuleGroupProfile {
+  readonly group: string;
+  readonly moduleOccurrences: number;
+  readonly renderedLength: number;
+  readonly uniqueModules: number;
+}
+
+/** Aggregated structural measurements for Nitro's final hosted server graph. */
+export interface NitroRolldownBuildProfile {
+  readonly chunks: number;
+  readonly groups: readonly NitroRolldownModuleGroupProfile[];
+  readonly invocations: number;
+  readonly largestModules: readonly NitroRolldownModuleProfile[];
+  readonly moduleOccurrences: number;
+  readonly renderedLength: number;
+  readonly uniqueModules: number;
+}
+
 /** Aggregated measurements for all Rolldown builds initiated directly by eve. */
 export interface EveRolldownBuildProfile {
   readonly categories: readonly EveRolldownBuildCategoryProfile[];
@@ -34,6 +59,18 @@ interface MutableCategoryProfile {
   moduleOccurrences: number;
   totalInvocationDurationMs: number;
   uniqueModules: Set<string>;
+}
+
+interface MutableNitroModuleGroupProfile {
+  moduleOccurrences: number;
+  renderedLength: number;
+  uniqueModules: Set<string>;
+}
+
+export interface NitroRolldownModuleMeasurement {
+  readonly group: string;
+  readonly id: string;
+  readonly renderedLength: number;
 }
 
 function roundDuration(durationMs: number): number {
@@ -52,6 +89,12 @@ function createMutableCategoryProfile(): MutableCategoryProfile {
 /** Collects build-local Rolldown measurements without threading state through bundler plugins. */
 export class EveRolldownBuildProfiler {
   readonly #categories = new Map<EveRolldownBuildCategory, MutableCategoryProfile>();
+  readonly #nitroGroups = new Map<string, MutableNitroModuleGroupProfile>();
+  readonly #nitroModules = new Map<string, number>();
+  #nitroChunks = 0;
+  #nitroInvocations = 0;
+  #nitroModuleOccurrences = 0;
+  #nitroRenderedLength = 0;
 
   record(
     category: EveRolldownBuildCategory,
@@ -64,6 +107,55 @@ export class EveRolldownBuildProfiler {
     profile.totalInvocationDurationMs += durationMs;
     for (const moduleId of moduleIds) profile.uniqueModules.add(moduleId);
     this.#categories.set(category, profile);
+  }
+
+  recordNitroBundle(chunks: number, modules: readonly NitroRolldownModuleMeasurement[]): void {
+    this.#nitroInvocations += 1;
+    this.#nitroChunks += chunks;
+    this.#nitroModuleOccurrences += modules.length;
+
+    for (const module of modules) {
+      const renderedLength = Math.max(0, module.renderedLength);
+      this.#nitroRenderedLength += renderedLength;
+      this.#nitroModules.set(module.id, (this.#nitroModules.get(module.id) ?? 0) + renderedLength);
+      const group = this.#nitroGroups.get(module.group) ?? {
+        moduleOccurrences: 0,
+        renderedLength: 0,
+        uniqueModules: new Set<string>(),
+      };
+      group.moduleOccurrences += 1;
+      group.renderedLength += renderedLength;
+      group.uniqueModules.add(module.id);
+      this.#nitroGroups.set(module.group, group);
+    }
+  }
+
+  finishNitro(): NitroRolldownBuildProfile {
+    return {
+      chunks: this.#nitroChunks,
+      groups: [...this.#nitroGroups.entries()]
+        .map(([group, profile]) => ({
+          group,
+          moduleOccurrences: profile.moduleOccurrences,
+          renderedLength: profile.renderedLength,
+          uniqueModules: profile.uniqueModules.size,
+        }))
+        .sort(
+          (left, right) =>
+            right.renderedLength - left.renderedLength || left.group.localeCompare(right.group),
+        ),
+      invocations: this.#nitroInvocations,
+      largestModules: [...this.#nitroModules.entries()]
+        .map(([id, renderedLength]) => ({ id, renderedLength }))
+        .sort(
+          (left, right) =>
+            right.renderedLength - left.renderedLength || left.id.localeCompare(right.id),
+        )
+        .slice(0, 25),
+      moduleOccurrences: this.#nitroModuleOccurrences,
+      renderedLength: this.#nitroRenderedLength,
+      uniqueModules: this.#nitroModules.size,
+    };
   }
 
   finish(): EveRolldownBuildProfile {
@@ -110,6 +202,24 @@ export function runWithEveRolldownBuildProfiler<T>(
   const context = new ContextContainer();
   context.setVirtualContext(BUILD_PROFILER_CONTEXT_KEY, profiler);
   return contextStorage.run(context, operation);
+}
+
+/** Captures the active build's Nitro recorder before the bundler invokes plugin hooks. */
+export function createNitroRolldownBundleRecorder():
+  | ((chunks: number, modules: readonly NitroRolldownModuleMeasurement[]) => void)
+  | undefined {
+  const profiler = contextStorage.getStore()?.get(BUILD_PROFILER_CONTEXT_KEY);
+  return profiler === undefined
+    ? undefined
+    : (chunks, modules) => profiler.recordNitroBundle(chunks, modules);
+}
+
+/** Reports one completed Nitro server graph when build profiling is active. */
+export function profileNitroRolldownBundle(
+  chunks: number,
+  modules: readonly NitroRolldownModuleMeasurement[],
+): void {
+  createNitroRolldownBundleRecorder()?.(chunks, modules);
 }
 
 /** Measures one eve-owned Rolldown invocation when build profiling is active. */
