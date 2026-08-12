@@ -1,42 +1,37 @@
 import type { MemoryDocumentBackend } from "#public/memory/file/backend.js";
-import { inMemory, type InMemoryBackendOptions } from "#public/memory/file/backends/in-memory.js";
+import { inMemory } from "#public/memory/file/backends/in-memory.js";
 import { lazyBackend } from "#public/memory/file/backends/lazy.js";
-import {
-  vercelBlob,
-  type VercelBlobBackendOptions,
-} from "#public/memory/file/backends/vercel-blob.js";
-
-/** Per-environment options for {@link defaultFileMemoryBackend}. */
-export interface DefaultFileMemoryBackendOptions {
-  readonly inMemory?: InMemoryBackendOptions;
-  readonly vercelBlob?: VercelBlobBackendOptions;
-}
+import { vercelBlob } from "#public/memory/file/backends/vercel-blob.js";
 
 /** Environment probe behind the default backend selection. */
-export interface DefaultFileMemoryBackendProbes {
+interface DefaultFileMemoryBackendProbes {
   readonly isDeployedOnVercel: () => boolean;
+  readonly isProduction: () => boolean;
 }
 
 const PRODUCTION_PROBES: DefaultFileMemoryBackendProbes = {
   isDeployedOnVercel: () => Boolean(process.env.VERCEL),
+  isProduction: () => process.env.NODE_ENV === "production",
 };
 
 /**
- * Selects private Vercel Blob storage on Vercel and process-local storage
- * elsewhere. Selection is deferred and cached for the process lifetime.
+ * Selects private Vercel Blob storage on Vercel and process-local storage for
+ * development. Other production environments must configure a backend.
+ * Selection is deferred and cached for the process lifetime.
  */
-export function defaultFileMemoryBackend(
-  options?: DefaultFileMemoryBackendOptions,
-): MemoryDocumentBackend {
-  return lazyBackend(() => selectDefaultFileMemoryBackend(options, PRODUCTION_PROBES));
+export function defaultFileMemoryBackend(): MemoryDocumentBackend {
+  return lazyBackend(() => selectDefaultFileMemoryBackend(PRODUCTION_PROBES));
 }
 
 /** @internal Selection primitive with injectable environment probes for tests. */
-export function selectDefaultFileMemoryBackend(
-  options: DefaultFileMemoryBackendOptions | undefined,
+function selectDefaultFileMemoryBackend(
   probes: DefaultFileMemoryBackendProbes,
 ): MemoryDocumentBackend {
-  return probes.isDeployedOnVercel()
-    ? vercelBlob(options?.vercelBlob)
-    : inMemory(options?.inMemory);
+  if (probes.isDeployedOnVercel()) return vercelBlob();
+  if (probes.isProduction()) {
+    throw new Error(
+      "fileMemory() requires an explicit backend outside Vercel in production. Pass fileMemory({ backend }).",
+    );
+  }
+  return inMemory();
 }

@@ -7,7 +7,7 @@ import {
 } from "#public/memory/file/backend.js";
 
 /** Optional shared storage for {@link inMemory}. */
-export interface InMemoryBackendOptions {
+interface InMemoryBackendOptions {
   readonly store?: Map<string, MemoryDocument>;
 }
 

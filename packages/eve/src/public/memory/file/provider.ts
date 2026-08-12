@@ -26,7 +26,7 @@ export interface FileMemoryOptions {
 }
 
 /** Result returned after saving one memory. */
-export interface FileMemorySaveResult {
+interface FileMemorySaveResult {
   /** Stable index used to recall or remove the memory. */
   readonly index: number;
 }

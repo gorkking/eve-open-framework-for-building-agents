@@ -13,7 +13,8 @@ const scenarioApp = useScenarioApp();
 
 const FILE_MEMORY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "smoke.mjs": `import { fileMemory, inMemory, vercelBlob } from "eve/memory/file";
+    "smoke.mjs": `import { fileMemory, inMemory } from "eve/memory/file";
+import { vercelBlob } from "eve/memory/file/vercel";
 
 const provider = fileMemory({ backend: inMemory() });
 const blob = vercelBlob({ token: "unused" });
