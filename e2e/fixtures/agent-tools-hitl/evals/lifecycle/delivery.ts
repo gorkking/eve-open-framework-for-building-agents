@@ -6,11 +6,16 @@ export interface CompoundDeliveryResult {
   readonly turn: EveEvalTurn;
 }
 
+interface CompoundDelivery {
+  readonly inputResponses: readonly InputResponse[];
+  readonly message: string;
+}
+
 export async function respondToRequests(
   t: EveEvalContext,
   ...responses: InputResponse[]
 ): Promise<EveEvalTurn> {
-  return await t.respond(...responses);
+  return await t.respond(responses);
 }
 
 export async function sendAs(
@@ -18,7 +23,7 @@ export async function sendAs(
   message: string,
   authorization: string,
 ): Promise<EveEvalTurn> {
-  return await t.send({ headers: { authorization }, message });
+  return await t.send(message, { headers: { authorization } });
 }
 
 export async function respondAs(
@@ -26,18 +31,15 @@ export async function respondAs(
   response: InputResponse,
   authorization: string,
 ): Promise<EveEvalTurn> {
-  return await t.send({
-    headers: { authorization },
-    inputResponses: [response],
-  });
+  return await t.respond([response], { headers: { authorization } });
 }
 
 export async function sendCompoundDelivery(
   t: EveEvalContext,
-  input: {
-    readonly inputResponses: readonly InputResponse[];
-    readonly message: string;
-  },
+  input: CompoundDelivery,
 ): Promise<CompoundDeliveryResult> {
-  return { session: t, turn: await t.send(input) };
+  // The target interpreter accepts compound deliveries after the lifecycle
+  // consolidation; this gated eval intentionally reaches that future surface.
+  const send = t.send as unknown as (delivery: CompoundDelivery) => Promise<EveEvalTurn>;
+  return { session: t, turn: await send(input) };
 }
