@@ -24,6 +24,13 @@ describe("ApplicationBuildProfiler", () => {
         { durationMs: 23.5, name: "host.prepare" },
         { durationMs: 76.5, name: "nitro.all.bundle" },
       ],
+      rolldown: {
+        categories: [],
+        invocations: 0,
+        moduleOccurrences: 0,
+        totalInvocationDurationMs: 0,
+        uniqueModules: 0,
+      },
     });
   });
 
@@ -41,6 +48,13 @@ describe("ApplicationBuildProfiler", () => {
     expect(profiler.finish()).toEqual({
       durationMs: 15,
       phases: [{ durationMs: 15, name: "nitro.all.bundle" }],
+      rolldown: {
+        categories: [],
+        invocations: 0,
+        moduleOccurrences: 0,
+        totalInvocationDurationMs: 0,
+        uniqueModules: 0,
+      },
     });
   });
 });
@@ -61,6 +75,13 @@ describe("createApplicationBuildProfile", () => {
         timing: {
           durationMs: 125.4,
           phases: [{ durationMs: 100, name: "nitro.flow.bundle" }],
+          rolldown: {
+            categories: [],
+            invocations: 0,
+            moduleOccurrences: 0,
+            totalInvocationDurationMs: 0,
+            uniqueModules: 0,
+          },
         },
       }),
     ).toEqual({
@@ -75,6 +96,13 @@ describe("createApplicationBuildProfile", () => {
         rawBytes: 64,
       },
       phases: [{ durationMs: 100, name: "nitro.flow.bundle" }],
+      rolldown: {
+        categories: [],
+        invocations: 0,
+        moduleOccurrences: 0,
+        totalInvocationDurationMs: 0,
+        uniqueModules: 0,
+      },
       schemaVersion: APPLICATION_BUILD_PROFILE_SCHEMA_VERSION,
       target: "vercel",
     });

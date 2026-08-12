@@ -297,6 +297,7 @@ export class WorkflowBundleBuilder {
           sourcemap: "inline",
         },
       },
+      "workflow-intermediate",
     );
 
     await bundleFinalWorkflowOutput({

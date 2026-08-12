@@ -319,40 +319,44 @@ export async function bundleWorkflowStepRegistrations(input: {
     ...serdeOnlyFiles.map((filePath) => createWorkflowImport(filePath, input.workingDir)),
     "export const __steps_registered = true;",
   ].join("\n");
-  const chunk = await buildSingleRolldownChunk(`step registrations bundle for "${input.outfile}"`, {
-    cwd: input.workingDir,
-    input: WORKFLOW_VIRTUAL_ENTRY_ID,
-    // Optional runtime packages (the just-bash sandbox engine and its
-    // native codecs) resolve lazily against the application install at
-    // run time; inlining them would drag platform-specific `.node`
-    // binaries into the step bundle.
-    external: isWorkflowStepExternalPackage,
-    platform: "node",
-    plugins: [
-      createWorkflowVirtualEntryPlugin(virtualEntrySource),
-      createWorkflowPseudoPackagePlugin(),
-      createWorkflowRuntimeAliasPlugin(),
-      createEvePackageImportsPlugin(input.workingDir),
-      createWorkflowTransformPlugin({
-        manifest,
-        mode: "step",
-        projectRoot: input.projectRoot,
-        sideEffectFiles: [...stepFiles, ...serdeOnlyFiles],
-        workingDir: input.workingDir,
-      }),
-    ],
-    resolve: {
-      conditionNames: ["eve-source", "node", "import", "default"],
-      extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
-      mainFields: ["module", "main"],
+  const chunk = await buildSingleRolldownChunk(
+    `step registrations bundle for "${input.outfile}"`,
+    {
+      cwd: input.workingDir,
+      input: WORKFLOW_VIRTUAL_ENTRY_ID,
+      // Optional runtime packages (the just-bash sandbox engine and its
+      // native codecs) resolve lazily against the application install at
+      // run time; inlining them would drag platform-specific `.node`
+      // binaries into the step bundle.
+      external: isWorkflowStepExternalPackage,
+      platform: "node",
+      plugins: [
+        createWorkflowVirtualEntryPlugin(virtualEntrySource),
+        createWorkflowPseudoPackagePlugin(),
+        createWorkflowRuntimeAliasPlugin(),
+        createEvePackageImportsPlugin(input.workingDir),
+        createWorkflowTransformPlugin({
+          manifest,
+          mode: "step",
+          projectRoot: input.projectRoot,
+          sideEffectFiles: [...stepFiles, ...serdeOnlyFiles],
+          workingDir: input.workingDir,
+        }),
+      ],
+      resolve: {
+        conditionNames: ["eve-source", "node", "import", "default"],
+        extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+        mainFields: ["module", "main"],
+      },
+      tsconfig: input.tsconfigPath ?? false,
+      output: {
+        comments: false,
+        format: "esm",
+        sourcemap: "inline",
+      },
     },
-    tsconfig: input.tsconfigPath ?? false,
-    output: {
-      comments: false,
-      format: "esm",
-      sourcemap: "inline",
-    },
-  });
+    "workflow-steps",
+  );
   await writeWorkflowBundleAtomically(input.outfile, chunk.code);
 }
 
@@ -407,18 +411,22 @@ export const POST = workflowEntrypoint(workflowCode, { namespace: ${JSON.stringi
     return;
   }
 
-  const chunk = await buildSingleRolldownChunk(`final workflow bundle for "${input.outfile}"`, {
-    cwd: input.workingDir,
-    input: WORKFLOW_VIRTUAL_ENTRY_ID,
-    external: (source: string) => source === "@aws-sdk/credential-provider-web-identity",
-    platform: "node",
-    plugins: [createWorkflowVirtualEntryPlugin(workflowFunctionCode)],
-    output: {
-      comments: false,
-      format: input.format,
-      sourcemap: false,
+  const chunk = await buildSingleRolldownChunk(
+    `final workflow bundle for "${input.outfile}"`,
+    {
+      cwd: input.workingDir,
+      input: WORKFLOW_VIRTUAL_ENTRY_ID,
+      external: (source: string) => source === "@aws-sdk/credential-provider-web-identity",
+      platform: "node",
+      plugins: [createWorkflowVirtualEntryPlugin(workflowFunctionCode)],
+      output: {
+        comments: false,
+        format: input.format,
+        sourcemap: false,
+      },
     },
-  });
+    "workflow-final",
+  );
   await writeWorkflowBundleAtomically(input.outfile, chunk.code);
 }
 

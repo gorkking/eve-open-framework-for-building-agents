@@ -1,10 +1,16 @@
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+import {
+  type EveRolldownBuildCategory,
+  profileEveRolldownBuild,
+} from "#internal/bundler/build-profile.js";
+
 type RolldownOutputChunk = {
   readonly type: "chunk";
   readonly code: string;
   readonly fileName: string;
+  readonly modules?: Readonly<Record<string, unknown>>;
 };
 
 type RolldownOutputAsset = {
@@ -115,13 +121,28 @@ export async function buildWithNitroRolldown(
 export async function buildSingleRolldownChunk(
   description: string,
   options: Record<string, unknown> & { readonly output?: Record<string, unknown> },
+  profileCategory?: EveRolldownBuildCategory,
 ): Promise<RolldownOutputChunk> {
-  const result = await buildWithNitroRolldown({
-    ...options,
-    write: false,
-    output: { ...options.output, codeSplitting: false },
-  });
+  const build = async () =>
+    await buildWithNitroRolldown({
+      ...options,
+      write: false,
+      output: { ...options.output, codeSplitting: false },
+    });
+  const result =
+    profileCategory === undefined
+      ? await build()
+      : await profileEveRolldownBuild(profileCategory, build, collectRolldownModuleIds);
   return getSingleRolldownChunk(result, description);
+}
+
+function collectRolldownModuleIds(output: RolldownOutput): string[] {
+  const moduleIds = new Set<string>();
+  for (const item of output.output) {
+    if (item.type !== "chunk") continue;
+    for (const moduleId of Object.keys(item.modules ?? {})) moduleIds.add(moduleId);
+  }
+  return [...moduleIds];
 }
 
 function getSingleRolldownChunk(output: RolldownOutput, description: string): RolldownOutputChunk {

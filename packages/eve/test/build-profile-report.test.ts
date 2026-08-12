@@ -3,11 +3,12 @@ import { describe, expect, it } from "vitest";
 interface BuildProfile {
   durationMs: number;
   kind: "eve-build-profile";
+  rolldown?: unknown;
   phases: Array<{
     durationMs: number;
     name: string;
   }>;
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   target: "local" | "vercel";
 }
 
@@ -59,12 +60,13 @@ async function loadBuildProfileReportModule(): Promise<BuildProfileReportModule>
 function createProfile(input: {
   durationMs: number;
   phases: BuildProfile["phases"];
+  schemaVersion?: BuildProfile["schemaVersion"];
 }): BuildProfile {
   return {
     durationMs: input.durationMs,
     kind: "eve-build-profile",
     phases: input.phases,
-    schemaVersion: 1,
+    schemaVersion: input.schemaVersion ?? 1,
     target: "vercel",
   };
 }
@@ -129,6 +131,36 @@ describe("build profile report", () => {
     expect(markdown).toContain("<summary>Detailed phase timings vs `main (abc1234)`</summary>");
     expect(markdown).toContain("| `nitro.app.bundle` | 600.0 ms | 700.0 ms | +100.0 ms |");
     expect(markdown).toContain("| `output.publish` | — | 40.0 ms | — |");
+  });
+
+  it("compares a version 2 profile with a version 1 baseline", async () => {
+    const { createBuildProfileReport } = await loadBuildProfileReportModule();
+    const report = createBuildProfileReport({
+      appLabel: "e2e/fixtures/agent-tools",
+      baselineProfile: createProfile({
+        durationMs: 600,
+        phases: [{ durationMs: 500, name: "nitro.bundle" }],
+      }),
+      currentProfile: {
+        ...createProfile({
+          durationMs: 500,
+          phases: [{ durationMs: 400, name: "nitro.bundle" }],
+          schemaVersion: 2,
+        }),
+        rolldown: {
+          categories: [],
+          invocations: 0,
+          moduleOccurrences: 0,
+          totalInvocationDurationMs: 0,
+          uniqueModules: 0,
+        },
+      },
+    });
+
+    expect(report.baseline?.profile.schemaVersion).toBe(1);
+    expect(report.current.profile.schemaVersion).toBe(2);
+    expect(report.comparison?.durationMs.delta).toBe(-100);
+    expect(JSON.stringify(report)).not.toContain("rolldown");
   });
 
   it("renders the current profile without a baseline", async () => {

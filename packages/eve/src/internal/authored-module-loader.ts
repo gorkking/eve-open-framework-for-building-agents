@@ -299,21 +299,25 @@ export async function bundleAuthoredModuleMapForGeneration(input: {
   ].filter((plugin) => plugin !== null);
 
   try {
-    const chunk = await buildSingleRolldownChunk("authored module map", {
-      cwd: packageRoot,
-      input: input.moduleMapPath,
-      platform: "node",
-      plugins,
-      resolve: {
-        extensions: [...RESOLVE_EXTENSIONS],
+    const chunk = await buildSingleRolldownChunk(
+      "authored module map",
+      {
+        cwd: packageRoot,
+        input: input.moduleMapPath,
+        platform: "node",
+        plugins,
+        resolve: {
+          extensions: [...RESOLVE_EXTENSIONS],
+        },
+        tsconfig: resolveAuthoredTsConfigPath(packageRoot),
+        output: {
+          comments: false,
+          format: "esm",
+          sourcemap: false,
+        },
       },
-      tsconfig: resolveAuthoredTsConfigPath(packageRoot),
-      output: {
-        comments: false,
-        format: "esm",
-        sourcemap: false,
-      },
-    });
+      "authored-module-map",
+    );
     return removeRolldownModuleRegionComments(chunk.code);
   } catch (error) {
     throw createAuthoredModuleBundleError(input.moduleMapPath, error);
@@ -412,21 +416,25 @@ async function buildAuthoredModuleBundle(
   ].filter((plugin) => plugin !== null);
 
   try {
-    const chunk = await buildSingleRolldownChunk(`authored module for "${modulePath}"`, {
-      cwd: packageRoot,
-      input: modulePath,
-      platform: "node",
-      plugins,
-      resolve: {
-        extensions: [...RESOLVE_EXTENSIONS],
+    const chunk = await buildSingleRolldownChunk(
+      `authored module for "${modulePath}"`,
+      {
+        cwd: packageRoot,
+        input: modulePath,
+        platform: "node",
+        plugins,
+        resolve: {
+          extensions: [...RESOLVE_EXTENSIONS],
+        },
+        tsconfig: tsconfigPath,
+        output: {
+          comments: false,
+          format: "esm",
+          sourcemap: configuration.sourcemap,
+        },
       },
-      tsconfig: tsconfigPath,
-      output: {
-        comments: false,
-        format: "esm",
-        sourcemap: configuration.sourcemap,
-      },
-    });
+      "authored-module",
+    );
     return chunk.code;
   } catch (error) {
     throw createAuthoredModuleBundleError(modulePath, error);

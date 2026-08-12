@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  EveRolldownBuildProfiler,
+  runWithEveRolldownBuildProfiler,
+} from "#internal/bundler/build-profile.js";
 import { buildSingleRolldownChunk } from "#internal/bundler/nitro-rolldown.js";
 
 function scratchModuleWithDynamicImport(): string {
@@ -47,5 +51,31 @@ describe("buildSingleRolldownChunk", () => {
     });
 
     expect(chunk.code).toContain("eve-lazy-module-marker");
+  });
+
+  it("profiles one invocation and every traversed module", async () => {
+    const entryPath = scratchModuleWithDynamicImport();
+    const profiler = new EveRolldownBuildProfiler();
+
+    await runWithEveRolldownBuildProfiler(profiler, () =>
+      buildSingleRolldownChunk(
+        "profiled test module",
+        {
+          input: entryPath,
+          platform: "node",
+          resolve: { extensions: [".ts", ".js", ".mjs"] },
+          output: { comments: false, format: "esm" },
+        },
+        "authored-module",
+      ),
+    );
+
+    const profile = profiler.finish();
+    expect(profile).toMatchObject({
+      categories: [{ category: "authored-module", invocations: 1 }],
+      invocations: 1,
+    });
+    expect(profile.moduleOccurrences).toBeGreaterThanOrEqual(2);
+    expect(profile.uniqueModules).toBe(profile.moduleOccurrences);
   });
 });

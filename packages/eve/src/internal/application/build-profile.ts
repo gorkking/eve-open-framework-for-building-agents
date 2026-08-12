@@ -3,8 +3,14 @@ import { dirname, join, relative, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import { gzipSync } from "node:zlib";
 
+import {
+  type EveRolldownBuildProfile,
+  EveRolldownBuildProfiler,
+  runWithEveRolldownBuildProfiler,
+} from "#internal/bundler/build-profile.js";
+
 /** Version of the machine-readable `eve build --profile` report schema. */
-export const APPLICATION_BUILD_PROFILE_SCHEMA_VERSION = 1 as const;
+export const APPLICATION_BUILD_PROFILE_SCHEMA_VERSION = 2 as const;
 
 /** Deployment target represented by one build profile. */
 export type ApplicationBuildProfileTarget = "local" | "vercel";
@@ -35,6 +41,7 @@ export interface ApplicationBuildProfileOutput {
 export interface ApplicationBuildProfileTiming {
   readonly durationMs: number;
   readonly phases: readonly ApplicationBuildProfilePhase[];
+  readonly rolldown: EveRolldownBuildProfile;
 }
 
 /** Stable JSON document written by `eve build --profile <path>`. */
@@ -43,6 +50,7 @@ export interface ApplicationBuildProfile {
   readonly kind: "eve-build-profile";
   readonly output: ApplicationBuildProfileOutput;
   readonly phases: readonly ApplicationBuildProfilePhase[];
+  readonly rolldown: EveRolldownBuildProfile;
   readonly schemaVersion: typeof APPLICATION_BUILD_PROFILE_SCHEMA_VERSION;
   readonly target: ApplicationBuildProfileTarget;
 }
@@ -104,12 +112,17 @@ function addFileSize(size: MutableOutputSize, fileSize: FileSize): void {
 export class ApplicationBuildProfiler {
   readonly #now: () => number;
   readonly #phases: ApplicationBuildProfilePhase[] = [];
+  readonly #rolldown = new EveRolldownBuildProfiler();
   readonly #startedAt: number;
   #finished = false;
 
   constructor(options: ApplicationBuildProfilerOptions = {}) {
     this.#now = options.now ?? performance.now.bind(performance);
     this.#startedAt = this.#now();
+  }
+
+  run<T>(operation: () => T): T {
+    return runWithEveRolldownBuildProfiler(this.#rolldown, operation);
   }
 
   async measure<T>(name: string, operation: () => T | Promise<T>): Promise<T> {
@@ -137,6 +150,7 @@ export class ApplicationBuildProfiler {
     return {
       durationMs: roundDuration(this.#now() - this.#startedAt),
       phases: [...this.#phases],
+      rolldown: this.#rolldown.finish(),
     };
   }
 }
@@ -152,6 +166,7 @@ export function createApplicationBuildProfile(input: {
     kind: "eve-build-profile",
     output: input.output,
     phases: input.timing.phases,
+    rolldown: input.timing.rolldown,
     schemaVersion: APPLICATION_BUILD_PROFILE_SCHEMA_VERSION,
     target: input.target,
   };

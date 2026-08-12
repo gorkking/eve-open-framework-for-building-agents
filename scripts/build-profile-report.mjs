@@ -3,7 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUILD_PROFILE_KIND = "eve-build-profile";
-const BUILD_PROFILE_SCHEMA_VERSION = 1;
+const BUILD_PROFILE_SCHEMA_VERSION = 2;
+const BUILD_PROFILE_SCHEMA_VERSIONS = new Set([1, BUILD_PROFILE_SCHEMA_VERSION]);
 const BUILD_PROFILE_REPORT_KIND = "eve-build-profile-report";
 const BUILD_PROFILE_REPORT_SCHEMA_VERSION = 1;
 
@@ -28,9 +29,9 @@ function readBuildProfile(value, sourceLabel) {
     throw new Error(`${sourceLabel} must have kind "${BUILD_PROFILE_KIND}".`);
   }
 
-  if (value.schemaVersion !== BUILD_PROFILE_SCHEMA_VERSION) {
+  if (!BUILD_PROFILE_SCHEMA_VERSIONS.has(value.schemaVersion)) {
     throw new Error(
-      `${sourceLabel} must use schema version ${BUILD_PROFILE_SCHEMA_VERSION}, received ${String(value.schemaVersion)}.`,
+      `${sourceLabel} must use schema version 1 or ${BUILD_PROFILE_SCHEMA_VERSION}, received ${String(value.schemaVersion)}.`,
     );
   }
 
@@ -62,6 +63,7 @@ function readBuildProfile(value, sourceLabel) {
   return {
     durationMs: readDuration(value.durationMs, `${sourceLabel}.durationMs`),
     phases,
+    schemaVersion: value.schemaVersion,
     target: value.target,
   };
 }

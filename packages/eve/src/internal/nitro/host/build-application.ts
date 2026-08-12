@@ -324,7 +324,17 @@ export async function buildApplication(
   const profileOutputPath =
     options.profileOutputPath === undefined ? undefined : resolve(options.profileOutputPath);
   const profiler = profileOutputPath === undefined ? undefined : new ApplicationBuildProfiler();
+  const operation = () => buildProfiledApplication(rootDir, options, profileOutputPath, profiler);
 
+  return profiler === undefined ? await operation() : await profiler.run(operation);
+}
+
+async function buildProfiledApplication(
+  rootDir: string,
+  options: ApplicationBuildOptions,
+  profileOutputPath: string | undefined,
+  profiler: ApplicationBuildProfiler | undefined,
+): Promise<string> {
   // Extension packages use `eve extension build`. Keep agent `eve build` agent-only
   // so a mistaken run fails with a clear redirect instead of a half-Nitro path.
   const extensionBuild = await measureBuildPhase(profiler, "extension.check", () =>
