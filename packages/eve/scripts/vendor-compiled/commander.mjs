@@ -8,10 +8,9 @@ import { join } from "node:path";
  *   - `esm.mjs`             ESM wrapper that re-exports named bindings.
  *   - `typings/index.d.ts`  Single-file declaration with no external imports.
  *
- * The default rolldown resolution picks `esm.mjs` because the per-package
- * config inherits `conditionNames: ["node", "import", "default"]`. That
- * collapses the CJS `index.js` graph through the wrapper and produces an
- * ESM bundle whose named exports match the source-side usage
+ * Rolldown picks `esm.mjs` for the ESM entry edge. That collapses the CJS
+ * `index.js` graph through the wrapper and produces an ESM bundle whose named
+ * exports match the source-side usage
  * (`Command`, `CommanderError`, `InvalidArgumentError`).
  *
  * Declarations are copied verbatim from `typings/index.d.ts` so the type

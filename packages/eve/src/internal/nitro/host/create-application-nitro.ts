@@ -657,6 +657,7 @@ function createApplicationNitroPlugins(preparedHost: PreparedApplicationHost): s
   const nitroPlugins = [
     preparedHost.compiledArtifacts.bootstrapPath,
     preparedHost.compiledArtifacts.workflowWorldPluginPath,
+    resolvePackageSourceFilePath("src/internal/nitro/host/websocket-upgrade-guard-plugin.ts"),
   ];
   if (manifestEnablesWorkflow(preparedHost.compileResult.manifest)) {
     nitroPlugins.push(

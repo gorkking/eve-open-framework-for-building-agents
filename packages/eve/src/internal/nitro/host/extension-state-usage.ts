@@ -2,7 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS } from "#discover/filesystem.js";
-import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
+import { parseWithRolldownAst } from "#internal/bundler/rolldown.js";
 
 const STATE_MODULE = "eve/context";
 const STATE_EXPORT = "defineState";
@@ -28,7 +28,7 @@ export async function extensionUsesState(sourceRoot: string): Promise<boolean> {
   const moduleSet = new Set(modulePaths);
   const shapes = new Map<string, ModuleStateShape>();
   for (const [modulePath, source] of sources) {
-    const ast = (await parseWithNitroRolldownAst(modulePath, source)) as StateAstNode;
+    const ast = (await parseWithRolldownAst(modulePath, source)) as StateAstNode;
     shapes.set(modulePath, analyzeModule(ast));
   }
 

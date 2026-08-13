@@ -26,6 +26,7 @@ type VendorWarningLog = {
         readonly id?: string;
         readonly loc?: { readonly file?: string };
         readonly message: string;
+        readonly pluginCode?: unknown;
       },
       defaultHandler: (level: string, log: { readonly message: string }) => void,
     ) => void;
@@ -106,6 +107,7 @@ describe("compiled vendor assets", () => {
           file: dependencyFilePath,
         },
         message: "dependency implementation detail",
+        pluginCode: "DEPENDENCY_WARNING",
       },
       (level, log) => {
         forwardedLogs.push(`${level}:${log.message}`);

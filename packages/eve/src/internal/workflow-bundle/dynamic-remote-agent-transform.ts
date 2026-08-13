@@ -1,4 +1,4 @@
-import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
+import { parseWithRolldownAst } from "#internal/bundler/rolldown.js";
 import {
   findProperty,
   type DynamicToolAstNode as AstNode,
@@ -32,7 +32,7 @@ export async function transformDynamicRemoteAgentCredentials(
     return null;
   }
 
-  const ast = (await parseWithNitroRolldownAst(filename, source)) as AstNode;
+  const ast = (await parseWithRolldownAst(filename, source)) as AstNode;
   const factories = findCredentialsFactories(source, ast);
   return factories.length === 0 ? null : applyTransform(source, factories);
 }

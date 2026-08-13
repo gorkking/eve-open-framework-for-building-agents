@@ -29,6 +29,7 @@ describe("createNitroBundlerConfig", () => {
       {
         id: "/repo/node_modules/fixture/index.js",
         message: "dependency implementation detail",
+        pluginCode: "DEPENDENCY_WARNING",
       },
       defaultHandler,
     );
@@ -53,6 +54,14 @@ describe("createNitroBundlerConfig", () => {
     onLog(
       "warn",
       {
+        ids: ["/repo/node_modules/fixture/index.js", "/repo/packages/eve/src/authored-warning.ts"],
+        message: "mixed authored and dependency warning",
+      },
+      defaultHandler,
+    );
+    onLog(
+      "warn",
+      {
         id: "/repo/packages/eve/src/internal/nitro/host/create-application-nitro.ts",
         message: "eve build warning",
       },
@@ -67,14 +76,19 @@ describe("createNitroBundlerConfig", () => {
       defaultHandler,
     );
 
-    expect(defaultHandler).toHaveBeenCalledTimes(2);
+    expect(defaultHandler).toHaveBeenCalledTimes(3);
     expect(defaultHandler).toHaveBeenNthCalledWith(
       1,
+      "warn",
+      expect.objectContaining({ message: "mixed authored and dependency warning" }),
+    );
+    expect(defaultHandler).toHaveBeenNthCalledWith(
+      2,
       "warn",
       expect.objectContaining({ message: "eve build warning" }),
     );
     expect(defaultHandler).toHaveBeenNthCalledWith(
-      2,
+      3,
       "error",
       expect.objectContaining({ message: "dependency build failure" }),
     );

@@ -33,15 +33,18 @@ const WEBSOCKET_DEV_SERVER_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
     ...DEV_SERVER_AGENT_DESCRIPTOR.files,
     "agent/channels/socket.ts": [
-      'import { defineChannel, WS } from "eve/channels";',
+      'import { defineChannel, GET, WS } from "eve/channels";',
       "",
       "export default defineChannel({",
-      '  routes: [WS("/socket", () => ({',
+      "  routes: [",
+      '    GET("/socket", () => new Response("socket-http")),',
+      '    WS("/socket", () => ({',
       "    message(peer, message) {",
       '      const transportHeader = peer.request.headers.has("x-eve-dev-workflow-delivery") ? "exposed" : "hidden";',
       '      peer.send(`${transportHeader}:${peer.remoteAddress ?? "missing"}:${message.text()}`);',
       "    },",
-      "  }))],",
+      "    })),",
+      "  ],",
       "});",
       "",
     ].join("\n"),
@@ -276,9 +279,17 @@ describe("eve dev server live connections", () => {
       const server = await startEveDev(app.appRoot);
       const socketUrl = new URL("/socket", server.url);
       socketUrl.protocol = "ws:";
-      const socket = new WebSocket(socketUrl);
+      let socket: WebSocket | undefined;
 
       try {
+        await expect(fetchText(server.url, "/socket")).resolves.toBe("socket-http");
+
+        const ordinaryRouteUrl = new URL("/dev-generation", server.url);
+        ordinaryRouteUrl.protocol = "ws:";
+        const unmatchedSocket = new WebSocket(ordinaryRouteUrl);
+        await expect(waitForWebSocketOpen(unmatchedSocket)).rejects.toThrow("WebSocket failed");
+
+        socket = new WebSocket(socketUrl);
         await waitForWebSocketOpen(socket);
         const firstMessage = waitForWebSocketMessage(socket);
         socket.send("before");
@@ -294,7 +305,7 @@ describe("eve dev server live connections", () => {
         socket.send("after");
         await expect(nextMessage).resolves.toBe("hidden:127.0.0.1:after");
       } finally {
-        if (socket.readyState === WebSocket.OPEN) {
+        if (socket?.readyState === WebSocket.OPEN) {
           const closed = waitForWebSocketClose(socket);
           socket.close();
           await closed;

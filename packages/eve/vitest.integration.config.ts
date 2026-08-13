@@ -35,6 +35,13 @@ export default defineConfig({
     exclude: ["**/node_modules/**", "test/scenarios/**", "test/vercel/**"],
     globalSetup: ["./test/setup/clear-workflow-cache.ts"],
     include: ["src/**/*.integration.test.ts", "test/**/*.integration.test.ts"],
+    server: {
+      deps: {
+        // Generated workflow artifacts can be tens of megabytes. Execute them
+        // with Node instead of making Vite parse code that is already bundled.
+        external: [/[\\/]\.workflow-vitest[\\/].*\.mjs$/],
+      },
+    },
     setupFiles: ["./test/setup/mock-ai-gateway.ts"],
     testTimeout: 30_000,
   },

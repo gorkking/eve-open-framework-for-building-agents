@@ -99,4 +99,32 @@ describe("registerChannelVirtualHandlers", () => {
       "dispatchChannelWebSocketRequest",
     );
   });
+
+  it("shares one Nitro handler when GET and WebSocket use the same path", () => {
+    const nitro = {
+      options: {
+        handlers: [] as any[],
+        virtual: {} as Record<string, string>,
+      },
+    };
+
+    registerChannelVirtualHandlers(nitro, {
+      artifactsConfig: createDevelopmentNitroArtifactsConfig({ appRoot: "/app" }),
+      registrations: [
+        { method: "GET", route: "/voice" },
+        { method: "WEBSOCKET", route: "/voice" },
+      ],
+    });
+
+    expect(nitro.options.handlers).toEqual([
+      {
+        handler: "#nitro/virtual/eve-channel/GET+WEBSOCKET /voice",
+        route: "/voice",
+      },
+    ]);
+    const source = nitro.options.virtual["#nitro/virtual/eve-channel/GET+WEBSOCKET /voice"];
+    expect(source).toContain('dispatchChannelRequest(event, "GET /voice", config)');
+    expect(source).toContain('dispatchChannelWebSocketRequest(event, "WEBSOCKET /voice", config)');
+    expect(source).toContain('event.req.headers.get("upgrade")');
+  });
 });

@@ -372,7 +372,6 @@ export async function configureDevelopmentNitroRoutes(
     compiledArtifactsBootstrapPath: preparedHost.compiledArtifacts.bootstrapPath,
     outDir: preparedHost.workflowBuildDir,
     rootDir: resolvePackageRoot(),
-    watch: true,
   });
   const syncWorkflowArtifacts = async () => {
     await builder.build({
@@ -417,7 +416,6 @@ export async function configureProductionNitroRoutes(
     compiledArtifactsBootstrapPath: preparedHost.compiledArtifacts.bootstrapPath,
     outDir: preparedHost.workflowBuildDir,
     rootDir: resolvePackageRoot(),
-    watch: false,
   });
   const syncWorkflowArtifacts = async () => {
     await builder.build({

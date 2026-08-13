@@ -93,7 +93,37 @@ export function registerChannelVirtualHandlers(
   },
 ): void {
   const preflightRoutes = new Set<string>();
+  const getRegistrations = new Map(
+    input.registrations
+      .filter((registration) => registration.method === "GET")
+      .map((registration) => [registration.route, registration]),
+  );
+  const websocketRoutes = new Set(
+    input.registrations
+      .filter((registration) => registration.method === "WEBSOCKET")
+      .map((registration) => registration.route),
+  );
+  const combinedRoutes = new Set<string>();
+
   for (const registration of input.registrations) {
+    const getRegistration = getRegistrations.get(registration.route);
+    const sharesGetAndWebSocketRoute =
+      (registration.method === "GET" || registration.method === "WEBSOCKET") &&
+      getRegistration !== undefined &&
+      websocketRoutes.has(registration.route);
+
+    if (sharesGetAndWebSocketRoute) {
+      if (!combinedRoutes.has(registration.route)) {
+        combinedRoutes.add(registration.route);
+        addCombinedGetAndWebSocketVirtualHandler(nitro, {
+          artifactsConfig: input.artifactsConfig,
+          getRegistration,
+          preflightRoutes,
+        });
+      }
+      continue;
+    }
+
     addChannelVirtualHandler(nitro, {
       artifactsConfig: input.artifactsConfig,
       cors: registration.cors,
@@ -102,6 +132,61 @@ export function registerChannelVirtualHandlers(
       route: registration.route,
     });
   }
+}
+
+function addCombinedGetAndWebSocketVirtualHandler(
+  nitro: Pick<ChannelRouteNitro, "options">,
+  input: {
+    artifactsConfig: NitroArtifactsConfig;
+    getRegistration: NitroChannelRouteRegistration;
+    preflightRoutes: Set<string>;
+  },
+): void {
+  const route = input.getRegistration.route;
+  const getRouteKey = `GET ${route}`;
+  const websocketRouteKey = `WEBSOCKET ${route}`;
+  const virtualId = `${EVE_CHANNEL_VIRTUAL_ID_PREFIX}GET+WEBSOCKET ${route}`;
+  const dispatchModulePath = stringifyEsmImportSpecifier(
+    resolvePackageSourceFilePath("src/internal/nitro/routes/channel-dispatch.ts"),
+  );
+  const nitroH3ModulePath = stringifyEsmImportSpecifier(resolvePackageDependencyPath("nitro/h3"));
+
+  nitro.options.handlers.push({ handler: virtualId, route });
+  if (input.getRegistration.cors !== undefined) {
+    addChannelCorsPreflightHandler(nitro, {
+      cors: input.getRegistration.cors,
+      nitroH3ModulePath,
+      preflightRoutes: input.preflightRoutes,
+      route,
+    });
+  }
+
+  nitro.options.virtual[virtualId] = [
+    ...(input.getRegistration.cors === undefined
+      ? []
+      : [
+          `import { handleCors } from ${nitroH3ModulePath};`,
+          `const cors = ${JSON.stringify(input.getRegistration.cors)};`,
+        ]),
+    `import { dispatchChannelRequest, dispatchChannelWebSocketRequest } from ${dispatchModulePath};`,
+    `const config = ${JSON.stringify(input.artifactsConfig)};`,
+    `export default async (event) => {`,
+    `  if (event.req.headers.get("upgrade")?.toLowerCase() === "websocket") {`,
+    `    const crossws = await dispatchChannelWebSocketRequest(event, ${JSON.stringify(websocketRouteKey)}, config);`,
+    `    return Object.assign(new Response("WebSocket upgrade is required.", { status: 426 }), { crossws });`,
+    `  }`,
+    `  if (event.req.method !== "GET") {`,
+    `    return new Response("Method Not Allowed", { headers: { allow: "GET" }, status: 405 });`,
+    `  }`,
+    ...(input.getRegistration.cors === undefined
+      ? []
+      : [
+          `  const corsResponse = handleCors(event, cors);`,
+          `  if (corsResponse !== false) return corsResponse;`,
+        ]),
+    `  return dispatchChannelRequest(event, ${JSON.stringify(getRouteKey)}, config);`,
+    `};`,
+  ].join("\n");
 }
 
 function createChannelRouteKey(registration: NitroChannelRouteRegistration): string {

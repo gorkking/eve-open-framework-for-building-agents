@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { build as buildNitro, copyPublicAssets, prepare, prerender } from "nitro/builder";
+import { build as buildNitro, prepare } from "nitro/builder";
 import type { Nitro } from "nitro/types";
 
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
@@ -304,8 +304,6 @@ async function buildNitroOutput(
     prepareEveVersionedCacheDirectory(outputDirectory),
   );
   await measureBuildPhase(profiler, `${phasePrefix}.prepare`, () => prepare(nitro));
-  await measureBuildPhase(profiler, `${phasePrefix}.public-assets`, () => copyPublicAssets(nitro));
-  await measureBuildPhase(profiler, `${phasePrefix}.prerender`, () => prerender(nitro));
   await measureBuildPhase(profiler, `${phasePrefix}.bundle`, () => buildNitro(nitro));
   await measureBuildPhase(profiler, `${phasePrefix}.cache.write`, () =>
     writeEveVersionedCacheMetadata(outputDirectory),

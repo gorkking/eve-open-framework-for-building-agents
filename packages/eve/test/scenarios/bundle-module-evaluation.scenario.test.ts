@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { buildWithNitroRolldown } from "#internal/bundler/nitro-rolldown.js";
+import { buildWithRolldown } from "#internal/bundler/rolldown.js";
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 
@@ -34,7 +34,7 @@ interface RolldownInputOptions {
  * (`false`) so any cycle surfaces as a loud TDZ ReferenceError at load.
  */
 async function bundleEveDistAsSingleChunk(input: RolldownInputOptions): Promise<string> {
-  await buildWithNitroRolldown({
+  await buildWithRolldown({
     cwd: input.cwd,
     input: input.entry,
     platform: "node",
@@ -45,7 +45,7 @@ async function bundleEveDistAsSingleChunk(input: RolldownInputOptions): Promise<
       return !isEveOwnedSpecifier(source);
     },
     resolve: {
-      conditionNames: ["eve-source", "node", "import"],
+      conditionNames: ["eve-source"],
       mainFields: ["module", "main"],
     },
     treeshake: false,
@@ -69,7 +69,7 @@ describe("eve dist single-chunk module evaluation", () => {
     const outDir = join(scratch, "out");
     await mkdir(outDir, { recursive: true });
 
-    // Mirror the imports `writeNitroStepEntrypoint` generates for a
+    // Mirror the imports `writeWorkflowStepEntrypoint` generates for a
     // workflow's `steps.mjs`.
     const stepSources = [
       "src/internal/workflow/builtins.ts",

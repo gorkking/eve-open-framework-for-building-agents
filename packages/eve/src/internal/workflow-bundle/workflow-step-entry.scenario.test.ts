@@ -4,15 +4,15 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { writeNitroStepEntrypoint } from "#internal/workflow-bundle/nitro-step-entry.js";
+import { writeWorkflowStepEntrypoint } from "#internal/workflow-bundle/workflow-step-entry.js";
 
-describe("writeNitroStepEntrypoint", () => {
+describe("writeWorkflowStepEntrypoint", () => {
   it("serializes Windows absolute imports as file URLs", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "eve-nitro-step-entry-windows-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-step-entry-windows-"));
     const outfile = join(tempRoot, "build", "steps.mjs");
 
     try {
-      await writeNitroStepEntrypoint({
+      await writeWorkflowStepEntrypoint({
         builtinsPath: "G:\\projects\\eve\\node_modules\\eve\\dist\\builtins.js",
         discoveredEntries: {
           discoveredSerdeFiles: [],
@@ -38,8 +38,8 @@ describe("writeNitroStepEntrypoint", () => {
     }
   });
 
-  it("does not rewrite the Nitro step entry when the content is unchanged", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "eve-nitro-step-entry-"));
+  it("does not rewrite the workflow step entry when the content is unchanged", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-step-entry-"));
     const stepsDirectory = join(tempRoot, "steps");
     const stepFilePath = join(stepsDirectory, "ping.ts");
     const outfile = join(tempRoot, "build", "steps.mjs");
@@ -51,7 +51,7 @@ describe("writeNitroStepEntrypoint", () => {
         ["export async function ping() {", '  "use step";', '  return "pong";', "}", ""].join("\n"),
       );
 
-      await writeNitroStepEntrypoint({
+      await writeWorkflowStepEntrypoint({
         discoveredEntries: {
           discoveredSerdeFiles: [],
           discoveredSteps: [stepFilePath],
@@ -67,7 +67,7 @@ describe("writeNitroStepEntrypoint", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 25));
 
-      await writeNitroStepEntrypoint({
+      await writeWorkflowStepEntrypoint({
         discoveredEntries: {
           discoveredSerdeFiles: [],
           discoveredSteps: [stepFilePath],

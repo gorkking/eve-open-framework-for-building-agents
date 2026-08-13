@@ -1,8 +1,45 @@
 import { loadDeclaration } from "./_shared.mjs";
 
+const ENV_RUNNER_SHUTDOWN_SOURCE =
+  "Promise.resolve(entry.ipc?.onClose?.()).then(() => server.close()).then(() => {";
+const EVE_SHUTDOWN_SOURCE =
+  "Promise.resolve(server.close(true)).then(() => entry.ipc?.onClose?.()).then(() => {";
+
+function createGracefulNodeWorkerShutdownPlugin() {
+  let patched = false;
+
+  return {
+    name: "eve-env-runner-graceful-node-worker-shutdown",
+    transform(code, id) {
+      if (!id.replaceAll("\\", "/").endsWith("/runners/node-worker/worker.mjs")) {
+        return null;
+      }
+      if (!code.includes(ENV_RUNNER_SHUTDOWN_SOURCE)) {
+        throw new Error("env-runner's Node worker shutdown contract changed.");
+      }
+      patched = true;
+      return {
+        code: code
+          .replace(ENV_RUNNER_SHUTDOWN_SOURCE, EVE_SHUTDOWN_SOURCE)
+          .replace(
+            'parentPort?.postMessage({ event: "exit" });',
+            'parentPort?.postMessage({ event: "exit" });\n      parentPort?.close();',
+          ),
+        map: null,
+      };
+    },
+    buildEnd() {
+      if (!patched) {
+        throw new Error("env-runner's Node worker entry was not patched.");
+      }
+    },
+  };
+}
+
 export default {
   packageName: "env-runner",
   compiledPath: "env-runner",
+  plugins: [createGracefulNodeWorkerShutdownPlugin()],
   entries: [
     {
       entry: "dist/_chunks/common-base-runner.mjs",

@@ -25,10 +25,7 @@ import {
   type RolldownResolveContext,
 } from "#internal/authored-package-boundary.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
-import {
-  buildSingleRolldownChunk,
-  buildWithNitroRolldown,
-} from "#internal/bundler/nitro-rolldown.js";
+import { buildSingleRolldownChunk, buildWithRolldown } from "#internal/bundler/rolldown.js";
 import { createNodeEsmCompatBannerPlugin } from "#internal/node-esm-compat-banner.js";
 import { createDynamicCapabilityTransformPlugin } from "#internal/workflow-bundle/dynamic-capability-transform-plugin.js";
 
@@ -217,7 +214,7 @@ export async function bundleExtensionDistributionGraph(input: {
   ];
 
   try {
-    const result = await buildWithNitroRolldown({
+    const result = await buildWithRolldown({
       cwd: input.packageRoot,
       input: Object.fromEntries(input.entries.map((entry) => [entry.name, entry.path])),
       platform: "node",

@@ -4,6 +4,8 @@ import { Worker } from "node:worker_threads";
 import { BaseEnvRunner } from "#compiled/env-runner/index.js";
 import { resolvePackageCompiledFilePath } from "#internal/application/package.js";
 
+const DEVELOPMENT_WORKER_SHUTDOWN_TIMEOUT_MS = 15_000;
+
 export interface DevelopmentRunner {
   readonly closed: boolean;
   close(cause?: unknown): Promise<void>;
@@ -98,8 +100,29 @@ class NodeDevelopmentRunner extends BaseEnvRunner implements DevelopmentRunner {
     }
 
     this.#worker = undefined;
-    worker.removeAllListeners();
-    await worker.terminate();
+    const exited = new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        worker.off("exit", onExit);
+        resolve(result);
+      };
+      const onExit = () => finish(true);
+      const timer = setTimeout(() => finish(false), DEVELOPMENT_WORKER_SHUTDOWN_TIMEOUT_MS);
+      timer.unref();
+      worker.once("exit", onExit);
+    });
+
+    try {
+      worker.postMessage({ event: "shutdown" });
+      if (!(await exited)) {
+        await worker.terminate();
+      }
+    } finally {
+      worker.removeAllListeners();
+    }
   }
 
   protected override _handleMessage(message: unknown): void {

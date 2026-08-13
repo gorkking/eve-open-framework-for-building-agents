@@ -43,7 +43,7 @@ import { createRequire } from "node:module";
 import { dirname, join, parse, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildWithNitroRolldown } from "../nitro-rolldown.mjs";
+import { buildWithRolldown } from "../rolldown.mjs";
 import { createVendoredDependencyWarningFilter } from "../vendor-warning-log.mjs";
 
 const declarationsDir = fileURLToPath(new URL("./declarations/", import.meta.url));
@@ -624,16 +624,8 @@ function getModulePlatform(module) {
   return module.platform ?? "node";
 }
 
-function getDefaultResolve(platform) {
-  return platform === "neutral"
-    ? {
-        conditionNames: ["import", "default"],
-        mainFields: ["module", "main"],
-      }
-    : {
-        conditionNames: ["node", "import", "default"],
-        mainFields: ["module", "main"],
-      };
+function getDefaultResolve() {
+  return { mainFields: ["module", "main"] };
 }
 
 async function bundleStandaloneModule({ destinationRoot, module, packageInfo, packageRoot }) {
@@ -647,14 +639,14 @@ async function bundleStandaloneModule({ destinationRoot, module, packageInfo, pa
     );
   }
 
-  await buildWithNitroRolldown({
+  await buildWithRolldown({
     cwd: packageRoot,
     input: entries[0].input,
     external: module.external ?? [],
     moduleTypes: module.loader ?? {},
     platform,
     plugins: module.plugins ?? [],
-    resolve: module.resolve ?? getDefaultResolve(platform),
+    resolve: module.resolve ?? getDefaultResolve(),
     treeshake: true,
     output: {
       banner: module.banner ?? "/* oxlint-disable */",
@@ -699,14 +691,14 @@ async function bundleModuleGroup({
   );
   const plugins = preparedModules.flatMap(({ module }) => module.plugins ?? []);
 
-  await buildWithNitroRolldown({
+  await buildWithRolldown({
     cwd: packageRoot,
     input: entrypoints,
     external,
     moduleTypes,
     platform,
     plugins,
-    resolve: getDefaultResolve(platform),
+    resolve: getDefaultResolve(),
     treeshake: true,
     output: {
       banner: "/* oxlint-disable */",

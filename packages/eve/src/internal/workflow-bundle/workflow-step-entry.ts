@@ -7,18 +7,18 @@ import {
   type WorkflowManifest,
 } from "#internal/workflow-bundle/workflow-builders.js";
 
-export interface NitroStepEntrypointDiscoveredEntries {
+export interface WorkflowStepEntrypointDiscoveredEntries {
   readonly discoveredSerdeFiles: readonly string[];
   readonly discoveredSteps: readonly string[];
 }
 
 /**
- * Writes the hosted Nitro step entrypoint source and returns the manifest
+ * Writes the hosted workflow step entrypoint source and returns the manifest
  * metadata discovered from the imported step and serde files.
  */
-export async function writeNitroStepEntrypoint(input: {
+export async function writeWorkflowStepEntrypoint(input: {
   readonly builtinsPath?: string;
-  readonly discoveredEntries: NitroStepEntrypointDiscoveredEntries;
+  readonly discoveredEntries: WorkflowStepEntrypointDiscoveredEntries;
   readonly outfile: string;
   readonly preferAbsoluteFileImports?: boolean;
   readonly projectRoot: string;
@@ -30,7 +30,7 @@ export async function writeNitroStepEntrypoint(input: {
   const serdeOnlyFiles = [...input.discoveredEntries.discoveredSerdeFiles]
     .sort()
     .filter((filePath) => !stepFileSet.has(filePath));
-  const manifest = await collectNitroStepManifest({
+  const manifest = await collectWorkflowStepManifest({
     projectRoot: input.projectRoot,
     stepFiles,
     serdeOnlyFiles,
@@ -119,7 +119,7 @@ function createFileImportSpecifier(input: {
   return createRelativeImportSpecifier(input.outfileDirectory, input.targetPath);
 }
 
-async function collectNitroStepManifest(input: {
+async function collectWorkflowStepManifest(input: {
   readonly projectRoot: string;
   readonly serdeOnlyFiles: readonly string[];
   readonly stepFiles: readonly string[];

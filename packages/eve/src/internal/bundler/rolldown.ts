@@ -1,6 +1,3 @@
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
-
 type RolldownOutputChunk = {
   readonly type: "chunk";
   readonly code: string;
@@ -37,31 +34,18 @@ let rolldownPromise: Promise<RolldownModule> | undefined;
 let rolldownParseAstPromise: Promise<RolldownParseAstModule> | undefined;
 
 /**
- * Loads Rolldown from Nitro's dependency tree so eve does not carry a second
- * native bundler package in its own install footprint.
+ * Lazily loads eve's direct Rolldown dependency so importing parser-backed
+ * helpers does not eagerly initialize the native bundler.
  */
-function loadNitroRolldown(): Promise<RolldownModule> {
-  rolldownPromise ??= (async () => {
-    const require = createRequire(import.meta.url);
-    const nitroRequire = createRequire(require.resolve("nitro/package.json"));
-    const rolldownPath = nitroRequire.resolve("rolldown");
-    return (await import(pathToFileURL(rolldownPath).href)) as RolldownModule;
-  })();
+function loadRolldown(): Promise<RolldownModule> {
+  rolldownPromise ??= import("rolldown") as Promise<RolldownModule>;
 
   return rolldownPromise;
 }
 
-/**
- * Loads Rolldown's parser from Nitro's dependency tree so workflow directive
- * transforms can use the same bundler dependency without exposing it publicly.
- */
-export function loadNitroRolldownParseAst(): Promise<RolldownParseAstModule> {
-  rolldownParseAstPromise ??= (async () => {
-    const require = createRequire(import.meta.url);
-    const nitroRequire = createRequire(require.resolve("nitro/package.json"));
-    const parseAstPath = nitroRequire.resolve("rolldown/parseAst");
-    return (await import(pathToFileURL(parseAstPath).href)) as RolldownParseAstModule;
-  })();
+/** Lazily loads Rolldown's parser for source transforms. */
+export function loadRolldownParseAst(): Promise<RolldownParseAstModule> {
+  rolldownParseAstPromise ??= import("rolldown/parseAst") as Promise<RolldownParseAstModule>;
 
   return rolldownParseAstPromise;
 }
@@ -73,11 +57,8 @@ export function inferRolldownParserLanguage(filename: string): RolldownParserLan
   return "js";
 }
 
-export async function parseWithNitroRolldownAst(
-  filename: string,
-  sourceText: string,
-): Promise<unknown> {
-  const { parseAst } = await loadNitroRolldownParseAst();
+export async function parseWithRolldownAst(filename: string, sourceText: string): Promise<unknown> {
+  const { parseAst } = await loadRolldownParseAst();
   return parseAst(
     sourceText,
     {
@@ -95,11 +76,33 @@ export async function parseWithNitroRolldownAst(
  * bundle whose consumer expects one in-memory file; use this directly only
  * for multi-file, written-to-disk output.
  */
-export async function buildWithNitroRolldown(
-  options: Record<string, unknown>,
-): Promise<RolldownOutput> {
-  const { build } = await loadNitroRolldown();
+export async function buildWithRolldown(options: Record<string, unknown>): Promise<RolldownOutput> {
+  assertCustomRolldownConditionNames(options);
+  const { build } = await loadRolldown();
   return await build(options);
+}
+
+const ROLLDOWN_STANDARD_CONDITION_NAMES = new Set([
+  "browser",
+  "default",
+  "import",
+  "node",
+  "require",
+]);
+
+function assertCustomRolldownConditionNames(options: Record<string, unknown>): void {
+  const resolve = options.resolve;
+  if (resolve === null || typeof resolve !== "object") return;
+  const conditionNames = Reflect.get(resolve, "conditionNames");
+  if (!Array.isArray(conditionNames)) return;
+
+  for (const conditionName of conditionNames) {
+    if (typeof conditionName === "string" && ROLLDOWN_STANDARD_CONDITION_NAMES.has(conditionName)) {
+      throw new Error(
+        `Rolldown resolves the standard condition ${JSON.stringify(conditionName)} per import edge; conditionNames may contain only eve-specific additions.`,
+      );
+    }
+  }
 }
 
 /**
@@ -109,14 +112,14 @@ export async function buildWithNitroRolldown(
  * split into lazy chunks. Every eve single-file bundle (the authored-module
  * evaluator, immutable development generations, and workflow step/function
  * bundles) goes through this helper so the single-file policy and its
- * assertion cannot drift apart. The final Nitro production server build
+ * assertion cannot drift apart. The final Nitro application server build
  * does not use it and keeps code splitting enabled.
  */
 export async function buildSingleRolldownChunk(
   description: string,
   options: Record<string, unknown> & { readonly output?: Record<string, unknown> },
 ): Promise<RolldownOutputChunk> {
-  const result = await buildWithNitroRolldown({
+  const result = await buildWithRolldown({
     ...options,
     write: false,
     output: { ...options.output, codeSplitting: false },

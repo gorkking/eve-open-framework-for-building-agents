@@ -82,11 +82,9 @@ const buildNitroMock = vi.fn(async (nitro: Nitro) => {
     );
   }
 });
-const copyPublicAssetsMock = vi.fn(async () => undefined);
 const createProductionApplicationNitroMock = vi.fn();
 const prepareProductionApplicationHostMock = vi.fn();
 const prepareMock = vi.fn(async () => undefined);
-const prerenderMock = vi.fn(async () => undefined);
 const resolveDiscoveryProjectMock = vi.fn(async (appRoot: string) => ({
   agentRoot: join(appRoot, "agent"),
   appRoot,
@@ -96,9 +94,7 @@ const runVercelBuildPrewarmMock = vi.fn(async () => undefined);
 
 vi.mock("nitro/builder", () => ({
   build: buildNitroMock,
-  copyPublicAssets: copyPublicAssetsMock,
   prepare: prepareMock,
-  prerender: prerenderMock,
 }));
 
 vi.mock("./create-application-nitro.js", () => ({
