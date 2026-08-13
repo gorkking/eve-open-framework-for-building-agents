@@ -5,15 +5,15 @@ import type { PublicInstructionsDefinition } from "#shared/instructions-definiti
 export type InstructionsDefinition = Readonly<PublicInstructionsDefinition>;
 
 /**
- * Defines an instructions prompt in TypeScript from a `{ markdown }`
- * definition.
+ * Defines role-aware instructions in TypeScript.
  *
  * Use it to return instructions from a `defineDynamic` resolver in
- * `agent/instructions/`; the returned markdown lowers to a single
- * `{ role: "system" }` message. For a fixed prompt with no resolver,
+ * `agent/instructions/`; the returned content lowers to one model message
+ * with the selected role. For a fixed prompt with no resolver,
  * author `instructions.md` instead. The result is branded so the dynamic
  * instruction lifecycle can validate that a resolver return came through
- * this helper.
+ * this helper. `role` defaults to `"system"`; use `"user"` for durable,
+ * append-only model context.
  */
 export function defineInstructions<TInstructions extends InstructionsDefinition>(
   definition: ExactDefinition<TInstructions, InstructionsDefinition>,

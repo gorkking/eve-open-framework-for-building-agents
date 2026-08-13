@@ -2,11 +2,48 @@ import { describe, expect, it } from "vitest";
 
 import {
   normalizeAgentDefinition,
+  normalizeInstructionsDefinition,
   normalizeScheduleDefinition,
 } from "#internal/authored-definition/core.js";
 import { defineDynamic } from "#public/definitions/tool.js";
 
 const FAILURE_MESSAGE = "Expected the agent config to match the public eve shape.";
+
+describe("normalizeInstructionsDefinition", () => {
+  it("defaults content instructions to the system role", () => {
+    expect(normalizeInstructionsDefinition({ content: "System policy." }, FAILURE_MESSAGE)).toEqual(
+      { content: "System policy.", role: "system" },
+    );
+  });
+
+  it("accepts user-role content", () => {
+    expect(
+      normalizeInstructionsDefinition(
+        { content: "Persisted profile.", role: "user" },
+        FAILURE_MESSAGE,
+      ),
+    ).toEqual({ content: "Persisted profile.", role: "user" });
+  });
+
+  it("normalizes deprecated markdown instructions to the system role", () => {
+    expect(normalizeInstructionsDefinition({ markdown: "Legacy." }, FAILURE_MESSAGE)).toEqual({
+      content: "Legacy.",
+      role: "system",
+    });
+  });
+
+  it("rejects ambiguous or invalid role shapes", () => {
+    expect(() =>
+      normalizeInstructionsDefinition({ content: "New.", markdown: "Legacy." }, FAILURE_MESSAGE),
+    ).toThrow('exactly one of "content" or deprecated "markdown"');
+    expect(() =>
+      normalizeInstructionsDefinition({ content: "Invalid.", role: "assistant" }, FAILURE_MESSAGE),
+    ).toThrow('"system" or "user"');
+    expect(() =>
+      normalizeInstructionsDefinition({ markdown: "Legacy.", role: "user" }, FAILURE_MESSAGE),
+    ).toThrow('deprecated "markdown" shape cannot declare "role"');
+  });
+});
 
 describe("normalizeAgentDefinition", () => {
   it("accepts provider-agnostic reasoning effort", () => {

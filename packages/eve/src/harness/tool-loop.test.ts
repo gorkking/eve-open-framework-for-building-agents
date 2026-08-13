@@ -10943,6 +10943,32 @@ describe("createToolLoopHarness", () => {
       ]);
     });
 
+    it("persists dynamic user instructions at their lifecycle history boundaries", async () => {
+      setupMockAgent(defaultModelResult());
+      const takePendingMessages = vi
+        .fn<NonNullable<ToolLoopHarnessConfig["takePendingMessages"]>>()
+        .mockReturnValueOnce([{ content: "Session profile.", role: "user" }])
+        .mockReturnValueOnce([{ content: "Step context.", role: "user" }])
+        .mockReturnValue([]);
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", undefined, { takePendingMessages }),
+      );
+
+      const result = await runStep(createTestSession(), { message: "Hi" });
+
+      expect(getLastAgentSettings().messages).toEqual([
+        { content: "Session profile.", role: "user" },
+        { content: "Hi", role: "user" },
+        { content: "Step context.", role: "user" },
+      ]);
+      expect(result.session.history).toEqual([
+        { content: "Session profile.", role: "user" },
+        { content: "Hi", role: "user" },
+        { content: "Step context.", role: "user" },
+        { content: "ok", role: "assistant" },
+      ]);
+    });
+
     it("leaves instructions unchanged when no context is provided", async () => {
       setupMockAgent(defaultModelResult());
       const runStep = createToolLoopHarness(createTestConfig("conversation"));

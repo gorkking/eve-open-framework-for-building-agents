@@ -313,6 +313,8 @@ export interface ToolLoopHarnessConfig {
    * compacted history.
    */
   readonly onCompaction?: () => readonly ModelMessage[];
+  /** Takes framework-produced user messages at the current history boundary. */
+  readonly takePendingMessages?: () => readonly ModelMessage[];
   /**
    * Whether the agent opted into `experimental.subagentPersistentSessions`.
    * Gates delegated-agent handle tracking and the model-visible `<agents>`

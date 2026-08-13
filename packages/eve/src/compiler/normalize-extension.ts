@@ -7,6 +7,7 @@ import type {
   CompiledDynamicSkillDefinition,
   CompiledDynamicToolDefinition,
   CompiledHookDefinition,
+  CompiledInstructionsDefinition,
   CompiledSkillDefinition,
   CompiledToolDefinition,
 } from "#compiler/manifest.js";
@@ -29,7 +30,7 @@ export interface CompiledExtensionContributions {
   readonly dynamicSkills: CompiledDynamicSkillDefinition[];
   readonly dynamicInstructions: CompiledDynamicInstructionsDefinition[];
   readonly connections: CompiledConnectionDefinition[];
-  readonly instructionFragments: string[];
+  readonly instructions: CompiledInstructionsDefinition[];
 }
 
 /**
@@ -257,11 +258,15 @@ async function composeManifestContributions(input: {
   }));
 
   const dynamicInstructions: CompiledDynamicInstructionsDefinition[] = [];
-  const instructionFragments: string[] = [];
+  const instructions: CompiledInstructionsDefinition[] = [];
   for (const source of manifest.instructions) {
     const entry = await compileInstructionsEntry(sourceRoot, source, options);
     if (entry.kind === "instructions") {
-      instructionFragments.push(entry.definition.markdown);
+      instructions.push({
+        ...entry.definition,
+        sourceId: scopeSourceId(entry.definition.sourceId),
+        logicalPath: rebase(entry.definition.logicalPath),
+      });
     } else {
       dynamicInstructions.push({
         ...entry.definition,
@@ -281,7 +286,7 @@ async function composeManifestContributions(input: {
       dynamicSkills,
       dynamicInstructions,
       connections,
-      instructionFragments,
+      instructions,
     },
     disabledToolTargets,
   };
@@ -326,7 +331,7 @@ export function mergeContributions(
     hooks: [...primary.hooks, ...secondary.hooks],
     dynamicSkills: [...primary.dynamicSkills, ...secondary.dynamicSkills],
     dynamicInstructions: [...primary.dynamicInstructions, ...secondary.dynamicInstructions],
-    instructionFragments: [...primary.instructionFragments, ...secondary.instructionFragments],
+    instructions: [...primary.instructions, ...secondary.instructions],
   };
 }
 

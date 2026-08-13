@@ -34,6 +34,8 @@ interface RuntimeTurnAgentBase {
   readonly availableSkills?: readonly AvailableSkillDescription[];
   readonly id: string;
   readonly instructions: readonly string[];
+  /** User-role instructions seeded once when a durable session is created. */
+  readonly initialMessages?: readonly import("ai").ModelMessage[];
   /**
    * Optional model used only for compaction summaries.
    *
@@ -115,6 +117,9 @@ export function createResolvedRuntimeTurnAgent(input: {
       toolsAvailable: input.tools.length > 0 || subagentImplicitRootTool,
       workspaceSpec: agent.workspaceSpec,
     }),
+    initialMessages: (agent.instructions ?? [])
+      .filter((entry) => entry.role === "user" && entry.content.trim().length > 0)
+      .map((entry) => ({ content: entry.content.trim(), role: "user" as const })),
     compactionModel: config?.compaction?.model,
     nodeId: input.nodeId,
     outputSchema: config?.outputSchema,

@@ -1,4 +1,5 @@
 import type { HandleMessageStreamEvent } from "../../protocol/message.js";
+import type { ModelMessage } from "ai";
 import type { SessionContext } from "./callback-context.js";
 import type { ExactDefinition } from "./exact.js";
 
@@ -67,6 +68,8 @@ export type HookEvent<TKey extends HookEventKey = HookEventType> = TKey extends 
  * `ctx` is always the last argument.
  */
 export interface HookContext extends SessionContext {
+  /** Aborts when the active turn is cancelled. */
+  readonly abortSignal: AbortSignal;
   readonly agent: {
     readonly name: string;
     readonly nodeId?: string;
@@ -74,7 +77,10 @@ export interface HookContext extends SessionContext {
   readonly channel: {
     readonly kind?: string;
     readonly continuationToken?: string;
+    readonly metadata?: Readonly<Record<string, unknown>>;
   };
+  /** Durable model history selected for this lifecycle point. */
+  readonly messages: readonly ModelMessage[];
 }
 
 /**

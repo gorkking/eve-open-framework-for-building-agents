@@ -8,8 +8,11 @@ vi.mock("#context/build-callback-context.js", () => ({
   }),
 }));
 
-const { dispatchDynamicInstructionEvent, buildDynamicInstructionMessages } =
-  await import("#context/dynamic-instruction-lifecycle.js");
+const {
+  dispatchDynamicInstructionEvent,
+  buildDynamicInstructionMessages,
+  takePendingDynamicInstructionMessages,
+} = await import("#context/dynamic-instruction-lifecycle.js");
 
 import { ContextContainer } from "#context/container.js";
 import {
@@ -277,19 +280,106 @@ describe("dispatchDynamicInstructionEvent", () => {
     ]);
   });
 
-  it("rejects step.started events for instructions", async () => {
+  it("uses step-scoped system instructions in preference to wider scopes", async () => {
     const ctx = createCtx();
-    const handler = vi.fn(() => defineInstructions({ markdown: "nope" }));
-    const resolver = createResolver("context", ["step.started"], handler);
+    const sessionResolver = createResolver("context", ["session.started"], () =>
+      defineInstructions({ content: "Session.", role: "system" }),
+    );
+    const stepResolver = createResolver("context", ["step.started"], () =>
+      defineInstructions({ content: "Step." }),
+    );
+
+    await dispatchDynamicInstructionEvent({
+      ctx,
+      resolvers: [sessionResolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+
+    await dispatchDynamicInstructionEvent({
+      ctx,
+      resolvers: [stepResolver],
+      messages: [],
+      event: makeEvent("step.started"),
+    });
+
+    expect(buildDynamicInstructionMessages(ctx)).toEqual([{ role: "system", content: "Step." }]);
+  });
+
+  it("appends user-role instructions to the pending history boundary", async () => {
+    const ctx = createCtx();
+    const resolver = createResolver("profile", ["session.started"], () =>
+      defineInstructions({ content: "Persisted profile.", role: "user" }),
+    );
 
     await dispatchDynamicInstructionEvent({
       ctx,
       resolvers: [resolver],
       messages: [],
+      event: makeEvent("session.started"),
+    });
+
+    expect(buildDynamicInstructionMessages(ctx)).toEqual([]);
+    expect(takePendingDynamicInstructionMessages(ctx)).toEqual([
+      { role: "user", content: "Persisted profile." },
+    ]);
+    expect(takePendingDynamicInstructionMessages(ctx)).toEqual([]);
+  });
+
+  it("lets a turn-scoped user message replace same-slug session system instructions", async () => {
+    const ctx = createCtx();
+    const sessionResolver = createResolver("profile", ["session.started"], () =>
+      defineInstructions({ content: "Session system." }),
+    );
+    const turnResolver = createResolver("profile", ["turn.started"], () =>
+      defineInstructions({ content: "Turn user.", role: "user" }),
+    );
+
+    await dispatchDynamicInstructionEvent({
+      ctx,
+      resolvers: [sessionResolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    await dispatchDynamicInstructionEvent({
+      ctx,
+      resolvers: [turnResolver],
+      messages: [],
+      event: makeEvent("turn.started"),
+    });
+
+    expect(buildDynamicInstructionMessages(ctx)).toEqual([]);
+    expect(takePendingDynamicInstructionMessages(ctx)).toEqual([
+      { role: "user", content: "Turn user." },
+    ]);
+  });
+
+  it("lets a step-scoped user message suppress wider system instructions for its slug", async () => {
+    const ctx = createCtx();
+    const sessionResolver = createResolver("context", ["session.started"], () =>
+      defineInstructions({ content: "Session system." }),
+    );
+    const stepResolver = createResolver("context", ["step.started"], () =>
+      defineInstructions({ content: "Step user.", role: "user" }),
+    );
+
+    await dispatchDynamicInstructionEvent({
+      ctx,
+      resolvers: [sessionResolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    await dispatchDynamicInstructionEvent({
+      ctx,
+      resolvers: [stepResolver],
+      messages: [],
       event: makeEvent("step.started"),
     });
 
-    expect(handler).not.toHaveBeenCalled();
+    expect(buildDynamicInstructionMessages(ctx)).toEqual([]);
+    expect(takePendingDynamicInstructionMessages(ctx)).toEqual([
+      { role: "user", content: "Step user." },
+    ]);
   });
 
   it("ignores events outside the allowed set", async () => {

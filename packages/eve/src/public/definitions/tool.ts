@@ -262,18 +262,16 @@ export function defineTool<TInput = unknown, TOutput = unknown>(
  *   `Record<string, defineTool(...)>`, or `null`.
  * - `agent/skills/`: return a single `defineSkill(...)`, a
  *   `Record<string, defineSkill(...)>`, or `null`.
- * - `agent/instructions/`: return a single `defineInstructions({ markdown })`,
- *   which lowers to one `{ role: "system", content: markdown }` message,
- *   or `null`. (Maps are not meaningful here.)
+ * - `agent/instructions/`: return a single
+ *   `defineInstructions({ content, role? })` or `null`. (Maps are not
+ *   meaningful here.)
  * - `agent/subagents/<name>/agent.ts`: return `defineAgent(...)` to configure
  *   and expose the subagent, or `null` to omit it.
  *
  * Per-slot events: tools resolvers run at `session.started`,
- * `turn.started`, and `step.started`. Instructions and skills resolvers
- * contribute to the system prompt, so for cache stability they run only
- * at `session.started` and `turn.started`; the runtime never invokes a
- * handler keyed on `step.started` in those slots.
- * Dynamic subagents run at `session.started` and `turn.started` only.
+ * `turn.started`, and `step.started`. Instructions use those same events.
+ * Skills and dynamic subagents run at `session.started` and `turn.started`
+ * only.
  *
  * ```ts
  * import { defineDynamic, defineTool } from "eve/tools";

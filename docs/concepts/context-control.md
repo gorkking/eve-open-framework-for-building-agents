@@ -22,7 +22,7 @@ Use instructions for stable behavior that should apply throughout a session, suc
 
 ### Compose instructions in TypeScript with `instructions.ts`
 
-Use `instructions.ts` when you need typed helpers or build-time composition. See [Instructions](../instructions) for both formats, directory composition, and runtime resolution.
+Use `instructions.ts` when you need typed helpers or build-time composition. Module-backed instructions run once at build time, and eve captures the content and role in the compiled manifest. The default `system` role stays outside history; use `role: "user"` for persisted facts that should be seeded once into each new session and then follow ordinary compaction and clear behavior. See [Instructions](../instructions) for both formats, directory composition, and runtime resolution.
 
 ## Load procedures on demand with `skills/`
 
@@ -50,7 +50,7 @@ See [Subagents](../subagents) for the distinction between root-agent copies and 
 
 ## Dynamic context with `defineDynamic`
 
-Use `defineDynamic` when instructions, skills, tools, subagents, or the model depend on the active principal, tenant, channel, or feature state. Dynamic resolvers can read session auth and channel metadata before returning the capabilities available to that session.
+Use `defineDynamic` when instructions, skills, tools, subagents, or the model depend on the active principal, tenant, channel, or feature state. Dynamic resolvers receive the shared callback context, including `ctx.session`, `ctx.agent`, `ctx.channel`, `ctx.messages`, and `ctx.abortSignal`. Dynamic instructions can return scoped system instructions or append user-role history.
 
 See [Dynamic capabilities](../guides/dynamic-capabilities) for the resolver API, supported slots, and execution order.
 

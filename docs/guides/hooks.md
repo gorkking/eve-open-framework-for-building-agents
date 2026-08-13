@@ -35,10 +35,20 @@ helpers documented in [Session context](./session-context):
 
 ```ts
 interface HookContext extends SessionContext {
+  readonly abortSignal: AbortSignal;
   readonly agent: { readonly name: string; readonly nodeId?: string };
-  readonly channel: { readonly kind?: string; readonly continuationToken?: string };
+  readonly channel: {
+    readonly kind?: string;
+    readonly continuationToken?: string;
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  };
+  readonly messages: readonly ModelMessage[];
 }
 ```
+
+`ctx.messages` is the exact durable model-history snapshot for the event.
+System-role instructions are passed to the model separately and do not appear
+in this array. `ctx.abortSignal` aborts with the active turn.
 
 That means a hook can access the current sandbox and release its backing
 compute at an application-defined boundary:

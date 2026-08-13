@@ -54,7 +54,8 @@ export function buildApplicationInfoJson(inspection: ApplicationInspection): App
         }
       : null,
     model: compiledState?.manifest.config.model?.id ?? null,
-    instructions: compiledState?.manifest.instructions?.logicalPath ?? null,
+    instructions:
+      compiledState?.manifest.instructions?.map((entry) => entry.logicalPath).join(", ") ?? null,
     skills: (compiledState?.manifest.skills ?? []).map((skill) => skill.name),
     tools: (compiledState?.manifest.tools ?? []).map((tool) => tool.name),
     subagents: (compiledState?.manifest.subagents ?? []).map((subagent) => subagent.name),
@@ -171,7 +172,9 @@ export async function printApplicationInfo(
       },
       {
         label: "Instructions",
-        value: compiledState.manifest.instructions?.logicalPath ?? "none",
+        value:
+          compiledState.manifest.instructions?.map((entry) => entry.logicalPath).join(", ") ??
+          "none",
       },
       {
         label: "Skills",
@@ -220,7 +223,9 @@ export async function printApplicationInfo(
           }
         : {
             label: "Instructions",
-            value: compiledState.manifest.instructions.logicalPath,
+            value: compiledState.manifest.instructions
+              .map((entry) => `${entry.logicalPath} (${entry.role})`)
+              .join(", "),
           },
     );
   } else {

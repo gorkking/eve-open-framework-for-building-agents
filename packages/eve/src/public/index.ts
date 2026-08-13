@@ -19,7 +19,10 @@ export {
   defineAgent,
   defineDynamic,
 } from "#public/definitions/agent.js";
-export type { DynamicResolveContext, DynamicSentinel } from "#shared/dynamic-tool-definition.js";
+export type {
+  DynamicCapabilityResolveContext as DynamicResolveContext,
+  DynamicSentinel,
+} from "#shared/dynamic-tool-definition.js";
 export {
   type RemoteAgentDefinition,
   type RemoteAgentDefinitionInput,

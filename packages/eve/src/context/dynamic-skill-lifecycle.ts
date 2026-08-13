@@ -22,7 +22,7 @@ import {
   DynamicSkillManifestKey,
   SandboxKey,
 } from "#context/keys.js";
-import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import { buildDynamicCapabilityResolveContext } from "#context/dynamic-resolve-context.js";
 import { resolveSandboxSkillRoot } from "#shared/skill-paths.js";
 
 const log = createLogger("dynamic-skills");
@@ -107,6 +107,7 @@ export const PendingSkillAnnouncementKey = new ContextKey<string>("eve.pendingSk
  * tool-loop to inject.
  */
 export async function dispatchDynamicSkillEvent(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly resolvers: readonly ResolvedDynamicSkillResolver[];
   readonly event: UnstampedMessageStreamEvent;
@@ -132,7 +133,7 @@ export async function dispatchDynamicSkillEvent(input: {
   const matching = resolvers.filter((r) => r.eventNames.includes(event.type));
   if (matching.length === 0) return;
 
-  const resolveCtx = buildResolveContext(ctx, messages);
+  const resolveCtx = buildDynamicCapabilityResolveContext(ctx, messages, input.abortSignal);
   const manifest = ctx.get(DynamicSkillManifestKey) ?? {};
   const updates: DynamicSkillUpdate[] = [];
 

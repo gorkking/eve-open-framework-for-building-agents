@@ -10,7 +10,7 @@ function createResolvedAgentForTest(overrides: Partial<ResolvedAgent> = {}): Res
     config: { name: "test-agent" } as ResolvedAgent["config"],
     connections: [],
     disabledFrameworkTools: [],
-    instructions: { markdown: "" } as ResolvedAgent["instructions"],
+    instructions: [],
     skills: [],
     ...overrides,
   };
@@ -18,6 +18,36 @@ function createResolvedAgentForTest(overrides: Partial<ResolvedAgent> = {}): Res
 }
 
 describe("createResolvedRuntimeTurnAgent agent-messaging gating", () => {
+  it("separates user-role instructions from the system prompt", () => {
+    const turnAgent = createResolvedRuntimeTurnAgent({
+      agent: createResolvedAgentForTest({
+        instructions: [
+          {
+            content: "System policy.",
+            logicalPath: "instructions/policy.ts",
+            name: "policy",
+            role: "system",
+            sourceId: "instructions/policy.ts",
+            sourceKind: "module",
+          },
+          {
+            content: "Persisted profile.",
+            logicalPath: "instructions/profile.ts",
+            name: "profile",
+            role: "user",
+            sourceId: "instructions/profile.ts",
+            sourceKind: "module",
+          },
+        ],
+      }),
+      tools: [],
+    });
+
+    expect(turnAgent.instructions).toContain("Instructions (policy)\nSystem policy.");
+    expect(turnAgent.instructions.join("\n")).not.toContain("Persisted profile.");
+    expect(turnAgent.initialMessages).toEqual([{ content: "Persisted profile.", role: "user" }]);
+  });
+
   it("includes the messaging instruction for an opted-in root agent (framework agent tool)", () => {
     const turnAgent = createResolvedRuntimeTurnAgent({
       agent: createResolvedAgentForTest({

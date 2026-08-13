@@ -23,6 +23,12 @@ import {
   type DynamicToolEventName,
 } from "#shared/dynamic-tool-definition.js";
 
+const ALLOWED_DYNAMIC_TOOL_EVENT_NAMES: ReadonlySet<string> = new Set([
+  "session.started",
+  "turn.started",
+  "step.started",
+]);
+
 /**
  * Canonical normalized shape of one authored tool default export.
  *
@@ -61,9 +67,18 @@ type NormalizedToolEntry =
 export function normalizeToolDefinition(value: unknown, message: string): NormalizedToolEntry {
   if (isDynamicSentinel(value)) {
     assertResolverOnlyDynamicSentinel(value, message);
+    const eventNames = Object.keys(value.events);
+    const unsupported = eventNames.find(
+      (eventName) => !ALLOWED_DYNAMIC_TOOL_EVENT_NAMES.has(eventName),
+    );
+    if (unsupported !== undefined) {
+      throw new Error(
+        `${message} Dynamic tools support only "session.started", "turn.started", and "step.started" handlers; received "${unsupported}".`,
+      );
+    }
     return {
       kind: "dynamic-tool",
-      eventNames: Object.keys(value.events) as DynamicToolEventName[],
+      eventNames: eventNames as DynamicToolEventName[],
     };
   }
   if (isDisabledToolSentinel(value)) {

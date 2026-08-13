@@ -72,9 +72,10 @@ export default defineAgent({
 ```
 
 Handlers receive the shared [dynamic resolver
-context](./guides/dynamic-capabilities) (`ctx.session`, `ctx.channel`,
-`ctx.messages`) and return a gateway model id, an AI SDK `LanguageModel`, a
-selection object. Returning `null` or `undefined` fails the turn.
+context](./guides/dynamic-capabilities) (`ctx.session`, `ctx.agent`,
+`ctx.channel`, `ctx.messages`, `ctx.abortSignal`) and return a gateway model
+id, an AI SDK `LanguageModel`, or a selection object. Returning `null` or
+`undefined` fails the turn.
 
 - **Scopes.** `session.started` (once per session), `turn.started` (once per
   turn), `step.started` (every model step). Precedence: step > turn >

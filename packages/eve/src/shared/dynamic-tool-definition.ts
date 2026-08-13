@@ -8,7 +8,8 @@ import type {
 import type { Approval } from "#public/definitions/approval.js";
 import type { ToolContext } from "#public/definitions/tool.js";
 import type { SessionAuth } from "#context/keys.js";
-import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
+import type { MessageStreamEvent, UnstampedMessageStreamEvent } from "#protocol/message.js";
+import type { SessionContext } from "#public/definitions/callback-context.js";
 
 /**
  * Stream event types allowed for dynamic tool resolvers. Dispatch
@@ -27,13 +28,11 @@ export const ALLOWED_DYNAMIC_TOOL_EVENTS: ReadonlySet<string> = new Set<DynamicT
 ]);
 
 /**
- * Instructions and skills are restricted to session/turn boundaries.
- * They feed the system prompt, the most cache-sensitive position in the
- * wire format; keeping them stable across steps within a turn maximizes
- * cache hits.
+ * Instructions may also resolve at a model step. Authors who return changing
+ * system-role content at that boundary explicitly accept the cache cost.
  */
 export const ALLOWED_DYNAMIC_INSTRUCTION_EVENTS: ReadonlySet<string> =
-  new Set<DynamicToolEventName>(["session.started", "turn.started"]);
+  new Set<DynamicToolEventName>(["session.started", "turn.started", "step.started"]);
 
 export const ALLOWED_DYNAMIC_SKILL_EVENTS: ReadonlySet<string> = new Set<DynamicToolEventName>([
   "session.started",
@@ -41,16 +40,42 @@ export const ALLOWED_DYNAMIC_SKILL_EVENTS: ReadonlySet<string> = new Set<Dynamic
 ]);
 
 /**
- * Context passed to a dynamic resolver's event handler (tools and skills).
+ * Context passed to a dynamic model resolver's event handler.
  *
- * Exposes read-only session identity, auth, and channel metadata. State
- * is not exposed here; resolvers read it through `defineState` handles or
- * the session context inside tool `execute` functions.
+ * Preserved separately from the richer dynamic capability context so model
+ * selection keeps its existing public contract.
  */
 export interface DynamicResolveContext {
   readonly session: {
     readonly id: string;
     readonly auth: SessionAuth;
+  };
+  /** Channel metadata for the request that triggered this resolve. */
+  readonly channel: {
+    /** Channel type that produced the request (e.g. `"slack"`, `"http"`), when known. */
+    readonly kind?: string;
+    /** Channel-owned resume handle for the conversation, when the channel supplies one. */
+    readonly continuationToken?: string;
+    /** Free-form channel-specific metadata attached to the request. */
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  };
+  /** Conversation history visible at this resolve point, oldest first. */
+  readonly messages: readonly ModelMessage[];
+}
+
+/** Context shared by dynamic tools, skills, instructions, and subagents. */
+export interface DynamicCapabilityResolveContext extends SessionContext {
+  /** Aborts when the active turn is cancelled. */
+  readonly abortSignal: AbortSignal;
+  readonly agent: {
+    readonly name: string;
+    readonly nodeId?: string;
+  };
+  readonly session: {
+    readonly id: string;
+    readonly auth: SessionAuth;
+    readonly parent?: SessionContext["session"]["parent"];
+    readonly turn: { readonly id: string; readonly sequence: number };
   };
   /** Channel metadata for the request that triggered this resolve. */
   readonly channel: {
@@ -124,21 +149,21 @@ export type DynamicToolResult = DynamicToolEntry<any, any> | DynamicToolSet | nu
  */
 export type DynamicToolEvents = {
   readonly [K in DynamicToolEventName]?: (
-    event: unknown,
-    ctx: DynamicResolveContext,
+    event: Extract<MessageStreamEvent, { type: K }>,
+    ctx: DynamicCapabilityResolveContext,
   ) => DynamicToolResult | Promise<DynamicToolResult>;
 };
 
 /**
- * Base event handler map accepted by `defineDynamic`. Intentionally
- * wide so it accepts both tool-returning and skill-returning handlers:
- * the slot directory (tools/ vs skills/) determines the required return,
- * validated at runtime by the respective resolver.
+ * Event handler map used by slot-specific `defineDynamic` wrappers.
  */
-export type DynamicEvents<TResult = unknown> = {
-  readonly [K in DynamicToolEventName]?: (
-    event: unknown,
-    ctx: DynamicResolveContext,
+export type DynamicEvents<
+  TResult = unknown,
+  TEventName extends UnstampedMessageStreamEvent["type"] = DynamicToolEventName,
+> = {
+  readonly [K in TEventName]?: (
+    event: Extract<MessageStreamEvent, { type: K }>,
+    ctx: DynamicCapabilityResolveContext,
   ) => TResult | Promise<TResult>;
 };
 
@@ -151,9 +176,17 @@ export const DYNAMIC_SENTINEL_KIND = "eve:dynamic" as const;
  * Return value of `defineDynamic`: the runtime shape of a dynamic export,
  * stamped with a sentinel kind the compiler/normalizer detects.
  */
-export type DynamicSentinel<TResult = unknown> = {
+export type DynamicSentinel<
+  TResult = unknown,
+  TEventName extends UnstampedMessageStreamEvent["type"] = DynamicToolEventName,
+> = {
   readonly kind: typeof DYNAMIC_SENTINEL_KIND;
-  readonly events: DynamicEvents<TResult>;
+  readonly events: {
+    readonly [K in TEventName]?: (
+      event: unknown,
+      ctx: DynamicResolveContext,
+    ) => TResult | Promise<TResult>;
+  };
 };
 
 export function assertResolverOnlyDynamicSentinel(

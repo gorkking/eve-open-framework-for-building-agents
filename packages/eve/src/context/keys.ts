@@ -4,7 +4,7 @@
  * `#runtime/sessions/runtime-context-keys.ts`.
  */
 
-import type { LanguageModel, SystemModelMessage } from "ai";
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 
 import type { JsonObject } from "#shared/json.js";
 import type {
@@ -266,3 +266,13 @@ export const SessionDynamicInstructionsKey = new ContextKey<
 export const TurnDynamicInstructionsKey = new ContextKey<
   Record<string, readonly SystemModelMessage[]>
 >("eve.turnDynamicInstructions");
+
+/** Step-local system instruction overrides keyed by resolver slug. */
+export const LiveStepDynamicInstructionsKey = new ContextKey<
+  Record<string, readonly SystemModelMessage[] | null>
+>("eve.liveStepDynamicInstructions");
+
+/** User-role instruction results waiting for the next history boundary. */
+export const PendingDynamicInstructionMessagesKey = new ContextKey<readonly ModelMessage[]>(
+  "eve.pendingDynamicInstructionMessages",
+);

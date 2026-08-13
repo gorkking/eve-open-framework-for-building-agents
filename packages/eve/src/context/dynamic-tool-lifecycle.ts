@@ -30,7 +30,7 @@ import {
   LiveStepToolsKey,
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
-import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import { buildDynamicCapabilityResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 
 const log = createLogger("dynamic-tools");
@@ -236,13 +236,14 @@ async function resolveToolsFromEvent(
   resolvers: readonly ResolvedDynamicToolResolver[],
   event: UnstampedMessageStreamEvent,
   messages: readonly ModelMessage[],
+  abortSignal?: AbortSignal,
 ): Promise<ResolveResult> {
   const outcomes = await Promise.allSettled(
     resolvers.map(async (resolver) => {
       const handler = resolver.events[event.type];
       if (handler === undefined) return null;
 
-      const resolveCtx = buildResolveContext(ctx, messages);
+      const resolveCtx = buildDynamicCapabilityResolveContext(ctx, messages, abortSignal);
       const rawResult = await handler(event, resolveCtx);
       if (rawResult === null || rawResult === undefined) return null;
       const { entries, isSingle } = readDynamicToolResult(resolver, rawResult);
@@ -368,6 +369,7 @@ const resolvedStepTools = new WeakMap<
  */
 /** Resolves step-scoped tools once for one internal policy/model pass. */
 export async function resolveStepDynamicTools(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly resolvers: readonly ResolvedDynamicToolResolver[];
   readonly event: UnstampedMessageStreamEvent;
@@ -392,7 +394,13 @@ export async function resolveStepDynamicTools(input: {
   const { liveTools } =
     matching.length === 0
       ? { liveTools: [] }
-      : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
+      : await resolveToolsFromEvent(
+          input.ctx,
+          matching,
+          input.event,
+          input.messages,
+          input.abortSignal,
+        );
   input.ctx.setVirtualContext(LiveStepToolsKey, liveTools);
   if (coordinate !== undefined) {
     resolvedStepTools.set(input.ctx, { coordinate, tools: liveTools });
@@ -400,6 +408,7 @@ export async function resolveStepDynamicTools(input: {
 }
 
 export async function dispatchDynamicToolEvent(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly resolvers: readonly ResolvedDynamicToolResolver[];
   readonly event: UnstampedMessageStreamEvent;
@@ -422,7 +431,13 @@ export async function dispatchDynamicToolEvent(input: {
     return;
   }
 
-  const { metadata } = await resolveToolsFromEvent(ctx, matching, event, messages);
+  const { metadata } = await resolveToolsFromEvent(
+    ctx,
+    matching,
+    event,
+    messages,
+    input.abortSignal,
+  );
 
   // Session/turn: store durable metadata for cross-step replay via
   // the bundler's registered step functions.
@@ -446,6 +461,7 @@ export async function dispatchDynamicToolEvent(input: {
  * still observe exactly one `session.started` event for the session.
  */
 export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly resolvers: readonly ResolvedDynamicToolResolver[];
   readonly event: SessionStartedStreamEvent;
@@ -462,7 +478,13 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   const { metadata } =
     matching.length === 0
       ? { metadata: [] }
-      : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
+      : await resolveToolsFromEvent(
+          input.ctx,
+          matching,
+          input.event,
+          input.messages,
+          input.abortSignal,
+        );
 
   input.ctx.set(SessionDynamicToolMetadataKey, metadata);
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);

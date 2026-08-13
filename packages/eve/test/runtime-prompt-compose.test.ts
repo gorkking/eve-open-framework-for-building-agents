@@ -5,13 +5,16 @@ describe("composeRuntimeBasePrompt", () => {
   it("composes the authored instructions prompt into one runtime instruction block", () => {
     expect(
       composeRuntimeBasePrompt({
-        instructions: {
-          name: "instructions",
-          logicalPath: "instructions.md",
-          markdown: "You are a weather assistant.\n",
-          sourceId: "instructions.md",
-          sourceKind: "markdown",
-        },
+        instructions: [
+          {
+            content: "You are a weather assistant.\n",
+            name: "instructions",
+            logicalPath: "instructions.md",
+            role: "system",
+            sourceId: "instructions.md",
+            sourceKind: "markdown",
+          },
+        ],
       }),
     ).toEqual(["Instructions (instructions)\nYou are a weather assistant."]);
   });
@@ -32,15 +35,43 @@ describe("composeRuntimeBasePrompt", () => {
   it("drops the instructions block when the authored markdown normalizes to empty", () => {
     expect(
       composeRuntimeBasePrompt({
-        instructions: {
-          name: "instructions",
-          logicalPath: "instructions.md",
-          markdown: "   \n",
-          sourceId: "instructions.md",
-          sourceKind: "markdown",
-        },
+        instructions: [
+          {
+            content: "   \n",
+            name: "instructions",
+            logicalPath: "instructions.md",
+            role: "system",
+            sourceId: "instructions.md",
+            sourceKind: "markdown",
+          },
+        ],
       }),
     ).toEqual([]);
+  });
+
+  it("keeps user-role instructions out of the system prompt without changing its label", () => {
+    expect(
+      composeRuntimeBasePrompt({
+        instructions: [
+          {
+            content: "System policy.",
+            logicalPath: "instructions/policy.ts",
+            name: "policy",
+            role: "system",
+            sourceId: "instructions/policy.ts",
+            sourceKind: "module",
+          },
+          {
+            content: "Persisted profile.",
+            logicalPath: "instructions/profile.ts",
+            name: "profile",
+            role: "user",
+            sourceId: "instructions/profile.ts",
+            sourceKind: "module",
+          },
+        ],
+      }),
+    ).toEqual(["Instructions (policy)\nSystem policy."]);
   });
 
   it("adds a shallow workspace awareness section when authored project files are mounted", () => {

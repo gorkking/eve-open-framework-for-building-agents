@@ -11,7 +11,12 @@ import {
   ChannelKey,
   type CompiledBundle,
 } from "#runtime/sessions/runtime-context-keys.js";
-import { ContinuationTokenKey, SessionIdKey, SessionKey } from "./keys.js";
+import {
+  ChannelInstrumentationKey,
+  ContinuationTokenKey,
+  SessionIdKey,
+  SessionKey,
+} from "./keys.js";
 
 function createMockBundle(): CompiledBundle {
   return {
@@ -43,6 +48,10 @@ function buildCtx(): ContextContainer {
     turn: { id: "turn_0", sequence: 0 },
   });
   ctx.set(ContinuationTokenKey, "test:continuation");
+  ctx.set(ChannelInstrumentationKey, {
+    kind: "mock",
+    metadata: { tenantId: "tenant_test" },
+  });
   ctx.set(ChannelKey, { kind: "mock" } as never);
   ctx.set(BundleKey, createMockBundle());
   return ctx;
@@ -67,6 +76,7 @@ describe("dispatchStreamEventHooks", () => {
         events: {
           "session.completed": async (_event, hookContext) => {
             expect(hookContext.channel.continuationToken).toBe("test:continuation");
+            expect(hookContext.channel.metadata).toEqual({ tenantId: "tenant_test" });
             calls.push("typed");
           },
         },
@@ -83,9 +93,11 @@ describe("dispatchStreamEventHooks", () => {
 
     await contextStorage.run(ctx, () =>
       dispatchStreamEventHooks({
+        abortSignal: AbortSignal.any([]),
         ctx,
         registry,
         event: stampTestEvent({ type: "session.completed" }),
+        messages: [],
       }),
     );
     expect(calls).toEqual(["typed", "wildcard:session.completed"]);
@@ -102,9 +114,11 @@ describe("dispatchStreamEventHooks", () => {
     await expect(
       contextStorage.run(ctx, () =>
         dispatchStreamEventHooks({
+          abortSignal: AbortSignal.any([]),
           ctx,
           registry: brokenRegistry,
           event: stampTestEvent({ type: "session.completed" }),
+          messages: [],
         }),
       ),
     ).rejects.toThrow(/event hook boom/);

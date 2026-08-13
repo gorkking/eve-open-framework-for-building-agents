@@ -96,8 +96,10 @@ export async function settleCancelledTurnStep(input: {
           const stamped = stampMessageStreamEvent(transformed);
           await writer.write(encodeMessageStreamEvent(stamped));
           await dispatchStreamEventHooks({
+            abortSignal: AbortSignal.any([]),
             ctx,
             event: stamped,
+            messages: enrichedSession.history,
             registry: bundle.hookRegistry,
           });
         };

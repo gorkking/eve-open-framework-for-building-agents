@@ -11,17 +11,26 @@ import { createLogger } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
 import type { ContextContainer } from "#context/container.js";
 import type { ContextKey } from "#context/key.js";
-import { SessionDynamicInstructionsKey, TurnDynamicInstructionsKey } from "#context/keys.js";
-import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import {
+  LiveStepDynamicInstructionsKey,
+  PendingDynamicInstructionMessagesKey,
+  SessionDynamicInstructionsKey,
+  TurnDynamicInstructionsKey,
+} from "#context/keys.js";
+import { buildDynamicCapabilityResolveContext } from "#context/dynamic-resolve-context.js";
 
 const log = createLogger("dynamic-instructions");
 
 type SlugMessageMap = Record<string, readonly SystemModelMessage[]>;
+type StepSlugMessageMap = Record<string, readonly SystemModelMessage[] | null>;
 
-function lowerToSystemMessage(definition: InstructionsDefinition): SystemModelMessage | undefined {
-  const trimmed = definition.markdown.trim();
-  if (trimmed.length === 0) return undefined;
-  return { role: "system", content: trimmed };
+function normalizeDefinition(definition: InstructionsDefinition): {
+  readonly content: string;
+  readonly role: "system" | "user";
+} {
+  return "markdown" in definition
+    ? { content: definition.markdown!, role: "system" }
+    : { content: definition.content, role: definition.role ?? "system" };
 }
 
 function durableKeyForEvent(eventType: string): ContextKey<SlugMessageMap> | undefined {
@@ -35,27 +44,39 @@ function durableKeyForEvent(eventType: string): ContextKey<SlugMessageMap> | und
   }
 }
 
-/**
- * Builds the flattened system messages from session + turn durable keys.
- * Session-scoped entries appear first.
- */
+/** Builds effective system instructions with step > turn > session precedence per slug. */
 export function buildDynamicInstructionMessages(ctx: {
   get<T>(key: ContextKey<T>): T | undefined;
 }): SystemModelMessage[] {
   const session = ctx.get(SessionDynamicInstructionsKey) ?? {};
   const turn = ctx.get(TurnDynamicInstructionsKey) ?? {};
-  return [...Object.values(session).flat(), ...Object.values(turn).flat()];
+  const step = ctx.get(LiveStepDynamicInstructionsKey) ?? {};
+  const slugs = new Set([...Object.keys(session), ...Object.keys(turn), ...Object.keys(step)]);
+  const messages: SystemModelMessage[] = [];
+
+  for (const slug of slugs) {
+    if (Object.hasOwn(step, slug)) {
+      messages.push(...(step[slug] ?? []));
+    } else if (Object.hasOwn(turn, slug)) {
+      messages.push(...(turn[slug] ?? []));
+    } else {
+      messages.push(...(session[slug] ?? []));
+    }
+  }
+
+  return messages;
 }
 
-/**
- * Dispatches a stream event to dynamic instruction resolvers.
- *
- * Each resolver's output replaces its own slot (keyed by slug) in the
- * scope-appropriate durable key (session or turn). The tool-loop calls
- * {@link buildDynamicInstructionMessages} to assemble the flattened
- * result for the model call.
- */
+/** Takes user-role instructions produced since the previous history boundary. */
+export function takePendingDynamicInstructionMessages(ctx: ContextContainer): ModelMessage[] {
+  const messages = [...(ctx.get(PendingDynamicInstructionMessagesKey) ?? [])];
+  ctx.setVirtualContext(PendingDynamicInstructionMessagesKey, []);
+  return messages;
+}
+
+/** Dispatches one lifecycle event to matching dynamic instruction resolvers. */
 export async function dispatchDynamicInstructionEvent(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly resolvers: readonly ResolvedDynamicInstructionsResolver[];
   readonly event: UnstampedMessageStreamEvent;
@@ -65,21 +86,17 @@ export async function dispatchDynamicInstructionEvent(input: {
 
   if (!ALLOWED_DYNAMIC_INSTRUCTION_EVENTS.has(event.type)) return;
 
-  const matching = resolvers.filter((r) => r.eventNames.includes(event.type));
+  const matching = resolvers.filter((resolver) => resolver.eventNames.includes(event.type));
   if (matching.length === 0) return;
 
-  const durableKey = durableKeyForEvent(event.type);
-  if (durableKey === undefined) return;
-
-  const resolveCtx = buildResolveContext(ctx, messages);
-
+  const resolveCtx = buildDynamicCapabilityResolveContext(ctx, messages, input.abortSignal);
   const outcomes = await Promise.allSettled(
     matching.map(async (resolver) => {
       const handler = resolver.events[event.type];
       if (handler === undefined) return null;
 
       const rawResult = await handler(event, resolveCtx);
-      if (rawResult === null || rawResult === undefined) return { resolver, message: undefined };
+      if (rawResult === null || rawResult === undefined) return { resolver, result: null };
 
       if (!isBrandedInstructionsEntry(rawResult)) {
         log.error(
@@ -88,11 +105,20 @@ export async function dispatchDynamicInstructionEvent(input: {
         return null;
       }
 
-      return { resolver, message: lowerToSystemMessage(rawResult as InstructionsDefinition) };
+      return { resolver, result: normalizeDefinition(rawResult as InstructionsDefinition) };
     }),
   );
 
-  const durable = { ...ctx.get(durableKey) };
+  const durableKey = durableKeyForEvent(event.type);
+  const system: SlugMessageMap | StepSlugMessageMap =
+    event.type === "step.started"
+      ? { ...ctx.get(LiveStepDynamicInstructionsKey) }
+      : durableKey === undefined
+        ? {}
+        : { ...ctx.get(durableKey) };
+  const pending = [...(ctx.get(PendingDynamicInstructionMessagesKey) ?? [])];
+
+  for (const resolver of matching) delete system[resolver.slug];
 
   for (const outcome of outcomes) {
     if (outcome.status === "rejected") {
@@ -103,13 +129,24 @@ export async function dispatchDynamicInstructionEvent(input: {
     }
     if (outcome.value === null) continue;
 
-    const { resolver, message } = outcome.value;
-    if (message !== undefined) {
-      durable[resolver.slug] = [message];
+    const { resolver, result } = outcome.value;
+    if (result === null || result.content.trim().length === 0) {
+      if (event.type === "step.started") system[resolver.slug] = null;
+      continue;
+    }
+
+    if (result.role === "system") {
+      system[resolver.slug] = [{ role: "system", content: result.content.trim() }];
     } else {
-      delete durable[resolver.slug];
+      pending.push({ role: "user", content: result.content.trim() });
+      system[resolver.slug] = event.type === "step.started" ? null : [];
     }
   }
 
-  ctx.set(durableKey, durable);
+  if (event.type === "step.started") {
+    ctx.setVirtualContext(LiveStepDynamicInstructionsKey, system as StepSlugMessageMap);
+  } else if (durableKey !== undefined) {
+    ctx.set(durableKey, system as SlugMessageMap);
+  }
+  ctx.setVirtualContext(PendingDynamicInstructionMessagesKey, pending);
 }

@@ -10,13 +10,15 @@ import {
 } from "#harness/authorization.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import type { ToolContext } from "#public/definitions/tool.js";
+import { createStepStartedEvent } from "#protocol/message.js";
+import { stampTestEvent } from "#internal/testing/events.js";
 import type { ConnectionRegistry, ConnectionToolMetadata } from "#runtime/connections/types.js";
 import { extractDiscoveredTools } from "#runtime/framework-tools/connection-search-dynamic.js";
 import { getFrameworkDynamicToolResolvers } from "#runtime/framework-tools/index.js";
 import type { ResolvedConnectionDefinition } from "#runtime/types.js";
 import {
   isBrandedToolEntry,
-  type DynamicResolveContext,
+  type DynamicCapabilityResolveContext,
   type DynamicToolSet,
 } from "#shared/dynamic-tool-definition.js";
 
@@ -46,11 +48,33 @@ async function executeConnectionSearch(
 
   return contextStorage.run(ctx, async () => {
     const resolve = getConnectionSearchResolver().events["step.started"]!;
-    const resolved = (await resolve({}, {
-      channel: {},
-      messages: [],
-      session: { auth: { current: null, initiator: null }, id: "test-session" },
-    } satisfies DynamicResolveContext)) as DynamicToolSet;
+    const resolved = (await resolve(
+      stampTestEvent(
+        createStepStartedEvent({
+          modelId: "openai/gpt-5.5",
+          sequence: 0,
+          stepIndex: 0,
+          turnId: "turn_0",
+        }),
+      ),
+      {
+        abortSignal: AbortSignal.any([]),
+        agent: { name: "test-agent" },
+        channel: {},
+        getSandbox: async () => {
+          throw new Error("No sandbox in this test.");
+        },
+        getSkill: () => {
+          throw new Error("No skills in this test.");
+        },
+        messages: [],
+        session: {
+          auth: { current: null, initiator: null },
+          id: "test-session",
+          turn: { id: "turn_0", sequence: 0 },
+        },
+      } satisfies DynamicCapabilityResolveContext,
+    )) as DynamicToolSet;
 
     return resolved["connection_search"]!.execute(input, {} as ToolContext);
   });

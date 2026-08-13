@@ -128,6 +128,25 @@ describe("createSession", () => {
     expect(session.continuationToken).toBe("root-token");
   });
 
+  it("seeds static user-role instructions once when the session is created", () => {
+    const initialMessages = [{ content: "Persisted profile.", role: "user" as const }];
+    const session = createSession({
+      continuationToken: "root-token",
+      sessionId: "sess-root",
+      turnAgent: createTestTurnAgent({ initialMessages }),
+    });
+
+    expect(session.history).toEqual(initialMessages);
+
+    const refreshed = refreshSessionFromTurnAgent({
+      session,
+      turnAgent: createTestTurnAgent({
+        initialMessages: [{ content: "New deployment profile.", role: "user" }],
+      }),
+    });
+    expect(refreshed.history).toEqual(initialMessages);
+  });
+
   it("defaults description and inputSchema when null", () => {
     const session = createSession({
       continuationToken: "root-token",
@@ -263,6 +282,23 @@ describe("createSession", () => {
     });
 
     expect(hydrated.limits).toBeUndefined();
+  });
+
+  it("does not reseed static user-role instructions while hydrating", () => {
+    const history = [{ content: "Existing conversation.", role: "user" as const }];
+    const hydrated = hydrateDurableSession({
+      durable: {
+        agent: { system: "You are a helpful assistant." },
+        continuationToken: "root-token",
+        history,
+        sessionId: "sess-root",
+      },
+      turnAgent: createTestTurnAgent({
+        initialMessages: [{ content: "Persisted profile.", role: "user" }],
+      }),
+    });
+
+    expect(hydrated.history).toEqual(history);
   });
 
   it("rehydrates persisted limits verbatim without re-applying defaults", () => {

@@ -21,6 +21,30 @@ resolver first selects a model, eve normalizes the selection and resolves any
 omitted context-window metadata from the AI Gateway catalog. Dynamic tools,
 skills, instructions, and subagents may return `null` to omit a capability.
 
+## Resolver context
+
+Dynamic capability handlers for tools, skills, instructions, and subagents
+receive their configured lifecycle event and the same callback context shape:
+
+```ts
+interface DynamicResolveContext extends SessionContext {
+  readonly abortSignal: AbortSignal;
+  readonly agent: { readonly name: string; readonly nodeId?: string };
+  readonly channel: {
+    readonly kind?: string;
+    readonly continuationToken?: string;
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  };
+  readonly messages: readonly ModelMessage[];
+}
+```
+
+`ctx.messages` is the durable model-history snapshot at that exact event
+boundary. It excludes system-role instructions because those are passed to the
+model separately. `ctx.abortSignal` aborts with the active turn. The inherited
+`SessionContext` supplies session identity, auth, turn metadata, sandbox access,
+and skill access.
+
 ## Dynamic subagents
 
 Wrap a declared subagent's own `agent.ts` in `defineDynamic` when its
@@ -153,7 +177,7 @@ When a stream event fires, three things happen in order.
 
 1. The channel adapter handler runs and the event is written to the durable stream.
 2. Stream-event [hooks](./hooks) fire.
-3. Dynamic tool resolvers subscribed to that event run and update the tool set.
+3. Matching dynamic resolvers run and update their scoped capabilities.
 
 The tool loop reads the current set right before each model call, so a mid-turn update is visible on the next call.
 
@@ -212,7 +236,7 @@ Skills follow the same naming rule as tools: a single `defineSkill(...)` is name
 
 ## Dynamic instructions
 
-A dynamic instructions file resolves the per-session system prompt the same way, returning `defineInstructions(...)` built from the principal, tenant, or external data:
+A dynamic instructions file resolves scoped model context by returning `defineInstructions(...)` from a `session.started`, `turn.started`, or `step.started` handler:
 
 ```ts title="agent/instructions/persona.ts"
 import { defineDynamic, defineInstructions } from "eve/instructions";
@@ -222,14 +246,37 @@ export default defineDynamic({
     "session.started": (_event, ctx) => {
       const plan = ctx.session.auth.current?.attributes.plan ?? "free";
       return defineInstructions({
-        markdown: `The caller is on the ${plan} plan. Match the depth of your answers to it.`,
+        content: `The caller is on the ${plan} plan. Match the depth of your answers to it.`,
       });
     },
   },
 });
 ```
 
-Both resolve before the prompt is assembled, so the model sees the right instructions and skill set for whoever is calling, without that context reaching anyone else.
+The default `system` role stays outside history. Session and turn results are durable across workflow steps, while a step result applies only to that model call. For the same file slug, step shadows turn and turn shadows session.
+
+Use `role: "user"` for append-only context that should behave like persisted conversation history:
+
+```ts title="agent/instructions/memory.ts"
+import { defineDynamic, defineInstructions } from "eve/instructions";
+
+export default defineDynamic({
+  events: {
+    "turn.started": async (_event, ctx) =>
+      defineInstructions({
+        content: JSON.stringify(await loadMemories(ctx.session.id)),
+        role: "user",
+      }),
+  },
+});
+```
+
+eve appends one user message when the matching event is accepted. From then on
+it is ordinary durable history: compaction may summarize it and a manual clear
+removes it. A `session.started` handler runs only when the session is first
+created, so its user-role result is not reinserted on hydration or deployment
+refresh. Append-only placement preserves the previous prompt prefix but does
+not guarantee a provider cache hit.
 
 ## What to read next
 

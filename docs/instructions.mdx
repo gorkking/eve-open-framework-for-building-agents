@@ -1,9 +1,9 @@
 ---
 title: "Instructions"
-description: "Author the agent's always-on system prompt with instructions.md or instructions.ts."
+description: "Add stable system instructions or durable user-role context with instructions.md or instructions.ts."
 ---
 
-Instructions are the always-on system prompt, the agent's permanent identity rather than a procedure it pulls in when the moment calls for it. Use them for anything that should hold on every turn, such as a rule, a persona, or a constraint. eve prepends the instructions to every model call in the session.
+Instructions add authored context to the model. System-role instructions form the agent's always-on identity; user-role instructions seed durable session history. Use system-role content for trusted standing rules and user-role content for persisted facts that should remain ordinary conversation context.
 
 ## Author instructions
 
@@ -24,11 +24,34 @@ import { defineInstructions } from "eve/instructions";
 import { buildInstructionsPrompt } from "./lib/prompts";
 
 export default defineInstructions({
-  markdown: buildInstructionsPrompt(),
+  content: buildInstructionsPrompt(),
 });
 ```
 
-`defineInstructions` takes one field, `markdown`, the resolved prompt text. A module-backed prompt runs once at build time. eve captures the resulting markdown into the compiled manifest, so the runtime serves the same prompt every session and never re-runs the module.
+`defineInstructions` takes `content` and an optional `role`, which defaults to `"system"`. A module-backed definition runs once at build time. eve captures the result in the compiled manifest, so the runtime never re-runs the module. The older `{ markdown: string }` object shape is deprecated; it remains equivalent to `{ content, role: "system" }` while you migrate.
+
+## Choose a role
+
+Markdown files always produce system-role instructions. Use a TypeScript module when you need user-role context:
+
+```ts title="agent/instructions/profile.ts"
+import { defineInstructions } from "eve/instructions";
+import { persistedProfile } from "../lib/profile";
+
+export default defineInstructions({
+  content: JSON.stringify(persistedProfile),
+  role: "user",
+});
+```
+
+The two roles have different lifetimes:
+
+| Role     | Where it lives                                      | Compaction and clear behavior                                                                                  |
+| -------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `system` | Outside model history, in the session system prompt | Re-applied after compaction or a manual clear; a deployment refresh can update it                              |
+| `user`   | Ordinary durable model history                      | Seeded once when the session is created; compaction can summarize it and a manual clear removes it permanently |
+
+User-role instructions are never re-seeded when eve hydrates an existing session or refreshes it after a deployment. Because they append without rewriting the earlier prompt, they preserve the existing cache prefix. That does not guarantee a cache hit: the provider, selected model, cache policy, and any system-prompt change still determine whether the cache is reusable.
 
 ## Split instructions across a directory
 
@@ -40,10 +63,11 @@ A flat `agent/instructions.md` (or `.ts`) at the agent root and the directory ca
 
 Instructions and [skills](./skills) both feed text into the model's context. The difference is timing:
 
-|                           | Loaded                                       | Use for                                              |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------------- |
-| `instructions.md` / `.ts` | Always on, every turn                        | Permanent identity and standing rules                |
-| `agent/skills/*`          | On demand, when the model calls `load_skill` | Optional procedures that should not bloat every turn |
+|                          | Loaded                                       | Use for                                              |
+| ------------------------ | -------------------------------------------- | ---------------------------------------------------- |
+| system-role instructions | Always on, every turn                        | Permanent identity and standing rules                |
+| user-role instructions   | Seeded into durable history once             | Persisted facts that may be compacted or cleared     |
+| `agent/skills/*`         | On demand, when the model calls `load_skill` | Optional procedures that should not bloat every turn |
 
 Keep instructions short and stable. Long or situational procedures belong in [skills](./skills), where they only enter context when the request calls for them.
 
@@ -51,7 +75,7 @@ Instructions never run code. When you need typed executable behavior, reach for 
 
 ## Dynamic instructions
 
-To resolve the prompt at runtime from session context (auth, tenant, or channel), wrap `defineInstructions` in a `defineDynamic` resolver. See [Dynamic capabilities](./guides/dynamic-capabilities).
+To resolve instructions at runtime from session context (auth, tenant, or channel), wrap `defineInstructions` in a `defineDynamic` resolver. Dynamic definitions may run at `session.started`, `turn.started`, or `step.started`. A system-role result applies outside history at that scope; a user-role result appends one ordinary user message at the corresponding history boundary. See [Dynamic capabilities](./guides/dynamic-capabilities).
 
 ## Disclaimer
 

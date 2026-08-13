@@ -136,19 +136,20 @@ export async function resolveAgent(input: ResolveAgentInput): Promise<ResolvedAg
 }
 
 function createResolvedInstructionsDefinition(
-  instructions: CompiledInstructionsDefinition | undefined,
-): ResolvedInstructionsDefinition | undefined {
+  instructions: readonly CompiledInstructionsDefinition[] | undefined,
+): readonly ResolvedInstructionsDefinition[] | undefined {
   if (instructions === undefined) {
     return undefined;
   }
 
-  return {
-    name: instructions.name,
-    logicalPath: instructions.logicalPath,
-    markdown: instructions.markdown,
-    sourceId: instructions.sourceId,
-    sourceKind: instructions.sourceKind,
-  };
+  return instructions.map((entry) => ({
+    content: entry.content,
+    name: entry.name,
+    logicalPath: entry.logicalPath,
+    role: entry.role,
+    sourceId: entry.sourceId,
+    sourceKind: entry.sourceKind,
+  }));
 }
 
 function createResolvedAgentConfig(

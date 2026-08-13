@@ -20,7 +20,7 @@ const AGENT_INFO: AgentInfoResult = {
   connections: [],
   diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
   hooks: [],
-  instructions: { dynamic: [], static: null },
+  instructions: { dynamic: [], static: [] },
   kind: "eve-agent-info",
   mode: "development",
   sandbox: null,
@@ -35,7 +35,7 @@ const AGENT_INFO: AgentInfoResult = {
     framework: [],
     reserved: [],
   },
-  version: 1,
+  version: 2,
   workflow: { enabled: false, toolName: "Workflow" },
   workspace: { resourceRoot: null, rootEntries: [] },
 };
@@ -234,7 +234,7 @@ describe("Client request policy", () => {
 
   it("rejects a non-Eve response from the agent info route", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ kind: "eve-agent-info", version: 1 }),
+      Response.json({ kind: "eve-agent-info", version: 2 }),
     );
     const client = new Client({ host: "https://eve.test" });
 
@@ -252,7 +252,7 @@ describe("Client request policy", () => {
         },
         diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
         kind: "eve-agent-info",
-        version: 1,
+        version: 2,
       }),
     );
     const client = new Client({ host: "https://eve.test" });
@@ -271,7 +271,7 @@ describe("Client request policy", () => {
         },
         diagnostics: { discoveryErrors: 0, discoveryWarnings: 0 },
         kind: "eve-agent-info",
-        version: 1,
+        version: 2,
       }),
     );
     const client = new Client({ host: "https://eve.test" });

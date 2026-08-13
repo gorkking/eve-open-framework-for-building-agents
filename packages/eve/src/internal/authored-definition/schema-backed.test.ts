@@ -303,4 +303,16 @@ describe("normalizeToolDefinition", () => {
     if (entry.kind !== "dynamic-tool") throw new Error("expected dynamic-tool");
     expect(entry.eventNames).toEqual(expect.arrayContaining(["session.started", "step.started"]));
   });
+
+  it("rejects unsupported dynamic tool events", () => {
+    expect(() =>
+      normalizeToolDefinition(
+        {
+          events: { "message.completed": () => ({}) },
+          kind: "eve:dynamic",
+        },
+        FAILURE_MESSAGE,
+      ),
+    ).toThrow('received "message.completed"');
+  });
 });

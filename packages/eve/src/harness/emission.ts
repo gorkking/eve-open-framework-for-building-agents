@@ -217,18 +217,20 @@ export async function emitTurnEpilogue(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
   mode: RunMode,
+  messages?: readonly ModelMessage[],
 ): Promise<HarnessEmissionState> {
   await emitFn(
     createTurnCompletedEvent({
       sequence: state.sequence,
       turnId: state.turnId,
     }),
+    messages,
   );
 
   if (mode === "conversation") {
-    await emitFn(createSessionWaitingEvent());
+    await emitFn(createSessionWaitingEvent(), messages);
   } else {
-    await emitFn(createSessionCompletedEvent());
+    await emitFn(createSessionCompletedEvent(), messages);
   }
 
   return {

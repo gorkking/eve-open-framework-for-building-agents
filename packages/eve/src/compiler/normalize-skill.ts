@@ -12,6 +12,7 @@ import {
   type ModuleBackedDefinitionLoadOptions,
 } from "#compiler/normalize-helpers.js";
 import {
+  ALLOWED_DYNAMIC_SKILL_EVENTS,
   assertResolverOnlyDynamicSentinel,
   isDynamicSentinel,
   type DynamicToolEventName,
@@ -80,11 +81,20 @@ export async function compileSkillSource(
       exportValue,
       `Expected the skill export "${source.exportName ?? "default"}" from "${source.logicalPath}" to match the public eve shape.`,
     );
+    const eventNames = Object.keys(exportValue.events);
+    const unsupported = eventNames.find(
+      (eventName) => !ALLOWED_DYNAMIC_SKILL_EVENTS.has(eventName),
+    );
+    if (unsupported !== undefined) {
+      throw new Error(
+        `Dynamic skills support only "session.started" and "turn.started" handlers; received "${unsupported}".`,
+      );
+    }
     const slug = stripLogicalPathExtension(source.logicalPath).replace(/^skills\//, "");
     return {
       kind: "dynamic-skill",
       definition: {
-        eventNames: Object.keys(exportValue.events) as DynamicToolEventName[],
+        eventNames: eventNames as DynamicToolEventName[],
         exportName: source.exportName,
         logicalPath: source.logicalPath,
         slug,

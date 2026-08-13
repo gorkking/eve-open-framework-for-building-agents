@@ -1,7 +1,7 @@
 import type { ModelMessage } from "ai";
 
 import type { ContextContainer } from "#context/container.js";
-import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import { buildDynamicCapabilityResolveContext } from "#context/dynamic-resolve-context.js";
 import type { ContextReader } from "#context/key.js";
 import {
   SessionDynamicSubagentRuntimeRevisionKey,
@@ -28,6 +28,7 @@ const ALLOWED_DYNAMIC_SUBAGENT_EVENTS = new Set(["session.started", "turn.starte
 type DynamicSubagentSelections = Readonly<Record<string, DurableDynamicSubagentSelection>>;
 
 async function resolveSelections(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly event: UnstampedMessageStreamEvent;
   readonly messages: readonly ModelMessage[];
@@ -42,7 +43,10 @@ async function resolveSelections(input: {
         return [resolver.nodeId, null] as const;
       }
 
-      const result = await handler(input.event, buildResolveContext(input.ctx, input.messages));
+      const result = await handler(
+        input.event,
+        buildDynamicCapabilityResolveContext(input.ctx, input.messages, input.abortSignal),
+      );
       if (result === null || result === undefined) {
         return [resolver.nodeId, null] as const;
       }
@@ -123,6 +127,7 @@ function isRemoteAgentDefinition(value: unknown): boolean {
 }
 
 export async function dispatchDynamicSubagentEvent(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly event: UnstampedMessageStreamEvent;
   readonly messages: readonly ModelMessage[];
@@ -146,6 +151,7 @@ export async function dispatchDynamicSubagentEvent(input: {
 }
 
 export async function refreshDynamicSessionSubagentsForRuntimeRevision(input: {
+  readonly abortSignal?: AbortSignal;
   readonly ctx: ContextContainer;
   readonly event: SessionStartedStreamEvent;
   readonly messages: readonly ModelMessage[];

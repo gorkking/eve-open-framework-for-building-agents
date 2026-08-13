@@ -3,7 +3,10 @@ import { callAdapterEventHandler, defaultDeliverResult } from "#channel/adapter.
 import type { DeliverHookPayload } from "#channel/types.js";
 import { contextStorage } from "#context/container.js";
 import { dispatchStreamEventHooks } from "#context/hook-lifecycle.js";
-import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-lifecycle.js";
+import {
+  dispatchDynamicInstructionEvent,
+  takePendingDynamicInstructionMessages,
+} from "#context/dynamic-instruction-lifecycle.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
 import {
@@ -18,6 +21,7 @@ import {
   AuthKey,
   CapabilitiesKey,
   ModeKey,
+  PendingDynamicInstructionMessagesKey,
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
 } from "#context/keys.js";
@@ -155,6 +159,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   "use step";
 
   let input = rawInput;
+  const abortSignal = input.abortSignal ?? AbortSignal.any([]);
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
@@ -341,6 +346,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
       await Promise.all([
         refreshDynamicSessionSubagentsForRuntimeRevision({
+          abortSignal,
           ctx,
           resolvers: dynamicSubagentResolvers,
           event: refreshEvent,
@@ -349,6 +355,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           runtimeRevision: dynamicRuntimeRevision,
         }),
         refreshDynamicSessionToolsForRuntimeRevision({
+          abortSignal,
           ctx,
           resolvers: dynamicToolResolvers,
           event: refreshEvent,
@@ -363,6 +370,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   }
 
   const writer = input.parentWritable.getWriter();
+  let lifecycleMessages: readonly import("ai").ModelMessage[] = initialSession.history;
 
   // Stamp once: the persisted chunk and the hooks below must agree on the id.
   const emit = async (event: UnstampedMessageStreamEvent): Promise<MessageStreamEvent> => {
@@ -377,14 +385,21 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     event: UnstampedMessageStreamEvent,
     messages?: readonly import("ai").ModelMessage[],
   ): Promise<void> => {
+    if (messages !== undefined) lifecycleMessages = messages;
     const emitted = await emit(event);
-    await dispatchStreamEventHooks({ ctx, registry: hookRegistry, event: emitted });
+    await dispatchStreamEventHooks({
+      abortSignal,
+      ctx,
+      registry: hookRegistry,
+      event: emitted,
+      messages: lifecycleMessages,
+    });
     if (emitted.type !== "step.started") {
       await dispatchDynamicModelEvent({
         ctx,
         dynamicModel: effectiveAgent.turnAgent.dynamicModel,
         event: emitted,
-        messages: messages ?? [],
+        messages: lifecycleMessages,
         scope: {
           moduleMap: bundle.moduleMap,
           nodeId: bundle.nodeId,
@@ -392,30 +407,41 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       });
     }
     await dispatchDynamicSubagentEvent({
+      abortSignal,
       ctx,
       resolvers: dynamicSubagentResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
       persistentSessions: persistentSubagentSessions,
     });
     await dispatchDynamicToolEvent({
+      abortSignal,
       ctx,
       resolvers: dynamicToolResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
     });
     await dispatchDynamicSkillEvent({
+      abortSignal,
       ctx,
       resolvers: dynamicSkillResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
     });
     await dispatchDynamicInstructionEvent({
+      abortSignal,
       ctx,
       resolvers: dynamicInstructionsResolvers,
       event: emitted,
-      messages: messages ?? [],
+      messages: lifecycleMessages,
     });
+    const pendingInstructionMessages = ctx.get(PendingDynamicInstructionMessagesKey) ?? [];
+    const newlyVisibleInstructionMessages = pendingInstructionMessages.filter(
+      (message) => !lifecycleMessages.includes(message),
+    );
+    if (newlyVisibleInstructionMessages.length > 0) {
+      lifecycleMessages = [...lifecycleMessages, ...newlyVisibleInstructionMessages];
+    }
   };
 
   const mode = ctx.require(ModeKey);
@@ -425,7 +451,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // A signal already aborted at entry (cancellation during an in-line
     // runtime-action wait) must settle before the park-resume stages run,
     // or the pending batch would re-park and later re-dispatch.
-    throwIfTurnAborted(input.abortSignal);
+    throwIfTurnAborted(abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
@@ -484,7 +510,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
         });
 
         const step = createExecutionNodeStep({
-          abortSignal: input.abortSignal,
+          abortSignal,
           capabilities,
           clearOnly: input.input?.kind === "clear",
           compactOnly: input.input?.kind === "compact",
@@ -496,6 +522,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             nodeId: bundle.nodeId,
           },
           node: effectiveNode,
+          takePendingMessages: () => takePendingDynamicInstructionMessages(ctx),
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });
         return step(refreshedSession, stepInput);

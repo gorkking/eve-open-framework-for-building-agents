@@ -38,7 +38,7 @@ export type {
   DynamicToolEntry,
   DynamicEvents,
   DynamicToolEvents,
-  DynamicResolveContext,
+  DynamicCapabilityResolveContext as DynamicResolveContext,
   DynamicSentinel,
   DynamicToolSet,
   DynamicToolResult,

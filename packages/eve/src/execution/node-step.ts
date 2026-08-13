@@ -74,6 +74,8 @@ export interface CreateExecutionNodeStepInput {
   readonly mode: RunMode;
   readonly modelResolutionScope: RuntimeModelResolutionScope;
   readonly node: ResolvedRuntimeAgentNode;
+  /** Takes lifecycle-produced user messages for durable history. */
+  readonly takePendingMessages?: () => readonly import("ai").ModelMessage[];
   /**
    * Effective `maxSubagents` cap configured by the experimental Workflow tool
    * definition and materialized on the session at creation.
@@ -113,6 +115,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     dispatchDynamicModelEvent: dispatchModelEvent,
     resolveModel,
     runtimeIdentity: buildRuntimeIdentity(input.node),
+    takePendingMessages: input.takePendingMessages,
     tools,
   });
   if (instrumentation === undefined) return step;
