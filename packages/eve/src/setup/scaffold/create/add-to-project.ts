@@ -104,6 +104,8 @@ export async function addAgentToProject(
     );
   }
 
+  const packageJson: unknown = JSON.parse(await readFile(packageJsonPath, "utf8"));
+
   const evePackage = resolveEvePackageContract(options.evePackage);
   const aiVersion = resolveVersionToken(
     "aiPackageVersion",
@@ -128,7 +130,6 @@ export async function addAgentToProject(
     filesWritten.push(filePath);
   }
 
-  const packageJson: unknown = JSON.parse(await readFile(packageJsonPath, "utf8"));
   const wanted: Record<string, string> = {
     "@vercel/connect": connectVersion,
     ai: aiVersion,

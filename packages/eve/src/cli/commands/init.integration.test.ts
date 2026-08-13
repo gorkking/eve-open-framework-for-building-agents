@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -437,6 +437,24 @@ describe("runInitCommand", () => {
       expect.any(Object),
     );
     expect(deps.tryInitializeGit).toHaveBeenCalledWith(subdirectory);
+  });
+
+  it("scaffolds into a preexisting empty named directory", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-empty-named-"));
+    const projectPath = join(parentDirectory, "my-agent");
+    await mkdir(projectPath);
+    const output = logger();
+    const deps = dependencies();
+
+    await runInitCommand(output, parentDirectory, "my-agent", {}, deps);
+
+    await expect(pathExists(join(projectPath, "agent/agent.ts"))).resolves.toBe(true);
+    await expect(pathExists(join(projectPath, "package.json"))).resolves.toBe(true);
+    expect(deps.runPackageManagerInstall).toHaveBeenCalledWith(
+      "pnpm",
+      projectPath,
+      expect.anything(),
+    );
   });
 
   it("leaves a non-empty current directory unchanged when location selection is cancelled", async () => {
@@ -981,20 +999,36 @@ describe("runInitCommand", () => {
     );
   });
 
-  it("refuses a target directory without package.json before writing anything", async () => {
+  it("refuses a nonempty named target without package.json before writing anything", async () => {
     const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-dir-no-pkg-"));
     const projectRoot = join(parentDirectory, "host-app");
     await mkdir(projectRoot, { recursive: true });
+    await writeFile(join(projectRoot, "notes.md"), "keep me\n", "utf8");
     const output = logger();
     const deps = dependencies();
 
     await expect(runInitCommand(output, parentDirectory, "host-app", {}, deps)).rejects.toThrow(
-      "no package.json",
+      "already exists",
     );
 
+    await expect(readFile(join(projectRoot, "notes.md"), "utf8")).resolves.toBe("keep me\n");
     await expect(pathExists(join(projectRoot, "agent"))).resolves.toBe(false);
     expect(deps.runPackageManagerInstall).not.toHaveBeenCalled();
     expect(deps.spawnPackageManager).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invalid host package.json before writing agent files", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-dir-invalid-pkg-"));
+    const projectRoot = join(parentDirectory, "host-app");
+    await mkdir(projectRoot);
+    await writeFile(join(projectRoot, "package.json"), "{invalid\n", "utf8");
+    const output = logger();
+    const deps = dependencies();
+
+    await expect(runInitCommand(output, parentDirectory, "host-app", {}, deps)).rejects.toThrow();
+
+    await expect(pathExists(join(projectRoot, "agent"))).resolves.toBe(false);
+    expect(deps.runPackageManagerInstall).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1197,13 +1231,147 @@ describe("runInitCommand", () => {
     expect(output.messages.join("\n")).toContain("npm exec -- eve dev");
   });
 
-  it("stops before Git and dev when dependency installation fails, replaying its output", async () => {
+  it("removes a fresh named target after dependency installation fails so init can retry", async () => {
     const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-install-fail-"));
     const output = logger();
     const deps = dependencies();
-    deps.runPackageManagerInstall.mockImplementation(async (_kind, _projectPath, options) => {
-      options?.onOutput?.({ stream: "stdout", text: "Packages: +12" });
-      options?.onOutput?.({ stream: "stderr", text: "ERR_PNPM_FETCH_404 not found" });
+    deps.runPackageManagerInstall
+      .mockImplementationOnce(async (_kind, _projectPath, options) => {
+        options?.onOutput?.({ stream: "stdout", text: "Packages: +12" });
+        options?.onOutput?.({ stream: "stderr", text: "ERR_PNPM_FETCH_404 not found" });
+        return false;
+      })
+      .mockResolvedValueOnce(true);
+
+    await expect(runInitCommand(output, parentDirectory, "my-agent", {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(pathExists(join(parentDirectory, "my-agent"))).resolves.toBe(false);
+    expect(output.errors).toEqual(["Packages: +12", "ERR_PNPM_FETCH_404 not found"]);
+    expect(deps.tryInitializeGit).not.toHaveBeenCalled();
+    expect(deps.spawnPackageManager).not.toHaveBeenCalled();
+
+    await expect(
+      runInitCommand(logger(), parentDirectory, "my-agent", {}, deps),
+    ).resolves.toBeUndefined();
+    expect(deps.runPackageManagerInstall).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a preexisting empty named target to its empty state after install fails", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-empty-install-fail-"));
+    const projectPath = join(parentDirectory, "my-agent");
+    await mkdir(projectPath);
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockResolvedValue(false);
+
+    await expect(runInitCommand(output, parentDirectory, "my-agent", {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(pathExists(projectPath)).resolves.toBe(true);
+    await expect(readdir(projectPath)).resolves.toEqual([]);
+  });
+
+  it("removes a fresh named target when dependency installation throws", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-install-throw-"));
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockRejectedValue(new Error("spawn pnpm ENOENT"));
+
+    await expect(runInitCommand(output, parentDirectory, "my-agent", {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(pathExists(join(parentDirectory, "my-agent"))).resolves.toBe(false);
+    expect(output.errors).toContain("spawn pnpm ENOENT");
+  });
+
+  it("preserves an existing host project and prints install retry guidance", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-host-install-fail-"));
+    const projectRoot = await createHostProject(parentDirectory);
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockResolvedValue(false);
+
+    await expect(runInitCommand(output, parentDirectory, "host-app", {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(pathExists(join(projectRoot, "agent/agent.ts"))).resolves.toBe(true);
+    expect(JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"))).toMatchObject({
+      dependencies: { eve: "^0.6.0" },
+    });
+    expect(output.errors.join("\n")).toContain(`Run \`pnpm install\` in "${projectRoot}"`);
+  });
+
+  it("preserves an existing host project when dependency installation throws", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-host-install-throw-"));
+    const projectRoot = await createHostProject(parentDirectory);
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockRejectedValue(new Error("spawn pnpm ENOENT"));
+
+    await expect(runInitCommand(output, parentDirectory, "host-app", {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(pathExists(join(projectRoot, "agent/agent.ts"))).resolves.toBe(true);
+    const errors = output.errors.join("\n");
+    expect(errors).toContain("spawn pnpm ENOENT");
+    expect(errors).toContain(`Run \`pnpm install\` in "${projectRoot}"`);
+  });
+
+  it("preserves an explicitly chosen nonempty in-place target and prints retry guidance", async () => {
+    const projectPath = await mkdtemp(join(tmpdir(), "eve-init-in-place-install-fail-"));
+    await writeFile(join(projectPath, "notes.md"), "keep me\n", "utf8");
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockResolvedValue(false);
+
+    await expect(runInitCommand(output, projectPath, undefined, {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(readFile(join(projectPath, "notes.md"), "utf8")).resolves.toBe("keep me\n");
+    await expect(pathExists(join(projectPath, "agent/agent.ts"))).resolves.toBe(true);
+    expect(output.errors.join("\n")).toContain(`Run \`pnpm install\` in "${projectPath}"`);
+  });
+
+  it("warns when fresh-project cleanup cannot restore shared workspace files", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "eve-init-workspace-install-fail-"));
+    const appsDirectory = join(workspaceRoot, "apps");
+    await mkdir(appsDirectory);
+    await writeFile(
+      join(workspaceRoot, "package.json"),
+      `${JSON.stringify({ private: true, engines: { node: "22.x" } }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(join(workspaceRoot, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n", "utf8");
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockResolvedValue(false);
+
+    await expect(runInitCommand(output, appsDirectory, "my-agent", {}, deps)).rejects.toThrow(
+      "Failed to install dependencies",
+    );
+
+    await expect(pathExists(join(appsDirectory, "my-agent"))).resolves.toBe(false);
+    const errors = output.errors.join("\n");
+    expect(errors).toContain("Shared workspace files were not rolled back");
+    expect(errors).toContain(join(workspaceRoot, "package.json"));
+    expect(errors).toContain(join(workspaceRoot, "pnpm-workspace.yaml"));
+  });
+
+  it("reports an incomplete cleanup without claiming the target can finish installing", async () => {
+    const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-cleanup-incomplete-"));
+    const projectPath = join(parentDirectory, "my-agent");
+    await mkdir(projectPath);
+    const output = logger();
+    const deps = dependencies();
+    deps.runPackageManagerInstall.mockImplementation(async () => {
+      await rm(projectPath, { recursive: true });
       return false;
     });
 
@@ -1211,10 +1379,10 @@ describe("runInitCommand", () => {
       "Failed to install dependencies",
     );
 
-    await expect(pathExists(join(parentDirectory, "my-agent"))).resolves.toBe(true);
-    expect(output.errors).toEqual(["Packages: +12", "ERR_PNPM_FETCH_404 not found"]);
-    expect(deps.tryInitializeGit).not.toHaveBeenCalled();
-    expect(deps.spawnPackageManager).not.toHaveBeenCalled();
+    const errors = output.errors.join("\n");
+    expect(errors).toContain(`Cleanup was incomplete for "${projectPath}"`);
+    expect(errors).not.toContain("Generated changes were kept");
+    expect(errors).not.toContain("pnpm install");
   });
 
   it("replays only the actionable npm error, dropping silly/verbose/http/timing noise", async () => {

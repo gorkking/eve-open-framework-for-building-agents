@@ -94,14 +94,16 @@ export const EVE_INIT_PACKAGE_SPEC_ENV = "EVE_INIT_PACKAGE_SPEC";
 
 const initLog = createLogger("init");
 
-/** Resolves `target` to an existing directory, or undefined for name mode. */
+/** Resolves `target` to an existing package directory, or undefined for name mode. */
 async function resolveTargetDirectory(
   parentDirectory: string,
   target: string,
 ): Promise<string | undefined> {
   const targetPath = resolve(parentDirectory, target);
   const stats = await stat(targetPath).catch(() => undefined);
-  return stats?.isDirectory() ? targetPath : undefined;
+  return stats?.isDirectory() && (await pathExists(join(targetPath, "package.json")))
+    ? targetPath
+    : undefined;
 }
 
 function isCurrentDirectoryTarget(target: string): boolean {
@@ -111,6 +113,29 @@ function isCurrentDirectoryTarget(target: string): boolean {
 async function moveDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
   for (const entry of await readdir(sourceRoot)) {
     await rename(join(sourceRoot, entry), join(targetRoot, entry));
+  }
+}
+
+type FreshTargetOwnership =
+  | { kind: "created" }
+  | { kind: "preexisting"; entries: string[] }
+  | { kind: "in-place" };
+
+async function cleanFreshTarget(
+  projectPath: string,
+  ownership: FreshTargetOwnership,
+): Promise<void> {
+  if (ownership.kind === "created") {
+    await rm(projectPath, { recursive: true, force: true, maxRetries: 3 });
+    return;
+  }
+  if (ownership.kind === "preexisting") {
+    const originalEntries = new Set(ownership.entries);
+    for (const entry of await readdir(projectPath)) {
+      if (!originalEntries.has(entry)) {
+        await rm(join(projectPath, entry), { recursive: true, force: true, maxRetries: 3 });
+      }
+    }
   }
 }
 
@@ -197,12 +222,28 @@ async function scaffoldProject(
   dependencies: InitCommandDependencies,
   evePackage: EvePackageContract | undefined,
   overwriteExisting: boolean,
-): Promise<{ projectPath: string; workspaceRootMutations: WorkspaceRootMutation[] }> {
+): Promise<{
+  ownership: FreshTargetOwnership;
+  projectPath: string;
+  workspaceRootMutations: WorkspaceRootMutation[];
+}> {
   const parentPath = resolve(parentDirectory);
   const createInPlace = projectName === CURRENT_DIRECTORY_PROJECT_NAME;
   const projectPath = createInPlace ? parentPath : join(parentPath, projectName);
-  if (!createInPlace && (await pathExists(projectPath))) {
-    throw new Error(`Cannot create project because "${projectPath}" already exists.`);
+  const projectPathExists = await pathExists(projectPath);
+  let ownership: FreshTargetOwnership;
+  if (createInPlace) {
+    ownership = overwriteExisting
+      ? { kind: "in-place" }
+      : { kind: "preexisting", entries: await readdir(projectPath) };
+  } else if (projectPathExists) {
+    const entries = await readdir(projectPath);
+    if (entries.length > 0) {
+      throw new Error(`Cannot create project because "${projectPath}" already exists.`);
+    }
+    ownership = { kind: "preexisting", entries };
+  } else {
+    ownership = { kind: "created" };
   }
 
   const stagingDirectory =
@@ -250,13 +291,14 @@ async function scaffoldProject(
     }
 
     if (stagingDirectory !== undefined) {
-      if (createInPlace) {
+      if (ownership.kind === "preexisting") {
         await moveDirectoryContents(stagedProjectPath, projectPath);
       } else {
         await rename(stagedProjectPath, projectPath);
       }
     }
     return {
+      ownership,
       projectPath,
       workspaceRootMutations: uniqueWorkspaceRootMutations(workspaceRootMutations),
     };
@@ -276,6 +318,7 @@ type PreparedInitProject =
     }
   | {
       kind: "created";
+      ownership: FreshTargetOwnership;
       packageManager: PackageManagerKind;
       projectPath: string;
       workspaceRootMutations: WorkspaceRootMutation[];
@@ -386,6 +429,7 @@ async function runInitSteps(input: {
       );
       project = {
         kind: "created",
+        ownership: scaffold.ownership,
         packageManager,
         projectPath: scaffold.projectPath,
         workspaceRootMutations: scaffold.workspaceRootMutations,
@@ -419,30 +463,36 @@ async function runInitSteps(input: {
     const installStartedAt = dependencies.now();
     const installFailureOutput: string[] = [];
     const recentInstallOutput: string[] = [];
-    const installed = await dependencies.runPackageManagerInstall(
-      project.packageManager,
-      project.projectPath,
-      {
-        // The scaffold pins versions younger than typical release-age cooldown
-        // windows; gating them would fail every fresh bootstrap.
-        bypassMinimumReleaseAge: true,
-        progressDetails: process.stdout.isTTY === true && !debug,
-        onOutput: (line) => {
-          if (line.text.trim() !== "") {
-            recentInstallOutput.push(line.text);
-            if (recentInstallOutput.length > INSTALL_OUTPUT_FALLBACK_LINES) {
-              recentInstallOutput.shift();
+    let installError: unknown;
+    let installed = false;
+    try {
+      installed = await dependencies.runPackageManagerInstall(
+        project.packageManager,
+        project.projectPath,
+        {
+          // The scaffold pins versions younger than typical release-age cooldown
+          // windows; gating them would fail every fresh bootstrap.
+          bypassMinimumReleaseAge: true,
+          progressDetails: process.stdout.isTTY === true && !debug,
+          onOutput: (line) => {
+            if (line.text.trim() !== "") {
+              recentInstallOutput.push(line.text);
+              if (recentInstallOutput.length > INSTALL_OUTPUT_FALLBACK_LINES) {
+                recentInstallOutput.shift();
+              }
+              if (!NPM_NOISE_LINE.test(line.text)) {
+                installFailureOutput.push(line.text);
+              }
             }
-            if (!NPM_NOISE_LINE.test(line.text)) {
-              installFailureOutput.push(line.text);
-            }
-          }
-          if (debug) initLog.debug(line.text);
-          const detail = installProgressDetail(project.packageManager, line);
-          if (detail !== undefined) progress.update("Installing dependencies", detail);
+            if (debug) initLog.debug(line.text);
+            const detail = installProgressDetail(project.packageManager, line);
+            if (detail !== undefined) progress.update("Installing dependencies", detail);
+          },
         },
-      },
-    );
+      );
+    } catch (error) {
+      installError = error;
+    }
     const installElapsedMs = dependencies.now() - installStartedAt;
     if (!installed) {
       initLog.debug("dependency installation failed", { ms: installElapsedMs });
@@ -450,6 +500,36 @@ async function runInitSteps(input: {
       const failureOutput =
         installFailureOutput.length > 0 ? installFailureOutput : recentInstallOutput;
       for (const line of failureOutput) logger.error(line);
+      if (failureOutput.length === 0 && installError !== undefined) {
+        logger.error(installError instanceof Error ? installError.message : String(installError));
+      }
+      let preserved = project.kind === "added";
+      if (project.kind === "created") {
+        if (project.workspaceRootMutations.length > 0) {
+          logger.error(
+            "Shared workspace files were not rolled back and may still contain init changes:",
+          );
+          for (const mutation of project.workspaceRootMutations) {
+            logger.error(formatWorkspaceRootMutationWarning(mutation));
+          }
+          logger.error(
+            "Package-manager and lifecycle-script effects outside the project were not rolled back.",
+          );
+        }
+        try {
+          await cleanFreshTarget(project.projectPath, project.ownership);
+          preserved = project.ownership.kind === "in-place";
+        } catch {
+          logger.error(
+            `Cleanup was incomplete for "${project.projectPath}". Inspect it before retrying eve init and remove generated files manually if needed.`,
+          );
+        }
+      }
+      if (preserved) {
+        logger.error(
+          `Generated changes were kept. Run \`${project.packageManager} install\` in "${project.projectPath}" after fixing the failure.`,
+        );
+      }
       throw new Error(`Failed to install dependencies in "${project.projectPath}".`);
     }
     initLog.debug("dependencies installed", { ms: installElapsedMs });
