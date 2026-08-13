@@ -22,7 +22,6 @@ import { claimHookOwnership, disposeHook, isHookConflictError } from "#execution
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
-import { refreshLocalSubagentWorkStep } from "#execution/refresh-local-subagent-work-step.js";
 import { writeLocalSubagentWorkStep } from "#execution/write-local-subagent-work-step.js";
 import {
   createTurnCancellationControl,
@@ -382,6 +381,8 @@ async function waitForRuntimeActionResults(input: {
       return "cancelled";
     }
     if (next === "work-refresh") {
+      const { refreshLocalSubagentWorkStep } =
+        await import("#execution/refresh-local-subagent-work-step.js");
       const refreshed = await refreshLocalSubagentWorkStep({
         serializedContext: input.cursor.serializedContext,
         sessionState: input.cursor.sessionState,
