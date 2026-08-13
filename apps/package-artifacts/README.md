@@ -1,44 +1,50 @@
 # eve package artifacts
 
-The trusted package project builds an eve tarball from each `vercel/eve` `main` commit and uploads immutable SHA-addressed artifacts to private Vercel Blob using deployment OIDC. Preview deployments package their own checkout into static output; they do not use Blob.
+A stable, read-only Vercel app at `pkg.eve.dev` proxies private Blob artifacts published by GitHub Actions. The app itself never packages source or writes Blob objects.
 
 ```text
 /main/eve.tgz
 /main/latest.json
+/pr/<number>/eve.tgz
+/pr/<number>/latest.json
 /<full-sha>/eve.tgz
 ```
 
-The publisher uses Vercel's `VERCEL_PROJECT_PRODUCTION_URL` system environment variable as the public package domain. For example, if the production domain is `pkg.eve.dev`, initialize an agent from the current `main` build with:
+Initialize an agent from the current `main` build with:
 
 ```bash
 npm exec --yes --package=https://pkg.eve.dev/main/eve.tgz -- eve init my-agent
 ```
 
-Trusted `main` builds stamp immutable `/<sha>/eve.tgz` dependencies into generated projects. A Preview build writes `eve.tgz` to its own deployment output and stamps that deployment's immutable `https://<deployment>/eve.tgz` URL instead. Preview URLs are explicitly for testing unreviewed code and are never published through the trusted package host.
+A pull-request build is available at `/pr/<number>/eve.tgz` after its package workflow succeeds. Both moving routes redirect to an immutable `/<sha>/eve.tgz` artifact, and the packaged CLI stamps that immutable URL into generated projects.
 
-## Trust boundary
+## Publishing
 
-The trusted package project must:
+[Package artifact build](../../.github/workflows/package-artifact-build.yml) runs for `main` pushes and pull requests without credentials. It checks out the exact source SHA, packages eve, and uploads the tarball and metadata as a short-lived GitHub Actions artifact.
+
+[Package artifact publish](../../.github/workflows/package-artifact-publish.yml) runs through `workflow_run`, so GitHub loads its workflow definition from trusted `main`. On a fresh runner it verifies the target from GitHub event/API metadata, downloads the build artifact, checks out the trusted publisher from `main`, and uploads the bytes without executing or extracting them. Pull-request code controls package contents but never receives the Blob token or controls the destination paths.
+
+The publisher writes:
+
+```text
+packages/<sha>/eve.tgz
+packages/<sha>/manifest.json
+packages/refs/main.json
+packages/refs/pr/<number>.json
+```
+
+SHA objects are immutable. Main and PR pointer objects are mutable and short-cached.
+
+## Project setup
+
+The Vercel package project must:
 
 - use this directory as its project root;
-- enable access to Vercel system environment variables;
+- connect the private package Blob store for reads;
 - deploy `main` to Production;
-- connect the trusted private Blob store to Production only;
-- omit `BLOB_READ_WRITE_TOKEN` so Blob writes use Vercel OIDC; and
-- disable Deployment Protection so npm can reach the production origin anonymously.
+- set its Ignored Build Step to `test "$VERCEL_GIT_COMMIT_REF" != "main"`; and
+- disable Deployment Protection so package managers can reach the public proxy.
 
-Only `main` builds may run in the trusted project. Set its Ignored Build Step to:
+Create a protected GitHub environment named `package-artifacts` and set `EVE_PACKAGE_BLOB_READ_WRITE_TOKEN` to the package store's write token there. Restrict environment deployment access to the trusted team that may publish package artifacts. The build workflow never references this environment or secret.
 
-```sh
-test "$VERCEL_GIT_COMMIT_REF" != "main"
-```
-
-This skips every non-main revision before dependency installation and prevents untrusted branch code from running with the trusted project's Blob access. The smoke check verifies public access and the downloaded artifact's gzip signature.
-
-To build Preview package artifacts, use a separate Vercel project with the same root and build command, no Blob connection, no package-host credentials, and no production secrets. It must permit Preview deployments and skip Production deployments:
-
-```sh
-test "$VERCEL_ENV" = "production"
-```
-
-The Preview project's deployment URL is the artifact host. The generated package is self-contained: a project initialized from it continues to pin the same Preview deployment's `/eve.tgz` URL.
+The smoke check verifies public access and the downloaded main artifact's gzip signature.

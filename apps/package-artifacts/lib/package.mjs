@@ -1,4 +1,5 @@
 export const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+export const PULL_REQUEST_PATTERN = /^[1-9]\d*$/;
 
 export function packageArtifactPath(sourceSha) {
   return `packages/${sourceSha}/eve.tgz`;
@@ -8,17 +9,16 @@ export function packageManifestPath(sourceSha) {
   return `packages/${sourceSha}/manifest.json`;
 }
 
+export function packagePointerPath(ref) {
+  if (ref === "main") return "packages/refs/main.json";
+  if (PULL_REQUEST_PATTERN.test(ref)) return `packages/refs/pr/${ref}.json`;
+  throw new Error("Package ref must be main or a positive pull request number.");
+}
+
 export function packageDependencyUrl(baseUrl, sourceSha) {
   const url = new URL(baseUrl);
   if (url.protocol !== "https:") throw new Error("Package base URL must use HTTPS.");
   url.pathname = `${url.pathname.replace(/\/$/, "")}/${sourceSha}/eve.tgz`;
-  return url.toString();
-}
-
-export function previewPackageDependencyUrl(baseUrl) {
-  const url = new URL(baseUrl);
-  if (url.protocol !== "https:") throw new Error("Package base URL must use HTTPS.");
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/eve.tgz`;
   return url.toString();
 }
 
