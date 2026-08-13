@@ -23,6 +23,7 @@ import type { NextDriverAction } from "#execution/next-driver-action.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { refreshLocalSubagentWorkStep } from "#execution/refresh-local-subagent-work-step.js";
+import { writeLocalSubagentWorkStep } from "#execution/write-local-subagent-work-step.js";
 import {
   createTurnCancellationControl,
   type TurnCancellationControl,
@@ -32,8 +33,6 @@ import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url
 import { normalizeSerializableError } from "#execution/workflow-errors.js";
 import { turnStep } from "#execution/workflow-steps.js";
 import { activeTurnId } from "#harness/active-turn-id.js";
-import { deserializeContext } from "#context/serialize.js";
-import { WorkGraphKey } from "#context/keys.js";
 import { getRuntimeActionResultKey } from "#runtime/actions/keys.js";
 import { resolveRuntimeActionResultsForKeys } from "#runtime/actions/results.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
@@ -263,15 +262,10 @@ async function writeCommittedWorkSnapshot(
   workWritable: WritableStream<unknown> | undefined,
 ): Promise<void> {
   if (workWritable === undefined) return;
-  const ctx = await deserializeContext(result.serializedContext);
-  const work = ctx.get(WorkGraphKey);
-  if (work === undefined || work.revision === 0) return;
-  const writer = workWritable.getWriter();
-  try {
-    await writer.write(work);
-  } finally {
-    writer.releaseLock();
-  }
+  await writeLocalSubagentWorkStep({
+    serializedContext: result.serializedContext,
+    workWritable,
+  });
 }
 
 async function finishCancelledTurn(input: {
