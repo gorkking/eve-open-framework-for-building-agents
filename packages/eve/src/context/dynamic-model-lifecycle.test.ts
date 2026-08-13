@@ -7,10 +7,12 @@ import { ContextContainer } from "#context/container.js";
 import {
   dispatchDynamicModelEvent,
   getActiveDynamicModelSelection,
+  refreshDynamicSessionModelForRuntimeRevision,
 } from "#context/dynamic-model-lifecycle.js";
 import {
   LiveStepDynamicModelSelectionKey,
   SessionDynamicModelReferenceKey,
+  SessionDynamicModelRuntimeRevisionKey,
   TurnDynamicModelReferenceKey,
 } from "#context/keys.js";
 import { defineDynamic } from "#public/definitions/tool.js";
@@ -64,6 +66,60 @@ describe("dynamic model lifecycle", () => {
         providerOptions: undefined,
       },
     });
+  });
+
+  it("refreshes a session-scoped model once per runtime revision", async () => {
+    const ctx = new ContextContainer();
+    const handler = vi.fn(() => ({
+      model: "openai/current-model",
+      modelContextWindowTokens: 128_000,
+    }));
+    const moduleMap = createModuleMap({
+      default: {
+        model: defineDynamic({ events: { "session.started": handler } }),
+      },
+    });
+
+    const refresh = () =>
+      refreshDynamicSessionModelForRuntimeRevision({
+        ctx,
+        dynamicModel: DYNAMIC_MODEL_SOURCE,
+        event: createSessionStartedEvent(),
+        messages: [],
+        runtimeRevision: "deployment:dpl_current",
+        scope: { moduleMap, nodeId: undefined },
+      });
+
+    await refresh();
+    await refresh();
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(ctx.get(SessionDynamicModelRuntimeRevisionKey)).toBe("deployment:dpl_current");
+    expect(getActiveDynamicModelSelection(ctx)?.reference.id).toBe("openai/current-model");
+  });
+
+  it.each([
+    ["without a dynamic model", undefined],
+    ["with a turn-only dynamic model", { ...DYNAMIC_MODEL_SOURCE, eventNames: ["turn.started"] }],
+  ])("clears a stale session model %s", async (_name, dynamicModel) => {
+    const ctx = new ContextContainer();
+    ctx.set(SessionDynamicModelReferenceKey, {
+      contextWindowTokens: 128_000,
+      id: "openai/old-model",
+    });
+    ctx.set(SessionDynamicModelRuntimeRevisionKey, "deployment:dpl_old");
+
+    await refreshDynamicSessionModelForRuntimeRevision({
+      ctx,
+      dynamicModel,
+      event: createSessionStartedEvent(),
+      messages: [],
+      runtimeRevision: "deployment:dpl_current",
+      scope: { moduleMap: createModuleMap({}), nodeId: undefined },
+    });
+
+    expect(ctx.get(SessionDynamicModelReferenceKey)).toBeNull();
+    expect(ctx.get(SessionDynamicModelRuntimeRevisionKey)).toBe("deployment:dpl_current");
   });
 
   it("prefers step, then turn, then session selections", () => {

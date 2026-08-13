@@ -6,10 +6,11 @@ import type { ContextKey } from "#context/key.js";
 import {
   LiveStepDynamicModelSelectionKey,
   SessionDynamicModelReferenceKey,
+  SessionDynamicModelRuntimeRevisionKey,
   TurnDynamicModelReferenceKey,
   type LiveDynamicModelSelection,
 } from "#context/keys.js";
-import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
+import type { SessionStartedStreamEvent, UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type {
   RuntimeDynamicModelReference,
   RuntimeModelReference,
@@ -126,6 +127,23 @@ export async function dispatchDynamicModelEvent(input: {
   } catch (error) {
     throw isDynamicModelSelectionError(error) ? error : new DynamicModelSelectionError(error);
   }
+}
+
+export async function refreshDynamicSessionModelForRuntimeRevision(input: {
+  readonly ctx: AlsContext;
+  readonly dynamicModel: RuntimeDynamicModelReference | undefined;
+  readonly event: SessionStartedStreamEvent;
+  readonly messages: readonly ModelMessage[];
+  readonly runtimeRevision: string;
+  readonly scope: RuntimeModelResolutionScope;
+}): Promise<void> {
+  if (input.ctx.get(SessionDynamicModelRuntimeRevisionKey) === input.runtimeRevision) {
+    return;
+  }
+
+  input.ctx.set(SessionDynamicModelReferenceKey, null);
+  await dispatchDynamicModelEvent(input);
+  input.ctx.set(SessionDynamicModelRuntimeRevisionKey, input.runtimeRevision);
 }
 
 function setSelectionForEvent(

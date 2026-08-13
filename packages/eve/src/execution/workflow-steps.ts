@@ -8,7 +8,10 @@ import {
   drainDynamicInstructionUserMessages,
   prepareDynamicInstructionPreamble,
 } from "#context/dynamic-instruction-lifecycle.js";
-import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
+import {
+  dispatchDynamicModelEvent,
+  refreshDynamicSessionModelForRuntimeRevision,
+} from "#context/dynamic-model-lifecycle.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
 import {
   dispatchDynamicSubagentEvent,
@@ -22,6 +25,7 @@ import {
   AuthKey,
   CapabilitiesKey,
   ModeKey,
+  SessionDynamicModelRuntimeRevisionKey,
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
 } from "#context/keys.js";
@@ -339,25 +343,30 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     const sessionStarted = initialEmissionState.sessionStarted;
 
     if (!sessionStarted) {
+      ctx.set(SessionDynamicModelRuntimeRevisionKey, dynamicRuntimeRevision);
       ctx.set(SessionDynamicSubagentRuntimeRevisionKey, dynamicRuntimeRevision);
       ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
     } else {
-      const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
+      const refreshInput = {
+        ctx,
+        event: createSessionStartedEvent({ runtime: runtimeIdentity }),
+        messages: initialSession.history,
+        runtimeRevision: dynamicRuntimeRevision,
+      };
       await Promise.all([
+        refreshDynamicSessionModelForRuntimeRevision({
+          ...refreshInput,
+          dynamicModel: effectiveAgent.turnAgent.dynamicModel,
+          scope: { moduleMap: bundle.moduleMap, nodeId: bundle.nodeId },
+        }),
         refreshDynamicSessionSubagentsForRuntimeRevision({
-          ctx,
+          ...refreshInput,
           resolvers: dynamicSubagentResolvers,
-          event: refreshEvent,
-          messages: initialSession.history,
           persistentSessions: persistentSubagentSessions,
-          runtimeRevision: dynamicRuntimeRevision,
         }),
         refreshDynamicSessionToolsForRuntimeRevision({
-          ctx,
+          ...refreshInput,
           resolvers: dynamicToolResolvers,
-          event: refreshEvent,
-          messages: initialSession.history,
-          runtimeRevision: dynamicRuntimeRevision,
         }),
       ]);
     }
