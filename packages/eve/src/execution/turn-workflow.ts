@@ -22,6 +22,7 @@ import { claimHookOwnership, disposeHook, isHookConflictError } from "#execution
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
+import { startLocalSubagentWorkMonitorStep } from "#execution/local-subagent-work-monitor-steps.js";
 import { writeLocalSubagentWorkStep } from "#execution/write-local-subagent-work-step.js";
 import {
   createTurnCancellationControl,
@@ -191,6 +192,10 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         const initialAcceptedAtMs = dispatchResult.results.length === 0 ? undefined : Date.now();
         await cursor.adopt(dispatchResult);
         await acknowledgeDelegatedTasksStep({ tasks: dispatchResult.pendingTasks });
+        await startLocalSubagentWorkMonitorStep({
+          serializedContext: cursor.serializedContext,
+          sessionState: cursor.sessionState,
+        });
 
         const results = await waitForRuntimeActionResults({
           bufferedDeliveries,
@@ -301,8 +306,6 @@ interface AcceptedRuntimeActionBatch {
   readonly results: readonly RuntimeActionResult[];
 }
 
-const LOCAL_SUBAGENT_WORK_REFRESH_MS = 15_000;
-
 async function waitForRuntimeActionResults(input: {
   readonly bufferedDeliveries: DeliverHookPayload[];
   readonly cancellation: TurnCancellationControl | undefined;
@@ -322,12 +325,7 @@ async function waitForRuntimeActionResults(input: {
       acceptedAtMsByKey.set(getRuntimeActionResultKey(result), input.initialAcceptedAtMs);
     }
   }
-  let nextWorkRefresh = workflowSleep(LOCAL_SUBAGENT_WORK_REFRESH_MS).then(
-    () => "work-refresh" as const,
-  );
   let nextPromise = input.iterator.next();
-  // A timer can win while this read remains pending. Keep one read alive
-  // across refreshes so a child result cannot be consumed and discarded.
   nextPromise.catch(() => {});
 
   while (true) {
@@ -372,10 +370,9 @@ async function waitForRuntimeActionResults(input: {
     }
 
     const inbox = nextPromise.then((next) => ({ kind: "inbox" as const, next }));
-    const refresh = nextWorkRefresh.then(() => ({ kind: "work-refresh" as const }));
     const next = await (input.cancellation === undefined
-      ? Promise.race([inbox, refresh])
-      : Promise.race([inbox, refresh, input.cancellation.requested]));
+      ? inbox
+      : Promise.race([inbox, input.cancellation.requested]));
     if (next === "cancel") {
       if (pendingDeliveryRequest !== undefined) {
         // Release the raced public input back to the driver so it stays
@@ -386,28 +383,6 @@ async function waitForRuntimeActionResults(input: {
         });
       }
       return "cancelled";
-    }
-    if (next.kind === "work-refresh") {
-      console.error("[eve.work] parent refresh tick", {
-        pendingActionKeys: input.pendingActionKeys,
-        sessionId: input.cursor.sessionState.sessionId,
-      });
-      const { refreshLocalSubagentWorkStep } =
-        await import("#execution/refresh-local-subagent-work-step.js");
-      const refreshed = await refreshLocalSubagentWorkStep({
-        serializedContext: input.cursor.serializedContext,
-        sessionState: input.cursor.sessionState,
-      });
-      const contextChanged = refreshed.serializedContext !== input.cursor.serializedContext;
-      await input.cursor.adopt({ ...refreshed, sessionState: input.cursor.sessionState });
-      console.error("[eve.work] parent refresh adopted", {
-        serializedContextChanged: contextChanged,
-        sessionId: input.cursor.sessionState.sessionId,
-      });
-      nextWorkRefresh = workflowSleep(LOCAL_SUBAGENT_WORK_REFRESH_MS).then(
-        () => "work-refresh" as const,
-      );
-      continue;
     }
     if (next.next.done) throw new Error("Turn inbox closed before runtime actions completed.");
 

@@ -11,18 +11,24 @@ import { adoptChildWorkSnapshot } from "#harness/work-graph.js";
 export async function refreshLocalSubagentWorkStep(input: {
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
-}): Promise<{ readonly serializedContext: Record<string, unknown> }> {
+}): Promise<{
+  readonly hasRunningLocalSubagents: boolean;
+  readonly serializedContext: Record<string, unknown>;
+}> {
   "use step";
 
   const ctx = await deserializeContext(input.serializedContext);
   let work = ctx.get(WorkGraphKey);
-  if (work === undefined) return { serializedContext: input.serializedContext };
+  if (work === undefined) {
+    return { hasRunningLocalSubagents: false, serializedContext: input.serializedContext };
+  }
 
   const handles = findRunningLocalAgentHandles(input.sessionState.snapshot?.session.state);
   console.error("[eve.work] querying direct local subagents", {
     callIds: handles.map((handle) => handle.operation.callId),
     parentSessionId: input.sessionState.sessionId,
   });
+  let allChildrenTerminal = handles.length > 0;
   for (const handle of handles) {
     const child = await readLocalSubagentWork({
       callId: handle.operation.callId,
@@ -34,7 +40,16 @@ export async function refreshLocalSubagentWorkStep(input: {
       outcome: child.kind === "available" ? `available:${child.revision}` : child.reason,
       parentSessionId: input.sessionState.sessionId,
     });
-    if (child.kind !== "available") continue;
+    if (child.kind !== "available") {
+      allChildrenTerminal = false;
+      continue;
+    }
+    if (
+      child.work.turn === undefined ||
+      !["completed", "failed", "cancelled"].includes(child.work.turn.phase)
+    ) {
+      allChildrenTerminal = false;
+    }
     const priorRevision = work.revision;
     work = adoptChildWorkSnapshot(work, {
       callId: handle.operation.callId,
@@ -53,7 +68,10 @@ export async function refreshLocalSubagentWorkStep(input: {
     console.error("[eve.work] parent refresh unchanged", {
       parentSessionId: input.sessionState.sessionId,
     });
-    return { serializedContext: input.serializedContext };
+    return {
+      hasRunningLocalSubagents: !allChildrenTerminal,
+      serializedContext: input.serializedContext,
+    };
   }
   ctx.set(WorkGraphKey, work);
   const adapter = ctx.require(ChannelKey);
@@ -72,5 +90,5 @@ export async function refreshLocalSubagentWorkStep(input: {
     parentSessionId: input.sessionState.sessionId,
     revision: work.revision,
   });
-  return { serializedContext };
+  return { hasRunningLocalSubagents: !allChildrenTerminal, serializedContext };
 }
