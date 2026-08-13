@@ -7,8 +7,13 @@ import type { LocalSubagentWorkMonitorInput } from "#execution/local-subagent-wo
 /** Starts the sibling workflow that polls local child work for channel rendering. */
 export async function startLocalSubagentWorkMonitorStep(
   input: LocalSubagentWorkMonitorInput,
-): Promise<void> {
+): Promise<{ readonly runId: string }> {
   "use step";
 
-  await startWorkflowPreferLatest(localSubagentWorkMonitorWorkflowReference, [input]);
+  const run = await startWorkflowPreferLatest(localSubagentWorkMonitorWorkflowReference, [input]);
+  console.error("[eve.work] started local subagent work monitor", {
+    monitorRunId: run.runId,
+    parentSessionId: input.sessionState.sessionId,
+  });
+  return { runId: run.runId };
 }

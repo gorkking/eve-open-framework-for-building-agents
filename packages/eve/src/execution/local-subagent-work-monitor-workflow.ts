@@ -17,13 +17,39 @@ export async function localSubagentWorkMonitorWorkflow(
   "use workflow";
 
   let serializedContext = input.serializedContext;
+  let poll = 0;
+  console.error("[eve.work] local subagent work monitor started", {
+    parentSessionId: input.sessionState.sessionId,
+  });
   while (true) {
+    poll += 1;
+    console.error("[eve.work] local subagent work monitor poll", {
+      parentSessionId: input.sessionState.sessionId,
+      poll,
+    });
     const refreshed = await refreshLocalSubagentWorkStep({
       serializedContext,
       sessionState: input.sessionState,
     });
     serializedContext = refreshed.serializedContext;
-    if (!refreshed.hasRunningLocalSubagents) return;
+    console.error("[eve.work] local subagent work monitor refresh complete", {
+      ...refreshed.poll,
+      hasRunningLocalSubagents: refreshed.hasRunningLocalSubagents,
+      parentSessionId: input.sessionState.sessionId,
+      poll,
+    });
+    if (!refreshed.hasRunningLocalSubagents) {
+      console.error("[eve.work] local subagent work monitor settled", {
+        parentSessionId: input.sessionState.sessionId,
+        poll,
+      });
+      return;
+    }
+    console.error("[eve.work] local subagent work monitor sleeping", {
+      durationMs: LOCAL_SUBAGENT_WORK_REFRESH_MS,
+      parentSessionId: input.sessionState.sessionId,
+      poll,
+    });
     await sleep(LOCAL_SUBAGENT_WORK_REFRESH_MS);
   }
 }

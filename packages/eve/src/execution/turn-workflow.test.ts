@@ -70,7 +70,7 @@ describe("turnWorkflow", () => {
     createHookMock.mockReset();
     sleepMock.mockClear();
     vi.mocked(startLocalSubagentWorkMonitorStep).mockReset();
-    vi.mocked(startLocalSubagentWorkMonitorStep).mockResolvedValue();
+    vi.mocked(startLocalSubagentWorkMonitorStep).mockResolvedValue({ runId: "monitor-run" });
   });
 
   it("notifies the driver when a turn completes", async () => {
