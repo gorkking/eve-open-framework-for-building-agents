@@ -40,10 +40,13 @@ if (typeof nodeEngine !== "string") {
 }
 
 const evePackageDependencyVersion = process.env.EVE_MAIN_DEPENDENCY_URL ?? packageJson.version;
+const eveBuildPackageDependencyVersion =
+  process.env.EVE_BUILD_DEPENDENCY_URL ?? packageJson.version;
 
 const replacements = {
   __EVE_PACKAGE_VERSION__: packageJson.version,
   __EVE_PACKAGE_DEPENDENCY_VERSION__: evePackageDependencyVersion,
+  __EVE_BUILD_PACKAGE_DEPENDENCY_VERSION__: eveBuildPackageDependencyVersion,
   __NODE_ENGINE__: nodeEngine,
   __AI_SDK_VERSION__: await resolveCatalogVersion("ai"),
   __BETTER_AUTH_VERSION__: await resolveCatalogVersion("better-auth"),

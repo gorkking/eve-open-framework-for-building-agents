@@ -1,6 +1,6 @@
 import { EVE_DEV_ENV_FLAG } from "#internal/application/optional-package-install.js";
 
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import { createDevelopmentApplicationNitro } from "#internal/nitro/host/create-application-nitro.js";
 import { DrainedNitroDevServer } from "#internal/nitro/host/drained-nitro-dev-server.js";

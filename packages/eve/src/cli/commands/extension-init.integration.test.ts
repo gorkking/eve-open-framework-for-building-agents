@@ -13,6 +13,7 @@ import { pathExists } from "#setup/path-exists.js";
 
 import type { GitInitResult } from "./init-git.js";
 import {
+  EVE_INIT_BUILD_PACKAGE_SPEC_ENV,
   EVE_INIT_PACKAGE_SPEC_ENV,
   runExtensionInitCommand,
   type ExtensionInitCliLogger,
@@ -105,7 +106,7 @@ describe("runExtensionInitCommand", () => {
       files?: string[];
       peerDependencies?: { eve?: string };
       peerDependenciesMeta?: Record<string, unknown>;
-      devDependencies?: { eve?: string; typescript?: string };
+      devDependencies?: { "@eve/build"?: string; eve?: string; typescript?: string };
       dependencies?: { zod?: string; ai?: string };
       scripts?: Record<string, string>;
     };
@@ -117,6 +118,7 @@ describe("runExtensionInitCommand", () => {
     expect(packageJson.peerDependencies?.eve).toBe("*");
     expect(packageJson.peerDependenciesMeta).toBeUndefined();
     expect(packageJson.devDependencies?.eve).toBe("0.6.0");
+    expect(packageJson.devDependencies?.["@eve/build"]).toBe("0.6.0");
     expect(packageJson.dependencies?.zod).toBe("4.0.0");
     expect(packageJson.dependencies?.ai).toBeUndefined();
     expect(packageJson.scripts?.build).toBe("eve extension build");
@@ -199,6 +201,7 @@ describe("runExtensionInitCommand", () => {
     const parentDirectory = await mkdtemp(join(tmpdir(), "eve-extension-init-spec-"));
     const output = logger();
     const deps = dependencies();
+    vi.stubEnv(EVE_INIT_BUILD_PACKAGE_SPEC_ENV, "file:/tmp/eve-build-local.tgz");
     vi.stubEnv(EVE_INIT_PACKAGE_SPEC_ENV, "file:/tmp/eve-local.tgz");
 
     await runExtensionInitCommand(output, parentDirectory, "my-crm", deps);
@@ -207,9 +210,10 @@ describe("runExtensionInitCommand", () => {
       await readFile(join(parentDirectory, "my-crm", "package.json"), "utf8"),
     ) as {
       peerDependencies?: { eve?: string };
-      devDependencies?: { eve?: string };
+      devDependencies?: { "@eve/build"?: string; eve?: string };
     };
     expect(packageJson.peerDependencies?.eve).toBe("*");
     expect(packageJson.devDependencies?.eve).toBe("file:/tmp/eve-local.tgz");
+    expect(packageJson.devDependencies?.["@eve/build"]).toBe("file:/tmp/eve-build-local.tgz");
   });
 });

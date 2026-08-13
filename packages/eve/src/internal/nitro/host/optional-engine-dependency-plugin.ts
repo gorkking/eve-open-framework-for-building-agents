@@ -1,11 +1,7 @@
 /**
- * Optional sandbox engine packages eve's runtime references through
- * lazy dynamic imports. Bundlers follow literal dynamic imports like
- * static imports — so without intervention mere *resolvability* (for
- * example eve's own workspace devDependencies) would pull them into
- * every hosted build. The source of truth for whether an application
- * opted in is its compiled sandbox config: the backend names captured
- * into the manifest at compile time.
+ * Optional sandbox engine packages eve's runtime references through lazy
+ * dynamic imports. The same bundler policy also handles the project-local
+ * build engine supplied by the caller.
  */
 export const OPTIONAL_ENGINE_PACKAGES_BY_BACKEND_NAME: Readonly<Record<string, string>> = {
   "just-bash": "just-bash",

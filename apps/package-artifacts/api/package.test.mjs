@@ -12,6 +12,8 @@ const manifest = {
   version: `0.33.0+main.${sha}`,
   tarball: `https://packages.example.com/${sha}/eve.tgz`,
   sha256: "b".repeat(64),
+  buildTarball: `https://packages.example.com/${sha}/eve-build.tgz`,
+  buildSha256: "c".repeat(64),
 };
 
 function response() {
@@ -67,9 +69,23 @@ describe("package route", () => {
     expect(artifact.setHeader).toHaveBeenCalledWith("Content-Type", "application/gzip");
     expect(artifact.read()).toEqual(Buffer.from("package bytes"));
 
+    const buildArtifact = response();
+    await handler({ query: { ref: sha, package: "eve-build" } }, buildArtifact);
+    expect(get).toHaveBeenLastCalledWith(`packages/${sha}/eve-build.tgz`, {
+      access: "private",
+    });
+    expect(buildArtifact.read()).toEqual(Buffer.from("package bytes"));
+
     const latest = response();
     await handler({ query: { ref: sha, manifest: "1" } }, latest);
     expect(latest.status).toHaveBeenCalledWith(404);
+  });
+
+  test("resolves the main build engine through the deployment commit", async () => {
+    const res = response();
+    await handler({ query: { ref: "main", package: "eve-build" } }, res);
+
+    expect(res.redirect).toHaveBeenCalledWith(302, manifest.buildTarball);
   });
 
   test("rejects unsupported refs and missing artifacts", async () => {

@@ -12,5 +12,8 @@
   "dependencies": {
     "eve": "workspace:*",
     "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@eve/build": "workspace:*"
   }
 }

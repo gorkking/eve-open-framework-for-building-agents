@@ -23,6 +23,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@eve/build": "workspace:*",
     "@types/node": "catalog:",
     "eve": "workspace:*",
     "typescript": "catalog:"

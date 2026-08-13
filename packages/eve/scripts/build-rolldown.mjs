@@ -127,17 +127,16 @@ const EXCLUDED_DIRECTORIES = new Set([join("internal", "testing")]);
  *
  *   - Peer dependencies (`ai`, `next`, `react`, `@opentelemetry/api`,
  *     `braintrust`) — consumers provide the install.
- *   - Runtime dependencies (`nitro`, `undici`) — resolved at
- *     runtime against the eve installation.
- *   - Optional peer dependency (`just-bash`) — the opt-in local sandbox
- *     engine; resolved lazily against the consumer's install and never
- *     bundled with eve.
+ *   - Runtime dependency (`undici`) — resolved at runtime against the eve installation.
+ *   - Optional peer dependencies (`@eve/build`, `just-bash`) — project-local
+ *     engines resolved lazily against the consumer's install and never bundled with eve.
  *
  * `#compiled/*` is also external (handled separately) so the vendored
  * dependency tree under `dist/src/compiled/**` resolves at runtime via
  * the package `imports` map.
  */
 const EXTERNAL_PACKAGES = new Set([
+  "@eve/build",
   "@nuxt/kit",
   "@opentelemetry/api",
   "@sveltejs/kit",
@@ -146,7 +145,6 @@ const EXTERNAL_PACKAGES = new Set([
   "just-bash",
   "microsandbox",
   "next",
-  "nitro",
   "react",
   "svelte",
   "undici",

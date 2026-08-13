@@ -56,6 +56,7 @@ catalog:
 minimumReleaseAge: 2880 # 2 days
 
 minimumReleaseAgeExclude:
+  - "@eve/*"
   - "@vercel/*"
   - "@workflow/*"
   - nitro

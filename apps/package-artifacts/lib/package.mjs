@@ -1,17 +1,17 @@
 export const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
-export function packageArtifactPath(sourceSha) {
-  return `packages/${sourceSha}/eve.tgz`;
+export function packageArtifactPath(sourceSha, packageSlug = "eve") {
+  return `packages/${sourceSha}/${packageSlug}.tgz`;
 }
 
 export function packageManifestPath(sourceSha) {
   return `packages/${sourceSha}/manifest.json`;
 }
 
-export function packageDependencyUrl(baseUrl, sourceSha) {
+export function packageDependencyUrl(baseUrl, sourceSha, packageSlug = "eve") {
   const url = new URL(baseUrl);
   if (url.protocol !== "https:") throw new Error("Package base URL must use HTTPS.");
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/${sourceSha}/eve.tgz`;
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/${sourceSha}/${packageSlug}.tgz`;
   return url.toString();
 }
 

@@ -286,6 +286,7 @@ async function patchWebPackageJson(
   } satisfies Record<string, string>;
   const devDependencies = {
     ...WEB_APP_TEMPLATE_PACKAGE_JSON.devDependencies,
+    "@eve/build": formatEveDependencySpecifier(evePackage.buildVersion),
     "@types/node": nodeEngine,
     "@types/react": resolveVersionToken(
       "typesReactPackageVersion",

@@ -23,6 +23,7 @@ import { WizardCancelledError } from "#setup/step.js";
 import type { GitInitResult } from "./init-git.js";
 import { initAgentReplPrompt } from "./agent-instructions.js";
 import {
+  EVE_INIT_BUILD_PACKAGE_SPEC_ENV,
   EVE_INIT_PACKAGE_SPEC_ENV,
   runInitCommand,
   type InitCliLogger,
@@ -38,7 +39,7 @@ const BASE_VERSIONS = {
 } as const;
 
 const RELEASE_AGE_POLICY =
-  'minimumReleaseAgeExclude:\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\n';
+  'minimumReleaseAgeExclude:\n  - "@eve/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - eve\n  - nitro\n  - workflow\n';
 
 const WEB_VERSIONS = {
   ...BASE_VERSIONS,
@@ -311,14 +312,19 @@ describe("runInitCommand", () => {
     const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-package-spec-"));
     const output = logger();
     const deps = dependencies();
+    vi.stubEnv(EVE_INIT_BUILD_PACKAGE_SPEC_ENV, "file:/tmp/eve-build-0.11.5.tgz");
     vi.stubEnv(EVE_INIT_PACKAGE_SPEC_ENV, "file:/tmp/eve-0.11.5.tgz");
 
     await runInitCommand(output, parentDirectory, "my-agent", {}, deps);
 
     const packageJson = JSON.parse(
       await readFile(join(parentDirectory, "my-agent", "package.json"), "utf8"),
-    ) as { dependencies: Record<string, string> };
+    ) as {
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
     expect(packageJson.dependencies.eve).toBe("file:/tmp/eve-0.11.5.tgz");
+    expect(packageJson.devDependencies["@eve/build"]).toBe("file:/tmp/eve-build-0.11.5.tgz");
   });
 
   it("uses an explicit init package spec when adding to an existing project", async () => {
@@ -326,14 +332,17 @@ describe("runInitCommand", () => {
     const projectRoot = await createHostProject(parentDirectory);
     const output = logger();
     const deps = dependencies();
+    vi.stubEnv(EVE_INIT_BUILD_PACKAGE_SPEC_ENV, "file:/tmp/eve-build-0.11.5.tgz");
     vi.stubEnv(EVE_INIT_PACKAGE_SPEC_ENV, "file:/tmp/eve-0.11.5.tgz");
 
     await runInitCommand(output, parentDirectory, "host-app", {}, deps);
 
     const packageJson = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
     };
     expect(packageJson.dependencies.eve).toBe("file:/tmp/eve-0.11.5.tgz");
+    expect(packageJson.devDependencies["@eve/build"]).toBe("file:/tmp/eve-build-0.11.5.tgz");
   });
 
   it.each([undefined, ".", "./"] as const)(

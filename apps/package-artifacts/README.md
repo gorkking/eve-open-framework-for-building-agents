@@ -1,11 +1,15 @@
 # eve package artifacts
 
-Git-linked Vercel project that builds an eve tarball from each `vercel/eve` `main` commit and uploads immutable SHA-addressed package and manifest artifacts to private Vercel Blob using deployment OIDC.
+Git-linked Vercel project that builds coordinated `eve` and `@eve/build` tarballs from each
+`vercel/eve` `main` commit and uploads immutable SHA-addressed package and manifest artifacts to
+private Vercel Blob using deployment OIDC.
 
 ```text
 /main/eve.tgz
+/main/eve-build.tgz
 /main/latest.json
 /<full-sha>/eve.tgz
+/<full-sha>/eve-build.tgz
 ```
 
 The publisher uses Vercel's `VERCEL_PROJECT_PRODUCTION_URL` system environment variable as the public package domain. For example, if the production domain is `packages.example.com`, initialize an agent from the current `main` build with:

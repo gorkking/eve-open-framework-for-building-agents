@@ -1,4 +1,4 @@
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PreparedApplicationHost } from "./types.js";
@@ -56,9 +56,14 @@ const fsMocks = vi.hoisted(() => ({
 
 vi.mock("node:fs/promises", () => fsMocks);
 
+vi.mock("../../build-engine.js", () => ({
+  loadBuildEngine: async () => ({
+    resolveNitroDependency: (specifier: string) =>
+      `G:\\projects\\test-eve\\node_modules\\.pnpm\\nitro@1.0.0\\node_modules\\${specifier}\\dist\\index.js`,
+  }),
+}));
+
 vi.mock("../../application/package.js", () => ({
-  resolvePackageDependencyPath: (specifier: string) =>
-    `G:\\projects\\test-eve\\node_modules\\.pnpm\\${specifier}@1.0.0\\node_modules\\${specifier}\\dist\\index.js`,
   resolvePackageRoot: () =>
     "G:\\projects\\test-eve\\node_modules\\.pnpm\\eve@0.3.0\\node_modules\\eve",
   resolvePackageSourceFilePath: (relativeSourcePath: string) =>

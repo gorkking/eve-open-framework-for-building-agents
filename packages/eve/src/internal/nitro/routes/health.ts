@@ -1,4 +1,4 @@
-import type { H3Event } from "nitro";
+import type { H3Event } from "@eve/build";
 import { workflowEntryReference } from "#execution/workflow-runtime.js";
 
 /**

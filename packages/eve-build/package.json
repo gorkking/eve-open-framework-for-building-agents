@@ -1,0 +1,52 @@
+{
+  "name": "@eve/build",
+  "version": "0.34.0",
+  "description": "Project-local build engine for eve applications.",
+  "keywords": [
+    "agents",
+    "ai",
+    "build",
+    "eve",
+    "nitro"
+  ],
+  "homepage": "https://github.com/vercel/eve#readme",
+  "bugs": {
+    "url": "https://github.com/vercel/eve/issues"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vercel/eve.git",
+    "directory": "packages/eve-build"
+  },
+  "files": [
+    "index.d.ts",
+    "index.mjs",
+    "NOTICE",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "default": "./index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node --check index.mjs",
+    "prepack": "pnpm run build && node ../../scripts/copy-package-license.mjs .",
+    "typecheck": "tsc --ignoreConfig --noEmit --allowJs --checkJs --skipLibCheck --noImplicitAny false --module NodeNext --moduleResolution NodeNext --target ES2024 index.mjs"
+  },
+  "dependencies": {
+    "nitro": "3.0.260610-beta"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

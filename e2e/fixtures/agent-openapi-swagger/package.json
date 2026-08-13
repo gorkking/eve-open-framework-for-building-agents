@@ -16,6 +16,7 @@
     "eve": "workspace:*"
   },
   "devDependencies": {
+    "@eve/build": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:"
   }

@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { createDevelopmentNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
 import { registerChannelVirtualHandlers } from "#internal/nitro/host/channel-routes.js";
 
+const NITRO_MODULE_PATH = "/app/node_modules/nitro/dist/index.mjs";
+const NITRO_H3_MODULE_PATH = "/app/node_modules/nitro/dist/runtime/internal/h3.mjs";
+
 describe("registerChannelVirtualHandlers", () => {
   it("wraps CORS-enabled HTTP routes and registers preflight handlers", () => {
     const nitro = {
@@ -16,6 +19,8 @@ describe("registerChannelVirtualHandlers", () => {
       artifactsConfig: createDevelopmentNitroArtifactsConfig({
         appRoot: "/app",
       }),
+      nitroH3ModulePath: NITRO_H3_MODULE_PATH,
+      nitroModulePath: NITRO_MODULE_PATH,
       registrations: [{ cors: {}, method: "POST", route: "/eve/v1/session" }],
     });
 
@@ -54,6 +59,8 @@ describe("registerChannelVirtualHandlers", () => {
       artifactsConfig: createDevelopmentNitroArtifactsConfig({
         appRoot: "/app",
       }),
+      nitroH3ModulePath: NITRO_H3_MODULE_PATH,
+      nitroModulePath: NITRO_MODULE_PATH,
       registrations: [
         { cors: {}, method: "GET", route: "/eve/v1/session/:sessionId/events" },
         { cors: {}, method: "POST", route: "/eve/v1/session/:sessionId/events" },
@@ -80,6 +87,8 @@ describe("registerChannelVirtualHandlers", () => {
       artifactsConfig: createDevelopmentNitroArtifactsConfig({
         appRoot: "/app",
       }),
+      nitroH3ModulePath: NITRO_H3_MODULE_PATH,
+      nitroModulePath: NITRO_MODULE_PATH,
       registrations: [{ method: "WEBSOCKET", route: "/voice" }],
     });
 

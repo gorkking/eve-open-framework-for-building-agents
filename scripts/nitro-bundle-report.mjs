@@ -1512,10 +1512,17 @@ async function collectPackageReports(options) {
 
   try {
     const packResult = await runPack(packageRoot, packDirectory);
+    const buildPackageRoot = resolve(packageRoot, "../eve-build");
+    const buildPackResult = await runPack(buildPackageRoot, packDirectory);
     const tarballFilename = typeof packResult.filename === "string" ? packResult.filename : null;
+    const buildTarballFilename =
+      typeof buildPackResult.filename === "string" ? buildPackResult.filename : null;
 
     if (!tarballFilename) {
       throw new Error(`npm pack did not report a tarball filename for "${packageRoot}".`);
+    }
+    if (!buildTarballFilename) {
+      throw new Error(`npm pack did not report a tarball filename for "${buildPackageRoot}".`);
     }
 
     const tarballPath = join(packDirectory, tarballFilename);
@@ -1527,6 +1534,7 @@ async function collectPackageReports(options) {
       tarballPath,
     });
     const initInstall = await collectInitInstallReportFromTarball({
+      buildTarballPath: join(packDirectory, buildTarballFilename),
       packageLabel: options.packageLabel,
       packageRoot,
       tarballPath,

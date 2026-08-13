@@ -1,4 +1,4 @@
-import type { H3Event } from "nitro";
+import type { H3Event } from "@eve/build";
 
 /**
  * Public docs URL surfaced from the barebones home page. Kept in source

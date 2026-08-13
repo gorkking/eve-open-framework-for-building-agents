@@ -1,16 +1,13 @@
 import { readFile, readdir } from "node:fs/promises";
-import { createRequire, isBuiltin } from "node:module";
+import { isBuiltin } from "node:module";
 import { join, relative } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
 const runtimeDependencies = new Set(Object.keys(packageJson.dependencies ?? {}));
 const binRoot = join(packageRoot, "bin");
-const require = createRequire(import.meta.url);
-const nitroRequire = createRequire(require.resolve("nitro/package.json"));
-const parseAstPath = nitroRequire.resolve("rolldown/parseAst");
-const { parseAst } = await import(pathToFileURL(parseAstPath).href);
+const { parseWithRolldown } = await import("@eve/build");
 
 function packageName(specifier) {
   if (specifier.startsWith("@")) {
@@ -44,7 +41,7 @@ const violations = [];
 
 for await (const path of walkJavaScriptFiles(binRoot)) {
   const source = await readFile(path, "utf8");
-  const ast = parseAst(
+  const ast = await parseWithRolldown(
     source,
     { astType: "ts", lang: "js", range: true, sourceType: "module" },
     relative(packageRoot, path),

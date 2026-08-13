@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import type {
   DevelopmentServerHandle,

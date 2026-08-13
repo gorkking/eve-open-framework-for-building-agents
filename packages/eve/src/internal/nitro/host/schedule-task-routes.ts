@@ -1,4 +1,4 @@
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import {
   EVE_SCHEDULE_TASK_NAME_PREFIX,

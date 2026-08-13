@@ -115,6 +115,7 @@ The scaffold's `package.json` declares separate source and distribution roots:
     "zod": "^x",
   },
   "devDependencies": {
+    "@eve/build": "x.y.z",
     "@types/node": "^x",
     "eve": "x.y.z",
     "typescript": "^x",
@@ -138,7 +139,10 @@ eve extension build
 
 `eve extension build` writes an agent-shaped `dist/extension` tree, copies skill assets, emits declarations, and records compatibility metadata. It also manages the package exports for the mount factory (`@acme/crm`) and tool definitions (`@acme/crm/tools`). Publish `dist/`; consumers do not need the author's TypeScript source.
 
-The exact `eve` development pin controls the extension authoring API and build tooling. The wildcard peer lets the consumer provide the runtime copy of eve. At consumption time, eve checks generated metadata, not the npm peer range. Do not add eve to regular `dependencies`.
+The exact, matching `eve` and `@eve/build` development pins control the extension authoring API
+and build tooling. The wildcard peer lets the consumer provide the runtime copy of eve. At
+consumption time, eve checks generated metadata, not the npm peer range. Do not add either
+development package to regular `dependencies`.
 
 Put runtime packages such as `zod` or an SDK in `dependencies`. If a dependency cannot be bundled, such as a native addon, tell consumers to add it to `build.externalDependencies` in `agent.ts`.
 

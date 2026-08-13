@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 import {
   EVE_DEV_DISPATCH_SCHEDULE_ROUTE_PATTERN,
   EVE_DEV_RUNTIME_ARTIFACTS_ROUTE_PATH,
@@ -12,6 +12,7 @@ import {
   stringifyEsmImportSpecifier,
 } from "#internal/application/import-specifier.js";
 import { isVercelBuildEnvironment } from "#internal/application/paths.js";
+import { loadBuildEngine } from "#internal/build-engine.js";
 import {
   resolvePackageRoot,
   resolvePackageSourceFilePath,
@@ -275,11 +276,11 @@ async function registerWorkflowArtifactBuildHook(
   });
 }
 
-function registerApplicationRoutes(
+async function registerApplicationRoutes(
   nitro: Nitro,
   preparedHost: PreparedApplicationHost,
   artifactsConfig: NitroArtifactsConfig,
-): void {
+): Promise<void> {
   addFrameworkVirtualHandler(nitro, {
     args: JSON.stringify({
       agentName: preparedHost.compileResult.manifest.config.name,
@@ -296,8 +297,11 @@ function registerApplicationRoutes(
       route: EVE_HEALTH_ROUTE_PATH,
     });
   }
+  const { resolveNitroDependency } = await loadBuildEngine();
   registerChannelVirtualHandlers(nitro, {
     artifactsConfig,
+    nitroH3ModulePath: resolveNitroDependency("nitro/h3"),
+    nitroModulePath: resolveNitroDependency("nitro"),
     registrations: computeChannelRouteRegistrations(preparedHost),
   });
 }
@@ -387,7 +391,7 @@ export async function configureDevelopmentNitroRoutes(
     appRoot: preparedHost.appRoot,
     configuredWorld: preparedHost.compileResult.manifest.config.experimental?.workflow?.world,
   });
-  registerApplicationRoutes(nitro, preparedHost, artifactsConfig);
+  await registerApplicationRoutes(nitro, preparedHost, artifactsConfig);
   registerDevelopmentControlRoutes(nitro, artifactsConfig);
 
   const workflowBundlePath = join(workflowBuildDirectory, "workflows.mjs");
@@ -426,7 +430,7 @@ export async function configureProductionNitroRoutes(
   };
   await registerWorkflowArtifactBuildHook(nitro, syncWorkflowArtifacts);
 
-  registerApplicationRoutes(nitro, preparedHost, createProductionNitroArtifactsConfig());
+  await registerApplicationRoutes(nitro, preparedHost, createProductionNitroArtifactsConfig());
 
   const workflowBundlePath = join(preparedHost.workflowBuildDir, "workflows.mjs");
   const hasConfiguredWorkflowWorld =

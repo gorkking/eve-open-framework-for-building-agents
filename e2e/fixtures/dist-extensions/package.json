@@ -17,6 +17,7 @@
     "gizmo-extension": "file:../gizmo-extension"
   },
   "devDependencies": {
+    "@eve/build": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:"
   }

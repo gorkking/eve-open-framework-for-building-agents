@@ -145,6 +145,12 @@ export async function addAgentToProject(
   if (Object.keys(additions).length > 0) {
     patch.dependencies = additions;
   }
+  const buildAddition: Record<string, string> = hasDeclaredDependency(packageJson, "@eve/build")
+    ? {}
+    : { "@eve/build": formatEveDependencySpecifier(evePackage.buildVersion) };
+  if (Object.keys(buildAddition).length > 0) {
+    patch.devDependencies = buildAddition;
+  }
   const workspaceMember = isPackageManagerWorkspaceMember(packageManager, options.projectRoot);
   if (!workspaceMember) {
     patch.nodeEngineRequirement = evePackage.nodeEngine;
@@ -169,7 +175,7 @@ export async function addAgentToProject(
 
   return {
     filesWritten,
-    dependenciesAdded: Object.keys(additions).sort(),
+    dependenciesAdded: [...Object.keys(additions), ...Object.keys(buildAddition)].sort(),
     nodeEngineOverride,
   };
 }

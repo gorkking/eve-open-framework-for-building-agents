@@ -19,13 +19,13 @@ import {
   normalizeEveVercelRoutes,
 } from "#internal/workflow-bundle/eve-service-route-output.js";
 
-// just-bash and microsandbox are optional peer dependencies (the
-// opt-in local sandbox engines) loaded lazily from the application's
-// install; just-bash additionally exposes native optional codecs for
-// xz/zstd support. All of these must stay external so workflow step
-// bundles neither fail resolving an absent optional install nor try to
-// inline platform-specific `.node` artifacts.
+// @eve/build, just-bash, and microsandbox are optional peer dependencies
+// loaded lazily from the application's install. The build engine owns Nitro's
+// native-capable toolchain, while just-bash exposes optional codecs for xz/zstd.
+// All must stay external so workflow step bundles neither fail resolving an
+// absent optional install nor inline platform-specific `.node` artifacts.
 export const WORKFLOW_STEP_EXTERNAL_PACKAGES = [
+  "@eve/build",
   "@mongodb-js/zstd",
   "just-bash",
   "microsandbox",

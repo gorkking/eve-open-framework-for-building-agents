@@ -38,7 +38,8 @@ To add eve to a project that already has a `package.json`, run this command from
 npx eve@latest init .
 ```
 
-eve adds the missing `eve`, `ai`, and `zod` dependencies without changing files the project already owns.
+eve adds the missing `eve`, `ai`, and `zod` runtime dependencies plus the project-local
+`@eve/build` development dependency without changing files the project already owns.
 
 ## Run the agent
 
@@ -159,11 +160,16 @@ Run `eve info` when eve does not discover a file. It lists the discovered surfac
 
 ## Install manually
 
-If you do not want to use the scaffold, install the runtime dependencies:
+If you do not want to use the scaffold, install the runtime dependencies and matching build engine:
 
 ```bash
 npm install eve@latest ai zod
+npm install --save-dev @eve/build@latest
 ```
+
+Keep `eve` and `@eve/build` on the same version. The build package supplies Nitro and Rolldown to
+source-compilation commands such as `eve dev`, `eve build`, and `eve extension build`. It is not
+needed to run the compiled `.output/` with `eve start`.
 
 Declare Node.js 24 in `package.json`, then create `agent/instructions.md` and, when you need runtime configuration, `agent/agent.ts`.
 

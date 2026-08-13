@@ -2,8 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createNitro } from "nitro/builder";
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 import { EVE_PACKAGE_NAME } from "#internal/package-name.js";
 import {
   resolvePackageRoot,
@@ -16,6 +15,7 @@ import {
   writeEveVersionedCacheMetadata,
 } from "#internal/application/cache-metadata.js";
 import { createProductionNitroArtifactsConfig } from "#internal/nitro/host/artifacts-config.js";
+import { loadBuildEngine } from "#internal/build-engine.js";
 import { createCompiledSandboxBackendPrunePlugin } from "#internal/nitro/host/compiled-sandbox-backend-prune-plugin.js";
 import { createExtensionScopePlugin } from "#internal/bundler/extension-scope-plugin.js";
 import {
@@ -614,7 +614,10 @@ function createApplicationNitroBundlerConfiguration(
     ? createCompiledSandboxBackendPrunePlugin()
     : null;
   const configuredOptionalEnginePackages: string[] = [];
-  const unconfiguredOptionalEnginePackages: string[] = [];
+  // The project-local build engine is available to this build process but is
+  // never part of the generated server. Keep its lazy import external and
+  // untraced just like an unconfigured optional runtime engine.
+  const unconfiguredOptionalEnginePackages: string[] = ["@eve/build"];
   for (const [backendName, packageName] of Object.entries(
     OPTIONAL_ENGINE_PACKAGES_BY_BACKEND_NAME,
   )) {
@@ -730,6 +733,7 @@ function externalizeDevelopmentWorkflowBundle(
 export async function createDevelopmentApplicationNitro(
   preparedHost: PreparedDevelopmentApplicationHost,
 ): Promise<Nitro> {
+  const { createNitro } = await loadBuildEngine();
   const nitroBuildDir = preparedHost.workspace.nitroBuildDir;
   const bundler = createApplicationNitroBundlerConfiguration(preparedHost, undefined);
   const plugins = createApplicationNitroPlugins(preparedHost);
@@ -802,6 +806,7 @@ export async function createProductionApplicationNitro(
   preparedHost: PreparedApplicationHost,
   options: ProductionApplicationNitroOptions,
 ): Promise<Nitro> {
+  const { createNitro } = await loadBuildEngine();
   const preset = resolveProductionNitroPreset();
   const bundler = createApplicationNitroBundlerConfiguration(preparedHost, preset);
   const nitroPlugins = createApplicationNitroPlugins(preparedHost);

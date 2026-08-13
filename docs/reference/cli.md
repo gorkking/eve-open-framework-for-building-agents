@@ -43,7 +43,7 @@ Creates a new agent app or adds an agent to an existing app. Always installs dep
 | Target                                    | What happens                                                                                                                                             |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `eve init my-agent`                       | New agent project in `my-agent/`                                                                                                                         |
-| `eve init .` (or an existing project dir) | Adds `agent/` plus missing `eve`, `ai`, and `zod` deps. Needs a `package.json` and no `agent/` files yet                                                 |
+| `eve init .` (or an existing project dir) | Adds `agent/`, missing runtime deps, and the `@eve/build` dev dependency. Needs a `package.json` and no `agent/` files yet                               |
 | `eve init` with no target                 | Same as `eve init .`, except coding agents (Claude Code, Cursor, and similar) get a setup guide instead of scaffolding — they have not chosen a name yet |
 
 After scaffolding, a human terminal usually continues into `eve dev`. If a coding-agent REPL is on `PATH`, the handoff menu can open it instead or exit without starting either process. Coding-agent launches print the next steps instead of opening the TUI, so the session does not get stuck. Fresh projects use the parent workspace's package manager when there is one; otherwise they use the manager that launched `eve init`.
@@ -150,6 +150,10 @@ eve build [--profile <path>] [--skip-sandbox-prewarm]
 ```
 
 Compiles and bundles in an invocation-owned directory under `.eve/builds/`, then publishes the completed host output and prints its path. Scratch workspaces are removed after success or failure.
+
+Source-compilation commands load Nitro and Rolldown from the project's `@eve/build` development
+dependency. Keep it on the same version as `eve`. The completed `.output/` contains the Nitro
+server router and runs through `eve start` without `@eve/build` installed in production.
 
 | Flag                     | Type   | Default | Description                                                                                   |
 | ------------------------ | ------ | ------- | --------------------------------------------------------------------------------------------- |

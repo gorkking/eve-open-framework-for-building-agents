@@ -1,4 +1,4 @@
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import { normalizeGeneratedEsmImportSpecifiers } from "#internal/application/import-specifier.js";
 

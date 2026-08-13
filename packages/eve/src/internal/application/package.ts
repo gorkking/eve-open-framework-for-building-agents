@@ -265,10 +265,6 @@ export function resolvePackageSourceDirectoryPath(relativeSourcePath: string): s
   return join(resolvePackageRoot(), relativeSourcePath);
 }
 
-export function resolvePackageDependencyPath(specifier: string): string {
-  return require.resolve(specifier);
-}
-
 /**
  * Resolves one vendored compiled asset from the current eve installation.
  */

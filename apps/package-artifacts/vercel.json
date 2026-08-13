@@ -4,6 +4,10 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": "public",
   "rewrites": [
+    {
+      "source": "/:ref*/eve-build.tgz",
+      "destination": "/api/package?ref=:ref&package=eve-build"
+    },
     { "source": "/:ref*/eve.tgz", "destination": "/api/package?ref=:ref" },
     {
       "source": "/main/latest.json",

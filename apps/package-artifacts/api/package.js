@@ -10,6 +10,10 @@ export default async function handler(request, response) {
   if (typeof ref !== "string" || (ref !== "main" && !SHA_PATTERN.test(ref))) {
     return packageNotFound(response);
   }
+  const packageSlug = request.query.package ?? "eve";
+  if (packageSlug !== "eve" && packageSlug !== "eve-build") {
+    return packageNotFound(response);
+  }
 
   // Resolve `main` to the commit represented by the current production deployment.
   const sourceSha = ref === "main" ? process.env.VERCEL_GIT_COMMIT_SHA : ref;
@@ -27,10 +31,13 @@ export default async function handler(request, response) {
   }
   if (ref === "main") {
     response.setHeader("Cache-Control", "public, max-age=60");
-    return response.redirect(302, manifest.tarball);
+    return response.redirect(
+      302,
+      packageSlug === "eve-build" ? manifest.buildTarball : manifest.tarball,
+    );
   }
 
-  const artifact = await get(packageArtifactPath(sourceSha), { access: "private" });
+  const artifact = await get(packageArtifactPath(sourceSha, packageSlug), { access: "private" });
   if (artifact === null) return packageNotFound(response);
 
   response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -52,7 +59,9 @@ async function resolveManifest(sourceSha) {
     manifest.sourceSha !== sourceSha ||
     typeof manifest.version !== "string" ||
     typeof manifest.tarball !== "string" ||
-    typeof manifest.sha256 !== "string"
+    typeof manifest.sha256 !== "string" ||
+    typeof manifest.buildTarball !== "string" ||
+    typeof manifest.buildSha256 !== "string"
   ) {
     return undefined;
   }

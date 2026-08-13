@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { build as buildNitro, copyPublicAssets, prepare, prerender } from "nitro/builder";
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
+import { loadBuildEngine } from "#internal/build-engine.js";
 import {
   prepareEveVersionedCacheDirectory,
   writeEveVersionedCacheMetadata,
@@ -299,6 +299,7 @@ async function buildNitroOutput(
   phasePrefix: string,
 ): Promise<string> {
   const outputDirectory = trimTrailingSlash(nitro.options.output.dir);
+  const { build: buildNitro, copyPublicAssets, prepare, prerender } = await loadBuildEngine();
 
   await measureBuildPhase(profiler, `${phasePrefix}.cache.prepare`, () =>
     prepareEveVersionedCacheDirectory(outputDirectory),
@@ -460,7 +461,7 @@ async function buildApplicationInWorkspace(
     if (!isVercelBuild) {
       await measureBuildPhase(profiler, "compiler-artifacts.stage", () =>
         stageProductionCompilerArtifacts({
-          compilerArtifactsRoot: workspace.compiler.artifactsDir,
+          compilerRoot: workspace.compiler.rootDir,
           outputDir: workspace.publication.output.stagedDir,
         }),
       );

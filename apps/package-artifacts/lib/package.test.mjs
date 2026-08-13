@@ -21,6 +21,10 @@ describe("package artifacts", () => {
     expect(packageDependencyUrl("https://packages.example.com", sha)).toBe(
       `https://packages.example.com/${sha}/eve.tgz`,
     );
+    expect(packageArtifactPath(sha, "eve-build")).toBe(`packages/${sha}/eve-build.tgz`);
+    expect(packageDependencyUrl("https://packages.example.com", sha, "eve-build")).toBe(
+      `https://packages.example.com/${sha}/eve-build.tgz`,
+    );
   });
 
   test("requires an HTTPS package base URL", () => {

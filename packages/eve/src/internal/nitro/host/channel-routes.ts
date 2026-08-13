@@ -1,4 +1,4 @@
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
 import type { ChannelRouteMethod } from "#public/definitions/channel.js";
@@ -7,10 +7,7 @@ import {
   getFrameworkChannelDefinitions,
 } from "#runtime/framework-channels/index.js";
 import { stringifyEsmImportSpecifier } from "#internal/application/import-specifier.js";
-import {
-  resolvePackageDependencyPath,
-  resolvePackageSourceFilePath,
-} from "#internal/application/package.js";
+import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import type { NitroArtifactsConfig } from "#internal/nitro/routes/runtime-artifacts.js";
 import type { PreparedApplicationHost } from "#internal/nitro/host/types.js";
 
@@ -89,6 +86,8 @@ export function registerChannelVirtualHandlers(
   nitro: Pick<ChannelRouteNitro, "options">,
   input: {
     readonly artifactsConfig: NitroArtifactsConfig;
+    readonly nitroH3ModulePath: string;
+    readonly nitroModulePath: string;
     readonly registrations: readonly NitroChannelRouteRegistration[];
   },
 ): void {
@@ -98,6 +97,8 @@ export function registerChannelVirtualHandlers(
       artifactsConfig: input.artifactsConfig,
       cors: registration.cors,
       method: registration.method,
+      nitroH3ModulePath: input.nitroH3ModulePath,
+      nitroModulePath: input.nitroModulePath,
       preflightRoutes,
       route: registration.route,
     });
@@ -114,6 +115,8 @@ function addChannelVirtualHandler(
     artifactsConfig: NitroArtifactsConfig;
     cors?: NormalizedChannelCorsOptions;
     method: ChannelRouteMethod;
+    nitroH3ModulePath: string;
+    nitroModulePath: string;
     preflightRoutes: Set<string>;
     route: string;
   },
@@ -123,8 +126,8 @@ function addChannelVirtualHandler(
   const dispatchModulePath = stringifyEsmImportSpecifier(
     resolvePackageSourceFilePath("src/internal/nitro/routes/channel-dispatch.ts"),
   );
-  const nitroModulePath = stringifyEsmImportSpecifier(resolvePackageDependencyPath("nitro"));
-  const nitroH3ModulePath = stringifyEsmImportSpecifier(resolvePackageDependencyPath("nitro/h3"));
+  const nitroModulePath = stringifyEsmImportSpecifier(input.nitroModulePath);
+  const nitroH3ModulePath = stringifyEsmImportSpecifier(input.nitroH3ModulePath);
 
   if (input.method === "WEBSOCKET") {
     nitro.options.handlers.push({

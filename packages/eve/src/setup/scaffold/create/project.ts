@@ -32,21 +32,32 @@ const DEFAULT_TYPESCRIPT_PACKAGE_VERSION = "__TYPESCRIPT_VERSION__";
 export interface EvePackageContract {
   /** eve dependency version or npm specifier written to the generated package. */
   version: string;
+  /** Matching @eve/build version or npm specifier. Defaults to {@link version}. */
+  buildVersion?: string;
   /** The matching eve release's authored `package.json` `engines.node` value. */
   nodeEngine: string;
 }
 
 export const DEFAULT_EVE_PACKAGE_CONTRACT: EvePackageContract = {
   version: "__EVE_PACKAGE_DEPENDENCY_VERSION__",
+  buildVersion: "__EVE_BUILD_PACKAGE_DEPENDENCY_VERSION__",
   nodeEngine: "__NODE_ENGINE__",
 };
+
+interface ResolvedEvePackageContract extends EvePackageContract {
+  buildVersion: string;
+}
 
 /** Resolves a stamped or explicitly supplied eve package contract. */
 export function resolveEvePackageContract(
   contract: EvePackageContract = DEFAULT_EVE_PACKAGE_CONTRACT,
-): EvePackageContract {
+): ResolvedEvePackageContract {
   return {
     version: resolveVersionToken("evePackage.version", contract.version),
+    buildVersion: resolveVersionToken(
+      "evePackage.buildVersion",
+      contract.buildVersion ?? contract.version,
+    ),
     nodeEngine: resolveVersionToken("evePackage.nodeEngine", contract.nodeEngine),
   };
 }
@@ -56,6 +67,7 @@ interface TemplateContext {
   model: string;
   reasoning?: AgentReasoningDefinition;
   eveVersion: string;
+  eveBuildVersion: string;
   aiPackageVersion: string;
   connectPackageVersion: string;
   zodPackageVersion: string;
@@ -123,6 +135,10 @@ function renderTemplate(content: string, ctx: TemplateContext): string {
     .replaceAll("__EVE_INIT_BYOK_PROVIDER__", modelProviderSlug(ctx.model))
     .replaceAll("__EVE_INIT_BYOK_ENV_VAR__", byokProviderEnvVar(ctx.model))
     .replaceAll("__EVE_INIT_PACKAGE_VERSION__", formatEveDependencySpecifier(ctx.eveVersion))
+    .replaceAll(
+      "__EVE_INIT_BUILD_PACKAGE_VERSION__",
+      formatEveDependencySpecifier(ctx.eveBuildVersion),
+    )
     .replaceAll("__EVE_INIT_AI_SDK_VERSION__", ctx.aiPackageVersion)
     .replaceAll("__EVE_INIT_CONNECT_VERSION__", ctx.connectPackageVersion)
     .replaceAll("__EVE_INIT_ZOD_VERSION__", ctx.zodPackageVersion)
@@ -219,6 +235,7 @@ function packageJsonTemplate(input: {
     "zod": "__EVE_INIT_ZOD_VERSION__"
   },
   "devDependencies": {
+    "@eve/build": "__EVE_INIT_BUILD_PACKAGE_VERSION__",
     "@types/node": "__EVE_INIT_TYPES_NODE_VERSION__",
     "typescript": "__EVE_INIT_TYPESCRIPT_VERSION__"
   }${rootOnlyFields}
@@ -421,6 +438,7 @@ export async function scaffoldBaseProject(options: ScaffoldBaseProjectOptions): 
     appName: basename(targetRoot),
     model: options.model,
     reasoning: options.reasoning,
+    eveBuildVersion: evePackage.buildVersion,
     eveVersion: evePackage.version,
     aiPackageVersion: resolveVersionToken(
       "aiPackageVersion",

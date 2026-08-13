@@ -1,9 +1,8 @@
 import { join } from "node:path";
 
 import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
-import { loadCompiledModuleMapFromAuthoredSource } from "#internal/authored-module-map-loader.js";
-import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import { createAuthoredSourceRuntimeCompiledArtifactsSource } from "#internal/application/runtime-compiled-artifacts-source.js";
+import { loadCompiledModuleMapFromAuthoredSource } from "#internal/authored-module-map-loader.js";
 import type {
   SandboxBackend,
   SandboxBackendPrewarmInput,
@@ -21,6 +20,7 @@ import { type ResolvedAgentGraphBundle, ROOT_RUNTIME_AGENT_NODE_ID } from "#runt
 import { loadCompileMetadata } from "#runtime/loaders/compile-metadata.js";
 import { withBundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
 import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
+import { loadCompiledModuleMap } from "#runtime/loaders/module-map.js";
 import { resolveRuntimeCompilerArtifactPaths } from "#runtime/loaders/artifact-paths.js";
 import { resolveRuntimeAgentGraph } from "#runtime/resolve-agent-graph.js";
 import { createRuntimeSandboxTemplateKey } from "#runtime/sandbox/keys.js";
@@ -195,7 +195,6 @@ export async function prewarmBuiltAppSandboxes(input: {
 }): Promise<void> {
   const builtArtifactsRoot = join(input.appRoot, ".output");
   const builtArtifactsSource = createDiskRuntimeCompiledArtifactsSource(builtArtifactsRoot, {
-    moduleMapLoaderPath: resolvePackageSourceFilePath("src/internal/authored-module-map-loader.ts"),
     sandboxAppRoot: input.appRoot,
   });
   const [metadata, manifest, moduleMap] = await Promise.all([
@@ -205,7 +204,7 @@ export async function prewarmBuiltAppSandboxes(input: {
     loadCompiledManifest({
       compiledArtifactsSource: builtArtifactsSource,
     }),
-    loadCompiledModuleMapFromAuthoredSource({
+    loadCompiledModuleMap({
       compiledArtifactsSource: builtArtifactsSource,
     }),
   ]);

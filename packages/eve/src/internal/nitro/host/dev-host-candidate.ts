@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 
-import { build as buildNitro, prepare } from "nitro/builder";
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
+import { loadBuildEngine } from "#internal/build-engine.js";
 import type { PreparedDevelopmentApplicationHost } from "#internal/nitro/host/types.js";
 
 const CANDIDATE_BUILD_TIMEOUT_MS = 120_000;
@@ -23,6 +23,7 @@ export async function buildDevelopmentHostCandidate(input: {
   readonly nitro: Nitro;
 }): Promise<DevelopmentWorkerPayload> {
   const nitro = input.nitro;
+  const { build: buildNitro, prepare } = await loadBuildEngine();
   let settled = false;
   let payload: DevelopmentWorkerPayload | undefined;
   let buildError: unknown;

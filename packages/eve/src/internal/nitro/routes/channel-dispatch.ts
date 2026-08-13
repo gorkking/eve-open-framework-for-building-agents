@@ -1,4 +1,4 @@
-import type { H3Event } from "nitro";
+import type { H3Event } from "@eve/build";
 import type { Span } from "#compiled/@opentelemetry/api/index.js";
 import type { RouteContext } from "#public/definitions/channel.js";
 import { getChannelInstrumentationKind } from "#channel/compiled-channel.js";

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 
 import { EVE_ROUTE_PREFIX } from "#protocol/routes.js";
 

@@ -92,6 +92,7 @@ const defaultDependencies: InitCommandDependencies = {
 
 const CURRENT_DIRECTORY_PROJECT_NAME = ".";
 export const EVE_INIT_PACKAGE_SPEC_ENV = "EVE_INIT_PACKAGE_SPEC";
+export const EVE_INIT_BUILD_PACKAGE_SPEC_ENV = "EVE_INIT_BUILD_PACKAGE_SPEC";
 
 const initLog = createLogger("init");
 
@@ -579,6 +580,9 @@ function resolveInitEvePackageOverride(): EvePackageContract | undefined {
   }
 
   return {
+    buildVersion:
+      process.env[EVE_INIT_BUILD_PACKAGE_SPEC_ENV]?.trim() ||
+      DEFAULT_EVE_PACKAGE_CONTRACT.buildVersion,
     nodeEngine: DEFAULT_EVE_PACKAGE_CONTRACT.nodeEngine,
     version: spec,
   };

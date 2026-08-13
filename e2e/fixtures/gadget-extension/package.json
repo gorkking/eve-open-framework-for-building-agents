@@ -24,6 +24,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@eve/build": "workspace:*",
     "@types/node": "catalog:",
     "eve": "workspace:*",
     "typescript": "catalog:"

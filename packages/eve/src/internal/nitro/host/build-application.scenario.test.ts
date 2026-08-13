@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCompiledAgentManifest } from "#compiler/manifest.js";
@@ -87,6 +87,22 @@ const createProductionApplicationNitroMock = vi.fn();
 const prepareProductionApplicationHostMock = vi.fn();
 const prepareMock = vi.fn(async () => undefined);
 const prerenderMock = vi.fn(async () => undefined);
+const materializeAuthoredModulesMock = vi.fn(async (input: { runtimeAppRoot: string }) => {
+  const compileDirectory = join(input.runtimeAppRoot, ".eve", "compile");
+  const materializedModulePath = join("authored-modules", "production-module-map.mjs");
+
+  await mkdir(join(compileDirectory, "authored-modules"), { recursive: true });
+  await writeFile(
+    join(compileDirectory, materializedModulePath),
+    "export const moduleMap = { nodes: {} }; export default moduleMap;\n",
+  );
+
+  return {
+    fingerprint: "production-module-map",
+    moduleMap: materializedModulePath,
+    version: 3 as const,
+  };
+});
 const resolveDiscoveryProjectMock = vi.fn(async (appRoot: string) => ({
   agentRoot: join(appRoot, "agent"),
   appRoot,
@@ -94,7 +110,8 @@ const resolveDiscoveryProjectMock = vi.fn(async (appRoot: string) => ({
 }));
 const runVercelBuildPrewarmMock = vi.fn(async () => undefined);
 
-vi.mock("nitro/builder", () => ({
+vi.mock("@eve/build", () => ({
+  EVE_BUILD_ENGINE_PROTOCOL: 1,
   build: buildNitroMock,
   copyPublicAssets: copyPublicAssetsMock,
   prepare: prepareMock,
@@ -107,6 +124,10 @@ vi.mock("./create-application-nitro.js", () => ({
 
 vi.mock("./prepare-application-host.js", () => ({
   prepareProductionApplicationHost: prepareProductionApplicationHostMock,
+}));
+
+vi.mock("#internal/materialized-authored-modules.js", () => ({
+  materializeAuthoredModules: materializeAuthoredModulesMock,
 }));
 
 vi.mock("#discover/project.js", () => ({
@@ -237,6 +258,12 @@ describe("buildApplication", () => {
     await expect(
       readFile(join(appRoot, ".eve", "compile", "compiled-agent-manifest.json"), "utf8"),
     ).rejects.toThrow();
+    await expect(
+      readFile(join(outputDir, ".eve", "compile", "module-map.mjs"), "utf8"),
+    ).resolves.toBe("export const moduleMap = { nodes: {} }; export default moduleMap;\n");
+    expect(materializeAuthoredModulesMock).toHaveBeenCalledWith({
+      runtimeAppRoot: expect.stringContaining(join(appRoot, ".eve", "builds")),
+    });
 
     const summary = JSON.parse(
       await readFile(join(appRoot, VERCEL_EVE_AGENT_SUMMARY_OUTPUT_PATH), "utf8"),

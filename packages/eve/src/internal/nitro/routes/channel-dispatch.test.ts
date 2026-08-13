@@ -1,4 +1,4 @@
-import type { H3Event } from "nitro";
+import type { H3Event } from "@eve/build";
 import {
   context as apiContext,
   propagation as apiPropagation,

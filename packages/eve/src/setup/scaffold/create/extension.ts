@@ -25,6 +25,7 @@ const DEFAULT_TYPESCRIPT_PACKAGE_VERSION = "__TYPESCRIPT_VERSION__";
 
 interface ExtensionTemplateContext {
   appName: string;
+  eveBuildVersion: string;
   eveVersion: string;
   zodPackageVersion: string;
   typescriptPackageVersion: string;
@@ -35,6 +36,7 @@ interface ExtensionTemplateContext {
 function renderTemplate(content: string, ctx: ExtensionTemplateContext): string {
   return content
     .replaceAll("__EVE_INIT_APP_NAME__", ctx.appName)
+    .replaceAll("__EVE_INIT_BUILD_PACKAGE_VERSION__", ctx.eveBuildVersion)
     .replaceAll("__EVE_INIT_PACKAGE_VERSION__", ctx.eveVersion)
     .replaceAll("__EVE_INIT_ZOD_VERSION__", ctx.zodPackageVersion)
     .replaceAll("__EVE_INIT_TYPESCRIPT_VERSION__", ctx.typescriptPackageVersion)
@@ -77,6 +79,7 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
       zod: "__EVE_INIT_ZOD_VERSION__",
     },
     devDependencies: {
+      "@eve/build": "__EVE_INIT_BUILD_PACKAGE_VERSION__",
       "@types/node": "__EVE_INIT_TYPES_NODE_VERSION__",
       eve: "__EVE_INIT_PACKAGE_VERSION__",
       typescript: "__EVE_INIT_TYPESCRIPT_VERSION__",
@@ -244,6 +247,7 @@ export async function scaffoldExtensionProject(
 
   const ctx: ExtensionTemplateContext = {
     appName: basename(targetRoot),
+    eveBuildVersion: evePackage.buildVersion,
     eveVersion: evePackage.version,
     zodPackageVersion: resolveVersionToken(
       "zodPackageVersion",

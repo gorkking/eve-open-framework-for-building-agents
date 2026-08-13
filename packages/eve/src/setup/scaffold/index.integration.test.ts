@@ -26,7 +26,7 @@ async function createTempDir(): Promise<string> {
 const TEST_EVE_PACKAGE = { version: "0.25.0", nodeEngine: ">=24" } as const;
 const LATEST_EVE_PACKAGE = { version: "latest", nodeEngine: ">=24" } as const;
 const RELEASE_AGE_POLICY =
-  'minimumReleaseAgeExclude:\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\n';
+  'minimumReleaseAgeExclude:\n  - "@eve/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - eve\n  - nitro\n  - workflow\n';
 
 const TEST_WEB_PACKAGE_VERSIONS = {
   evePackage: TEST_EVE_PACKAGE,
@@ -227,6 +227,7 @@ describe("ensureChannel", () => {
     const patchedPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
     ) as { devDependencies: Record<string, string> };
+    expect(patchedPackageJson.devDependencies["@eve/build"]).toBe("^0.25.0");
     expect(patchedPackageJson.devDependencies.typescript).toBe("6.0.3");
     await expect(readFile(join(projectRoot, "app/page.tsx"), "utf8")).resolves.toContain(
       "AgentChat",
@@ -625,7 +626,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\nallowBuilds:\n  sharp: false\n',
+      'minimumReleaseAgeExclude:\n  - react\n  - "@eve/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - eve\n  - nitro\n  - workflow\nallowBuilds:\n  sharp: false\n',
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -907,6 +908,7 @@ describe("scaffoldExtensionProject", () => {
       engines: { node: "24.x" },
     });
     expect(packageJson.devDependencies?.eve).toBe("0.25.0");
+    expect(packageJson.devDependencies?.["@eve/build"]).toBe("0.25.0");
     expect(packageJson.peerDependenciesMeta).toBeUndefined();
     expect(packageJson.devDependencies?.typescript).toBe("7.0.2");
     expect(packageJson.dependencies?.ai).toBeUndefined();
@@ -953,6 +955,7 @@ describe("scaffoldBaseProject", () => {
     expect(agentSource).not.toContain("modelOptions");
     const packageJson = await readFile(join(projectRoot, "package.json"), "utf8");
     expect(packageJson).toContain('"eve": "^0.25.0"');
+    expect(packageJson).toContain('"@eve/build": "^0.25.0"');
     // Channels added later (`eve add channel/slack`, possibly next to a
     // running `eve dev`) import @vercel/connect; init ships it so a later
     // channel add never introduces a missing dependency.

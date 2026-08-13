@@ -177,6 +177,7 @@ async function runInitCommand(input) {
     env: {
       ...process.env,
       CODEX_CI: "1",
+      EVE_INIT_BUILD_PACKAGE_SPEC: input.eveBuildPackageSpec,
       EVE_INIT_PACKAGE_SPEC: input.evePackageSpec,
       npm_config_user_agent: `npm/? node/${process.versions.node} ${process.platform} ${process.arch}`,
     },
@@ -193,6 +194,7 @@ export async function collectInitInstallReportFromTarball(options) {
 
   try {
     const initialized = await runInitCommand({
+      eveBuildPackageSpec: `file:${options.buildTarballPath}`,
       evePackageSpec: `file:${options.tarballPath}`,
       packageRoot,
       parentDirectory: initDirectory,
@@ -210,6 +212,7 @@ export async function collectInitInstallReportFromTarball(options) {
     const installedSizeBytes = installedFiles.reduce((total, file) => total + file.size, 0);
     const packageSizes = new Map();
     const packageSpec = `file:${basename(options.tarballPath)}`;
+    const buildPackageSpec = `file:${basename(options.buildTarballPath)}`;
 
     for (const file of installedFiles) {
       const packageName = readInstalledPackageName(file.relativePath);
@@ -229,10 +232,16 @@ export async function collectInitInstallReportFromTarball(options) {
       },
     );
     const devDependencies = normalizeDependencyRanges(
-      attachInstalledBytes(readDependencyBlock(packageJson, "devDependencies"), packageSizes),
+      normalizeDependencyRanges(
+        attachInstalledBytes(readDependencyBlock(packageJson, "devDependencies"), packageSizes),
+        {
+          packageName: "eve",
+          packageSpec,
+        },
+      ),
       {
-        packageName: "eve",
-        packageSpec,
+        packageName: "@eve/build",
+        packageSpec: buildPackageSpec,
       },
     );
     const directDependencyNames = new Set(dependencies.map((dependency) => dependency.name));
@@ -285,13 +294,21 @@ export async function collectInitInstallReport(options) {
 
   try {
     const packResult = await runPack(packageRoot, packDirectory);
+    const buildPackageRoot = resolve(packageRoot, "../eve-build");
+    const buildPackResult = await runPack(buildPackageRoot, packDirectory);
     const tarballFilename = typeof packResult.filename === "string" ? packResult.filename : null;
+    const buildTarballFilename =
+      typeof buildPackResult.filename === "string" ? buildPackResult.filename : null;
 
     if (!tarballFilename) {
       throw new Error(`npm pack did not report a tarball filename for "${packageRoot}".`);
     }
+    if (!buildTarballFilename) {
+      throw new Error(`npm pack did not report a tarball filename for "${buildPackageRoot}".`);
+    }
 
     return collectInitInstallReportFromTarball({
+      buildTarballPath: join(packDirectory, buildTarballFilename),
       packageLabel: options.packageLabel,
       packageRoot,
       tarballPath: join(packDirectory, tarballFilename),

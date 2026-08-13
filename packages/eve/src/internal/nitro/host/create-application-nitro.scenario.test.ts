@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Nitro } from "nitro/types";
+import type { Nitro } from "@eve/build";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -38,7 +38,8 @@ const configureProductionNitroRoutes = vi.fn(async () => undefined);
 const createNitroMock = vi.fn();
 const registerScheduleTaskHandlers = vi.fn();
 
-vi.mock("nitro/builder", () => ({
+vi.mock("@eve/build", () => ({
+  EVE_BUILD_ENGINE_PROTOCOL: 1,
   createNitro: createNitroMock,
 }));
 

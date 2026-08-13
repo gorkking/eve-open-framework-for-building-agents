@@ -13,15 +13,11 @@ import type { PackageManagerStrategy } from "./types.js";
 export const PNPM_WORKSPACE_PATH = "pnpm-workspace.yaml";
 export const PNPM_WORKSPACE_MEMBERSHIP_ARGUMENTS = ["list", "--depth", "-1", "--json"] as const;
 const RELEASE_AGE_EXCLUSIONS = [
-  "@ai-sdk/*",
-  "@rolldown/*",
+  "@eve/*",
   "@vercel/*",
   "@workflow/*",
-  "ai",
-  "experimental-ai-sdk-code-mode",
   "eve",
   "nitro",
-  "rolldown",
   "workflow",
 ] as const;
 

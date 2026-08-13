@@ -23,6 +23,8 @@ playwright-report/
 test-results/
 
 # Package lifecycle artifacts (copied from the repo root at prepack)
+packages/eve-build/LICENSE
+packages/eve-build/NOTICE
 packages/eve/docs/
 packages/eve/LICENSE
 packages/eve/NOTICE
