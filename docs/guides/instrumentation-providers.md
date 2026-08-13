@@ -70,15 +70,18 @@ Omitting this file is the common case. eve registers the pipeline for whatever d
 `otelIntegration()` is a destination, and there may be as many as there are files. A `traceExporter` is wrapped in eve's batching processor, which is what makes the one-line form enough:
 
 ```ts title="agent/instrumentation/datadog.ts"
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
 import { otelIntegration } from "eve/instrumentation/otel";
 
 export default otelIntegration({
-  traceExporter: new OTLPTraceExporter(),
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: process.env.DATADOG_OTLP_TRACES_ENDPOINT!,
+    headers: { "dd-api-key": process.env.DD_API_KEY! },
+  }),
 });
 ```
 
-For Datadog, enable [OTLP ingestion in the Datadog Agent](https://docs.datadoghq.com/opentelemetry/setup/otlp_ingest_in_the_agent/) and set `OTEL_EXPORTER_OTLP_ENDPOINT` in the agent application to the local Agent endpoint.
+Set `DATADOG_OTLP_TRACES_ENDPOINT` to your [Datadog OTLP traces intake endpoint](https://docs.datadoghq.com/opentelemetry/setup/otlp_ingest/traces/) and provide `DD_API_KEY` through the deployment environment.
 
 Pass `spanProcessors` instead when the destination needs its own batching, sampling, or filtering. Both may be given: declared processors come first, and the wrapped exporter is appended after them.
 
@@ -131,11 +134,14 @@ present only for providers that capture content.
 `recordInputs` and `recordOutputs` belong to a destination, not to the process. Content is written onto a span if any destination wants it, and each destination that declined never exports it. A local spool and a hosted backend no longer have to agree:
 
 ```ts title="agent/instrumentation/datadog.ts"
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
 import { otelIntegration } from "eve/instrumentation/otel";
 
 export default otelIntegration({
-  traceExporter: new OTLPTraceExporter(),
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: process.env.DATADOG_OTLP_TRACES_ENDPOINT!,
+    headers: { "dd-api-key": process.env.DD_API_KEY! },
+  }),
   recordInputs: false,
   recordOutputs: false,
 });
