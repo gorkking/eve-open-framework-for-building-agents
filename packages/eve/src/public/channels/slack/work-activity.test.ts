@@ -1,8 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { renderSlackWorkActivity } from "#public/channels/slack/work-activity.js";
+import {
+  renderSlackWorkActivity,
+  settleSlackWorkActivity,
+} from "#public/channels/slack/work-activity.js";
 
 describe("renderSlackWorkActivity", () => {
+  it("removes the transient activity message when the parent turn settles", async () => {
+    const request = vi.fn(async () => ({ ok: true }));
+    const channel = {
+      slack: { channelId: "C1", request },
+      state: { workActivityMessageTs: "activity-1", workActivityTurnId: "turn-1" },
+      thread: { post: vi.fn() },
+    };
+
+    await settleSlackWorkActivity(channel);
+
+    expect(request).toHaveBeenCalledWith("chat.delete", { channel: "C1", ts: "activity-1" });
+    expect(channel.state.workActivityMessageTs).toBeNull();
+    expect(channel.state.workActivityTurnId).toBeNull();
+  });
+
   it("posts once then updates the same turn activity message", async () => {
     const post = vi.fn(async () => ({ id: "activity-1" }));
     const request = vi.fn(async () => ({ ok: true }));
@@ -57,8 +75,12 @@ describe("renderSlackWorkActivity", () => {
 
     expect(post).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith("chat.update", {
+      blocks: [
+        { text: { emoji: true, text: "Working", type: "plain_text" }, type: "header" },
+        { text: { text: "✓ search_docs", type: "mrkdwn" }, type: "section" },
+      ],
       channel: "C1",
-      text: "*Working*\n\n✓ search_docs",
+      text: "Working\n✓ search_docs",
       ts: "activity-1",
     });
   });
@@ -123,7 +145,13 @@ describe("renderSlackWorkActivity", () => {
       },
     });
 
-    expect(post).toHaveBeenCalledWith("*Working*\n\n◐ researcher — research_stage — discover");
+    expect(post).toHaveBeenCalledWith({
+      blocks: [
+        { text: { emoji: true, text: "Working", type: "plain_text" }, type: "header" },
+        { text: { text: "◐ *researcher*\n   ✓ discover", type: "mrkdwn" }, type: "section" },
+      ],
+      text: "Working\n◐ researcher\n  ✓ discover",
+    });
   });
 
   it("does not post when a monitor cannot find the parent-owned activity message", async () => {

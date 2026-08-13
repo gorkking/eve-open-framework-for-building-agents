@@ -402,7 +402,8 @@ function buildAdapter<TState, TCtx, TReceiveTarget, TMetadata extends Record<str
       work === undefined
         ? undefined
         : {
-            render: (adapterCtx: any) => work(adapterCtx.state, adapterCtx.session, adapterCtx.ctx),
+            render: (adapterCtx: any, options) =>
+              work(adapterCtx.state, adapterCtx.session, adapterCtx.ctx, options),
           },
 
     ...eventHandlers,

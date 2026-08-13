@@ -2,6 +2,8 @@ import type { WorkAction, WorkGraph, WorkPhase } from "#harness/work-graph.js";
 
 const ACTIVITY_MESSAGE_MAX_ITEMS = 8;
 
+type SlackBlock = Record<string, unknown>;
+
 export interface SlackWorkActivityState {
   workActivityMessageTs?: string | null;
   workActivityTurnId?: string | null;
@@ -11,26 +13,38 @@ export interface SlackWorkActivityChannel {
   readonly slack: {
     readonly channelId: string;
     request(
+      operation: "chat.delete",
+      body: { readonly channel: string; readonly ts: string },
+    ): Promise<{ readonly error?: string; readonly ok: boolean }>;
+    request(
       operation: "chat.update",
-      body: { readonly channel: string; readonly text: string; readonly ts: string },
+      body: {
+        readonly blocks: readonly SlackBlock[];
+        readonly channel: string;
+        readonly text: string;
+        readonly ts: string;
+      },
     ): Promise<{ readonly error?: string; readonly ok: boolean }>;
   };
   readonly state: SlackWorkActivityState;
   readonly thread: {
-    post(message: string): Promise<{ readonly id: string }>;
+    post(message: { readonly blocks: readonly SlackBlock[]; readonly text: string }): Promise<{
+      readonly id: string;
+    }>;
   };
 }
 
-/** Best-effort Slack activity message for the current work graph. */
+/** Removes the transient activity card once the parent turn reaches a terminal event. */
 export async function settleSlackWorkActivity(channel: SlackWorkActivityChannel): Promise<void> {
   const ts = channel.state.workActivityMessageTs;
   if (!ts) return;
   try {
-    await channel.slack.request("chat.update", {
+    await channel.slack.request("chat.delete", {
       channel: channel.slack.channelId,
-      text: "*Work complete*",
       ts,
     });
+    channel.state.workActivityMessageTs = null;
+    channel.state.workActivityTurnId = null;
   } catch {
     // Activity rendering is cosmetic.
   }
@@ -43,11 +57,11 @@ export async function renderSlackWorkActivity(input: {
 }): Promise<void> {
   const turn = input.work?.turn;
   if (turn === undefined) return;
-  const text = renderWorkActivity({
+  const activity = renderWorkActivity({
     actions: turn.steps.flatMap((step) => step.actions),
     blockers: turn.blockers,
   });
-  if (text === undefined) return;
+  if (activity === undefined) return;
 
   const currentTs =
     input.channel.state.workActivityTurnId === turn.id
@@ -57,7 +71,8 @@ export async function renderSlackWorkActivity(input: {
     try {
       const response = await input.channel.slack.request("chat.update", {
         channel: input.channel.slack.channelId,
-        text,
+        blocks: activity.blocks,
+        text: activity.text,
         ts: currentTs,
       });
       if (response.ok === true) return;
@@ -70,7 +85,10 @@ export async function renderSlackWorkActivity(input: {
   if (input.allowPost === false) return;
 
   try {
-    const posted = await input.channel.thread.post(text);
+    const posted = await input.channel.thread.post({
+      blocks: activity.blocks,
+      text: activity.text,
+    });
     if (posted.id) {
       input.channel.state.workActivityMessageTs = posted.id;
       input.channel.state.workActivityTurnId = turn.id;
@@ -83,30 +101,50 @@ export async function renderSlackWorkActivity(input: {
 function renderWorkActivity(input: {
   readonly actions: readonly WorkAction[];
   readonly blockers: readonly { kind: string; label?: string; phase: string }[];
-}): string | undefined {
+}): { readonly blocks: readonly SlackBlock[]; readonly text: string } | undefined {
   const blockers = input.blockers
     .filter((blocker) => blocker.phase === "blocked")
-    .map((blocker) => `! ${blocker.label ?? `Waiting for ${blocker.kind}`}`);
+    .map((blocker) => {
+      const text = `! ${blocker.label ?? `Waiting for ${blocker.kind}`}`;
+      return { markdown: text, text };
+    });
   const actions = input.actions
     .filter((action) => action.phase !== "queued")
-    .slice(-ACTIVITY_MESSAGE_MAX_ITEMS - blockers.length)
-    .map(renderAction);
-  const items = [...blockers, ...actions];
-  return items.length === 0 ? undefined : ["*Working*", "", ...items].join("\n");
+    .slice(-ACTIVITY_MESSAGE_MAX_ITEMS - blockers.length);
+  const rows = [...blockers, ...actions.map(renderAction)];
+  if (rows.length === 0) return undefined;
+  const text = ["Working", ...rows.map((row) => row.text)].join("\n");
+  return {
+    blocks: [
+      { text: { emoji: true, text: "Working", type: "plain_text" }, type: "header" },
+      {
+        text: { text: rows.map((row) => row.markdown).join("\n\n"), type: "mrkdwn" },
+        type: "section",
+      },
+    ],
+    text,
+  };
 }
 
-function renderAction(action: WorkAction): string {
+function renderAction(action: WorkAction): { readonly markdown: string; readonly text: string } {
   const child = action.child?.work?.turn;
-  const detail =
-    child === undefined ? undefined : summarizeChild(child.steps.flatMap((step) => step.actions));
-  return `${phaseGlyph(action.phase)} ${action.name}${detail ? ` — ${detail}` : ""}`;
-}
-
-function summarizeChild(actions: readonly WorkAction[]): string | undefined {
-  const action = actions.find((action) => action.phase === "running") ?? actions.at(-1);
-  return action === undefined
-    ? undefined
-    : [action.name, action.detail].filter(Boolean).join(" — ");
+  if (child === undefined) {
+    const text = `${phaseGlyph(action.phase)} ${action.name}`;
+    return { markdown: text, text };
+  }
+  const childActions = child.steps.flatMap((step) => step.actions);
+  const childRows = childActions.map((childAction) => {
+    const text = `${phaseGlyph(childAction.phase)} ${childAction.detail ?? childAction.name}`;
+    return { markdown: `   ${text}`, text };
+  });
+  const text = `${phaseGlyph(action.phase)} ${action.name}`;
+  return {
+    markdown: [
+      `${phaseGlyph(action.phase)} *${action.name}*`,
+      ...childRows.map((row) => row.markdown),
+    ].join("\n"),
+    text: [text, ...childRows.map((row) => `  ${row.text}`)].join("\n"),
+  };
 }
 
 function phaseGlyph(phase: WorkPhase): string {
