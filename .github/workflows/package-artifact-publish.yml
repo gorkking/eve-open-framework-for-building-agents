@@ -77,7 +77,9 @@ jobs:
             const run = runs.find(
               (candidate) =>
                 candidate.workflow_id === workflow.id &&
-                candidate.pull_requests.some((linked) => linked.number === pullNumber),
+                candidate.head_sha === pull.head.sha &&
+                candidate.head_branch === pull.head.ref &&
+                candidate.head_repository?.full_name === pull.head.repo.full_name,
             );
             if (!run) {
               throw new Error(`No successful package build found for PR #${pullNumber} at ${pull.head.sha}.`);
