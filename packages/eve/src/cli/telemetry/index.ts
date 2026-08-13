@@ -2,10 +2,6 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
-const DEFAULT_ENDPOINT = "https://telemetry.vercel.com/api/eve-cli/v1/events";
-const REQUEST_TIMEOUT_MS = 1_000;
-const FLUSH_SCRIPT = `const [endpoint, payload, sessionId] = process.argv.slice(1); fetch(endpoint, { method: "POST", headers: { "content-type": "application/json", "client-id": "eve-cli", "x-eve-cli-topic-id": "generic", "x-eve-cli-session-id": sessionId }, body: payload, signal: AbortSignal.timeout(${REQUEST_TIMEOUT_MS}) }).catch(() => {});`;
-
 type ErrorWithProperties = Error & {
   readonly code?: unknown;
   readonly status?: unknown;
@@ -133,15 +129,14 @@ export function createEveCliTelemetry(version: string): EveCliTelemetry {
       try {
         const child = spawn(
           process.execPath,
-          [
-            "-e",
-            FLUSH_SCRIPT,
-            process.env.EVE_TELEMETRY_ENDPOINT ?? DEFAULT_ENDPOINT,
-            JSON.stringify(events),
-            sessionId,
-          ],
-          { detached: true, stdio: "ignore", windowsHide: true },
-        );
+          [process.argv[1] ?? "", "telemetry", "flush", JSON.stringify({ events, sessionId })],
+          {
+            detached: true,
+            env: { ...process.env, EVE_TELEMETRY_DISABLED: "1" },
+            stdio: "ignore",
+            windowsHide: true,
+          },
+        ) as ReturnType<typeof spawn>;
         child.unref();
       } catch {
         // Telemetry must never affect command output or exit status.

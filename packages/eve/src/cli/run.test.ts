@@ -10,6 +10,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 
 import { resolveDevUiMode, resolveTuiDisplayOptions, runCli } from "#cli/run.js";
 import { createEveCliTelemetry } from "#cli/telemetry/index.js";
+import { flushEveCliTelemetry } from "#cli/telemetry/flush.js";
 import { MockScreen } from "#cli/dev/tui/test/mock-terminal.js";
 import type { RunDevelopmentTuiInput } from "#cli/dev/tui/tui.js";
 import type { DevelopmentServerOptions } from "#internal/nitro/host/types.js";
@@ -79,10 +80,34 @@ describe("CLI telemetry", () => {
     await telemetry.flush();
     expect(spawn).toHaveBeenCalledWith(
       process.execPath,
-      expect.arrayContaining(["http://localhost/events"]),
-      expect.objectContaining({ detached: true }),
+      expect.arrayContaining([process.argv[1], "telemetry", "flush"]),
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({ EVE_TELEMETRY_DISABLED: "1" }),
+      }),
     );
     expect(child.unref).toHaveBeenCalled();
+  });
+});
+
+describe("CLI telemetry flush command", () => {
+  it("posts a valid batch without recording telemetry recursively", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response());
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("EVE_TELEMETRY_ENDPOINT", "http://localhost/events");
+    await flushEveCliTelemetry(
+      JSON.stringify({
+        sessionId: "session_123",
+        events: [{ id: "event_123", event_time: 1, key: "command", value: "info" }],
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost/events",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-eve-cli-session-id": "session_123" }),
+      }),
+    );
   });
 });
 

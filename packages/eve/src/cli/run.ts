@@ -49,6 +49,7 @@ import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
 import { startCliLiveRow } from "#cli/ui/live-row.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
 import { createLogger } from "#internal/logging.js";
+import { flushEveCliTelemetry } from "#cli/telemetry/flush.js";
 import { canonicalCommand, createEveCliTelemetry } from "#cli/telemetry/index.js";
 import type {
   DevelopmentServer,
@@ -179,6 +180,11 @@ function createCliProgram(
         logger.log(message.trimEnd());
       },
     });
+
+  const telemetry = program.command("telemetry", { hidden: true });
+  telemetry.command("flush <payload>", { hidden: true }).action(async (payload: string) => {
+    await flushEveCliTelemetry(payload);
+  });
 
   applicationCommand(
     program
