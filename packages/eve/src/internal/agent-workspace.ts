@@ -179,12 +179,3 @@ export async function resolveAgentWorkspace(
 
   return { members, root: workspaceRoot };
 }
-
-/** Load a workspace that the caller has already identified as workspace-shaped. */
-export async function loadAgentWorkspace(root: string): Promise<AgentWorkspace> {
-  const workspace = await resolveAgentWorkspace(root);
-  if (workspace === undefined) {
-    throw new Error("An eve agent workspace requires an agents/ directory.");
-  }
-  return workspace;
-}
