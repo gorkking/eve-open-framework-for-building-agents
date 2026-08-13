@@ -5,6 +5,7 @@ import {
   trace,
 } from "#compiled/@opentelemetry/api/index.js";
 import {
+  asSchema,
   isStepCount,
   type LanguageModel,
   type ModelMessage,
@@ -29,7 +30,7 @@ import {
   recordErrorOnSpan,
 } from "#internal/logging.js";
 import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
-import { contextStorage } from "#context/container.js";
+import { contextStorage, type AlsContext } from "#context/container.js";
 import {
   AuthKey,
   ChannelInstrumentationKey,
@@ -210,6 +211,7 @@ import {
   getAnthropicCacheMarker,
 } from "#harness/prompt-cache.js";
 import { resolveFrameworkToolFromUpstreamType } from "#harness/provider-tools.js";
+import { estimateTokens } from "#harness/token-estimate.js";
 import {
   createRuntimeActionRequestFromToolCall,
   resolvePendingRuntimeActions,
@@ -554,6 +556,46 @@ function buildHarnessToolsWithDynamicSubagents(
     effectiveTools.set(dynamicSubagent.name, dynamicSubagent);
   }
   return effectiveTools;
+}
+
+function estimateRequestEnvelopeTokens(input: {
+  readonly config: ToolLoopHarnessConfig;
+  readonly context: AlsContext | undefined;
+  readonly emptyDeliveryEnabled: boolean;
+  readonly session: HarnessSession;
+}): number {
+  const tools = new Map(
+    getAdvertisedTools({
+      session: input.session,
+      tools: buildHarnessToolsWithDynamicSubagents(input.config.tools, input.context),
+    }),
+  );
+
+  if (input.context !== undefined) {
+    for (const tool of getAdvertisedTools({
+      session: input.session,
+      tools: buildDynamicTools(input.context),
+    })) {
+      tools.set(tool.name, tool);
+    }
+  }
+
+  return estimateTokens({
+    instructions: [
+      input.session.agent.system,
+      ...(input.context === undefined ? [] : buildDynamicInstructionMessages(input.context)),
+      input.context?.get(PendingSkillAnnouncementKey),
+      input.emptyDeliveryEnabled ? CONDITIONAL_DELIVERY_INSTRUCTION : undefined,
+    ],
+    outputSchema: input.session.outputSchema,
+    tools: [...tools.values()].map((tool) => ({
+      description: tool.description,
+      inputSchema: asSchema(tool.inputSchema).jsonSchema,
+      name: tool.name,
+      outputSchema:
+        tool.outputSchema === undefined ? undefined : asSchema(tool.outputSchema).jsonSchema,
+    })),
+  });
 }
 
 export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
@@ -1194,6 +1236,18 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const cachePath = detectPromptCachePath(model);
     const marker = cachePath.kind === "anthropic-direct" ? getAnthropicCacheMarker() : undefined;
 
+    const emptyDeliveryEnabled =
+      session.outputSchema === undefined &&
+      ctx !== undefined &&
+      isScheduleAppAuth(ctx.get(AuthKey)) &&
+      ctx.get(ParentSessionKey) === undefined;
+    const requestEnvelopeTokens = estimateRequestEnvelopeTokens({
+      config,
+      context: ctx,
+      emptyDeliveryEnabled,
+      session,
+    });
+
     // --- Compaction ---------------------------------------------------------
     //
     // Runs before `agent.stream()` so the compacted messages flow through
@@ -1209,17 +1263,12 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       onCompaction: config.onCompaction,
       resolveModel: config.resolveModel,
       runtimeIdentity: config.runtimeIdentity,
+      requestEnvelopeTokens,
       session,
       telemetry: enrichTelemetry(otelSettings, agentName) ?? undefined,
     }));
 
     const approvedTools = getApprovedTools(session);
-
-    const emptyDeliveryEnabled =
-      session.outputSchema === undefined &&
-      ctx !== undefined &&
-      isScheduleAppAuth(ctx.get(AuthKey)) &&
-      ctx.get(ParentSessionKey) === undefined;
 
     // --- Execute via ToolLoopAgent ------------------------------------------
 
@@ -1865,6 +1914,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       emit,
       emissionState,
       promptMessages: messages,
+      requestEnvelopeTokens,
       result,
       runStep,
       session,
@@ -2383,12 +2433,13 @@ async function handleStepResult(input: {
   readonly emit?: ToolLoopHarnessConfig["handleEvent"];
   readonly emissionState: ReturnType<typeof getHarnessEmissionState>;
   readonly promptMessages: readonly ModelMessage[];
+  readonly requestEnvelopeTokens: number;
   readonly result: HarnessStepResult;
   readonly runStep: StepFn;
   readonly runtimeActionTools: HarnessToolMap;
   readonly session: HarnessSession;
 }): Promise<StepResult> {
-  const { config, emit, promptMessages, result, runStep } = input;
+  const { config, emit, promptMessages, requestEnvelopeTokens, result, runStep } = input;
   let { emissionState, session } = input;
 
   const resolvedStepOutput = resolveAssistantStepText(result.response.messages, result.text);
@@ -2434,7 +2485,12 @@ async function handleStepResult(input: {
 
   const baseSession: HarnessSession = {
     ...session,
-    compaction: createNextCompactionConfig(session.compaction, promptMessages, result),
+    compaction: createNextCompactionConfig(
+      session.compaction,
+      promptMessages,
+      requestEnvelopeTokens,
+      result,
+    ),
   };
 
   const workflowContinuationSecurity =
@@ -3036,11 +3092,13 @@ function parkOnWorkflowInterrupt(input: {
 function createNextCompactionConfig(
   current: CompactionConfig,
   promptMessages: readonly ModelMessage[],
+  requestEnvelopeTokens: number,
   result: HarnessStepResult,
 ): CompactionConfig {
   const next: {
     lastKnownInputTokens?: number;
     lastKnownPromptMessageCount?: number;
+    lastKnownRequestEnvelopeTokens?: number;
     recentWindowSize: number;
     threshold: number;
     thresholdPercent?: number;
@@ -3053,6 +3111,7 @@ function createNextCompactionConfig(
   if (result.usage?.inputTokens !== undefined) {
     next.lastKnownInputTokens = result.usage.inputTokens;
     next.lastKnownPromptMessageCount = promptMessages.length;
+    next.lastKnownRequestEnvelopeTokens = requestEnvelopeTokens;
   }
 
   return next;
@@ -3077,6 +3136,7 @@ async function maybeCompact(input: {
   readonly onCompaction?: ToolLoopHarnessConfig["onCompaction"];
   readonly resolveModel: ToolLoopHarnessConfig["resolveModel"];
   readonly runtimeIdentity?: ToolLoopHarnessConfig["runtimeIdentity"];
+  readonly requestEnvelopeTokens?: number;
   readonly session: HarnessSession;
   readonly telemetry?: TelemetryOptions;
 }): Promise<{ readonly messages: ModelMessage[]; readonly session: HarnessSession }> {
@@ -3084,7 +3144,10 @@ async function maybeCompact(input: {
   let messages = input.messages;
   const session = input.session;
 
-  if (input.force !== true && !shouldCompact(messages, session.compaction)) {
+  if (
+    input.force !== true &&
+    !shouldCompact(messages, session.compaction, input.requestEnvelopeTokens)
+  ) {
     return { messages, session };
   }
 
@@ -3102,7 +3165,11 @@ async function maybeCompact(input: {
         sequence: emissionState.sequence,
         sessionId: session.sessionId,
         turnId: emissionState.turnId,
-        usageInputTokens: getInputTokenCount(messages, session.compaction),
+        usageInputTokens: getInputTokenCount(
+          messages,
+          session.compaction,
+          input.requestEnvelopeTokens,
+        ),
       }),
     );
   }
@@ -3116,6 +3183,7 @@ async function maybeCompact(input: {
     buildGatewayAttributionHeaders(compaction.model, input.runtimeIdentity),
     input.abortSignal,
     input.force === true,
+    input.requestEnvelopeTokens,
   );
 
   if (input.onCompaction) {
