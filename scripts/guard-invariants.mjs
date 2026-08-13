@@ -108,6 +108,9 @@
  *             `pnpm --filter eve build`. Turbo owns workspace dependency
  *             ordering; nested builds race on eve's clean-and-publish dist
  *             directory and let consumers observe a partial package.
+ *   rule 40 — Production eve source must reach vendored host primitives only
+ *             through `#compiled/*`. Bare imports would silently inline a
+ *             second copy and bypass the pinned artifact and license boundary.
  *
  * Baselines for rules with pre-existing violations live in
  * `guard-invariants-baseline.json`. Counts and allowlists in that file
@@ -603,6 +606,61 @@ async function checkRule39NoNestedEveBuild() {
         message: `script "${scriptName}" launches a nested eve package build. Declare eve as a workspace dependency and let Turbo's ^build edge produce it once; rebuilding eve inside a consumer races its destructive dist clean against other consumers.`,
       });
     }
+  }
+
+  return violations;
+}
+
+// ---------- Rule 40: host primitives stay behind compiled wrappers ----------
+
+const VENDORED_HOST_PRIMITIVE_RE = /^(?:croner|crossws|h3|rou3|srvx)(?:\/|$)/;
+const VENDORED_HOST_IMPORT_ALLOWLIST = new Set([
+  "packages/eve/src/internal/host/compiled-host-primitives.test.ts",
+]);
+
+/**
+ * @returns {Promise<Violation[]>}
+ */
+async function checkRule40VendoredHostPrimitiveImports() {
+  /** @type {Violation[]} */
+  const violations = [];
+  const sourceRoot = join(EVE_PACKAGE_ROOT, "src");
+
+  for await (const entry of walkFiles(sourceRoot)) {
+    if (!entry.stat.isFile() || !EVE_CODE_FILE_RE.test(entry.relPath)) continue;
+    const posix = toPosix(entry.relPath);
+    if (VENDORED_HOST_IMPORT_ALLOWLIST.has(posix) || /\.test\.[cm]?[jt]sx?$/.test(posix)) {
+      continue;
+    }
+
+    const source = await readFile(entry.absPath, "utf8");
+    const sourceFile = ts.createSourceFile(
+      posix,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      posix.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    const seen = new Set();
+    const visit = (node) => {
+      const specifier = importSpecifier(node) ?? mockedModuleSpecifier(node);
+      if (specifier !== undefined && VENDORED_HOST_PRIMITIVE_RE.test(specifier.text)) {
+        const line =
+          sourceFile.getLineAndCharacterOfPosition(specifier.getStart(sourceFile)).line + 1;
+        const key = `${line}:${specifier.text}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          violations.push({
+            rule: 40,
+            file: posix,
+            line,
+            message: `imports vendored host primitive "${specifier.text}" directly. Add a narrow vendor entry and import it through #compiled/* so eve ships one pinned, attributed implementation.`,
+          });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
   }
 
   return violations;
@@ -1447,6 +1505,9 @@ async function main() {
 
   // Rule 39
   violations.push(...(await checkRule39NoNestedEveBuild()));
+
+  // Rule 40
+  violations.push(...(await checkRule40VendoredHostPrimitiveImports()));
 
   if (violations.length === 0) {
     process.stdout.write("[eve:guard:invariants] ok — all mechanical lints passed.\n");

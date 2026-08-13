@@ -17,7 +17,7 @@ const cronMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("#internal/host/routes/schedule-task.js", () => dispatchMocks);
-vi.mock("croner", () => ({
+vi.mock("#compiled/croner/index.js", () => ({
   Cron: class MockCron {
     readonly stop = vi.fn();
 

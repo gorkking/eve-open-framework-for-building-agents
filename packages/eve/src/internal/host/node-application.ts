@@ -1,4 +1,4 @@
-import { serve } from "crossws/server/node";
+import { serve } from "#compiled/crossws/node.js";
 
 import type { ApplicationLifecycle } from "#internal/host/application-lifecycle.js";
 import {

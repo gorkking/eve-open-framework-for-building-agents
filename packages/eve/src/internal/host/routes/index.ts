@@ -1,4 +1,4 @@
-import type { H3Event } from "h3";
+import type { H3Event } from "#compiled/h3/index.js";
 
 /**
  * Public docs URL surfaced from the barebones home page. Kept in source

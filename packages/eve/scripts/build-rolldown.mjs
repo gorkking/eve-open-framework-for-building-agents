@@ -127,9 +127,9 @@ const EXCLUDED_DIRECTORIES = new Set([join("internal", "testing")]);
  *
  *   - Peer dependencies (`ai`, `next`, `react`, `@opentelemetry/api`,
  *     `braintrust`) — consumers provide the install.
- *   - Runtime dependencies (`crossws`, `croner`, `h3`, `nf3`, `rolldown`,
- *     `srvx`, `undici`) — resolved at
- *     runtime against the eve installation.
+ *   - Runtime dependencies (`nf3`, `rolldown`, `undici`) — resolved at runtime
+ *     against the eve installation. Host primitives are reached through
+ *     `#compiled/*` and ship as generated vendor artifacts instead.
  *   - Optional peer dependency (`just-bash`) — the opt-in local sandbox
  *     engine; resolved lazily against the consumer's install and never
  *     bundled with eve.
@@ -144,16 +144,12 @@ const EXTERNAL_PACKAGES = new Set([
   "@sveltejs/kit",
   "ai",
   "braintrust",
-  "crossws",
-  "croner",
-  "h3",
   "just-bash",
   "microsandbox",
   "next",
   "nf3",
   "react",
   "rolldown",
-  "srvx",
   "svelte",
   "undici",
   "vite",

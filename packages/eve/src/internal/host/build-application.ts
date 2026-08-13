@@ -24,7 +24,6 @@ import {
 import { stageProductionCompilerArtifacts } from "#internal/application/production-compiler-artifacts.js";
 import { buildApplicationBundle } from "#internal/host/application-bundler.js";
 import { createApplicationRouteRegistry } from "#internal/host/application-route-registry.js";
-import { traceServerDependencies } from "#internal/host/dependency-trace.js";
 import { emitVercelBuildOutput } from "#internal/host/vercel-output.js";
 import { emitVercelAgentSummary } from "#internal/host/build-vercel-agent-summary.js";
 import { tryReadExtensionBuildConfig } from "#internal/host/build-extension.js";
@@ -411,16 +410,17 @@ async function buildApplicationInWorkspace(
   );
 
   if (bundle.externalDependencies.length > 0) {
-    await measureBuildPhase(profiler, "host.dependencies.trace", () =>
-      traceServerDependencies({
+    await measureBuildPhase(profiler, "host.dependencies.trace", async () => {
+      const { traceServerDependencies } = await import("#internal/host/dependency-trace.js");
+      return traceServerDependencies({
         appRoot: preparedHost.appRoot,
         configuredExternalDependencies: bundle.externalDependencies,
         outputDirectory: bundle.serverDirectory,
         packageRoot: resolvePackageRoot(),
         sandboxEngineExternalDependencies: [],
         serverEntryPath: bundle.entryPath,
-      }),
-    );
+      });
+    });
   }
 
   if (isVercelBuild) {

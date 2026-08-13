@@ -1,4 +1,4 @@
-import type { Hooks } from "crossws";
+import type { Hooks } from "#compiled/crossws/types.js";
 
 import type { ApplicationFetch } from "#internal/host/application-task-tracker.js";
 

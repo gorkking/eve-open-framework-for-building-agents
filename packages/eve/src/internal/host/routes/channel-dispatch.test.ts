@@ -1,4 +1,4 @@
-import type { H3Event } from "h3";
+import type { H3Event } from "#compiled/h3/index.js";
 import {
   context as apiContext,
   propagation as apiPropagation,

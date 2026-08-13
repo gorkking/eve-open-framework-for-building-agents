@@ -304,4 +304,74 @@ describe("compiled vendor assets", () => {
       expect(vendored).toBe(upstream);
     }
   });
+
+  it("vendors host primitives behind narrow, attributed entrypoints", async () => {
+    const entrypoints = [
+      ["croner/index.js", ["Cron"]],
+      ["crossws/node.js", ["serve"]],
+      ["crossws/types.js", []],
+      ["crossws/vercel.js", ["default"]],
+      ["h3/index.js", ["H3", "defineWebSocketHandler", "handleCors"]],
+    ] as const;
+
+    for (const [entrypoint, expectedExports] of entrypoints) {
+      const module = (await import(
+        pathToFileURL(join(COMPILED_VENDOR_ROOT, entrypoint)).href
+      )) as Record<string, unknown>;
+      expect(Object.keys(module).sort()).toEqual([...expectedExports].sort());
+    }
+
+    const licensePaths = [
+      "croner/LICENSE",
+      "crossws/LICENSE",
+      "crossws/licenses/srvx/LICENSE",
+      "h3/LICENSE",
+      "h3/licenses/rou3/LICENSE",
+      "h3/licenses/srvx/LICENSE",
+    ];
+    for (const licensePath of licensePaths) {
+      expect(await readFile(join(COMPILED_VENDOR_ROOT, licensePath), "utf8")).toContain(
+        "MIT License",
+      );
+    }
+    expect(await readFile(join(COMPILED_VENDOR_ROOT, "crossws", "LICENSE"), "utf8")).toContain(
+      "Bundled with https://github.com/websockets/ws",
+    );
+    const h3ThirdPartyLicenses = await readFile(
+      join(COMPILED_VENDOR_ROOT, "h3", "THIRD-PARTY-LICENSES.md"),
+      "utf8",
+    );
+    expect(h3ThirdPartyLicenses).toContain("## cookie-es");
+    expect(h3ThirdPartyLicenses).toContain("## fetchdts");
+
+    const stamp = JSON.parse(
+      await readFile(join(COMPILED_VENDOR_ROOT, ".vendor-stamp.json"), "utf8"),
+    ) as {
+      readonly moduleVersions: Readonly<Record<string, string>>;
+      readonly toolVersions: Readonly<Record<string, string>>;
+    };
+    expect(stamp.moduleVersions).toMatchObject({
+      croner: "10.0.1",
+      crossws: "0.4.10",
+      "crossws>srvx": "0.12.5",
+      h3: "2.0.1-rc.26",
+      "h3>rou3": "0.9.2",
+      "h3>srvx": "0.12.5",
+    });
+    expect(stamp.toolVersions).toEqual({ rolldown: "1.2.3" });
+
+    const generatedEntries = await readdir(COMPILED_VENDOR_ROOT, { recursive: true });
+    const hostRuntimeSources = await Promise.all(
+      generatedEntries
+        .filter(
+          (entry) =>
+            (entry.endsWith(".js") || entry.endsWith(".d.ts")) &&
+            /^(?:_chunks\/host-runtime|croner|crossws|h3)\//u.test(entry),
+        )
+        .map((entry) => readFile(join(COMPILED_VENDOR_ROOT, entry), "utf8")),
+    );
+    expect(hostRuntimeSources.join("\n")).not.toMatch(
+      /(?:from\s*|import\s*\()["'](?:croner|crossws|h3|rou3|srvx)(?:\/|["'])/u,
+    );
+  });
 });

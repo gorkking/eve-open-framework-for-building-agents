@@ -8,8 +8,10 @@ import { parseAst } from "rolldown/parseAst";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
 const runtimeDependencies = new Set(Object.keys(packageJson.dependencies ?? {}));
+const developmentDependencies = new Set(Object.keys(packageJson.devDependencies ?? {}));
 const binRoot = join(packageRoot, "bin");
-const requiredRuntimePrimitives = ["crossws", "h3", "rolldown", "srvx"];
+const requiredRuntimePrimitives = ["nf3", "rolldown"];
+const requiredVendoredPrimitives = ["croner", "crossws", "h3", "srvx"];
 
 function isRemovedFrameworkPackage(dependency) {
   const name = dependency.startsWith("@") ? dependency.split("/")[1] : dependency;
@@ -67,6 +69,19 @@ for (const dependency of requiredRuntimePrimitives) {
   if (!runtimeDependencies.has(dependency)) {
     manifestViolations.push(
       `package.json must declare "${dependency}" directly in dependencies; eve uses this primitive at build or runtime.`,
+    );
+  }
+}
+
+for (const dependency of requiredVendoredPrimitives) {
+  if (!developmentDependencies.has(dependency)) {
+    manifestViolations.push(
+      `package.json must declare vendored primitive "${dependency}" in devDependencies.`,
+    );
+  }
+  if (runtimeDependencies.has(dependency)) {
+    manifestViolations.push(
+      `package.json must not declare vendored primitive "${dependency}" in dependencies.`,
     );
   }
 }

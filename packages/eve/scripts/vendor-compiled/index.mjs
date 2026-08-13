@@ -34,10 +34,13 @@ import workflowWorldVercel from "./@workflow/world-vercel.mjs";
 import chat from "./chat.mjs";
 import chokidar from "./chokidar.mjs";
 import commander from "./commander.mjs";
+import croner from "./croner.mjs";
+import crossws from "./crossws.mjs";
 import experimentalAiSdkCodeMode from "./experimental-ai-sdk-code-mode.mjs";
 import eventsourceParserStream from "./eventsource-parser-stream.mjs";
 import envRunner from "./env-runner.mjs";
 import grayMatter from "./gray-matter.mjs";
+import h3 from "./h3.mjs";
 import jose from "./jose.mjs";
 import jsoncParser from "./jsonc-parser.mjs";
 import jsonSchema from "./json-schema.mjs";
@@ -58,11 +61,14 @@ export const MODULES = [
   chatAdapterTwilio,
   chokidar,
   commander,
+  croner,
+  crossws,
   experimentalAiSdkCodeMode,
   eventsourceParserStream,
   envRunner,
   google,
   grayMatter,
+  h3,
   jose,
   jsoncParser,
   jsonSchema,

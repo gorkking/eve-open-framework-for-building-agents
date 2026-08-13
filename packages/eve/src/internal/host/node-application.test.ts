@@ -9,7 +9,7 @@ const scheduleMocks = vi.hoisted(() => ({
   startLocalScheduleRunner: vi.fn(),
 }));
 
-vi.mock("crossws/server/node", () => ({ serve: nodeServerMocks.serve }));
+vi.mock("#compiled/crossws/node.js", () => ({ serve: nodeServerMocks.serve }));
 vi.mock("#internal/host/schedule-runtime.js", () => ({
   startLocalScheduleRunner: scheduleMocks.startLocalScheduleRunner,
 }));

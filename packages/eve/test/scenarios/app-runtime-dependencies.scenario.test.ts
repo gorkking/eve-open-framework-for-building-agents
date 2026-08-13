@@ -72,7 +72,7 @@ describe("app runtime dependency tracing", () => {
     vi.unstubAllEnvs();
   });
 
-  it("declares host and build primitives without a framework-owned dependency", async () => {
+  it("declares build primitives directly and host primitives as vendor inputs", async () => {
     const packageJson = JSON.parse(
       await readFile(join(EVE_PACKAGE_ROOT, "package.json"), "utf8"),
     ) as {
@@ -83,11 +83,18 @@ describe("app runtime dependency tracing", () => {
     };
 
     expect(packageJson.dependencies).toMatchObject({
+      nf3: expect.any(String),
+      rolldown: expect.any(String),
+    });
+    expect(packageJson.devDependencies).toMatchObject({
+      croner: expect.any(String),
       crossws: expect.any(String),
       h3: expect.any(String),
-      rolldown: expect.any(String),
       srvx: expect.any(String),
     });
+    for (const vendoredPrimitive of ["croner", "crossws", "h3", "srvx"]) {
+      expect(packageJson.dependencies).not.toHaveProperty(vendoredPrimitive);
+    }
     for (const dependencies of [
       packageJson.dependencies,
       packageJson.devDependencies,
@@ -827,8 +834,16 @@ describe("app runtime dependency tracing", () => {
     );
     expect(functionEntries.some((entry) => entry.includes("node_modules/nitro"))).toBe(false);
     expect(functionEntries.some((entry) => entry.includes("node_modules/nitropack"))).toBe(false);
+    for (const vendoredPrimitive of ["croner", "crossws", "h3", "rou3", "srvx"]) {
+      expect(
+        functionEntries.some((entry) => entry.includes(`node_modules/${vendoredPrimitive}`)),
+      ).toBe(false);
+    }
     expect(serverModuleSource).not.toContain('import("esbuild")');
     expect(serverModuleSource).not.toContain('import("rolldown")');
+    expect(serverModuleSource).not.toMatch(
+      /(?:from\s*|import\s*\()["'](?:croner|crossws|h3|rou3|srvx)(?:\/|["'])/u,
+    );
     expect(serverModuleSource).not.toMatch(/(?:^|[/#])nitro(?:pack)?(?:$|[/.-])/im);
     expect(serverModuleSource).toContain(
       "This tool requires sandbox access on the runtime context.",

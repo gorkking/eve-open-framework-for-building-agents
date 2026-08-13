@@ -312,12 +312,8 @@
     "test:vercel": "vitest run --config vitest.vercel.config.ts"
   },
   "dependencies": {
-    "croner": "10.0.1",
-    "crossws": "0.4.10",
-    "h3": "2.0.1-rc.26",
     "nf3": "0.3.23",
     "rolldown": "1.2.3",
-    "srvx": "0.12.5",
     "undici": "8.9.0"
   },
   "devDependencies": {
@@ -362,11 +358,14 @@
     "chat": "4.34.0",
     "chokidar": "5.0.0",
     "commander": "14.0.3",
+    "croner": "10.0.1",
+    "crossws": "0.4.10",
     "emulate": "0.6.0",
     "env-runner": "0.1.16",
     "eventsource-parser": "3.1.0",
     "experimental-ai-sdk-code-mode": "1.0.16",
     "gray-matter": "4.0.3",
+    "h3": "2.0.1-rc.26",
     "jose": "6.2.3",
     "jsonc-parser": "3.3.1",
     "just-bash": "3.1.0",
@@ -378,6 +377,7 @@
     "react-test-renderer": "19.2.6",
     "semver": "7.8.4",
     "shadcn": "4.16.1",
+    "srvx": "0.12.5",
     "svelte": "^5.0.0",
     "turndown": "7.2.4",
     "vite": "^8.1.5",

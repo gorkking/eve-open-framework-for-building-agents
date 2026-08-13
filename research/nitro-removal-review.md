@@ -8,19 +8,21 @@ last_updated: "2026-08-13"
 
 ## Executive assessment
 
-[PR #2056](https://github.com/vercel/eve/pull/2056) replaces Nitro with direct,
-pinned Rolldown, H3, CrossWS, srvx, nf3, and Croner integration. The rewrite is
-justified for eve's current Node and Vercel scope, but its benefits are narrower
-than "everything is faster and simpler."
+[PR #2056](https://github.com/vercel/eve/pull/2056) replaces Nitro with an
+eve-owned host. Rolldown and nf3 remain direct, pinned dependencies because eve
+invokes them in consumer builds. H3, CrossWS, srvx, and Croner are pinned build
+inputs compiled into narrow private artifacts, so they do not participate in a
+consumer's package graph. The rewrite is justified for eve's current Node and
+Vercel scope, but its benefits are narrower than "everything is faster and
+simpler."
 
 The strongest result is installation. In a local alternating warm-cache
-benchmark, normal npm lock resolution fell from a 2.940 second median to 1.615
-seconds, and installation fell from 3.670 seconds to 2.290 seconds. The
-installed external package count fell from 33 to 21. These reductions come
-primarily from removing unused storage, database, and cache packages and from
-vendoring the env-runner implementation eve actually needs instead of
-inheriting Nitro's surrounding development graph. Rolldown and its platform
-bindings are still present.
+benchmark, normal npm lock resolution fell from a 2.427 second median to 1.052
+seconds, and installation fell from 3.205 seconds to 1.837 seconds. The number
+of npm-managed external package instances fell from 34 to 17. These reductions
+come from removing unused storage, database, cache, and development packages
+and from shipping the small host runtime as generated eve artifacts. Rolldown
+and its platform binding are still present.
 
 The strongest architectural result is ownership. eve now has one explicit host
 build configuration, one route registry, and explicit Node and Vercel adapters.
@@ -56,29 +58,29 @@ The installation benchmark used:
 
 - `eve@0.35.0` as the old artifact. Its runtime manifest matches the pre-change
   branch: `nitro@3.0.260610-beta` and `undici@8.9.0`.
-- A packed PR artifact as the new artifact. It declares exact versions of
-  Croner, CrossWS, H3, nf3, Rolldown, srvx, and Undici.
-- Node 24.16.0, npm 11.13.0, pnpm 11.21.0, macOS 26.6, and Apple arm64.
+- A packed PR artifact as the new artifact. It declares exact runtime versions
+  of nf3, Rolldown, and Undici. Croner, CrossWS, H3, and srvx are exact
+  `devDependencies` used to generate the private host runtime shipped inside
+  eve.
+- Node 24.16.0, npm 11.13.0, macOS 26.6, and Apple arm64.
 - Fresh project directories with a shared pre-warmed cache. Old and new runs
   alternated order. Install scripts, audit, and funding requests were disabled.
-- Eight npm `--package-lock-only` runs and six complete warm npm installs for
-  each normal eve artifact.
+- Four npm `--package-lock-only` runs and four complete warm npm installs for
+  each artifact. The artifact order alternated between runs.
 
 The runtime dependency manifests were:
 
-| Artifact     | Runtime dependencies                                                                                               |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `eve@0.35.0` | `nitro@3.0.260610-beta`, `undici@8.9.0`                                                                            |
-| PR #2056     | `croner@10.0.1`, `crossws@0.4.10`, `h3@2.0.1-rc.26`, `nf3@0.3.23`, `rolldown@1.2.3`, `srvx@0.12.5`, `undici@8.9.0` |
+| Artifact     | Runtime dependencies                           |
+| ------------ | ---------------------------------------------- |
+| `eve@0.35.0` | `nitro@3.0.260610-beta`, `undici@8.9.0`        |
+| PR #2056     | `nf3@0.3.23`, `rolldown@1.2.3`, `undici@8.9.0` |
 
-Top-level runtime declarations therefore grew from two to seven while the
+Top-level runtime declarations therefore grew from two to three while the
 resolved closure became smaller. Direct-dependency count alone is not a useful
 measure of install cost.
 
 The timings isolate package-manager metadata, constraint solving, and linking.
-They do not measure registry latency. Empty-cache network measurements were
-discarded because the observed 1.5 to 4.25 second network spread was larger than
-the local operation being compared. Package counts and byte totals are more
+They do not measure registry latency. Package counts and byte totals are more
 portable than workstation timings.
 
 The architectural review used current source and tests, the pre-change source
@@ -93,70 +95,73 @@ released on June 10, 2026.
 
 Normal npm behavior includes eve's peer dependency processing.
 
-| Metric                                |      Nitro | Direct primitives | Change |
-| ------------------------------------- | ---------: | ----------------: | -----: |
-| External physical package directories |         33 |                21 |   -36% |
-| Lockfile package entries              |         48 |                36 |   -25% |
-| Lockfile bytes                        |     26,876 |            18,588 |   -31% |
-| Total allocated disk, including eve   | 87,200 KiB |        80,236 KiB |  -8.0% |
-| External logical bytes                | 38,882,149 |        34,570,089 | -11.1% |
-| External allocated disk               | 47,372 KiB |        40,392 KiB | -14.7% |
-| npm lock-only median                  |    2.940 s |           1.615 s | -45.1% |
-| Warm npm install median               |    3.670 s |           2.290 s | -37.6% |
+| Metric                                  |      Nitro | eve-owned host | Change |
+| --------------------------------------- | ---------: | -------------: | -----: |
+| External npm-managed package instances  |         34 |             17 |   -50% |
+| Distinct external package names         |         33 |             16 |   -52% |
+| Installed files                         |      6,892 |          5,746 | -16.6% |
+| Total logical installed bytes           | 70,478,871 |     65,113,734 |  -7.6% |
+| Installed dependency bytes              | 42,104,410 |     36,597,645 | -13.1% |
+| Dependency edges in installed manifests |         38 |             17 |   -55% |
+| Optional peer edges                     |         47 |              4 |   -91% |
+| npm lock-only median                    |    2.427 s |        1.052 s | -56.7% |
+| Warm npm install median                 |    3.205 s |        1.837 s | -42.7% |
 
-The lock-only ranges were narrow: 2.84 to 3.05 seconds with Nitro and 1.52 to
-1.64 seconds with direct primitives. Five of the six complete Nitro installs
-fell between 3.66 and 3.73 seconds; one unexplained 1.49 second outlier remains
-in the raw sample but does not change the median. Direct installs ranged from
-2.16 to 2.45 seconds.
+The lock-only ranges were narrow: 2.407 to 2.649 seconds with Nitro and 1.004
+to 1.083 seconds with the eve-owned host. Complete installs ranged from 3.105
+to 3.286 seconds with Nitro and 1.807 to 1.932 seconds with the eve-owned host.
+Four samples per artifact are enough to establish a directional local result,
+not a universal package-manager timing guarantee.
 
-### Runtime dependency closure
+### Final dependency boundary
 
-The runtime-only comparison excludes eve's peer graph and the tiny benchmark
-wrapper package.
+The final boundary is deliberately mixed rather than "make everything a
+dependency" or "vendor everything."
 
-| Metric                                  |      Nitro | Direct primitives |    Change |
-| --------------------------------------- | ---------: | ----------------: | --------: |
-| External packages                       |         23 |                11 |      -52% |
-| Lockfile package entries                |         37 |                25 |      -32% |
-| Logical installed bytes                 | 25,404,392 |        21,092,434 |    -17.0% |
-| Allocated `node_modules`                | 29,184 KiB |        22,204 KiB |    -23.9% |
-| Dependency edges in installed manifests |         26 |                11 |      -58% |
-| Optional peer edges                     |         43 |                 2 |      -95% |
-| Rolldown platform bindings in the lock  |         14 |                14 | unchanged |
+| Component         | Packaging                                         | Reason                                                                                                                                                                           |
+| ----------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rolldown          | Direct runtime dependency                         | Consumer-side eve builds execute it, and its native binding must match the install platform.                                                                                     |
+| nf3               | Direct runtime dependency                         | Consumer-side production builds execute its tracer. Its published artifact contains a specialized prebundled tracer tree that the generic vendor pipeline cannot safely flatten. |
+| Undici            | Direct runtime dependency                         | Existing eve runtime dependency, unchanged by this migration.                                                                                                                    |
+| H3, CrossWS, srvx | Pinned dev inputs compiled into private artifacts | Emitted hosts need a narrow, fixed surface; consumers do not need to resolve the packages or their peers.                                                                        |
+| Croner            | Pinned dev input compiled into a private artifact | Only the emitted self-host schedule runner needs it.                                                                                                                             |
 
-With peer auto-installation disabled, resolution was already short: npm
-lock-only medians were 250 and 230 milliseconds, while pnpm medians were 260
-and 250 milliseconds. The large normal-install difference is therefore mostly
-the removed peer-constraint surface, not less JavaScript to download.
-Runtime-only warm-install medians were 485 to 360 milliseconds with npm and
-455 to 370 milliseconds with pnpm. The direction remains favorable, but the
-absolute difference is much smaller when peer processing and network access
-are removed.
+The vendor stamp includes the source-package and Rolldown versions. The build
+copies root and transitive license notices, rejects undeclared bundled package
+roots, and checks the handwritten private declarations against the pinned
+upstream types. The packed-install audit found none of `croner`, `crossws`,
+`h3`, `rou3`, `srvx`, `ws`, `bufferutil`, or `utf-8-validate` as installed
+packages. Separately, runtime scenarios cover Node HTTP and WebSocket behavior,
+the schedule lifecycle, and the Vercel adapter through the generated private
+artifacts.
 
-The old optional-peer fan-out came principally from Nitro (8 edges), unstorage
-(23), db0 (6), and env-runner (4). These declarations are reasonable for users
-of those features, but eve did not use Nitro storage, database, or cache APIs.
-It used the generic task runner only to implement eve schedules. The direct
-graph retains only H3's CrossWS and CrossWS's srvx peer relationships.
+The old optional-peer fan-out came principally from Nitro, unstorage, db0, and
+env-runner. Those declarations are reasonable for users of the corresponding
+features, but eve did not use Nitro storage, database, or cache APIs. It used
+the generic task runner only to implement eve schedules. The final consumer
+graph contains no H3, CrossWS, srvx, or Croner manifest edges.
 
-The packed eve artifact itself did not become smaller:
+The packed eve artifact itself did not become smaller. Compressed and installed
+byte counts are measurements of one run; tar metadata and npm's internal
+lockfile can move them by a small number of bytes without changing the graph:
 
-| Metric                           |        Nitro | Direct primitives |
-| -------------------------------- | -----------: | ----------------: |
-| Compressed package tarball       |  7,988,954 B |       7,989,133 B |
-| Logical unpacked package content | 29,729,967 B |      29,725,343 B |
-| Published files                  |        3,182 |             3,188 |
+| Metric                           |        Nitro | eve-owned host | Change |
+| -------------------------------- | -----------: | -------------: | -----: |
+| Compressed package tarball       |  7,988,954 B |    8,159,813 B |  +2.1% |
+| Logical unpacked package content | 29,729,967 B |   29,870,867 B |  +0.5% |
+| Published files                  |        3,182 |          3,205 |    +23 |
 
-The installation result comes from the dependency closure, not from reducing
-eve's own published files.
+eve's own artifact grew modestly because it now carries the compiled host code
+and its attribution files. The complete install still fell by 5.37 MB because
+the removed package closure was much larger than the added artifacts. This is
+a resolver and dependency-closure win, not a smaller eve tarball.
 
 ### Performance claims the evidence does not support
 
 | Area                               | Current conclusion                                                                                                                        |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | Dependency resolution              | Faster in the local benchmark, with a materially smaller manifest graph.                                                                  |
-| Install size                       | Smaller dependency closure; eve's own tarball is unchanged.                                                                               |
+| Install size                       | Smaller complete install; eve's own tarball grew by 2.1% to carry the vendored host runtime.                                              |
 | Application build time             | Likely less incidental work, but not benchmarked against the old implementation.                                                          |
 | Build memory                       | Not comparably benchmarked. An OOM found while developing the new nf3 tracer was a new implementation defect, not evidence against Nitro. |
 | Request throughput and latency     | Unknown. Both implementations use the same underlying request primitives.                                                                 |
@@ -230,13 +235,16 @@ required to implement them.
 
 ### Dependency versions and boundaries are explicit
 
-eve now pins the primitives it invokes. This allowed the branch to move from
-H3 rc.22 and srvx 0.11 to H3 rc.26 and srvx 0.12.5 without waiting for a Nitro
-release. srvx 0.12 includes `waitUntil` retention and Node adapter fixes in its
-[official release](https://github.com/h3js/srvx/releases/tag/v0.12.0).
+eve now pins every primitive it invokes or compiles. This allowed the branch to
+move from H3 rc.22 and srvx 0.11 to H3 rc.26 and srvx 0.12.5 without waiting for
+a Nitro release. srvx 0.12 includes `waitUntil` retention and Node adapter fixes
+in its [official release](https://github.com/h3js/srvx/releases/tag/v0.12.0).
 
-Direct pins improve reproducibility, but they also transfer compatibility
-testing to eve. The new relationship is better control, not free upgrades.
+The consumer installs Rolldown and nf3 directly. H3, CrossWS, srvx, and Croner
+remain visible source pins in eve's lockfile but ship through private compiled
+wrappers. These boundaries improve reproducibility, but they also transfer
+compatibility and attribution testing to eve. The new relationship is better
+control, not free upgrades.
 
 ### Maintainability improved at the seams, not by deleting code
 
@@ -381,8 +389,11 @@ Nitro v3 should receive credit for moving far beyond NitroPack v2. The Nitro
 team reports reducing its dependency count from 321 to fewer than 20, adopting
 H3 v2 and Rolldown, and compiling routes. See the
 [`v3` announcement](https://nitro.build/blog/v3-beta). An isolated lock
-snapshot in this review contained 387 package entries for `nitropack@2.13.4`,
-37 for `nitro@3.0.260610-beta`, and 25 for eve's direct primitive graph.
+snapshot in this review contained 387 package entries for `nitropack@2.13.4`.
+In the normal npm benchmark, `eve@0.35.0` and Nitro v3 installed 35 managed
+package instances, while the final eve-owned host installed 18. These are
+different measurements, but both show how much v3 improved over NitroPack v2
+and how much graph remained removable for eve's narrower use case.
 
 The remaining problem is fit. The
 [`nitro@3.0.260610-beta` manifest](https://github.com/nitrojs/nitro/blob/v3.0.260610-beta/package.json)
@@ -559,7 +570,8 @@ eve should reconsider Nitro components when all of the following are true:
 1. The selected packages do not install storage, database, cache, proxy,
    compatibility, generic dev-server, Vite, or Rollup packages.
 2. On the same benchmark, normal npm lock resolution is within 10% of the
-   direct graph, and the lock adds no more than a few thin wrapper packages.
+   current eve package boundary, and the lock adds no more than a few thin
+   wrapper packages.
 3. eve invokes and pins Rolldown; the Nitro component does not install and
    invoke a second copy.
 4. Native classification and exact external tracing are stable public APIs.

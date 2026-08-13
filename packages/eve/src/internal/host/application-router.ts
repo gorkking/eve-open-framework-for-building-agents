@@ -6,7 +6,7 @@ import {
   type EventHandler,
   type H3Event,
   type HTTPError,
-} from "h3";
+} from "#compiled/h3/index.js";
 
 import { EVE_DEV_RUNTIME_ARTIFACTS_ROUTE_PATH, EVE_HEALTH_ROUTE_PATH } from "#protocol/routes.js";
 import type { ApplicationChannelRouteRegistration } from "#internal/host/application-route-registry.js";

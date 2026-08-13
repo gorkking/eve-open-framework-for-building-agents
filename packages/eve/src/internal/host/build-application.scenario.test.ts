@@ -76,14 +76,16 @@ const resolveDiscoveryProjectMock = vi.fn(async (appRoot: string) => ({
 }));
 const runVercelBuildPrewarmMock = vi.fn(async () => undefined);
 const traceServerDependenciesMock = vi.fn(traceServerDependenciesFixture);
+const dependencyTraceModuleLoadMock = vi.fn();
 
 vi.mock("#internal/host/application-bundler.js", () => ({
   buildApplicationBundle: buildApplicationBundleMock,
 }));
 
-vi.mock("#internal/host/dependency-trace.js", () => ({
-  traceServerDependencies: traceServerDependenciesMock,
-}));
+vi.mock("#internal/host/dependency-trace.js", () => {
+  dependencyTraceModuleLoadMock();
+  return { traceServerDependencies: traceServerDependenciesMock };
+});
 
 vi.mock("./prepare-application-host.js", () => ({
   prepareProductionApplicationHost: prepareProductionApplicationHostMock,
@@ -216,6 +218,7 @@ describe("buildApplication", () => {
       target: "node",
     });
     expect(bundleOptions.serverDirectory).toContain(join(appRoot, ".eve", "builds"));
+    expect(dependencyTraceModuleLoadMock).toHaveBeenCalledTimes(1);
     expect(traceServerDependenciesMock).toHaveBeenCalledWith({
       appRoot,
       configuredExternalDependencies: [SCENARIO_EXTERNAL_DEPENDENCY],
@@ -252,6 +255,21 @@ describe("buildApplication", () => {
     expect(summary.kind).toBe(VERCEL_EVE_AGENT_SUMMARY_KIND);
     expect(summary.schemaVersion).toBe(VERCEL_EVE_AGENT_SUMMARY_VERSION);
     expect((summary.agent as { name: string }).name).toBe("scenario-test-agent");
+  });
+
+  it("does not load the dependency tracer when the bundle has no externals", async () => {
+    vi.stubEnv("VERCEL", "");
+    const appRoot = await createScratchDirectory("eve-build-application-no-externals-");
+    buildApplicationBundleMock.mockImplementationOnce(async (options) => ({
+      ...(await buildApplicationBundleFixture(options)),
+      externalDependencies: [],
+    }));
+
+    const { buildApplication } = await import("#internal/host/build-application.js");
+    await buildApplication(appRoot, DEPLOYABLE_BUILD_OPTIONS);
+
+    expect(dependencyTraceModuleLoadMock).not.toHaveBeenCalled();
+    expect(traceServerDependenciesMock).not.toHaveBeenCalled();
   });
 
   it("writes a versioned timing and output-size profile outside the published output", async () => {

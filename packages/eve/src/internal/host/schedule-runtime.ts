@@ -1,4 +1,4 @@
-import { Cron } from "croner";
+import { Cron } from "#compiled/croner/index.js";
 
 import type { ScheduleRegistration } from "#runtime/schedules/register.js";
 import { dispatchScheduleTask } from "#internal/host/routes/schedule-task.js";

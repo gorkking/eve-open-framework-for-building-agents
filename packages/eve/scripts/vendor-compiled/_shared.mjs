@@ -32,6 +32,10 @@
  *   bundling?: "shared" | "standalone",  // default "shared"
  *   banner?: string,               // standalone bundle prelude
  *   chunkGroup?: string,                  // default "node"
+ *   bundledPackages?: string[],    // transitive packages whose version/license must be tracked
+ *   validateBundledPackages?: boolean, // fail when Rolldown includes an undeclared package
+ *   requireLicense?: boolean,      // fail when the entry package ships no license
+ *   attributionFiles?: Array<{ source: string, output: string }>, // required notices to copy
  *   typeOnly?: boolean,                   // skips JS bundling entirely
  * }
  * ```
@@ -560,14 +564,110 @@ async function copyLicense(sourceRoot, destinationRoot) {
   const entries = await readdir(sourceRoot);
   const licenseFileName = entries.find((entry) => /^licen[cs]e(?:\..*)?$/i.test(entry));
   if (!licenseFileName) {
-    return;
+    return false;
   }
   await copyFile(join(sourceRoot, licenseFileName), join(destinationRoot, licenseFileName));
+  return true;
+}
+
+async function resolveBundledPackageInfos(module, packageInfo) {
+  return await Promise.all(
+    (module.bundledPackages ?? []).map((packageName) =>
+      findPackageJson(packageName, packageInfo.packageRoot),
+    ),
+  );
+}
+
+async function copyBundledPackageLicenses(destinationRoot, bundledPackageInfos) {
+  for (const packageInfo of bundledPackageInfos) {
+    const licenseRoot = join(
+      destinationRoot,
+      "licenses",
+      ...packageInfo.packageJson.name.split("/"),
+    );
+    await mkdir(licenseRoot, { recursive: true });
+    if (!(await copyLicense(packageInfo.packageRoot, licenseRoot))) {
+      throw new Error(
+        `Vendor: bundled package "${packageInfo.packageJson.name}" does not ship a license file.`,
+      );
+    }
+  }
+}
+
+async function copyAttributionFiles(destinationRoot, packageRoot, attributionFiles = []) {
+  for (const attributionFile of attributionFiles) {
+    const outputPath = join(destinationRoot, attributionFile.output);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await copyFile(join(packageRoot, attributionFile.source), outputPath);
+  }
+}
+
+function normalizeFilePath(filePath) {
+  return filePath.replaceAll("\\", "/");
+}
+
+function isPathInside(parentPath, candidatePath) {
+  const relativePath = relative(parentPath, candidatePath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
+}
+
+function readNodeModulesPackageName(moduleId) {
+  const normalizedId = normalizeFilePath(moduleId);
+  const marker = "/node_modules/";
+  const markerIndex = normalizedId.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const packagePath = normalizedId.slice(markerIndex + marker.length).split("/");
+  if (packagePath[0]?.startsWith("@")) {
+    return packagePath.length >= 2 ? `${packagePath[0]}/${packagePath[1]}` : null;
+  }
+  return packagePath[0] || null;
+}
+
+function validateBundledPackageGraph({ buildResult, preparedModules }) {
+  const validatedModules = preparedModules.filter(
+    ({ module }) => module.validateBundledPackages === true,
+  );
+  if (validatedModules.length === 0) return;
+
+  const allowedPackages = new Set(
+    validatedModules.flatMap(({ module }) => [
+      module.packageName,
+      ...(module.bundledPackages ?? []),
+    ]),
+  );
+  const undeclaredPackages = new Set();
+  for (const output of buildResult.output) {
+    if (output.type !== "chunk") continue;
+    for (const moduleId of output.moduleIds) {
+      if (
+        validatedModules.some(({ packageInfo }) => isPathInside(packageInfo.packageRoot, moduleId))
+      ) {
+        continue;
+      }
+      const packageName = readNodeModulesPackageName(moduleId);
+      if (packageName !== null && !allowedPackages.has(packageName)) {
+        undeclaredPackages.add(packageName);
+      }
+    }
+  }
+
+  if (undeclaredPackages.size > 0) {
+    const moduleNames = validatedModules.map(({ module }) => module.packageName).join(", ");
+    throw new Error(
+      `Vendor: ${moduleNames} bundle undeclared package${undeclaredPackages.size === 1 ? "" : "s"} ` +
+        `${[...undeclaredPackages]
+          .sort()
+          .map((packageName) => `"${packageName}"`)
+          .join(", ")}. ` +
+        `Add ${undeclaredPackages.size === 1 ? "it" : "them"} to bundledPackages so versions and licenses are tracked.`,
+    );
+  }
 }
 
 async function prepareCompiledModule({ module, compiledRoot, packageRoot }) {
   const destinationRoot = join(compiledRoot, module.compiledPath);
   const packageInfo = await findPackageJson(module.packageName, packageRoot);
+  const bundledPackageInfos = await resolveBundledPackageInfos(module, packageInfo);
 
   await rm(destinationRoot, { recursive: true, force: true });
   await mkdir(destinationRoot, { recursive: true });
@@ -582,7 +682,14 @@ async function prepareCompiledModule({ module, compiledRoot, packageRoot }) {
   // shadowing file, resolution falls through to eve's root imports map and the
   // real upstream types flow across the vendored tree. The upstream LICENSE is
   // still copied below for attribution.
-  await copyLicense(packageInfo.packageRoot, destinationRoot);
+  const copiedLicense = await copyLicense(packageInfo.packageRoot, destinationRoot);
+  if (module.requireLicense === true && !copiedLicense) {
+    throw new Error(
+      `Vendor: package "${packageInfo.packageJson.name}" does not ship a license file.`,
+    );
+  }
+  await copyBundledPackageLicenses(destinationRoot, bundledPackageInfos);
+  await copyAttributionFiles(destinationRoot, packageInfo.packageRoot, module.attributionFiles);
 
   return { destinationRoot, packageInfo };
 }
@@ -642,7 +749,7 @@ async function bundleStandaloneModule({ destinationRoot, module, packageInfo, pa
     );
   }
 
-  await buildWithRolldown({
+  const buildResult = await buildWithRolldown({
     cwd: packageRoot,
     input: entries[0].input,
     external: module.external ?? [],
@@ -661,6 +768,10 @@ async function bundleStandaloneModule({ destinationRoot, module, packageInfo, pa
       sourcemap: false,
     },
     onLog: warningFilter.onLog,
+  });
+  validateBundledPackageGraph({
+    buildResult,
+    preparedModules: [{ module, packageInfo }],
   });
 }
 
@@ -694,7 +805,7 @@ async function bundleModuleGroup({
   );
   const plugins = preparedModules.flatMap(({ module }) => module.plugins ?? []);
 
-  await buildWithRolldown({
+  const buildResult = await buildWithRolldown({
     cwd: packageRoot,
     input: entrypoints,
     external,
@@ -715,6 +826,7 @@ async function bundleModuleGroup({
     },
     onLog: warningFilter.onLog,
   });
+  validateBundledPackageGraph({ buildResult, preparedModules });
 }
 
 async function bundleModules({ modules, packageRoot, compiledRoot }) {
@@ -790,7 +902,8 @@ async function writeTypeOnlyModule({ module, compiledRoot, packageRoot }) {
 
 /**
  * Stable fingerprint of every input that drives the vendored output:
- * resolved package versions plus the content of every file in `scriptFiles`.
+ * resolved package and build-tool versions plus the content of every file in
+ * `scriptFiles`.
  * When the fingerprint matches the previously recorded stamp the work is
  * a no-op, which makes `build:compiled` safe to invoke concurrently from
  * sibling Turbo tasks without racing on shared destination directories.
@@ -809,13 +922,23 @@ async function computeStamp({ scriptFiles, modules, packageRoot }) {
 
   const moduleVersions = {};
   for (const module of modules) {
-    const { packageJson } = await findPackageJson(module.packageName, packageRoot);
-    moduleVersions[module.packageName] = packageJson.version ?? "0.0.0";
+    const packageInfo = await findPackageJson(module.packageName, packageRoot);
+    moduleVersions[module.packageName] = packageInfo.packageJson.version ?? "0.0.0";
+    const bundledPackageInfos = await resolveBundledPackageInfos(module, packageInfo);
+    for (const bundledPackageInfo of bundledPackageInfos) {
+      moduleVersions[`${module.packageName}>${bundledPackageInfo.packageJson.name}`] =
+        bundledPackageInfo.packageJson.version ?? "0.0.0";
+    }
   }
+
+  const rolldownPackageInfo = await findPackageJson("rolldown", packageRoot);
 
   return {
     moduleVersions,
     scriptHash: scriptHash.digest("hex"),
+    toolVersions: {
+      rolldown: rolldownPackageInfo.packageJson.version ?? "0.0.0",
+    },
   };
 }
 

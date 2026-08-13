@@ -1,4 +1,4 @@
-import { defineWebSocketHandler, H3 } from "h3";
+import { defineWebSocketHandler, H3 } from "#compiled/h3/index.js";
 import { describe, expect, it } from "vitest";
 
 import { ApplicationLifecycle } from "#internal/host/application-lifecycle.js";

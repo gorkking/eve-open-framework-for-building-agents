@@ -1,4 +1,4 @@
-import { H3 } from "h3";
+import { H3 } from "#compiled/h3/index.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const webSocketMocks = vi.hoisted(() => ({
@@ -6,7 +6,7 @@ const webSocketMocks = vi.hoisted(() => ({
   handleWebUpgrade: vi.fn(),
 }));
 
-vi.mock("crossws/adapters/vercel", () => ({ default: webSocketMocks.adapter }));
+vi.mock("#compiled/crossws/vercel.js", () => ({ default: webSocketMocks.adapter }));
 
 import {
   createVercelApplicationHandler,
@@ -141,7 +141,9 @@ describe("createVercelApplicationHandler", () => {
     createVercelApplicationHandler({ fetch, websocket: true });
 
     const adapterOptions = webSocketMocks.adapter.mock.calls[0]![0] as {
-      readonly resolve: (request: Request) => Promise<Partial<import("crossws").Hooks>>;
+      readonly resolve: (
+        request: Request,
+      ) => Promise<Partial<import("#compiled/crossws/types.js").Hooks>>;
     };
     const request = new Request("https://example.com/not-a-socket", {
       headers: { upgrade: "websocket" },

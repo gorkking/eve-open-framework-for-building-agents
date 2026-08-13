@@ -381,7 +381,7 @@ importers:
         version: 0.41.2
       '@vercel/connect':
         specifier: 'catalog:'
-        version: 0.4.3(@ai-sdk/mcp@2.0.29(zod@4.4.3))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.4.3))(ai@7.0.58(zod@4.4.3))(eve@packages+eve)
+        version: 0.4.3(@ai-sdk/mcp@2.0.29(zod@4.4.3))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.4.3))(ai@7.0.58(zod@4.4.3))(eve@packages+eve)
       ai:
         specifier: 'catalog:'
         version: 7.0.58(zod@4.4.3)
@@ -1060,24 +1060,12 @@ importers:
       braintrust:
         specifier: ^3.0.0
         version: 3.24.0(@aws-sdk/credential-provider-web-identity@3.972.49)(supports-color@10.2.2)(zod@4.4.3)
-      croner:
-        specifier: 10.0.1
-        version: 10.0.1
-      crossws:
-        specifier: 0.4.10
-        version: 0.4.10(srvx@0.12.5)
-      h3:
-        specifier: 2.0.1-rc.26
-        version: 2.0.1-rc.26(crossws@0.4.10(srvx@0.12.5))
       nf3:
         specifier: 0.3.23
         version: 0.3.23
       rolldown:
         specifier: 1.2.3
         version: 1.2.3
-      srvx:
-        specifier: 0.12.5
-        version: 0.12.5
       undici:
         specifier: 8.9.0
         version: 8.9.0
@@ -1205,6 +1193,12 @@ importers:
       commander:
         specifier: 14.0.3
         version: 14.0.3
+      croner:
+        specifier: 10.0.1
+        version: 10.0.1
+      crossws:
+        specifier: 0.4.10
+        version: 0.4.10(srvx@0.12.5)
       emulate:
         specifier: 0.6.0
         version: 0.6.0
@@ -1220,6 +1214,9 @@ importers:
       gray-matter:
         specifier: 4.0.3
         version: 4.0.3
+      h3:
+        specifier: 2.0.1-rc.26
+        version: 2.0.1-rc.26(crossws@0.4.10(srvx@0.12.5))
       jose:
         specifier: 6.2.3
         version: 6.2.3
@@ -1253,6 +1250,9 @@ importers:
       shadcn:
         specifier: 4.16.1
         version: 4.16.1(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(typescript@7.0.2)
+      srvx:
+        specifier: 0.12.5
+        version: 0.12.5
       svelte:
         specifier: ^5.0.0
         version: 5.56.1(@typescript-eslint/types@8.59.4)
@@ -16040,6 +16040,21 @@ snapshots:
       - utf-8-validate
       - zod
 
+  '@chat-adapter/slack@4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.4.3)':
+    dependencies:
+      '@chat-adapter/shared': 4.34.0(ai@7.0.58(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)
+      '@slack/socket-mode': 2.0.7(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+      '@slack/web-api': 7.19.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+      chat: 4.34.0(ai@7.0.58(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)
+    transitivePeerDependencies:
+      - ai
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+      - zod
+    optional: true
+
   '@chat-adapter/state-memory@4.34.0(ai@6.0.191(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)':
     dependencies:
       chat: 4.34.0(ai@6.0.191(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)
@@ -21476,13 +21491,13 @@ snapshots:
       ai: 6.0.191(zod@4.4.3)
       eve: link:packages/eve
 
-  '@vercel/connect@0.4.3(@ai-sdk/mcp@2.0.29(zod@4.4.3))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.4.3))(ai@7.0.58(zod@4.4.3))(eve@packages+eve)':
+  '@vercel/connect@0.4.3(@ai-sdk/mcp@2.0.29(zod@4.4.3))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.4.3))(ai@7.0.58(zod@4.4.3))(eve@packages+eve)':
     dependencies:
       '@vercel/oidc': 3.8.1
     optionalDependencies:
       '@ai-sdk/mcp': 2.0.29(zod@4.4.3)
       '@auth/core': 0.41.2
-      '@chat-adapter/slack': 4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.4.3)
+      '@chat-adapter/slack': 4.34.0(ai@7.0.58(zod@4.4.3))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.4.3)
       ai: 7.0.58(zod@4.4.3)
       eve: link:packages/eve
 

@@ -1,4 +1,4 @@
-import vercelWebSocketAdapter from "crossws/adapters/vercel";
+import vercelWebSocketAdapter from "#compiled/crossws/vercel.js";
 
 import type { ApplicationFetch } from "#internal/host/application-task-tracker.js";
 import { createApplicationWebSocketResolver } from "#internal/host/application-websocket.js";
