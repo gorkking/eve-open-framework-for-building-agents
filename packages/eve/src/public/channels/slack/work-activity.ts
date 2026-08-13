@@ -115,13 +115,7 @@ function renderWorkActivity(input: {
   if (rows.length === 0) return undefined;
   const text = ["Working", ...rows.map((row) => row.text)].join("\n");
   return {
-    blocks: [
-      {
-        elements: [{ text: "*Working*", type: "mrkdwn" }],
-        type: "context",
-      },
-      ...actions.map(workTaskCard),
-    ],
+    blocks: actions.map(workTaskCard),
     text,
   };
 }

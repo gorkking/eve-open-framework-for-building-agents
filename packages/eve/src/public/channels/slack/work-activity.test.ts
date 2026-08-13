@@ -76,7 +76,6 @@ describe("renderSlackWorkActivity", () => {
     expect(post).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith("chat.update", {
       blocks: [
-        { elements: [{ text: "*Working*", type: "mrkdwn" }], type: "context" },
         {
           status: "complete",
           task_id: "work-0",
@@ -152,7 +151,6 @@ describe("renderSlackWorkActivity", () => {
 
     expect(post).toHaveBeenCalledWith({
       blocks: [
-        { elements: [{ text: "*Working*", type: "mrkdwn" }], type: "context" },
         {
           details: {
             elements: [
