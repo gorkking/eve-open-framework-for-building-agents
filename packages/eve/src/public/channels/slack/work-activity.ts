@@ -117,10 +117,10 @@ function renderWorkActivity(input: {
   return {
     blocks: [
       {
-        tasks: actions.map(workTaskCard),
-        title: "Working",
-        type: "plan",
+        elements: [{ text: "*Working*", type: "mrkdwn" }],
+        type: "context",
       },
+      ...actions.map(workTaskCard),
     ],
     text,
   };
