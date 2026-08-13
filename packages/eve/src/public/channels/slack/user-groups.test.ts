@@ -75,6 +75,57 @@ describe("Slack Preview aliases", () => {
     ]);
   });
 
+  it("re-enables an unregistered alias so its next mention resolves", async () => {
+    const calls: string[] = [];
+    let enabled = false;
+    let description = "";
+    const request = async (operation: string): Promise<SlackApiResponse> => {
+      calls.push(operation);
+      if (operation === "auth.test") return { ok: true, team_id: "T1", user_id: "UBOT" };
+      if (operation === "usergroups.list") {
+        return {
+          ok: true,
+          usergroups: [
+            {
+              created_by: "UBOT",
+              description,
+              handle: registration.alias,
+              id: "S1",
+              is_enabled: enabled,
+              updated_by: "UBOT",
+            },
+          ],
+        };
+      }
+      if (operation === "usergroups.update") {
+        description = `eve:preview-agent:v1:${JSON.stringify(registration)}`;
+        return { ok: true };
+      }
+      if (operation === "usergroups.enable") {
+        enabled = true;
+        return { ok: true };
+      }
+      throw new Error(`Unexpected ${operation}`);
+    };
+
+    await expect(registerSlackPreviewAgent(registration, slack(request))).resolves.toEqual({
+      ...registration,
+      id: "S1",
+    });
+    await expect(resolveSlackPreviewAgentRoute("<!subteam^S1>", slack(request))).resolves.toEqual({
+      ...registration,
+      id: "S1",
+    });
+    expect(calls).toEqual([
+      "auth.test",
+      "usergroups.list",
+      "usergroups.update",
+      "usergroups.enable",
+      "auth.test",
+      "usergroups.list",
+    ]);
+  });
+
   it("resolves exactly one owned alias and rejects ambiguity", async () => {
     const request = async (operation: string): Promise<SlackApiResponse> => {
       if (operation === "auth.test") return { ok: true, team_id: "T1", user_id: "UBOT" };

@@ -92,6 +92,13 @@ export async function registerSlackPreviewAgent(
       usergroup: existing.id,
     });
     requireOk("usergroups.update", updated);
+    if (!existing.enabled) {
+      const enabled = await slack.request("usergroups.enable", {
+        team_id: teamId,
+        usergroup: existing.id,
+      });
+      requireOk("usergroups.enable", enabled);
+    }
     return { ...route, id: existing.id };
   }
 
@@ -235,6 +242,7 @@ function userGroups(response: SlackApiResponse): Array<{
   id: string;
   handle: string;
   description?: string;
+  enabled: boolean;
   record: Record<string, unknown>;
 }> {
   if (!Array.isArray(response.usergroups)) return [];
@@ -245,7 +253,15 @@ function userGroups(response: SlackApiResponse): Array<{
     const handle = optionalString(record.handle);
     return id === undefined || handle === undefined
       ? []
-      : [{ id, handle, description: optionalString(record.description), record }];
+      : [
+          {
+            id,
+            handle,
+            description: optionalString(record.description),
+            enabled: record.is_enabled !== false,
+            record,
+          },
+        ];
   });
 }
 
