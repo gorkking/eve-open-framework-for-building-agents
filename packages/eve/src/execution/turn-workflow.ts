@@ -335,6 +335,12 @@ async function waitForRuntimeActionResults(input: {
       pendingKeys: input.pendingActionKeys,
       results,
     });
+    console.error("[eve.work] parent action-result wait state", {
+      pendingActionKeys: input.pendingActionKeys,
+      ready: ready !== undefined,
+      resultCallIds: results.map((result) => result.callId),
+      sessionId: input.cursor.sessionState.sessionId,
+    });
     if (ready !== undefined) {
       if (pendingDeliveryRequest !== undefined) {
         // The entry may already be racing public input against this wait.
@@ -392,7 +398,12 @@ async function waitForRuntimeActionResults(input: {
         serializedContext: input.cursor.serializedContext,
         sessionState: input.cursor.sessionState,
       });
+      const contextChanged = refreshed.serializedContext !== input.cursor.serializedContext;
       await input.cursor.adopt({ ...refreshed, sessionState: input.cursor.sessionState });
+      console.error("[eve.work] parent refresh adopted", {
+        serializedContextChanged: contextChanged,
+        sessionId: input.cursor.sessionState.sessionId,
+      });
       nextWorkRefresh = workflowSleep(LOCAL_SUBAGENT_WORK_REFRESH_MS).then(
         () => "work-refresh" as const,
       );
@@ -432,6 +443,10 @@ async function waitForRuntimeActionResults(input: {
           acceptedAtMsByKey.set(getRuntimeActionResultKey(result), acceptedAtMs);
         }
       }
+      console.error("[eve.work] parent child results accumulated", {
+        resultCallIds: results.map((result) => result.callId),
+        sessionId: input.cursor.sessionState.sessionId,
+      });
       continue;
     }
 

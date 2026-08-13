@@ -58,9 +58,19 @@ export async function refreshLocalSubagentWorkStep(input: {
   ctx.set(WorkGraphKey, work);
   const adapter = ctx.require(ChannelKey);
   const render = adapter.work?.render;
+  console.error("[eve.work] parent refresh rendering", {
+    parentSessionId: input.sessionState.sessionId,
+    renderAvailable: render !== undefined,
+    revision: work.revision,
+  });
   if (render !== undefined) {
     await render(buildAdapterContext(adapter, ctx));
     ctx.set(ChannelKey, { ...adapter, state: { ...ctx.require(ChannelKey).state } });
   }
-  return { serializedContext: serializeContext(ctx) };
+  const serializedContext = serializeContext(ctx);
+  console.error("[eve.work] parent refresh committed", {
+    parentSessionId: input.sessionState.sessionId,
+    revision: work.revision,
+  });
+  return { serializedContext };
 }
