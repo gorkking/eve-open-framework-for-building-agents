@@ -325,6 +325,10 @@ async function waitForRuntimeActionResults(input: {
   let nextWorkRefresh = workflowSleep(LOCAL_SUBAGENT_WORK_REFRESH_MS).then(
     () => "work-refresh" as const,
   );
+  let nextPromise = input.iterator.next();
+  // A timer can win while this read remains pending. Keep one read alive
+  // across refreshes so a child result cannot be consumed and discarded.
+  nextPromise.catch(() => {});
 
   while (true) {
     const ready = resolveRuntimeActionResultsForKeys({
@@ -361,14 +365,11 @@ async function waitForRuntimeActionResults(input: {
       });
     }
 
-    const nextPromise = input.iterator.next();
-    // When a cancel wins the race, the dangling inbox `next()` is dropped
-    // by disposal in teardown; pre-attach a handler so a late rejection
-    // never surfaces as unhandled.
-    nextPromise.catch(() => {});
+    const inbox = nextPromise.then((next) => ({ kind: "inbox" as const, next }));
+    const refresh = nextWorkRefresh.then(() => ({ kind: "work-refresh" as const }));
     const next = await (input.cancellation === undefined
-      ? Promise.race([nextPromise, nextWorkRefresh])
-      : Promise.race([nextPromise, nextWorkRefresh, input.cancellation.requested]));
+      ? Promise.race([inbox, refresh])
+      : Promise.race([inbox, refresh, input.cancellation.requested]));
     if (next === "cancel") {
       if (pendingDeliveryRequest !== undefined) {
         // Release the raced public input back to the driver so it stays
@@ -380,7 +381,7 @@ async function waitForRuntimeActionResults(input: {
       }
       return "cancelled";
     }
-    if (next === "work-refresh") {
+    if (next.kind === "work-refresh") {
       const { refreshLocalSubagentWorkStep } =
         await import("#execution/refresh-local-subagent-work-step.js");
       const refreshed = await refreshLocalSubagentWorkStep({
@@ -393,9 +394,11 @@ async function waitForRuntimeActionResults(input: {
       );
       continue;
     }
-    if (next.done) throw new Error("Turn inbox closed before runtime actions completed.");
+    if (next.next.done) throw new Error("Turn inbox closed before runtime actions completed.");
 
-    const value = next.value;
+    const value = next.next.value;
+    nextPromise = input.iterator.next();
+    nextPromise.catch(() => {});
     if (value.kind === "runtime-action-result") {
       // The inbox token is shared by every callee in the batch, so an inbox
       // subagent result must bind to a running agent handle in the adopted
