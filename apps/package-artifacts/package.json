@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "package:prepare": "node scripts/prepare.mjs",
-    "publish": "node scripts/publish.mjs",
+    "package:publish": "node scripts/publish.mjs",
     "test": "vitest run --config vitest.config.ts",
     "test:smoke": "node scripts/check-smoke.mjs"
   },

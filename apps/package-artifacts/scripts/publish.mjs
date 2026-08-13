@@ -34,7 +34,8 @@ if (
   metadata.sourceSha !== expectedSha ||
   metadata.ref !== expectedRef ||
   metadata.sha256 !== sha256 ||
-  typeof metadata.version !== "string" ||
+  !/^\d+\.\d+\.\d+\+git\.[0-9a-f]{40}$/i.test(metadata.version ?? "") ||
+  !metadata.version.endsWith(`+git.${expectedSha}`) ||
   typeof metadata.tarball !== "string"
 ) {
   throw new Error("Package artifact metadata does not match the trusted publication target.");

@@ -4,6 +4,12 @@ on:
   workflow_run:
     workflows: [Package artifact build]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to publish
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -12,35 +18,71 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - name: Resolve trusted publication target
         id: target
         uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        env:
+          PULL_REQUEST: ${{ inputs.pull_request }}
         with:
           script: |
-            const run = context.payload.workflow_run;
-            if (run.event === "push") {
-              if (run.head_branch !== "main") throw new Error("Only main pushes may publish a main package.");
+            if (context.eventName === "workflow_run") {
+              const run = context.payload.workflow_run;
+              if (run.head_branch !== "main") throw new Error("Only main pushes publish automatically.");
+              const { data: branch } = await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: "main",
+              });
+              if (branch.commit.sha !== run.head_sha) {
+                throw new Error(`Refusing to publish stale main build ${run.head_sha}; main is ${branch.commit.sha}.`);
+              }
+              core.setOutput("run-id", String(run.id));
               core.setOutput("sha", run.head_sha);
               core.setOutput("ref", "main");
               return;
             }
-            if (run.event !== "pull_request" || run.pull_requests.length !== 1) {
-              throw new Error("Expected one pull request for the package build.");
+
+            if (!/^[1-9]\d*$/.test(process.env.PULL_REQUEST ?? "")) {
+              throw new Error("pull_request must be a positive integer.");
             }
-            const linked = run.pull_requests[0];
+            const pullNumber = Number(process.env.PULL_REQUEST);
             const { data: pull } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: linked.number,
+              pull_number: pullNumber,
             });
-            if (pull.head.sha !== run.head_sha) {
-              throw new Error("The workflow run is not for the pull request's current head SHA.");
+            if (pull.state !== "open") throw new Error(`Pull request #${pullNumber} is not open.`);
+
+            const { data: workflow } = await github.rest.actions.getWorkflow({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "package-artifact-build.yml",
+            });
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event: "pull_request",
+              head_sha: pull.head.sha,
+              status: "success",
+              per_page: 100,
+            });
+            const run = runs.find(
+              (candidate) =>
+                candidate.workflow_id === workflow.id &&
+                candidate.pull_requests.some((linked) => linked.number === pullNumber),
+            );
+            if (!run) {
+              throw new Error(`No successful package build found for PR #${pullNumber} at ${pull.head.sha}.`);
             }
-            core.setOutput("sha", run.head_sha);
-            core.setOutput("ref", String(linked.number));
+
+            core.setOutput("run-id", String(run.id));
+            core.setOutput("sha", pull.head.sha);
+            core.setOutput("ref", String(pullNumber));
 
       - name: Download package artifact
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
@@ -48,7 +90,7 @@ jobs:
           name: eve-package
           path: package-artifact
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.target.outputs.run-id }}
 
       - name: Checkout trusted publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,4 +120,4 @@ jobs:
           EVE_PACKAGE_INPUT_DIRECTORY: ${{ github.workspace }}/package-artifact
           EVE_PACKAGE_REF: ${{ steps.target.outputs.ref }}
           EVE_PACKAGE_SOURCE_SHA: ${{ steps.target.outputs.sha }}
-        run: pnpm --filter eve-package-artifacts publish
+        run: pnpm --filter eve-package-artifacts package:publish

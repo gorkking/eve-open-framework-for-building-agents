@@ -62,8 +62,8 @@ function parseManifest(source, expectedSha) {
     !SHA_PATTERN.test(manifest.sourceSha ?? "") ||
     (expectedSha !== undefined && manifest.sourceSha !== expectedSha) ||
     typeof manifest.version !== "string" ||
-    typeof manifest.tarball !== "string" ||
-    typeof manifest.sha256 !== "string"
+    manifest.tarball !== `https://pkg.eve.dev/${manifest.sourceSha}/eve.tgz` ||
+    !/^[0-9a-f]{64}$/i.test(manifest.sha256 ?? "")
   ) {
     return undefined;
   }

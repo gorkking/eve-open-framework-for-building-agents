@@ -10,7 +10,7 @@ const sha = "a".repeat(40);
 const manifest = {
   sourceSha: sha,
   version: `0.33.0+main.${sha}`,
-  tarball: `https://packages.example.com/${sha}/eve.tgz`,
+  tarball: `https://pkg.eve.dev/${sha}/eve.tgz`,
   sha256: "b".repeat(64),
 };
 
@@ -73,6 +73,19 @@ describe("package route", () => {
     const latest = response();
     await handler({ query: { ref: sha, manifest: "1" } }, latest);
     expect(latest.status).toHaveBeenCalledWith(404);
+  });
+
+  test("rejects pointers that redirect outside the package host", async () => {
+    get.mockResolvedValueOnce({
+      stream: new Blob([
+        JSON.stringify({ ...manifest, tarball: "https://example.com/eve.tgz" }),
+      ]).stream(),
+    });
+    const res = response();
+    await handler({ query: { ref: "main" } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.redirect).not.toHaveBeenCalled();
   });
 
   test("rejects unsupported refs and missing artifacts", async () => {

@@ -19,12 +19,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           MAIN_SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ "$EVENT_NAME" = "push" ]; then
+            echo "repository=${{ github.repository }}" >> "$GITHUB_OUTPUT"
             echo "sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
             echo "ref=main" >> "$GITHUB_OUTPUT"
           else
+            echo "repository=$PR_REPOSITORY" >> "$GITHUB_OUTPUT"
             echo "sha=$PR_SHA" >> "$GITHUB_OUTPUT"
             echo "ref=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           fi
@@ -32,6 +35,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ steps.source.outputs.repository }}
           ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
 
