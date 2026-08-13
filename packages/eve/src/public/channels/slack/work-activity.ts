@@ -100,8 +100,7 @@ function renderAction(action: WorkAction): string {
 }
 
 function summarizeChild(actions: readonly WorkAction[]): string | undefined {
-  const active = actions.find((action) => action.phase === "running");
-  return active?.name;
+  return actions.find((action) => action.phase === "running")?.name ?? actions.at(-1)?.name;
 }
 
 function phaseGlyph(phase: WorkPhase): string {

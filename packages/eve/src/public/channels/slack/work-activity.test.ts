@@ -63,6 +63,68 @@ describe("renderSlackWorkActivity", () => {
     });
   });
 
+  it("shows the most recent child action while the child turn is still running", async () => {
+    const post = vi.fn(async () => ({ id: "activity-1" }));
+    const channel = {
+      slack: { channelId: "C1", request: vi.fn(async () => ({ ok: true })) },
+      state: {},
+      thread: { post },
+    };
+
+    await renderSlackWorkActivity({
+      channel,
+      work: {
+        revision: 1,
+        turn: {
+          blockers: [],
+          id: "turn-1",
+          phase: "running",
+          steps: [
+            {
+              actions: [
+                {
+                  callId: "child-1",
+                  child: {
+                    sessionId: "child-session",
+                    work: {
+                      revision: 5,
+                      turn: {
+                        blockers: [],
+                        id: "turn-0",
+                        phase: "running",
+                        steps: [
+                          {
+                            actions: [
+                              {
+                                callId: "stage-1",
+                                kind: "tool-call",
+                                name: "research_stage",
+                                phase: "completed",
+                              },
+                            ],
+                            phase: "completed",
+                            stepIndex: 0,
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  kind: "subagent-call",
+                  name: "researcher",
+                  phase: "running",
+                },
+              ],
+              phase: "running",
+              stepIndex: 0,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(post).toHaveBeenCalledWith("*Working*\n\n◐ researcher — research_stage");
+  });
+
   it("reposts when its tracked message is gone", async () => {
     const post = vi.fn(async () => ({ id: "activity-2" }));
     const request = vi.fn(async () => ({ error: "message_not_found", ok: false }));
