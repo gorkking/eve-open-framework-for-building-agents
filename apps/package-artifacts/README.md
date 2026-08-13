@@ -45,6 +45,6 @@ The Vercel package project must:
 - set its Ignored Build Step to `test "$VERCEL_GIT_COMMIT_REF" != "main"`; and
 - disable Deployment Protection so package managers can reach the public proxy.
 
-Create a protected GitHub environment named `package-artifacts` and set `EVE_PACKAGE_BLOB_READ_WRITE_TOKEN` to the package store's write token there. Restrict environment deployment access to the trusted team that may publish package artifacts. The build workflow never references this environment or secret.
+Set the repository Actions secret `EVE_PACKAGE_BLOB_READ_WRITE_TOKEN` to the package store's write token. The build workflow never references this secret; only the `workflow_run` publisher loaded from trusted `main` can access it. Pull-request builds inherit the repository's existing contributor approval policy, so internal changes run automatically while outside contributors require the same approval as the test workflows.
 
 The smoke check verifies public access and the downloaded main artifact's gzip signature.

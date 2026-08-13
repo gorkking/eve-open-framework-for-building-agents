@@ -14,7 +14,6 @@ jobs:
   publish:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    environment: package-artifacts
     steps:
       - name: Resolve trusted publication target
         id: target
