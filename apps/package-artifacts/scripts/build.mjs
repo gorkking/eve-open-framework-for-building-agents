@@ -26,7 +26,7 @@ const artifactDirectory = join(appRoot, ".artifacts");
 const sourceSha = process.env.VERCEL_GIT_COMMIT_SHA;
 const branch = process.env.VERCEL_GIT_COMMIT_REF;
 const productionDomain = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-const deploymentDomain = process.env.VERCEL_URL;
+const unverifiedPackageOrigin = process.env.EVE_PACKAGE_PUBLIC_ORIGIN;
 const pullRequest = process.env.EVE_PULL_REQUEST_NUMBER;
 const isTrustedPublisher =
   branch === "main" &&
@@ -49,20 +49,23 @@ if (!isTrustedPublisher && !isUnverifiedPublisher) {
 }
 
 const scope = isTrustedPublisher ? "trusted" : "unverified";
-const packageDomain = isTrustedPublisher ? productionDomain : deploymentDomain;
-if (typeof packageDomain !== "string" || packageDomain.length === 0) {
+const packageOrigin = isTrustedPublisher
+  ? typeof productionDomain === "string" && productionDomain.length > 0
+    ? `https://${productionDomain}`
+    : undefined
+  : unverifiedPackageOrigin;
+if (typeof packageOrigin !== "string" || packageOrigin.length === 0) {
   throw new Error(
     isTrustedPublisher
       ? "VERCEL_PROJECT_PRODUCTION_URL is required for trusted package publishing."
-      : "VERCEL_URL is required for unverified package publishing.",
+      : "EVE_PACKAGE_PUBLIC_ORIGIN is required for unverified package publishing.",
   );
 }
 
 const originalPackageJson = await readFile(packageJsonPath, "utf8");
 const preparedPackageJson = preparePackageJson(JSON.parse(originalPackageJson), sourceSha, scope);
 const version = preparedPackageJson.version;
-const baseUrl = `https://${packageDomain}`;
-const dependencyUrl = packageDependencyUrl(baseUrl, sourceSha, scope);
+const dependencyUrl = packageDependencyUrl(packageOrigin, sourceSha, scope);
 const artifactPath = isTrustedPublisher
   ? packageArtifactPath(sourceSha)
   : unverifiedPackageArtifactPath(sourceSha);

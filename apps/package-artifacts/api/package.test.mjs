@@ -34,6 +34,7 @@ function response() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.VERCEL_GIT_COMMIT_SHA = sha;
+  process.env.EVE_UNVERIFIED_BLOB_READ_WRITE_TOKEN = "unverified-token";
   get.mockImplementation(async (pathname) => ({
     stream: new Blob([
       pathname.endsWith("manifest.json") ? JSON.stringify(manifest) : "package bytes",
@@ -84,8 +85,14 @@ describe("package route", () => {
     const artifact = response();
     await handler({ query: { scope: "unverified", ref: sha } }, artifact);
 
-    expect(get).toHaveBeenCalledWith(`unverified/sha/${sha}/manifest.json`, { access: "private" });
-    expect(get).toHaveBeenLastCalledWith(`unverified/sha/${sha}/eve.tgz`, { access: "private" });
+    expect(get).toHaveBeenCalledWith(`unverified/sha/${sha}/manifest.json`, {
+      access: "private",
+      token: "unverified-token",
+    });
+    expect(get).toHaveBeenLastCalledWith(`unverified/sha/${sha}/eve.tgz`, {
+      access: "private",
+      token: "unverified-token",
+    });
     expect(artifact.setHeader).toHaveBeenCalledWith(
       "Cache-Control",
       "public, max-age=31536000, immutable",
@@ -99,7 +106,10 @@ describe("package route", () => {
     const res = response();
     await handler({ query: { scope: "unverified", pr: "123" } }, res);
 
-    expect(get).toHaveBeenCalledWith("unverified/pr/123/latest.json", { access: "private" });
+    expect(get).toHaveBeenCalledWith("unverified/pr/123/latest.json", {
+      access: "private",
+      token: "unverified-token",
+    });
     expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "public, max-age=60");
     expect(res.redirect).toHaveBeenCalledWith(302, unverifiedManifest.tarball);
   });

@@ -15,11 +15,12 @@ import {
 
 export default async function handler(request, response) {
   const scope = request.query.scope === "unverified" ? "unverified" : "trusted";
+  const blobOptions = scope === "unverified" ? unverifiedBlobOptions() : undefined;
   const ref = request.query.ref;
   const pullRequest = request.query.pr;
 
   if (scope === "unverified" && typeof pullRequest === "string") {
-    return servePullRequest(pullRequest, request, response);
+    return servePullRequest(pullRequest, request, response, blobOptions);
   }
   if (
     typeof ref !== "string" ||
@@ -32,7 +33,7 @@ export default async function handler(request, response) {
   const sourceSha = ref === "main" ? process.env.VERCEL_GIT_COMMIT_SHA : ref;
   if (!SHA_PATTERN.test(sourceSha ?? "")) return packageNotFound(response);
 
-  const manifest = await resolveManifest(sourceSha, scope);
+  const manifest = await resolveManifest(sourceSha, scope, blobOptions);
   if (manifest === undefined) return packageNotFound(response);
 
   if (request.query.manifest === "1") {
@@ -45,12 +46,15 @@ export default async function handler(request, response) {
     return response.redirect(302, manifest.tarball);
   }
 
-  return streamArtifact(sourceSha, scope, response);
+  return streamArtifact(sourceSha, scope, response, blobOptions);
 }
 
-async function servePullRequest(pullRequest, request, response) {
+async function servePullRequest(pullRequest, request, response, blobOptions) {
   if (!PULL_REQUEST_PATTERN.test(pullRequest)) return packageNotFound(response);
-  const pointer = await get(unverifiedPullRequestManifestPath(pullRequest), { access: "private" });
+  const pointer = await get(unverifiedPullRequestManifestPath(pullRequest), {
+    access: "private",
+    ...blobOptions,
+  });
   if (pointer === null) return packageNotFound(response);
 
   const manifest = parseManifest(await new Response(pointer.stream).text(), "unverified");
@@ -65,12 +69,12 @@ async function servePullRequest(pullRequest, request, response) {
   return response.redirect(302, manifest.tarball);
 }
 
-async function streamArtifact(sourceSha, scope, response) {
+async function streamArtifact(sourceSha, scope, response, blobOptions) {
   const path =
     scope === "unverified"
       ? unverifiedPackageArtifactPath(sourceSha)
       : packageArtifactPath(sourceSha);
-  const artifact = await get(path, { access: "private" });
+  const artifact = await get(path, { access: "private", ...blobOptions });
   if (artifact === null) return packageNotFound(response);
 
   response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -83,14 +87,22 @@ function packageNotFound(response) {
   return response.status(404).send("Package not found.\n");
 }
 
-async function resolveManifest(sourceSha, scope) {
+async function resolveManifest(sourceSha, scope, blobOptions) {
   const path =
     scope === "unverified"
       ? unverifiedPackageManifestPath(sourceSha)
       : packageManifestPath(sourceSha);
-  const result = await get(path, { access: "private" });
+  const result = await get(path, { access: "private", ...blobOptions });
   if (result === null) return undefined;
   return parseManifest(await new Response(result.stream).text(), scope);
+}
+
+function unverifiedBlobOptions() {
+  const token = process.env.EVE_UNVERIFIED_BLOB_READ_WRITE_TOKEN;
+  if (typeof token !== "string" || token.length === 0) {
+    throw new Error("EVE_UNVERIFIED_BLOB_READ_WRITE_TOKEN is required for unverified artifacts.");
+  }
+  return { token };
 }
 
 function parseManifest(source, scope) {

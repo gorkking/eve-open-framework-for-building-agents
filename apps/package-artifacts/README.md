@@ -1,6 +1,6 @@
 # eve package artifacts
 
-The trusted package project builds an eve tarball from each `vercel/eve` `main` commit and uploads immutable SHA-addressed artifacts to private Vercel Blob using deployment OIDC. A separate unverified builder project publishes pull-request artifacts from its own Preview deployment domain and Blob store.
+The trusted package project builds an eve tarball from each `vercel/eve` `main` commit and uploads immutable SHA-addressed artifacts to private Vercel Blob using deployment OIDC. A separate unverified builder project publishes pull-request artifacts to an isolated Blob store; the trusted package host proxies both artifact classes from its permanent domain.
 
 ```text
 /main/eve.tgz
@@ -30,9 +30,9 @@ The trusted publisher project must:
 - omit `BLOB_READ_WRITE_TOKEN` so Blob writes use Vercel OIDC; and
 - disable Deployment Protection so npm can reach the production origin anonymously.
 
-An unverified builder must be a **separate** Vercel project connected only to a separate private Blob store. Give it `EVE_PACKAGE_ARTIFACT_SCOPE=unverified` for Preview deployments. It must never receive the trusted Blob connection, a production secret, or any credential that can access trusted artifacts. Configure it with the same root and build command; Preview builds write immutable SHA artifacts and an optional mutable PR pointer when `EVE_PULL_REQUEST_NUMBER` is set.
+An unverified builder must be a **separate** Vercel project connected only to a separate private Blob store. Give it `EVE_PACKAGE_ARTIFACT_SCOPE=unverified` and `EVE_PACKAGE_PUBLIC_ORIGIN=https://pkg.eve.dev` for Preview deployments. It must never receive the trusted Blob connection, a production secret, or any credential that can access trusted artifacts. Configure it with the same root and build command; Preview builds write immutable SHA artifacts and an optional mutable PR pointer when `EVE_PULL_REQUEST_NUMBER` is set.
 
-The unverified builder serves its own artifacts from its Preview deployment domain and needs write access only to the unverified store. The trusted publisher never receives access to that store.
+The unverified builder needs write access only to the unverified store. The trusted package host reads that store with `EVE_UNVERIFIED_BLOB_READ_WRITE_TOKEN` in its Production environment and proxies it through `pkg.eve.dev`; never configure that token in the unverified builder.
 
 Only `main` Production builds publish trusted artifacts. For the trusted project, set the Ignored Build Step to:
 
