@@ -10,6 +10,7 @@
  * ```
  * {
  *   packageName: string,           // npm package to resolve via require
+ *   packageJsonName?: string,      // original npm name when packageName is an alias
  *   compiledPath: string,          // subdir under compiledRoot to write into
  *
  *   // Declaration emission (pick one)
@@ -517,7 +518,7 @@ async function pathExists(path) {
   }
 }
 
-async function findPackageJson(packageName, packageRoot) {
+async function findPackageJson(packageName, packageRoot, packageJsonName = packageName) {
   let currentPath;
   try {
     currentPath = dirname(require.resolve(packageName, { paths: [packageRoot] }));
@@ -531,7 +532,7 @@ async function findPackageJson(packageName, packageRoot) {
 
     if (await pathExists(packageJsonPath)) {
       const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-      if (packageJson.name === packageName) {
+      if (packageJson.name === packageJsonName) {
         return {
           packageJson,
           packageJsonPath,
@@ -546,7 +547,7 @@ async function findPackageJson(packageName, packageRoot) {
     const packageJsonPath = join(currentPath, "package.json");
     if (await pathExists(packageJsonPath)) {
       const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-      if (packageJson.name === packageName) {
+      if (packageJson.name === packageJsonName) {
         return {
           packageJson,
           packageJsonPath,
@@ -666,7 +667,11 @@ function validateBundledPackageGraph({ buildResult, preparedModules }) {
 
 async function prepareCompiledModule({ module, compiledRoot, packageRoot }) {
   const destinationRoot = join(compiledRoot, module.compiledPath);
-  const packageInfo = await findPackageJson(module.packageName, packageRoot);
+  const packageInfo = await findPackageJson(
+    module.packageName,
+    packageRoot,
+    module.packageJsonName,
+  );
   const bundledPackageInfos = await resolveBundledPackageInfos(module, packageInfo);
 
   await rm(destinationRoot, { recursive: true, force: true });
@@ -922,7 +927,11 @@ async function computeStamp({ scriptFiles, modules, packageRoot }) {
 
   const moduleVersions = {};
   for (const module of modules) {
-    const packageInfo = await findPackageJson(module.packageName, packageRoot);
+    const packageInfo = await findPackageJson(
+      module.packageName,
+      packageRoot,
+      module.packageJsonName,
+    );
     moduleVersions[module.packageName] = packageInfo.packageJson.version ?? "0.0.0";
     const bundledPackageInfos = await resolveBundledPackageInfos(module, packageInfo);
     for (const bundledPackageInfo of bundledPackageInfos) {
