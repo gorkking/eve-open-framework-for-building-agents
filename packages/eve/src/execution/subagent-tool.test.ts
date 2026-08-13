@@ -336,7 +336,7 @@ describe("buildSubagentRunInput", () => {
     });
   });
 
-  it("does not include sandbox sharing fields for normal subagents", () => {
+  it("carries parent sandbox state for declared subagents that opt into sharing", () => {
     const sandboxState = { initialized: true, session: null };
     const session = { ...makeSession(), sandboxState };
     const { runInput } = buildRuntimeSubagentRunInput({
@@ -347,7 +347,9 @@ describe("buildSubagentRunInput", () => {
       session,
     });
 
-    expect(runInput.adapter.state).not.toHaveProperty("parentSandboxState");
-    expect(runInput.adapter.state).not.toHaveProperty("sandboxSessionId");
+    expect(runInput.adapter.state).toMatchObject({
+      parentSandboxState: sandboxState,
+      sandboxSessionId: "parent-session",
+    });
   });
 });

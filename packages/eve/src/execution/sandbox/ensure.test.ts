@@ -85,6 +85,7 @@ async function ensure(input: {
   readonly registry: RuntimeSandboxRegistry;
   readonly state?: SandboxState;
   readonly tags?: Record<string, string>;
+  readonly usePersistedSessionIdentity?: boolean;
 }) {
   return await ensureSandboxAccess({
     compiledArtifactsSource:
@@ -95,6 +96,7 @@ async function ensure(input: {
     sessionId: "session_1",
     state: input.state ?? null,
     tags: input.tags,
+    usePersistedSessionIdentity: input.usePersistedSessionIdentity,
   });
 }
 
@@ -340,6 +342,34 @@ describe("ensureSandboxAccess", () => {
 
     expect(backend.create).toHaveBeenCalledWith(
       expect.objectContaining({
+        templateKey: null,
+      }),
+    );
+  });
+
+  it("reattaches an inherited parent session without deriving a child session key", async () => {
+    const backend = createBackend();
+    const registry = createTestRegistry({ inheritsParent: true }, backend);
+    const state: SandboxState = {
+      initialized: true,
+      session: {
+        backendName: "test",
+        metadata: { sandboxName: "parent-provider-sandbox" },
+        sessionKey: "parent-session-key",
+      },
+    };
+
+    const access = await ensure({
+      registry,
+      state,
+      usePersistedSessionIdentity: true,
+    });
+    await access.get();
+
+    expect(backend.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        existingMetadata: { sandboxName: "parent-provider-sandbox" },
+        sessionKey: "parent-session-key",
         templateKey: null,
       }),
     );

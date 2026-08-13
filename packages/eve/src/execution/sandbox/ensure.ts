@@ -19,6 +19,10 @@ import { buildCallbackContext } from "#context/build-callback-context.js";
 import { createRuntimeSandboxKeys } from "#runtime/sandbox/keys.js";
 import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
 import { createRuntimeSandboxTemplatePlan } from "#runtime/sandbox/template-plan.js";
+import { docker } from "#public/sandbox/backends/docker.js";
+import { justbash } from "#public/sandbox/backends/just-bash.js";
+import { microsandbox } from "#public/sandbox/backends/microsandbox.js";
+import { vercel } from "#public/sandbox/backends/vercel.js";
 import type { SandboxAccess, SandboxSessionState, SandboxState } from "#sandbox/state.js";
 
 /**
@@ -31,6 +35,8 @@ export interface EnsureSandboxAccessInput {
   readonly sessionId: string;
   readonly runOnSession?: (callback: () => Promise<void>) => Promise<void>;
   readonly state: SandboxState | null;
+  /** Persisted parent record selected by an authored parent callback. */
+  readonly usePersistedSessionIdentity?: boolean;
   readonly tags?: SandboxBackendTags;
 }
 
@@ -69,20 +75,26 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
       return null;
     }
     const definition = registered.definition;
-    const backend = definition.backend;
+    const backend =
+      input.usePersistedSessionIdentity && persistedSession !== null
+        ? resolveInheritedBackend(persistedSession.backendName, definition.backend)
+        : definition.backend;
     const templatePlan = createRuntimeSandboxTemplatePlan({
       definition,
       workspaceResourceRoot: registered.workspaceResourceRoot,
     });
 
-    const keys = await createRuntimeSandboxKeys({
-      backendName: backend.name,
-      compiledArtifactsSource: input.compiledArtifactsSource,
-      nodeId: input.nodeId,
-      sessionId: input.sessionId,
-      sourceId: definition.sourceId,
-      templatePlan,
-    });
+    const keys =
+      input.usePersistedSessionIdentity && persistedSession !== null
+        ? { sessionKey: persistedSession.sessionKey, templateKey: null }
+        : await createRuntimeSandboxKeys({
+            backendName: backend.name,
+            compiledArtifactsSource: input.compiledArtifactsSource,
+            nodeId: input.nodeId,
+            sessionId: input.sessionId,
+            sourceId: definition.sourceId,
+            templatePlan,
+          });
 
     if (keys.templateKey !== null) {
       await waitForDevelopmentSandboxPrewarm({
@@ -181,6 +193,27 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
       return handle?.session ?? null;
     },
   };
+}
+
+function resolveInheritedBackend(
+  backendName: string,
+  authoredBackend: SandboxBackend,
+): SandboxBackend {
+  if (authoredBackend.name === backendName) return authoredBackend;
+  switch (backendName) {
+    case "docker":
+      return docker();
+    case "just-bash":
+      return justbash();
+    case "microsandbox":
+      return microsandbox();
+    case "vercel":
+      return vercel();
+    default:
+      throw new Error(
+        `Cannot inherit sandbox backend "${backendName}". Parent sharing supports built-in backends, or a child definition with the same custom backend.`,
+      );
+  }
 }
 
 async function createBackendHandleWithPrewarmRetry(input: {
