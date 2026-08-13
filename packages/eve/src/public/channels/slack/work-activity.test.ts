@@ -157,7 +157,10 @@ describe("renderSlackWorkActivity", () => {
           details: {
             elements: [
               {
-                elements: [{ text: "✓ discover", type: "text" }],
+                elements: [
+                  { style: { bold: true }, text: "✓", type: "text" },
+                  { text: " discover", type: "text" },
+                ],
                 type: "rich_text_section",
               },
             ],

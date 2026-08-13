@@ -162,13 +162,16 @@ function workTaskCard(action: WorkAction, index: number): SlackBlock {
 }
 
 function richText(text: string): SlackBlock {
+  const lines = text.split("\n");
+  const elements = lines.flatMap((line, index) => {
+    const [glyph, ...rest] = line.split(" ");
+    return [
+      { style: { bold: true }, text: glyph, type: "text" },
+      { text: ` ${rest.join(" ")}${index === lines.length - 1 ? "" : "\n"}`, type: "text" },
+    ];
+  });
   return {
-    elements: [
-      {
-        elements: [{ text, type: "text" }],
-        type: "rich_text_section",
-      },
-    ],
+    elements: [{ elements, type: "rich_text_section" }],
     type: "rich_text",
   };
 }
@@ -193,7 +196,7 @@ function phaseGlyph(phase: WorkPhase): string {
     case "blocked":
       return "!";
     case "cancelled":
-      return "–";
+      return "⊘";
     case "completed":
       return "✓";
     case "failed":
