@@ -31,7 +31,7 @@ vi.mock("../../src/evals/target.js", () => ({
   resolveEvalTargetHandle: mockedEvalDependencies.resolveEvalTargetHandle,
 }));
 
-vi.mock("../../src/internal/nitro/host.js", () => ({
+vi.mock("../../src/internal/host.js", () => ({
   createDevelopmentServer: mockedEvalDependencies.createDevelopmentServer,
 }));
 

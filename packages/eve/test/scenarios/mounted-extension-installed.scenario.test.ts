@@ -9,7 +9,7 @@ import { compileAgent } from "../../src/compiler/compile-agent.js";
 import {
   buildExtensionPackage,
   tryReadExtensionBuildConfig,
-} from "../../src/internal/nitro/host/build-extension.js";
+} from "../../src/internal/host/build-extension.js";
 import { loadCompiledModuleMapFromAuthoredSource } from "../../src/internal/authored-module-map-loader.js";
 import { useScenarioApp } from "../../src/internal/testing/scenario-app.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "../../src/runtime/compiled-artifacts-source.js";

@@ -123,7 +123,6 @@ const GITIGNORE_TEMPLATE = `node_modules
 .eve
 .vercel
 .output
-.nitro
 dist
 .DS_Store
 *.tsbuildinfo

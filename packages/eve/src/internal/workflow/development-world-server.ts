@@ -14,7 +14,7 @@ import {
   encodeDevelopmentWorldValue,
   serializeDevelopmentWorldError,
 } from "#internal/workflow/development-world-codec.js";
-import { timingSafeEqualStrings } from "#internal/nitro/dev-client-address.js";
+import { timingSafeEqualStrings } from "#internal/host/dev-client-address.js";
 import {
   DEVELOPMENT_WORKFLOW_DELIVERY_HEADER,
   DEVELOPMENT_WORKFLOW_STREAM_ROUTE,
@@ -28,7 +28,7 @@ import {
  * The application's one local Workflow World, owned by the CLI parent.
  *
  * Why the parent: run records, the queue, and stream state must outlive the
- * Nitro dev worker, which is disposed on every structural reload. The parent
+ * development worker, which is disposed on every structural reload. The parent
  * is the only process whose lifetime matches the run data, so it holds the
  * real (stock, vendored) world-local instance and serves it to workers over
  * an RPC route on the public listener; workers hold only an

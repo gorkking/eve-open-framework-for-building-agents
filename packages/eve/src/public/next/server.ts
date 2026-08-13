@@ -483,8 +483,6 @@ function startEveProductionServer(input: {
     cwd: input.appRoot,
     env: {
       HOST: parsedOrigin.hostname,
-      NITRO_HOST: parsedOrigin.hostname,
-      NITRO_PORT: port,
       PORT: port,
     },
   }).then(installProcessShutdown);

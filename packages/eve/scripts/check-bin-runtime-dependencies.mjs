@@ -1,16 +1,20 @@
 import { readFile, readdir } from "node:fs/promises";
-import { createRequire, isBuiltin } from "node:module";
+import { isBuiltin } from "node:module";
 import { join, relative } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+
+import { parseAst } from "rolldown/parseAst";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const packageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
 const runtimeDependencies = new Set(Object.keys(packageJson.dependencies ?? {}));
 const binRoot = join(packageRoot, "bin");
-const require = createRequire(import.meta.url);
-const nitroRequire = createRequire(require.resolve("nitro/package.json"));
-const parseAstPath = nitroRequire.resolve("rolldown/parseAst");
-const { parseAst } = await import(pathToFileURL(parseAstPath).href);
+const requiredRuntimePrimitives = ["crossws", "h3", "rolldown", "srvx"];
+
+function isRemovedFrameworkPackage(dependency) {
+  const name = dependency.startsWith("@") ? dependency.split("/")[1] : dependency;
+  return /^nitro(?:pack)?(?:$|-)/i.test(name ?? "");
+}
 
 function packageName(specifier) {
   if (specifier.startsWith("@")) {
@@ -29,6 +33,24 @@ function isBarePackageImport(specifier) {
   );
 }
 
+function* exportTargets(value) {
+  if (typeof value === "string") {
+    yield value;
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      yield* exportTargets(entry);
+    }
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const entry of Object.values(value)) {
+      yield* exportTargets(entry);
+    }
+  }
+}
+
 async function* walkJavaScriptFiles(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
@@ -40,7 +62,39 @@ async function* walkJavaScriptFiles(directory) {
   }
 }
 
-const violations = [];
+const manifestViolations = [];
+for (const dependency of requiredRuntimePrimitives) {
+  if (!runtimeDependencies.has(dependency)) {
+    manifestViolations.push(
+      `package.json must declare "${dependency}" directly in dependencies; eve uses this primitive at build or runtime.`,
+    );
+  }
+}
+
+for (const section of [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+]) {
+  for (const dependency of Object.keys(packageJson[section] ?? {})) {
+    if (isRemovedFrameworkPackage(dependency)) {
+      manifestViolations.push(
+        `package.json ${section} must not declare "${dependency}"; eve owns its build and routing stack directly.`,
+      );
+    }
+  }
+}
+
+for (const target of exportTargets(packageJson.exports)) {
+  if (target.startsWith("./src/")) {
+    manifestViolations.push(
+      `package.json exports target "${target}" is excluded from the published package; public exports must resolve through dist.`,
+    );
+  }
+}
+
+const importViolations = [];
 
 for await (const path of walkJavaScriptFiles(binRoot)) {
   const source = await readFile(path, "utf8");
@@ -60,13 +114,16 @@ for await (const path of walkJavaScriptFiles(binRoot)) {
     }
     const dependency = packageName(specifier);
     if (!runtimeDependencies.has(dependency)) {
-      violations.push({ dependency, path: relative(packageRoot, path), specifier });
+      importViolations.push({ dependency, path: relative(packageRoot, path), specifier });
     }
   }
 }
 
-if (violations.length > 0) {
-  for (const violation of violations) {
+if (manifestViolations.length > 0 || importViolations.length > 0) {
+  for (const violation of manifestViolations) {
+    process.stderr.write(`${violation}\n`);
+  }
+  for (const violation of importViolations) {
     process.stderr.write(
       `${violation.path} imports "${violation.specifier}", but "${violation.dependency}" is not ` +
         "declared in package.json dependencies. eve's bin files ship unbundled, so every bare " +

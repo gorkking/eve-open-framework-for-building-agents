@@ -8,7 +8,7 @@ import {
 } from "#runtime/sessions/runtime-session.js";
 
 /**
- * Bundled compiled artifacts installed by Nitro when authored runtime state is
+ * Bundled compiled artifacts installed by the host when authored runtime state is
  * embedded directly into the server bundle.
  */
 export interface BundledCompiledArtifacts {
@@ -28,7 +28,7 @@ export interface WithBundledCompiledArtifactsInput extends BundledCompiledArtifa
 /**
  * Installs one bundled compiled-artifact snapshot on the active runtime
  * session. In production this writes to the process-default session at
- * Nitro bootstrap time; inside a `withRuntimeSession` scope it targets the
+ * host bootstrap time; inside a `withRuntimeSession` scope it targets the
  * scoped session so tests cannot leak installations across each other.
  */
 export function installBundledCompiledArtifacts(input: BundledCompiledArtifacts): void {

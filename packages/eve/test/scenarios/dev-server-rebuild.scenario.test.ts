@@ -8,8 +8,8 @@ import { EVE_HEALTH_ROUTE_PATH } from "../../src/protocol/routes.js";
 import {
   readDevelopmentRuntimeArtifactsSnapshotRoot,
   resolveDevelopmentRuntimeArtifactsPointerPath,
-} from "../../src/internal/nitro/dev-runtime-artifacts.js";
-import { STRUCTURAL_RELOAD_LOG_LINE } from "../../src/internal/nitro/host/dev-watcher-log.js";
+} from "../../src/internal/host/dev-runtime-artifacts.js";
+import { STRUCTURAL_RELOAD_LOG_LINE } from "../../src/internal/host/dev-watcher-log.js";
 import { useScenarioApp } from "../../src/internal/testing/scenario-app.js";
 import { sendDevelopmentMessage } from "../dev-client-harness/send-message.js";
 import { createDevelopmentSessionState } from "../dev-client-harness/session.js";
@@ -70,7 +70,7 @@ describe("eve dev server rebuild transactions", () => {
   );
 
   it(
-    "replaces the worker for instrumentation changes and preserves Nitro's selected route",
+    "replaces the worker for instrumentation changes and preserves the selected route",
     async () => {
       const app = await scenarioApp(TRANSACTIONAL_REBUILD_DESCRIPTOR);
       const server = await startEveDev(app.appRoot);
@@ -217,7 +217,7 @@ describe("eve dev server rebuild transactions", () => {
         await writeFile(join(app.appRoot, ".env.local"), "EVE_SCENARIO_RELOAD=1\n");
         await waitForCondition(
           () => server.stdout().includes(STRUCTURAL_RELOAD_LOG_LINE),
-          `Timed out waiting for a structural Nitro reload.\n\nstdout:\n${server.stdout()}\n\nstderr:\n${server.stderr()}`,
+          `Timed out waiting for a structural worker reload.\n\nstdout:\n${server.stdout()}\n\nstderr:\n${server.stderr()}`,
         );
         expect(readDevelopmentRuntimeArtifactsSnapshotRoot(pointerPath)).toBe(authoredRuntimeRoot);
         await waitForCondition(async () => {

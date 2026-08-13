@@ -11,7 +11,7 @@ export const CHANNEL_SENTINEL = "eve:channel" as const;
 const CHANNEL_INSTRUMENTATION_KIND = Symbol.for("eve.channel.instrumentationKind");
 const CHANNEL_INSTRUMENTATION_KINDS = Symbol.for("eve.channel.instrumentationKinds");
 
-// Nitro dev can evaluate a channel once for its route and again for a resolver
+// Development builds can evaluate a channel once for its route and again for a resolver
 // import, so separately created channel objects need a process-wide identity.
 type ChannelInstrumentationKindGlobal = typeof globalThis & {
   [CHANNEL_INSTRUMENTATION_KINDS]?: Map<string, string>;

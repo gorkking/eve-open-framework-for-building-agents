@@ -18,9 +18,9 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/init-install-report.mjs"
       - "scripts/build-profile-report.mjs"
-      - "scripts/nitro-bundle-report-compare.mjs"
-      - "scripts/nitro-bundle-report-budget.mjs"
-      - "scripts/nitro-bundle-report.mjs"
+      - "scripts/bundle-report-compare.mjs"
+      - "scripts/bundle-report-budget.mjs"
+      - "scripts/bundle-report.mjs"
       - "scripts/package-publish-report.mjs"
 
 concurrency:
@@ -175,7 +175,7 @@ jobs:
           STEPS_BASELINE_WEATHER_APP_OUTPUTS_PATH: ${{ steps.baseline_weather_app.outputs.path }}
         working-directory: ${{ steps.baseline.outputs.root }}
         run: |
-          node ./scripts/nitro-bundle-report.mjs \
+          node "$GITHUB_WORKSPACE/scripts/bundle-report.mjs" \
             --app "${STEPS_BASELINE_WEATHER_APP_OUTPUTS_PATH}" \
             --app-label apps/fixtures/weather-agent \
             --package packages/eve \
@@ -282,7 +282,7 @@ jobs:
             report_args+=(--size-budget-acknowledged)
           fi
 
-          node ./scripts/nitro-bundle-report.mjs \
+          node ./scripts/bundle-report.mjs \
             --app apps/fixtures/weather-agent \
             --app-label apps/fixtures/weather-agent \
             --package packages/eve \
@@ -399,4 +399,4 @@ jobs:
             budget_args+=(--acknowledged)
           fi
 
-          node ./scripts/nitro-bundle-report-budget.mjs "${budget_args[@]}"
+          node ./scripts/bundle-report-budget.mjs "${budget_args[@]}"

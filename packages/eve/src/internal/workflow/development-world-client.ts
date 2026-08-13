@@ -33,7 +33,7 @@ import {
   type DevelopmentWorldOperation,
 } from "#internal/workflow/development-world-protocol.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
-import { timingSafeEqualStrings } from "#internal/nitro/dev-client-address.js";
+import { timingSafeEqualStrings } from "#internal/host/dev-client-address.js";
 
 const WORKFLOW_LOCAL_BASE_URL_ENV = "WORKFLOW_LOCAL_BASE_URL";
 

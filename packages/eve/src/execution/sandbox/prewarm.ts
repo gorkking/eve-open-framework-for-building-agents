@@ -186,7 +186,7 @@ export async function prewarmAppSandboxes(input: {
 
 /**
  * Loads one built app's bundled compiled artifacts and prewarms the sandbox
- * templates that its production Nitro runtime will request.
+ * templates that its production runtime will request.
  */
 export async function prewarmBuiltAppSandboxes(input: {
   readonly appRoot: string;

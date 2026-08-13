@@ -26,6 +26,8 @@ describe("createWorkflowWorldPluginSource", () => {
     expect(source).toContain("setWorld(workflowWorld);");
     expect(source).toContain("await getWorld();");
     expect(source).toContain("await workflowWorld.start?.();");
+    expect(source).toContain("export default function installWorkflowWorldPlugin(_lifecycle) {}");
+    expect(source).not.toContain("Nitro");
   });
 
   it("configures the vendored local World with eve's app-local data resolver", () => {
@@ -63,6 +65,9 @@ describe("createDevelopmentWorkflowWorldPluginSource", () => {
     expect(source).toContain("setWorld(createDevelopmentWorkflowWorld());");
     expect(source).not.toContain("@workflow/world-local");
     expect(source).not.toContain("workflowWorld.start");
+    expect(source).toContain(
+      "export default function installDevelopmentWorkflowWorldPlugin(_lifecycle) {}",
+    );
   });
 
   it("keeps explicitly configured remote Worlds inside the worker", () => {

@@ -63,7 +63,7 @@ describe("writeCompiledArtifactsFiles", () => {
     });
   });
 
-  it("writes instrumentation into a dedicated Nitro plugin instead of inlining it", async () => {
+  it("writes instrumentation into a dedicated application plugin instead of inlining it", async () => {
     const { agentRoot, appRoot } = await createAppRoot("eve-compiled-artifacts-instrumentation-", {
       packageName: "compiled-artifacts-instrumentation-test-agent",
     });
@@ -179,19 +179,16 @@ describe("writeCompiledArtifactsFiles", () => {
     expect(instrumentationPluginSource).toContain('slot: "otel"');
     expect(instrumentationPluginSource).toContain("seedInstrumentationProviders();");
     expect(instrumentationPluginSource).toContain("shutdownInstrumentationProviders");
-    expect(instrumentationPluginSource).toContain("hooks?.hook('close'");
+    expect(instrumentationPluginSource).toContain("lifecycle?.onClose(");
+    expect(instrumentationPluginSource).not.toContain("Nitro");
     expect(instrumentationPluginSource).not.toContain("registerInstrumentationConfig");
 
     const instrumentationPlugin = (await import(pathToFileURL(instrumentationPluginPath).href)) as {
-      default: (nitroApp: {
-        hooks: { hook(name: "close", handler: () => Promise<void>): void };
-      }) => void;
+      default: (lifecycle: { onClose(handler: () => Promise<void>): void }) => void;
     };
     const closeHandlers: Array<() => Promise<void>> = [];
     instrumentationPlugin.default({
-      hooks: {
-        hook: (_name, handler) => closeHandlers.push(handler),
-      },
+      onClose: (handler) => closeHandlers.push(handler),
     });
 
     // The plugin resolves the registry by absolute path while the assertion
@@ -246,7 +243,7 @@ describe("writeCompiledArtifactsFiles", () => {
     );
   });
 
-  it("surfaces instrumentation import failures when the Nitro plugin module loads", async () => {
+  it("surfaces instrumentation import failures when the application plugin module loads", async () => {
     const { agentRoot, appRoot } = await createAppRoot(
       "eve-compiled-artifacts-instrumentation-error-",
       { packageName: "compiled-artifacts-instrumentation-error-test-agent" },

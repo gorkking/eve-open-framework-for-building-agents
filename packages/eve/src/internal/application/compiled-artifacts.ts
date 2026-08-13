@@ -29,19 +29,19 @@ export type GeneratedInstrumentationLayout =
   | { readonly kind: "directory"; readonly slots: readonly string[] };
 
 /**
- * Paths to the generated compiled-artifacts files shared by Nitro and the
- * vendored workflow bundles for one application.
+ * Paths to the generated compiled-artifacts files shared by the application
+ * host and vendored workflow bundles.
  */
 export interface GeneratedCompiledArtifactsFiles {
   /**
-   * Shared bundled-artifacts bootstrap installed by Nitro and vendored
+   * Shared bundled-artifacts bootstrap installed by the host and vendored
    * workflow handlers.
    */
   bootstrapPath: string;
-  /** Nitro plugin that installs the selected vendored Workflow world. */
+  /** Application plugin that installs the selected vendored Workflow world. */
   workflowWorldPluginPath: string;
   /**
-   * Optional Nitro plugin that imports the authored instrumentation modules
+   * Optional application plugin that imports the authored instrumentation modules
    * from the application when present.
    */
   instrumentationPluginPath?: string;
@@ -49,8 +49,8 @@ export interface GeneratedCompiledArtifactsFiles {
   instrumentationLayout?: GeneratedInstrumentationLayout;
   /**
    * Absolute paths to the authored instrumentation modules when present — one
-   * for the file layout, one per provider in the directory layout. Nitro uses these
-   * to preserve each module's side effects during bundling.
+   * for the file layout, one per provider in the directory layout. The host uses
+   * these to preserve each module's side effects during bundling.
    */
   instrumentationSourcePaths?: readonly string[];
 }
@@ -59,7 +59,7 @@ export interface GeneratedCompiledArtifactsFiles {
  * Writes the generated compiled-artifacts bootstrap module.
  *
  * The bootstrap self-installs bundled artifacts on import and exports a
- * default function so it can be used directly as a Nitro plugin — no
+ * default function so it can be used directly as an application plugin — no
  * separate plugin wrapper file is needed.
  */
 export async function writeCompiledArtifactsFiles(input: {
@@ -120,7 +120,7 @@ function instrumentationSourcePathsOf(layout: InstrumentationLayout): readonly s
   return layout.kind === "file" ? [layout.modulePath] : Object.values(layout.modulePathsBySlot);
 }
 
-// The dev host's Nitro inputs outlive any single generation, so nothing
+// The dev host inputs outlive any single generation, so nothing
 // written here may point into authored source or a prunable snapshot: the
 // bootstrap references no authored module, and the instrumentation bundle is
 // copied out of the generation into the stable host directory.
@@ -224,7 +224,7 @@ function createDevelopmentCompiledArtifactsBootstrapSource(agentName: string): s
     "",
     `installEveWorkflowQueueNamespace(${JSON.stringify(agentName)});`,
     "",
-    "export default function installDevelopmentCompiledArtifactsPlugin() {}",
+    "export default function installDevelopmentCompiledArtifactsPlugin(_lifecycle) {}",
     "",
   ].join("\n");
 }
@@ -273,9 +273,9 @@ export async function createCompiledArtifactsBootstrapSource(input: {
     "",
     "installCompiledArtifactsBootstrap();",
     "",
-    "// Default export satisfies the Nitro plugin contract so this file",
-    "// can be used directly as a Nitro plugin without a separate wrapper.",
-    "export default function installCompiledArtifactsPlugin() {",
+    "// Default export satisfies the eve application plugin contract so this file",
+    "// can be used directly without a separate wrapper.",
+    "export default function installCompiledArtifactsPlugin(_lifecycle) {",
     "  // Already installed on import above.",
     "}",
     "",
@@ -374,7 +374,7 @@ export function createWorkflowWorldPluginSource(input: {
     "await getWorld();",
     "await workflowWorld.start?.();",
     "",
-    "export default function installWorkflowWorldPlugin() {}",
+    "export default function installWorkflowWorldPlugin(_lifecycle) {}",
     "",
   ].join("\n");
 }
@@ -413,13 +413,13 @@ export function createDevelopmentWorkflowWorldPluginSource(input: {
     "setWorld(createDevelopmentWorkflowWorld());",
     "await getWorld();",
     "",
-    "export default function installDevelopmentWorkflowWorldPlugin() {}",
+    "export default function installDevelopmentWorkflowWorldPlugin(_lifecycle) {}",
     "",
   ].join("\n");
 }
 
 /**
- * Generates the Nitro plugin that registers the authored instrumentation.
+ * Generates the application plugin that registers the authored instrumentation.
  *
  * The file layout registers one default export; the directory layout
  * registers one per file, in slot order, awaiting each `setup` so a provider
@@ -445,9 +445,9 @@ function createInstrumentationPluginSource(input: {
       `  await registerInstrumentationConfig(instrumentationModule.default, { agentName: ${agentName} });`,
       "}",
       "",
-      "// Default export satisfies the Nitro plugin contract so this file",
-      "// can be used directly as a Nitro plugin without a separate wrapper.",
-      "export default function installInstrumentationPlugin() {}",
+      "// Default export satisfies the eve application plugin contract so this file",
+      "// can be used directly without a separate wrapper.",
+      "export default function installInstrumentationPlugin(_lifecycle) {}",
       "",
     ].join("\n");
   }
@@ -477,11 +477,11 @@ function createInstrumentationPluginSource(input: {
     "",
     `finalizeInstrumentationProviders({ serviceName: ${agentName} });`,
     "",
-    "// Default export satisfies the Nitro plugin contract so this file",
-    "// can be used directly as a Nitro plugin without a separate wrapper.",
-    "export default function installInstrumentationPlugin(nitroApp) {",
+    "// Default export satisfies the eve application plugin contract so this file",
+    "// can be used directly without a separate wrapper.",
+    "export default function installInstrumentationPlugin(lifecycle) {",
     "  // The last point a buffered exporter can still reach the network.",
-    "  nitroApp?.hooks?.hook('close', async () => {",
+    "  lifecycle?.onClose(async () => {",
     "    await shutdownInstrumentationProviders();",
     "  });",
     "}",

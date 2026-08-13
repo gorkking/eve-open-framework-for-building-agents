@@ -9,6 +9,9 @@ export const EVE_ROUTE_PREFIX = "/eve/v1";
  */
 export const EVE_HEALTH_ROUTE_PATH = `${EVE_ROUTE_PREFIX}/health`;
 
+/** Stable route for the durable workflow protocol handler. */
+export const EVE_WORKFLOW_FLOW_ROUTE_PATH = "/.well-known/workflow/v1/flow";
+
 /**
  * Stable framework-owned route exposing the JSON inspection payload for
  * the current agent. The eve channel registers and authenticates this route
@@ -41,8 +44,8 @@ export const EVE_SESSION_STREAM_ROUTE_PATTERN = `${EVE_SESSION_ROUTE_PATH}/:sess
  * Framework-owned route pattern for dispatching one authored schedule
  * exactly once from the dev server.
  *
- * Only registered when Nitro is running in dev mode — production builds
- * never mount this route. Smoke tests and human developers use it to
+ * Only registered by the eve development host — production builds never
+ * mount this route. Smoke tests and human developers use it to
  * trigger a schedule out-of-band (without a cron firing) and recover the
  * resulting `{ scheduleId, sessionIds }` payload as JSON so they can
  * subscribe to {@link EVE_SESSION_STREAM_ROUTE_PATTERN} for each session.

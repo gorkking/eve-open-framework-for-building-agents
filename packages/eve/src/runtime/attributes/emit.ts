@@ -2,7 +2,7 @@
 // emit helper is loaded. The workflow-body shim's
 // `setAttributes` dispatches `__builtin_set_attributes` via
 // the runtime step registry; if no module ever imports the builtins file
-// (e.g. in integration tests that bypass the Nitro entry), the dispatch
+// (e.g. in integration tests that bypass the host entry), the dispatch
 // fails with "Step '__builtin_set_attributes' is not registered". Side
 // effect import is the smallest change that keeps the contract intact.
 import "#internal/workflow/builtins.js";

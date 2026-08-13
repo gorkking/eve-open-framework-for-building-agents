@@ -30,7 +30,7 @@ import type {
   DevelopmentServer,
   DevelopmentServerHandle,
   DevelopmentServerOptions,
-} from "#internal/nitro/host/types.js";
+} from "#internal/host/types.js";
 
 type ChildMessage =
   | {

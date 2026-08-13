@@ -9,7 +9,7 @@ import {
   EVE_EVALUATION_RUN_ID_ENV,
 } from "#internal/application/dev-environment.js";
 import { resolveApplicationRoot } from "#internal/application/paths.js";
-import { createDevelopmentServer, type DevelopmentServer } from "#internal/nitro/host.js";
+import { createDevelopmentServer, type DevelopmentServer } from "#internal/host.js";
 import { createEvalClient } from "#evals/cli/eval-client.js";
 import { filterEvalsByTags } from "#evals/cli/filter.js";
 import {

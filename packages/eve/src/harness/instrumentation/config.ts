@@ -6,15 +6,15 @@ import type { InstrumentationDefinition } from "#public/instrumentation/index.js
 /**
  * Process-global store for the authored instrumentation config.
  *
- * Populated at server startup by the generated Nitro instrumentation plugin
+ * Populated at server startup by the generated instrumentation plugin
  * when the user's `agent/instrumentation.ts` has a default export produced
  * by `defineInstrumentation()`. The harness reads from this at turn time
  * to decide whether telemetry is enabled and which settings to pass to the
  * AI SDK.
  *
- * Rooted on `globalThis` so the generated Nitro instrumentation plugin
- * (which Nitro keeps external by `file://` URL) and the bundled harness
- * chunk (which Nitro inlines via the package's `#harness/*` import alias)
+ * Rooted on `globalThis` so the generated instrumentation plugin
+ * (which stays external by `file://` URL) and the bundled harness
+ * chunk (inlined through the package's `#harness/*` import alias)
  * share one source of truth, even though they resolve to two distinct ESM
  * module instances. See `context/key.ts` and
  * `runtime/sessions/runtime-session.ts` for the established pattern.
@@ -31,7 +31,7 @@ const globalContainer = globalThis as typeof globalThis & InstrumentationConfigG
  * Registers the authored instrumentation config and awaits its `setup`
  * callback.
  *
- * Called once by the generated instrumentation Nitro plugin at server
+ * Called once by the generated instrumentation plugin at server
  * startup. Subsequent calls overwrite the previous value.
  *
  * The store write lands before `setup` runs so a synchronous caller sees the

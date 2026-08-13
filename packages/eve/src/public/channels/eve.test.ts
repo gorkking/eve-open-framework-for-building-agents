@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildAdapterContext } from "#channel/adapter-context.js";
 import { callAdapterEventHandler, type ChannelAdapter } from "#channel/adapter.js";
 import { isCompiledChannel } from "#channel/compiled-channel.js";
-import { attachRouteSessionCreator } from "#internal/nitro/routes/channel-route-context.js";
+import { attachRouteSessionCreator } from "#internal/host/routes/channel-route-context.js";
 import { mockChannelContext } from "#internal/testing/mocks/mock-channel-operations.js";
 import { type AuthFn, none } from "#public/channels/auth.js";
 import { eveChannel, defaultEveAuth, type EveChannelInput } from "#public/channels/eve.js";

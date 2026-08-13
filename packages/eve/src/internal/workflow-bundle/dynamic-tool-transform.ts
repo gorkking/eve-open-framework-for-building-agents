@@ -25,7 +25,7 @@
  * first workflow step but is not replayable.
  */
 
-import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
+import { parseWithRolldownAst } from "#internal/bundler/rolldown.js";
 import {
   collectReferencedIdentifierNames,
   findProperty,
@@ -110,7 +110,7 @@ export async function transformDynamicToolExecute(
 export { transformDynamicToolExecute as transformDynamicToolAwait };
 
 async function parseSource(filename: string, source: string): Promise<AstNode> {
-  return (await parseWithNitroRolldownAst(filename, source)) as AstNode;
+  return (await parseWithRolldownAst(filename, source)) as AstNode;
 }
 
 // ---------------------------------------------------------------------------

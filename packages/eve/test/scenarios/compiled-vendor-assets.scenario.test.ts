@@ -173,7 +173,7 @@ describe("compiled vendor assets", () => {
     expect(runtimeRunDts).toContain("from '../_workflow-serde.js'");
   });
 
-  it("vendors the Workflow world targets selected by generated Nitro plugins", async () => {
+  it("vendors the Workflow world targets selected by generated host plugins", async () => {
     const [localWorld, vercelWorld] = await Promise.all([
       readFile(join(COMPILED_VENDOR_ROOT, "@workflow/world-local/index.js"), "utf8"),
       readFile(join(COMPILED_VENDOR_ROOT, "@workflow/world-vercel/index.js"), "utf8"),

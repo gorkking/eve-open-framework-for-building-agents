@@ -32,7 +32,7 @@ export const BASH_OUTPUT_SCHEMA = z.strictObject({
  * Framework-owned executors stay statically imported so hosted server bundles
  * can trace and rewrite them into deployable output chunks.
  *
- * These modules are only used by the Nitro-hosted runtime path. Their deeper
+ * These modules are only used by the hosted runtime path. Their deeper
  * sandbox dependencies remain lazily loaded inside the execution layer, so the
  * top-level import here does not force those backends to initialize eagerly.
  */

@@ -19,7 +19,7 @@ import { isConnectionAuthorizationFailedError } from "#public/connections/errors
 import { principalKey, resolveConnectionPrincipal } from "#runtime/connections/principal.js";
 import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import { eveChannel, type EveChannelInput } from "#public/channels/eve.js";
-import { attachRouteSessionCreator } from "#internal/nitro/routes/channel-route-context.js";
+import { attachRouteSessionCreator } from "#internal/host/routes/channel-route-context.js";
 
 const ROUTER_CALLER: SessionAuthContext = {
   attributes: {},

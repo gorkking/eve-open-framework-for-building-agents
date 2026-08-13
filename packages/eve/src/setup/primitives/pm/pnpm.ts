@@ -20,7 +20,6 @@ const RELEASE_AGE_EXCLUSIONS = [
   "ai",
   "experimental-ai-sdk-code-mode",
   "eve",
-  "nitro",
   "rolldown",
   "workflow",
 ] as const;

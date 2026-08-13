@@ -4,7 +4,6 @@ node_modules
 .vercel
 .next
 .output
-.nitro
 dist
 .DS_Store
 *.tsbuildinfo

@@ -14,7 +14,7 @@ describe("ApplicationBuildProfiler", () => {
     await profiler.measure("host.prepare", async () => {
       now = 123.456;
     });
-    await profiler.measure("nitro.all.bundle", () => {
+    await profiler.measure("rolldown.application.bundle", () => {
       now = 200;
     });
 
@@ -22,7 +22,7 @@ describe("ApplicationBuildProfiler", () => {
       durationMs: 100,
       phases: [
         { durationMs: 23.5, name: "host.prepare" },
-        { durationMs: 76.5, name: "nitro.all.bundle" },
+        { durationMs: 76.5, name: "rolldown.application.bundle" },
       ],
     });
   });
@@ -32,7 +32,7 @@ describe("ApplicationBuildProfiler", () => {
     const profiler = new ApplicationBuildProfiler({ now: () => now });
 
     await expect(
-      profiler.measure("nitro.all.bundle", () => {
+      profiler.measure("rolldown.application.bundle", () => {
         now = 25;
         throw new Error("bundle failed");
       }),
@@ -40,7 +40,7 @@ describe("ApplicationBuildProfiler", () => {
 
     expect(profiler.finish()).toEqual({
       durationMs: 15,
-      phases: [{ durationMs: 15, name: "nitro.all.bundle" }],
+      phases: [{ durationMs: 15, name: "rolldown.application.bundle" }],
     });
   });
 });
@@ -60,7 +60,7 @@ describe("createApplicationBuildProfile", () => {
         target: "vercel",
         timing: {
           durationMs: 125.4,
-          phases: [{ durationMs: 100, name: "nitro.flow.bundle" }],
+          phases: [{ durationMs: 100, name: "rolldown.workflow.bundle" }],
         },
       }),
     ).toEqual({
@@ -74,7 +74,7 @@ describe("createApplicationBuildProfile", () => {
         gzipBytes: 27,
         rawBytes: 64,
       },
-      phases: [{ durationMs: 100, name: "nitro.flow.bundle" }],
+      phases: [{ durationMs: 100, name: "rolldown.workflow.bundle" }],
       schemaVersion: APPLICATION_BUILD_PROFILE_SCHEMA_VERSION,
       target: "vercel",
     });

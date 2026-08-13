@@ -1,7 +1,7 @@
 /**
  * ULID-compatible generation, vendored rather than taken from npm: the
  * `ulid` package's Node build hard-imports `node:crypto`, and this module is
- * bundled into browser clients, the Nitro server, and the workflow step
+ * bundled into browser clients, the server, and the workflow step
  * sandbox. `ulid.test.ts` pins the encoding against the reference
  * implementation's golden vectors.
  */

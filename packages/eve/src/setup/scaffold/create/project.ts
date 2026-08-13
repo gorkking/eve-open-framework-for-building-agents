@@ -261,7 +261,6 @@ const SHARED_TEMPLATE_FILES: Record<string, string> = {
 .vercel
 .next
 .output
-.nitro
 dist
 .DS_Store
 *.tsbuildinfo
@@ -273,7 +272,6 @@ dist
 .eve
 .next
 .output
-.nitro
 dist
 `,
   "AGENTS.md": `# eve Agent App

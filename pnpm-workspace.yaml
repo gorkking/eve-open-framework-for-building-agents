@@ -58,5 +58,4 @@ minimumReleaseAge: 2880 # 2 days
 minimumReleaseAgeExclude:
   - "@vercel/*"
   - "@workflow/*"
-  - nitro
   - workflow

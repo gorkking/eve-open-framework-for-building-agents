@@ -136,7 +136,7 @@ function stubCoreWorldFactories() {
 }
 
 // @workflow/core@5.0.0-beta.40 lazy-loads the optional QuickJS runtime, but
-// Rolldown still emits it as a reachable chunk and Nitro packages that chunk
+// Rolldown still emits it as a reachable chunk and the host packages that chunk
 // into every eve function. eve only supports the Node.js workflow VM, so keep
 // the lazy boundary while replacing its target with a small, explicit error.
 const CORE_QUICKJS_ENTRYPOINT_STUB_ID = "\0eve-core-quickjs-entrypoint-stub";

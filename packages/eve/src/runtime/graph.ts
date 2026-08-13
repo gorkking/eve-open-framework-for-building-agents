@@ -17,7 +17,7 @@ export interface ResolvedRuntimeAgentNode {
   readonly agent: ResolvedAgent;
   /**
    * The merged set of channels (framework defaults + authored overrides
-   * minus authored disables) that the Nitro mounting loop should mount.
+   * minus authored disables) that the host router should mount.
    * Computed by `resolve-agent-graph.ts` so the host plumbing never has to
    * combine framework defaults with the resolved-agent's authored channels.
    */

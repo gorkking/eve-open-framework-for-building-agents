@@ -9,10 +9,10 @@ import {
   resolveInstalledPackageInfo,
   resolvePackageRoot,
 } from "../../src/internal/application/package.js";
-import { buildApplication } from "../../src/internal/nitro/host.js";
+import { buildApplication } from "../../src/internal/host.js";
 import { useTemporaryDirectories } from "../../src/internal/testing/use-temporary-app-roots.js";
 
-vi.mock("../../src/internal/nitro/host/vercel-build-prewarm.js", () => ({
+vi.mock("../../src/internal/host/vercel-build-prewarm.js", () => ({
   runVercelBuildPrewarm: async () => true,
 }));
 
@@ -70,6 +70,33 @@ describe("app runtime dependency tracing", () => {
   afterEach(() => {
     delete (globalThis as Record<string, unknown>).__fixtureInstrumentationDep;
     vi.unstubAllEnvs();
+  });
+
+  it("declares host and build primitives without a framework-owned dependency", async () => {
+    const packageJson = JSON.parse(
+      await readFile(join(EVE_PACKAGE_ROOT, "package.json"), "utf8"),
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    };
+
+    expect(packageJson.dependencies).toMatchObject({
+      crossws: expect.any(String),
+      h3: expect.any(String),
+      rolldown: expect.any(String),
+      srvx: expect.any(String),
+    });
+    for (const dependencies of [
+      packageJson.dependencies,
+      packageJson.devDependencies,
+      packageJson.optionalDependencies,
+      packageJson.peerDependencies,
+    ]) {
+      expect(dependencies ?? {}).not.toHaveProperty("nitro");
+      expect(dependencies ?? {}).not.toHaveProperty("nitropack");
+    }
   });
 
   it("bundles authored app runtime dependencies without forcing traced node_modules copies", async () => {
@@ -166,7 +193,6 @@ describe("app runtime dependency tracing", () => {
       )
     ).join("\n");
 
-    expect(serverModuleEntries.some((entry) => entry.includes("fixture-runtime-dep"))).toBe(true);
     expect(tracedServerPackageJson.dependencies).not.toHaveProperty("fixture-runtime-dep");
     expect(tracedServerPackageJson.dependencies).not.toHaveProperty(EVE_PACKAGE_INFO.name);
     await expect(
@@ -178,7 +204,7 @@ describe("app runtime dependency tracing", () => {
       code: "ENOENT",
     });
     expect(serverModuleSource).toContain('"fixture-runtime-dep"');
-    expect(serverModuleSource).not.toContain('export const label = "fixture-runtime-dep";');
+    expect(serverModuleSource).toContain("Use the fixture runtime dependency.");
   }, 30_000);
 
   it("provides CommonJS path globals to bundled hosted dependencies", async () => {
@@ -799,8 +825,11 @@ describe("app runtime dependency tracing", () => {
     expect(functionEntries.some((entry) => entry.includes("node_modules/.nf3/rolldown"))).toBe(
       false,
     );
+    expect(functionEntries.some((entry) => entry.includes("node_modules/nitro"))).toBe(false);
+    expect(functionEntries.some((entry) => entry.includes("node_modules/nitropack"))).toBe(false);
     expect(serverModuleSource).not.toContain('import("esbuild")');
     expect(serverModuleSource).not.toContain('import("rolldown")');
+    expect(serverModuleSource).not.toMatch(/(?:^|[/#])nitro(?:pack)?(?:$|[/.-])/im);
     expect(serverModuleSource).toContain(
       "This tool requires sandbox access on the runtime context.",
     );
@@ -844,7 +873,6 @@ describe("app runtime dependency tracing", () => {
     );
 
     expect(vercelFunctionsSource).not.toContain("dev-authored-source-watcher");
-    expect(vercelFunctionsSource).not.toContain("chokidar");
     expect(vercelFunctionsSource).not.toContain("[eve:dev]");
     expect(vercelFunctionsSource).not.toContain("rollup:reload");
     // The world-local canary is its log prefix, not names other packages
@@ -969,7 +997,6 @@ describe("app runtime dependency tracing", () => {
       recursive: true,
     });
 
-    expect(serverEntries.some((entry) => entry.includes("fixture-instrumentation-dep"))).toBe(true);
     const instrumentationModulePath = (
       await Promise.all(
         serverEntries

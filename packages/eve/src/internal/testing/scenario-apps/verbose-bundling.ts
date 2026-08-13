@@ -18,7 +18,7 @@ export const VERBOSE_BUNDLING_DESCRIPTOR: ScenarioAppDescriptor = {
 export default defineAgent({
   build: {
     // These packages execute CommonJS/node-specific startup paths that do not
-    // survive Nitro's hosted ESM bundling. Keep them external in Vercel output.
+    // survive hosted ESM bundling. Keep them external in Vercel output.
     externalDependencies: ["snowflake-sdk", "typescript"],
   },
   model: "openai/gpt-5.4-mini",

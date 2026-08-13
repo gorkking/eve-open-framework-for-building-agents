@@ -6,7 +6,7 @@ import {
 } from "../src/runtime/schedules/register.js";
 
 describe("schedule registration", () => {
-  it("creates stable Nitro registration inputs from resolved schedules", () => {
+  it("creates stable runtime registration inputs from resolved schedules", () => {
     expect(
       createScheduleRegistrations([
         {

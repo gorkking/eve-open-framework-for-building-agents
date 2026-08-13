@@ -83,7 +83,7 @@ import { inspectError, type LogRecord } from "#internal/logging.js";
 import {
   parseDevRebuildLogLine,
   type DevRebuildLogUpdate,
-} from "#internal/nitro/host/dev-watcher-log.js";
+} from "#internal/host/dev-watcher-log.js";
 import { toErrorMessage } from "#shared/errors.js";
 import {
   type Block,

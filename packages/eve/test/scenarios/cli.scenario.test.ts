@@ -398,7 +398,7 @@ describe("runCli", () => {
   });
 
   it("starts an existing built app with local Workflow data under .eve", async () => {
-    const { buildApplication } = await import("../../src/internal/nitro/host.js");
+    const { buildApplication } = await import("../../src/internal/host.js");
     const appRoot = await createMinimalAppRoot("eve-cli-start-health-");
 
     await buildApplication(appRoot, {

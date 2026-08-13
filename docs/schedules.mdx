@@ -107,9 +107,9 @@ Vercel evaluates cron expressions in UTC. Confirm discovery under **Settings →
 
 ## Self-deployed hosts
 
-Production builds register schedules as Nitro scheduled tasks. On Vercel, Nitro's Vercel preset wires those task registrations into Vercel Cron for you. Outside Vercel, the standard `eve build && eve start` path serves Nitro's Node output and starts Nitro's schedule runner, so the tasks fire on their cron cadence while that process is running.
+The standard `eve build && eve start` path serves eve's Node output and starts eve's schedule runner, so tasks fire on their cron cadence while that process is running.
 
-The gotcha is custom hosting. If you adapt the generated output to a process manager, container platform, or Nitro preset that only serves HTTP and does not start Nitro's scheduled task runner, the schedule definitions still compile, but they will not fire automatically. In that case, run eve through `eve start`, use a host that supports Nitro scheduled tasks, or trigger the same work from your own scheduler through an authenticated route, channel handoff, or application-specific job runner. The dev dispatch route above is only for `eve dev`; production builds do not mount it.
+The gotcha is custom hosting. If you adapt the generated output to an HTTP host without starting eve's schedule runner, the schedule definitions still compile, but they will not fire automatically. In that case, run the build through `eve start` or trigger the same work from your own scheduler through an authenticated route, channel handoff, or application-specific job runner. The dev dispatch route above is only for `eve dev`; production builds do not mount it.
 
 ## What to read next
 

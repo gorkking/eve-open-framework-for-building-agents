@@ -16,4 +16,4 @@ export { MockScreen, MockUserInput } from "./mock-terminal.js";
 export {
   AUTHORED_ARTIFACTS_UPDATED_LOG_LINE,
   formatChangeDetectedLogLine,
-} from "#internal/nitro/host/dev-watcher-log.js";
+} from "#internal/host/dev-watcher-log.js";

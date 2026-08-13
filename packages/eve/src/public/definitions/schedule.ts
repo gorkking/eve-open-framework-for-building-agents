@@ -26,7 +26,7 @@ export interface ScheduleHandlerArgs {
   /**
    * Extends the cron task's lifetime past handler return so the runtime awaits
    * background work (the parked workflow session, in-flight fetches, etc.)
-   * before the Nitro task ends.
+   * before the eve host task ends.
    */
   readonly waitUntil: (task: Promise<unknown>) => void;
   /**

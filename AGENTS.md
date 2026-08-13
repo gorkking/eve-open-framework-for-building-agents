@@ -92,10 +92,11 @@ line of defense, and every required check must pass before merge.
    public APIs. Wrap them in eve-owned surfaces so internals can change freely.
    Add runtime `dependencies` only as a last resort: prefer vendoring code or
    generated artifacts into the repository and listing the source package under
-   `devDependencies`. The `eve` package should aim to keep `nitro` as its only
-   runtime dependency. This keeps eve installs as small as possible and avoids
-   exposure to hijacked nested dependencies that are not pinned directly in the
-   main lockfile.
+   `devDependencies`. When eve must load a package at runtime, declare and pin
+   that primitive directly instead of acquiring it through a framework's
+   transitive dependency graph. Keep these direct dependencies few, wrap their
+   APIs, and enforce the package boundary mechanically. This keeps installs
+   small and makes every shipped dependency visible in the main lockfile.
 
 6. **Pre-1.0: prefer breaking changes.** Favor correctness and simplicity over
    backwards compatibility. No legacy fallback logic.

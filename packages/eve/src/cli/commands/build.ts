@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { Command } from "#compiled/commander/index.js";
 import { resolveInternalVercelServiceOutput } from "#cli/vercel-service-output.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
-import type { ApplicationBuildOptions } from "#internal/nitro/host/types.js";
+import type { ApplicationBuildOptions } from "#internal/host/types.js";
 import {
   EVE_PUBLIC_ROUTE_PREFIX_ENV,
   normalizePublicRoutePrefix,
@@ -42,8 +42,7 @@ export function registerBuildCommand(input: {
 
       loadDevelopmentEnvironmentFiles(input.appRoot);
 
-      const buildHost =
-        input.buildHost ?? (await import("#internal/nitro/host.js")).buildApplication;
+      const buildHost = input.buildHost ?? (await import("#internal/host.js")).buildApplication;
       const profileOutputPath =
         options.profile === undefined ? undefined : resolve(input.appRoot, options.profile);
       const buildOptions: {

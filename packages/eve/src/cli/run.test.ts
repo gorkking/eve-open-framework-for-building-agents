@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveDevUiMode, resolveTuiDisplayOptions, runCli } from "#cli/run.js";
 import { MockScreen } from "#cli/dev/tui/test/mock-terminal.js";
 import type { RunDevelopmentTuiInput } from "#cli/dev/tui/tui.js";
-import type { DevelopmentServerOptions } from "#internal/nitro/host/types.js";
+import type { DevelopmentServerOptions } from "#internal/host/types.js";
 
 const { runInitCommand, runSetCommand } = vi.hoisted(() => ({
   runInitCommand: vi.fn(async () => {}),

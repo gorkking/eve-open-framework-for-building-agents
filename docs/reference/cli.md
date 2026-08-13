@@ -164,7 +164,7 @@ eve build --profile .eve/build-profiles/baseline.json
 
 The report is attempted only after a successful build. It records total elapsed time, completed phase timings, and final regular-file totals for file count, raw bytes, and the sum of each file compressed with gzip. For Vercel output it also includes a subtotal for every real `.func` directory, so app and flow bundles can be compared separately. The profile path resolves from the app root and should be outside the published output directory; profile collection does not add a file to the deployment. If collection or writing fails, eve emits a warning but keeps the completed build successful.
 
-Production builds do not write through the stable compiler, host, Nitro, or Workflow files owned by `eve dev`, so builds can run while a local dev server is active. A failed build leaves the last successful `.output/` and agent summary untouched. Concurrent completed builds serialize only the final publication window.
+Production builds do not write through the stable compiler, host, runtime, or Workflow files owned by `eve dev`, so builds can run while a local dev server is active. A failed build leaves the last successful `.output/` and agent summary untouched. Concurrent completed builds serialize only the final publication window.
 
 Useful stable artifacts written by inspection and development flows under `.eve/` include:
 

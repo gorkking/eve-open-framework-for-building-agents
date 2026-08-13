@@ -27,7 +27,7 @@ const SCENARIO_AI_PACKAGE_VERSION = resolvePackageVersion("ai");
 /**
  * Declarative description of a scenario-tier application.
  *
- * Scenario tests that need a real on-disk app (to run `eve build`, the Nitro
+ * Scenario tests that need a real on-disk app (to run `eve build`, the built server,
  * dev server, or `compileAgent` against real files) materialize a descriptor
  * into a fresh temporary directory via {@link materializeScenarioApp}. The
  * descriptor captures every file the test needs; the helper wires up the
@@ -71,7 +71,7 @@ export interface ScenarioAppDescriptor {
    * containing the `eve` tarball and the requested dependencies.
    *
    * Set this for scenarios that spawn subprocesses (`eve dev`, `eve build`)
-   * or start the Nitro dev server — anything that resolves `eve`
+   * or start the development server — anything that resolves `eve`
    * at runtime. Compile-only tests can leave this `false` (the default) to
    * skip the pnpm-install cost. pnpm's content-addressable store keeps the
    * second-and-onwards install in the same vitest worker fast (~1s) without

@@ -20,7 +20,7 @@ import {
  * `agent/instrumentation/`.
  *
  * Rooted on `globalThis` for the same reason the single-config store is: the
- * generated Nitro plugin stays external by `file://` URL while the harness
+ * generated host plugin stays external by `file://` URL while the harness
  * chunk is inlined, so the two resolve to distinct ESM module instances and
  * need one shared source of truth.
  */
@@ -61,7 +61,7 @@ export function seedInstrumentationProviders(): void {
 /**
  * Registers one authored provider and awaits its `setup`.
  *
- * Called once per `instrumentation/<slot>.ts` by the generated Nitro plugin at
+ * Called once per `instrumentation/<slot>.ts` by the generated host plugin at
  * server startup, before any event is published. A default export that is not
  * a `defineInstrumentation` result throws rather than being skipped: a slot
  * that registers nothing is telemetry that silently does nothing, which is the
@@ -99,7 +99,7 @@ export function getInstrumentationProviders(): readonly RegisteredInstrumentatio
 /**
  * Installs the process instrumentation runtime from the registered providers.
  *
- * Called once by the generated Nitro plugin after every slot has registered,
+ * Called once by the generated host plugin after every slot has registered,
  * which is also why it cannot happen inside `setup`: the OpenTelemetry pipeline
  * is the union of every destination declared in the directory, so no single
  * file knows enough to build it. A `setup` that reaches for a tracer therefore
@@ -124,7 +124,7 @@ export function finalizeInstrumentationProviders(input: {
 }
 
 /**
- * Releases every registered provider and OTel processor from Nitro's close
+ * Releases every registered provider and OTel processor from the host's close
  * hook, the last point a buffered exporter can still reach the network.
  */
 export async function shutdownInstrumentationProviders(): Promise<void> {

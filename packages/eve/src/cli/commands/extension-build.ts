@@ -5,7 +5,7 @@ import { createLogger } from "#internal/logging.js";
 import {
   buildExtensionPackage,
   tryReadExtensionBuildConfig,
-} from "#internal/nitro/host/build-extension.js";
+} from "#internal/host/build-extension.js";
 
 export interface ExtensionBuildCliLogger {
   error(message: string): void;

@@ -144,7 +144,7 @@ CLI commands:
 
 ## Deploying
 
-eve is built to be durable. The runtime is Nitro + Workflows. Read the [deployment guide](https://eve.dev/docs/guides/deployment/overview) for the deployment path, environment variables, and configuration.
+eve is built to be durable. Rolldown bundles the application, H3 routes requests, CrossWS provides the Node and WebSocket transport, and Workflows preserves execution state. Read the [deployment guide](https://eve.dev/docs/guides/deployment/overview) for the deployment path, environment variables, and configuration.
 
 ## Read Next
 

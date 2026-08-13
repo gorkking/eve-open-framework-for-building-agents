@@ -8,7 +8,7 @@ import {
 import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
 import { FORCED_EXIT_BACKSTOP_MS, installShutdownSignal } from "#cli/shutdown.js";
 import type { ClientOptions } from "#client/types.js";
-import type { DevelopmentServer, DevelopmentServerOptions } from "#internal/nitro/host/types.js";
+import type { DevelopmentServer, DevelopmentServerOptions } from "#internal/host/types.js";
 
 export type RunAcpServer = (input: {
   readonly auth?: ClientOptions["auth"];

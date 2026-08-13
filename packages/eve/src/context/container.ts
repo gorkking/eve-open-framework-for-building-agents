@@ -117,7 +117,7 @@ if (globalContextStorage[EVE_CONTEXT_STORAGE_KEY] === undefined) {
  * Process-wide AsyncLocalStorage used by every eve module copy in the current
  * runtime.
  *
- * Nitro step bundles can inline parts of eve while authored modules still
+ * Workflow step bundles can inline parts of eve while authored modules still
  * import `eve/*` from disk. Backing the storage with a global
  * symbol keeps those copies on the same ALS instance so authored tools,
  * model callbacks, and step code observe one unified eve context.

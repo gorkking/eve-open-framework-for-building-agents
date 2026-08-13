@@ -26,7 +26,7 @@ Every production deployment must satisfy the same runtime requirements:
 4. Select workflow and sandbox implementations that match the host.
 5. Verify the health route and complete a real agent turn.
 
-`eve build` always writes compiler artifacts under `.eve/`. A Vercel build also writes `.vercel/output`. A build for another host writes the standard Nitro server under `.output/`.
+`eve build` always writes compiler artifacts under `.eve/`. A Vercel build also writes `.vercel/output`. A build for another host writes eve's Node server under `.output/`.
 
 ## Configure credentials
 
@@ -57,5 +57,5 @@ Set `VERCEL_AUTOMATION_BYPASS_SECRET` locally first if a Vercel deployment uses 
 Follow the guide for your deployment platform or application topology:
 
 - [Deploy to Vercel](./vercel): use Vercel Build Output, Workflow, Sandbox, Cron, and observability
-- [Self-host eve](./self-hosting): run the Nitro Node server with infrastructure you manage
+- [Self-host eve](./self-hosting): run eve's Node server with infrastructure you manage
 - [Frontend integrations](../frontend/overview): mount eve alongside Next.js, Nuxt, or SvelteKit

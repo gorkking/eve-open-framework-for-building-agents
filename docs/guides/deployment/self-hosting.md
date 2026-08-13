@@ -3,7 +3,7 @@ title: "Self-Host eve"
 description: "Run an eve agent as a Node service with your own workflow storage, sandbox backend, and routing."
 ---
 
-Self-host eve when you operate a Node service, container platform, or reverse proxy. You run eve’s Nitro server and choose the infrastructure that stores workflows and executes sandbox sessions.
+Self-host eve when you operate a Node service, container platform, or reverse proxy. You run eve's Node server and choose the infrastructure that stores workflows and executes sandbox sessions.
 
 ## Build and start the Node service
 
@@ -14,7 +14,7 @@ eve build
 PORT=3000 eve start --host 0.0.0.0
 ```
 
-The build writes the Nitro server under `.output/`. `eve start` serves that output and accepts either `PORT` or the `--port` flag.
+The build writes the Node server under `.output/`. `eve start` serves that output and accepts either `PORT` or the `--port` flag.
 
 Run this process under the same process manager or container platform you use for other Node web services. Configure Transport Layer Security (TLS), scaling, restarts, and log collection in that platform.
 
@@ -63,7 +63,7 @@ A proxy restricted to `/eve/` lets a session start, but the run stalls when its 
 
 ## Run schedules
 
-The standard `eve build && eve start` path starts Nitro’s schedule runner. If you adapt the output to a custom HTTP-only host or preset, run Nitro scheduled tasks or invoke the same work from your scheduler.
+The standard `eve build && eve start` path starts eve's schedule runner. If you adapt the output to a custom HTTP-only host, invoke the same work from your own scheduler.
 
 ## Verify the service
 

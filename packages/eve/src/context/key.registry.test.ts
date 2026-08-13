@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 /**
  * Regression coverage for the `keyRegistry` chunk-isolation failure mode.
  *
- * `eve dev` (Nitro) inlines parts of `eve` into separate workflow
+ * `eve dev` inlines parts of `eve` into separate workflow
  * chunks. Each chunk gets its own module loader, so any module-scoped state
  * in `key.ts` (the `keyRegistry` Map) ends up as separate instances per chunk.
  * That made `setContext(MyKey, value)` from a hook handler invisible to

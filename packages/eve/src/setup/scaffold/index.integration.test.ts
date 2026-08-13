@@ -26,7 +26,7 @@ async function createTempDir(): Promise<string> {
 const TEST_EVE_PACKAGE = { version: "0.25.0", nodeEngine: ">=24" } as const;
 const LATEST_EVE_PACKAGE = { version: "latest", nodeEngine: ">=24" } as const;
 const RELEASE_AGE_POLICY =
-  'minimumReleaseAgeExclude:\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\n';
+  'minimumReleaseAgeExclude:\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - rolldown\n  - workflow\n';
 
 const TEST_WEB_PACKAGE_VERSIONS = {
   evePackage: TEST_EVE_PACKAGE,
@@ -625,7 +625,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(pnpmWorkspacePath, "utf8")).resolves.toBe(
-      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - nitro\n  - rolldown\n  - workflow\nallowBuilds:\n  sharp: false\n',
+      'minimumReleaseAgeExclude:\n  - react\n  - "@ai-sdk/*"\n  - "@rolldown/*"\n  - "@vercel/*"\n  - "@workflow/*"\n  - ai\n  - experimental-ai-sdk-code-mode\n  - eve\n  - rolldown\n  - workflow\nallowBuilds:\n  sharp: false\n',
     );
     expect(result.filesWritten).toContain(pnpmWorkspacePath);
   });
@@ -996,7 +996,7 @@ describe("scaffoldBaseProject", () => {
     // artifacts and a bare .env must be excluded here or a source deploy
     // ships them (and `.eve` alone can blow the upload size limit).
     const vercelignore = await readFile(join(projectRoot, ".vercelignore"), "utf8");
-    for (const entry of [".env*", ".eve", ".output", ".nitro", "dist"]) {
+    for (const entry of [".env*", ".eve", ".output", "dist"]) {
       expect(vercelignore.split("\n")).toContain(entry);
     }
   });

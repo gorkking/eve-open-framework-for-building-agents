@@ -79,14 +79,14 @@ describe("build profile report", () => {
       baselineProfile: createProfile({
         durationMs: 1_000,
         phases: [
-          { durationMs: 600, name: "nitro.app.bundle" },
+          { durationMs: 600, name: "rolldown.server.bundle" },
           { durationMs: 200, name: "workflow.emit" },
         ],
       }),
       currentProfile: createProfile({
         durationMs: 1_250,
         phases: [
-          { durationMs: 700, name: "nitro.app.bundle" },
+          { durationMs: 700, name: "rolldown.server.bundle" },
           { durationMs: 300, name: "workflow.emit" },
           { durationMs: 40, name: "output.publish" },
         ],
@@ -105,7 +105,7 @@ describe("build profile report", () => {
         baselineDurationMs: 600,
         currentDurationMs: 700,
         deltaMs: 100,
-        name: "nitro.app.bundle",
+        name: "rolldown.server.bundle",
       },
       {
         baselineDurationMs: 200,
@@ -127,7 +127,7 @@ describe("build profile report", () => {
     );
     expect(markdown).toContain("<details>");
     expect(markdown).toContain("<summary>Detailed phase timings vs `main (abc1234)`</summary>");
-    expect(markdown).toContain("| `nitro.app.bundle` | 600.0 ms | 700.0 ms | +100.0 ms |");
+    expect(markdown).toContain("| `rolldown.server.bundle` | 600.0 ms | 700.0 ms | +100.0 ms |");
     expect(markdown).toContain("| `output.publish` | — | 40.0 ms | — |");
   });
 
@@ -138,7 +138,7 @@ describe("build profile report", () => {
       appLabel: "apps/fixtures/weather-agent",
       currentProfile: createProfile({
         durationMs: 500,
-        phases: [{ durationMs: 450, name: "nitro.flow.bundle" }],
+        phases: [{ durationMs: 450, name: "rolldown.workflow.bundle" }],
       }),
     });
     const markdown = renderBuildProfileReportMarkdown(report);
@@ -150,7 +150,7 @@ describe("build profile report", () => {
     expect(markdown).toContain("No baseline build profile was supplied");
     expect(markdown).toContain("<details>");
     expect(markdown).toContain("<summary>Detailed phase timings</summary>");
-    expect(markdown).toContain("| `nitro.flow.bundle` | 450.0 ms |");
+    expect(markdown).toContain("| `rolldown.workflow.bundle` | 450.0 ms |");
   });
 
   it("requires prewarm when a deployable-build regression check requests it", async () => {
@@ -161,7 +161,7 @@ describe("build profile report", () => {
         appLabel: "apps/fixtures/weather-agent",
         currentProfile: createProfile({
           durationMs: 500,
-          phases: [{ durationMs: 450, name: "nitro.flow.bundle" }],
+          phases: [{ durationMs: 450, name: "rolldown.workflow.bundle" }],
         }),
         requiredCurrentPhases: ["sandbox.prewarm"],
       }),
@@ -174,7 +174,7 @@ describe("build profile report", () => {
     const profile = {
       ...createProfile({
         durationMs: 500,
-        phases: [{ durationMs: 450, name: "nitro.flow.bundle" }],
+        phases: [{ durationMs: 450, name: "rolldown.workflow.bundle" }],
       }),
       VERCEL_OIDC_TOKEN: "must-not-appear-in-summary",
     };

@@ -5,7 +5,7 @@ import {
   type DevelopmentRequestHeaders,
 } from "#cli/dev/url-target.js";
 import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
-import type { DevelopmentServer, DevelopmentServerOptions } from "#internal/nitro/host/types.js";
+import type { DevelopmentServer, DevelopmentServerOptions } from "#internal/host/types.js";
 import type { DevelopmentTarget } from "#services/dev-client/target.js";
 
 import { resolveInvokeOperation, type RunInvokeInput } from "./invoke.js";
@@ -50,10 +50,10 @@ export function registerRuntimeInvokeCommand(input: {
       runInvoke: async (invokeInput) =>
         await (input.runtime.runInvoke ?? (await import("./invoke.js")).runInvoke)(invokeInput),
       startHost: async (root) =>
-        (
-          input.runtime.startHost ??
-          (await import("#internal/nitro/host.js")).createDevelopmentServer
-        )(root, { existing: "reject" }),
+        (input.runtime.startHost ?? (await import("#internal/host.js")).createDevelopmentServer)(
+          root,
+          { existing: "reject" },
+        ),
     },
   });
 }

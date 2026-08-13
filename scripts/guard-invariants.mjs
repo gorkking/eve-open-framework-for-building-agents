@@ -98,6 +98,16 @@
  *             `ai`: its event payloads are eve's published shape, so deriving
  *             them from the model SDK's callback types would make an SDK
  *             upgrade a breaking change for every provider. Map at the bridge.
+ *   rule 38 — The published eve package must not declare Nitro, import a
+ *             Nitro-owned module, or emit Nitro references in distributable
+ *             JavaScript and declarations. The Nuxt adapter may configure
+ *             Nuxt's own Nitro integration, and Nuxt fixtures and the workspace
+ *             lockfile may retain NitroPack; none of those make it an eve
+ *             dependency.
+ *   rule 39 — Workspace build scripts must not launch a nested
+ *             `pnpm --filter eve build`. Turbo owns workspace dependency
+ *             ordering; nested builds race on eve's clean-and-publish dist
+ *             directory and let consumers observe a partial package.
  *
  * Baselines for rules with pre-existing violations live in
  * `guard-invariants-baseline.json`. Counts and allowlists in that file
@@ -411,6 +421,191 @@ function importSpecifier(node) {
     return node.arguments[0];
   }
   return undefined;
+}
+
+// ---------- Rule 38: eve package owns its build and routing stack ----------
+
+const EVE_PACKAGE_ROOT = join(REPO_ROOT, "packages/eve");
+const EVE_PACKAGE_CODE_ROOTS = ["src", "test", "scripts"];
+const EVE_DISTRIBUTED_CODE_ROOTS = ["bin", "dist"];
+const EVE_CODE_FILE_RE = /\.(?:[cm]?[jt]s|[jt]sx|d\.ts)$/;
+const EVE_DISTRIBUTED_FILE_RE = /\.(?:[cm]?js|d\.ts|json|map)$/;
+const NITRO_MODULE_SEGMENT_RE = /(?:^|[/#])nitro(?:pack)?(?:$|[/.-])/i;
+const NITRO_EMITTED_REFERENCE_RE = /\bnitro(?:pack)?(?:\b|[/.-])/i;
+const EVE_VENDORED_OUTPUT_PREFIX = "packages/eve/dist/src/compiled/";
+const EVE_NUXT_OUTPUT_PREFIX = "packages/eve/dist/src/public/nuxt/";
+
+/** @param {string} dependency */
+function isNitroPackage(dependency) {
+  const name = dependency.startsWith("@") ? dependency.split("/")[1] : dependency;
+  return /^nitro(?:pack)?(?:$|-)/i.test(name ?? "");
+}
+
+/**
+ * @param {import("typescript").Node} node
+ */
+function mockedModuleSpecifier(node) {
+  if (
+    !ts.isCallExpression(node) ||
+    node.arguments[0] === undefined ||
+    !ts.isStringLiteralLike(node.arguments[0]) ||
+    !ts.isPropertyAccessExpression(node.expression)
+  ) {
+    return undefined;
+  }
+
+  return /^(?:doMock|mock|unmock)$/.test(node.expression.name.text) ? node.arguments[0] : undefined;
+}
+
+/**
+ * @param {string} posix
+ * @param {string} source
+ * @param {Violation[]} violations
+ */
+function checkRule38SourceImports(posix, source, violations) {
+  const sourceFile = ts.createSourceFile(
+    posix,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    posix.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const seen = new Set();
+  const visit = (node) => {
+    const specifier = importSpecifier(node) ?? mockedModuleSpecifier(node);
+    if (specifier !== undefined && NITRO_MODULE_SEGMENT_RE.test(specifier.text)) {
+      const line =
+        sourceFile.getLineAndCharacterOfPosition(specifier.getStart(sourceFile)).line + 1;
+      const key = `${line}:${specifier.text}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        violations.push({
+          rule: 38,
+          file: posix,
+          line,
+          message: `references Nitro module "${specifier.text}". Import eve-owned host, router, and bundler modules instead; packages/eve must not depend on Nitro directly or through legacy internal paths.`,
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+/**
+ * @returns {Promise<Violation[]>}
+ */
+async function checkRule38NoNitro() {
+  /** @type {Violation[]} */
+  const violations = [];
+  /** @type {{ file: string; line?: number }[]} */
+  const emittedReferences = [];
+  const packageJsonPath = join(EVE_PACKAGE_ROOT, "package.json");
+  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+
+  for (const section of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ]) {
+    for (const dependency of Object.keys(packageJson[section] ?? {})) {
+      if (!isNitroPackage(dependency)) continue;
+      violations.push({
+        rule: 38,
+        file: "packages/eve/package.json",
+        message: `declares "${dependency}" in ${section}. eve must depend on its build and routing primitives directly; NitroPack remains allowed only where Nuxt owns it outside packages/eve.`,
+      });
+    }
+  }
+
+  for (const relativeRoot of EVE_PACKAGE_CODE_ROOTS) {
+    const root = join(EVE_PACKAGE_ROOT, relativeRoot);
+    for await (const entry of walkFiles(root)) {
+      if (!entry.stat.isFile() || !EVE_CODE_FILE_RE.test(entry.relPath)) continue;
+      checkRule38SourceImports(
+        toPosix(entry.relPath),
+        await readFile(entry.absPath, "utf8"),
+        violations,
+      );
+    }
+  }
+
+  for (const relativeRoot of EVE_DISTRIBUTED_CODE_ROOTS) {
+    const root = join(EVE_PACKAGE_ROOT, relativeRoot);
+    let stats;
+    try {
+      stats = await lstat(root);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (!stats.isDirectory()) continue;
+
+    for await (const entry of walkFiles(root)) {
+      if (!entry.stat.isFile() || !EVE_DISTRIBUTED_FILE_RE.test(entry.relPath)) continue;
+      const posix = toPosix(entry.relPath);
+      const source = await readFile(entry.absPath, "utf8");
+      if (
+        posix.startsWith(EVE_VENDORED_OUTPUT_PREFIX) ||
+        posix.startsWith(EVE_NUXT_OUTPUT_PREFIX)
+      ) {
+        checkRule38SourceImports(posix, source, violations);
+        continue;
+      }
+
+      const pathMatch = NITRO_MODULE_SEGMENT_RE.exec(posix);
+      const match = pathMatch ?? NITRO_EMITTED_REFERENCE_RE.exec(source);
+      if (match === null) continue;
+      emittedReferences.push({
+        file: posix,
+        line: pathMatch === null ? source.slice(0, match.index).split(/\r?\n/).length : undefined,
+      });
+    }
+  }
+
+  if (emittedReferences.length > 0) {
+    const examples = emittedReferences
+      .slice(0, 8)
+      .map((reference) => `${reference.file}${reference.line ? `:${reference.line}` : ""}`)
+      .join(", ");
+    violations.push({
+      rule: 38,
+      file: "packages/eve",
+      message: `${emittedReferences.length} distributable output file${emittedReferences.length === 1 ? "" : "s"} contain Nitro references (first: ${examples}). Rebuild eve after removing the legacy imports and ensure source maps/declarations are generated only from the eve-owned build stack.`,
+    });
+  }
+
+  return violations;
+}
+
+// ---------- Rule 39: one owner for the eve package build ----------
+
+const NESTED_EVE_BUILD_RE = /\bpnpm\s+(?:--filter(?:=|\s+)eve|-F\s+eve)\s+(?:run\s+)?build\b/;
+
+/**
+ * @returns {Promise<Violation[]>}
+ */
+async function checkRule39NoNestedEveBuild() {
+  /** @type {Violation[]} */
+  const violations = [];
+
+  for (const dir of await readPnpmWorkspacePackageDirs()) {
+    if (dir === "packages/eve") continue;
+    const packageJson = await readJsonIfExists(join(REPO_ROOT, dir, "package.json"));
+    for (const [scriptName, command] of Object.entries(packageJson?.scripts ?? {})) {
+      if (typeof command !== "string" || !NESTED_EVE_BUILD_RE.test(command)) continue;
+      violations.push({
+        rule: 39,
+        file: `${dir}/package.json`,
+        message: `script "${scriptName}" launches a nested eve package build. Declare eve as a workspace dependency and let Turbo's ^build edge produce it once; rebuilding eve inside a consumer races its destructive dist clean against other consumers.`,
+      });
+    }
+  }
+
+  return violations;
 }
 
 // ---------- Rule 19: AsyncLocalStorage instances ----------
@@ -1246,6 +1441,12 @@ async function main() {
 
   // Rule 37
   violations.push(...state.rule37);
+
+  // Rule 38
+  violations.push(...(await checkRule38NoNitro()));
+
+  // Rule 39
+  violations.push(...(await checkRule39NoNestedEveBuild()));
 
   if (violations.length === 0) {
     process.stdout.write("[eve:guard:invariants] ok — all mechanical lints passed.\n");

@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +13,7 @@ import {
 } from "#internal/application/package.js";
 
 import { WorkflowBundleBuilder } from "#internal/workflow-bundle/builder.js";
+import { createWorkflowEntrypointSource } from "#internal/workflow-bundle/builder-support.js";
 import type { WorkflowManifest } from "#internal/workflow-bundle/workflow-builders.js";
 
 class InspectableWorkflowBundleBuilder extends WorkflowBundleBuilder {
@@ -59,8 +59,6 @@ class StepEntryOnlyWorkflowBundleBuilder extends WorkflowBundleBuilder {
   }
 
   protected override async createWorkflowsBundle(): Promise<{
-    bundleFinal?: (interimBundleResult: string) => Promise<void>;
-    interimBundleCtx?: undefined;
     manifest: Record<string, never>;
   }> {
     this.workflowBundleCalls += 1;
@@ -98,7 +96,6 @@ describe("WorkflowBundleBuilder", () => {
       compiledArtifactsBootstrapPath: "/tmp/compiled-artifacts-bootstrap.js",
       outDir: "/tmp/eve-workflows",
       rootDir,
-      watch: false,
     });
 
     expect(builder.snapshot.projectRoot).toBe(appRoot);
@@ -106,7 +103,7 @@ describe("WorkflowBundleBuilder", () => {
     expect(builder.snapshot.dirs).toEqual([resolvePackageSourceDirectoryPath("src/execution")]);
   });
 
-  it("writes a Nitro-owned step registration entry", async () => {
+  it("writes a workflow step registration entry", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-bundle-step-entry-"));
     const outDir = join(tempRoot, "workflow-build");
     const stepFilePath = join(tempRoot, "steps", "ping.ts");
@@ -134,7 +131,6 @@ describe("WorkflowBundleBuilder", () => {
           compiledArtifactsBootstrapPath,
           outDir,
           rootDir: tempRoot,
-          watch: false,
         },
         [stepFilePath],
       );
@@ -205,7 +201,6 @@ describe("WorkflowBundleBuilder", () => {
           compiledArtifactsBootstrapPath,
           outDir,
           rootDir: tempRoot,
-          watch: false,
         },
         [stepFilePath],
       );
@@ -227,7 +222,7 @@ describe("WorkflowBundleBuilder", () => {
     }
   });
 
-  it("rewrites generated workflow code template literals to parser-safe base64 chunks", async () => {
+  it("writes generated workflow code as parser-safe base64 chunks", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-bundle-code-literal-"));
     const outDir = join(tempRoot, "workflow-build");
     const stepFilePath = join(tempRoot, "steps", "ping.ts");
@@ -246,14 +241,10 @@ describe("WorkflowBundleBuilder", () => {
 
         await writeFile(
           outfile,
-          [
-            "import { workflowEntrypoint } from 'workflow/runtime';",
-            "",
-            `const workflowCode = \`${workflowBundleCode.replace(/[\\`$]/g, "\\$&")}\`;`,
-            "",
-            'export const POST = workflowEntrypoint(workflowCode, { namespace: "eve746573742d6167656e74" });',
-            "",
-          ].join("\n"),
+          createWorkflowEntrypointSource({
+            code: workflowBundleCode,
+            queueNamespace: "eve746573742d6167656e74",
+          }),
         );
 
         return { manifest: {} };
@@ -288,7 +279,6 @@ describe("WorkflowBundleBuilder", () => {
           compiledArtifactsBootstrapPath,
           outDir,
           rootDir: tempRoot,
-          watch: false,
         },
         [stepFilePath],
       );
@@ -297,21 +287,9 @@ describe("WorkflowBundleBuilder", () => {
 
       const workflowsSource = await readFile(join(outDir, "workflows.mjs"), "utf8");
 
-      const encodedChunksMatch = workflowsSource.match(
-        /Buffer\.from\((\[[\s\S]*?\])\.join\(""\), "base64"\)\.toString\("utf8"\)/,
-      );
-      expect(encodedChunksMatch).not.toBeNull();
-
-      const encodedChunks = JSON.parse(encodedChunksMatch?.[1] ?? "[]") as string[];
-      const decodedWorkflowCode = Buffer.from(encodedChunks.join(""), "base64").toString("utf8");
-
       expect(workflowsSource).toContain("const workflowCode = Buffer.from([");
       expect(workflowsSource).not.toContain("const workflowCode = `");
       expect(workflowsSource).not.toContain('template ${"literal"}');
-      expect(decodedWorkflowCode).toContain('template ${"literal"}');
-      expect(decodedWorkflowCode).toContain(
-        "sourceMappingURL=data:application/json;base64,ZmFrZQ==",
-      );
       expect(workflowsSource).toContain(resolveWorkflowModulePath("workflow/runtime"));
 
       const workflowsModule = await import(pathToFileURL(join(outDir, "workflows.mjs")).href);
@@ -374,7 +352,6 @@ describe("WorkflowBundleBuilder", () => {
           compiledArtifactsBootstrapPath,
           outDir,
           rootDir: tempRoot,
-          watch: false,
         },
         [flowFilePath],
       );
@@ -430,7 +407,6 @@ describe("WorkflowBundleBuilder", () => {
           compiledArtifactsBootstrapPath,
           outDir,
           rootDir: resolvePackageRoot(),
-          watch: false,
         },
         [flowFilePath],
       );
@@ -498,7 +474,6 @@ describe("WorkflowBundleBuilder", () => {
           compiledArtifactsBootstrapPath,
           outDir,
           rootDir: tempRoot,
-          watch: false,
         },
         [flowFilePath],
       );

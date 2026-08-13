@@ -134,7 +134,7 @@ describe("schedule trigger end-to-end (channel-less schedules)", () => {
       expect(schedules[0]?.sourceKind).toBe("markdown");
       expect(schedules[0]?.hasRun).toBe(false);
 
-      // Resolve the schedule the same way the Nitro task handler does.
+      // Resolve the schedule the same way the production task handler does.
       const registrations = createScheduleRegistrations(schedules);
       expect(registrations).toHaveLength(1);
       const schedule = await loadResolvedCompiledScheduleByTaskName(registrations[0]!.taskName, {
@@ -229,7 +229,7 @@ describe("schedule trigger end-to-end (channel-less schedules)", () => {
   });
 
   /**
-   * Locks the load path the Nitro cron handler uses for a `run`-handler
+   * Locks the load path the production cron handler uses for a `run`-handler
    * schedule. Pre-fix, `collectModuleRefsForManifest` omitted
    * `manifest.schedules` from the compiled module map, so this load
    * threw `ResolveAgentError: Missing compiled module namespace ...`.

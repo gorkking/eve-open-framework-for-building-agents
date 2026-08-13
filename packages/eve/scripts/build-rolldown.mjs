@@ -17,7 +17,7 @@ import { readdir } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { join, parse, relative } from "node:path";
 
-import { buildWithNitroRolldown } from "./nitro-rolldown.mjs";
+import { buildWithRolldown } from "./rolldown.mjs";
 import { createVendoredDependencyWarningFilter } from "./vendor-warning-log.mjs";
 
 /**
@@ -82,7 +82,7 @@ function createStripUnusedRolldownRuntimeImportPlugin() {
 
 /**
  * Applies the same `defineDynamic` execute-hoisting transform that the
- * agent's Nitro build applies to authored `agent/tools/*.ts` files. This
+ * host build applies to authored `agent/tools/*.ts` files. This
  * lets framework dynamic tools ship pre-transformed so they replay
  * across workflow step boundaries identically to authored tools.
  */
@@ -127,7 +127,8 @@ const EXCLUDED_DIRECTORIES = new Set([join("internal", "testing")]);
  *
  *   - Peer dependencies (`ai`, `next`, `react`, `@opentelemetry/api`,
  *     `braintrust`) — consumers provide the install.
- *   - Runtime dependencies (`nitro`, `undici`) — resolved at
+ *   - Runtime dependencies (`crossws`, `croner`, `h3`, `nf3`, `rolldown`,
+ *     `srvx`, `undici`) — resolved at
  *     runtime against the eve installation.
  *   - Optional peer dependency (`just-bash`) — the opt-in local sandbox
  *     engine; resolved lazily against the consumer's install and never
@@ -143,11 +144,16 @@ const EXTERNAL_PACKAGES = new Set([
   "@sveltejs/kit",
   "ai",
   "braintrust",
+  "crossws",
+  "croner",
+  "h3",
   "just-bash",
   "microsandbox",
   "next",
-  "nitro",
+  "nf3",
   "react",
+  "rolldown",
+  "srvx",
   "svelte",
   "undici",
   "vite",
@@ -229,7 +235,7 @@ const input = Object.fromEntries(
 
 const warningFilter = createVendoredDependencyWarningFilter();
 
-await buildWithNitroRolldown({
+await buildWithRolldown({
   input,
   external: isExternalPackageSpecifier,
   platform: "node",
@@ -313,7 +319,7 @@ if (vueSourceFiles.length > 0) {
     return false;
   }
 
-  await buildWithNitroRolldown({
+  await buildWithRolldown({
     input: vueInput,
     external: isVueBuildExternal,
     platform: "node",
@@ -370,7 +376,7 @@ if (svelteSourceFiles.length > 0) {
     return false;
   }
 
-  await buildWithNitroRolldown({
+  await buildWithRolldown({
     input: svelteInput,
     external: isSvelteBuildExternal,
     platform: "node",

@@ -58,7 +58,7 @@ type CallbackRouteKind = (typeof ROUTE_KINDS)[number];
  * Returns one definition per accepted HTTP method and route generation. The
  * legacy shape remains mounted for callbacks minted by already-pinned runs.
  * The framework channel resolver mounts each `(method, urlPath)` pair as a
- * separate Nitro route.
+ * separate host route.
  */
 export function getConnectionCallbackChannelDefinitions(): readonly ResolvedChannelDefinition[] {
   return ROUTE_KINDS.flatMap((kind) =>
@@ -105,7 +105,7 @@ function channelNameForMethod(method: ChannelMethod, kind: CallbackRouteKind): s
 
 /**
  * Inbound handler for the connection callback route. Exported for test
- * coverage; the framework channel resolver wires it into Nitro via
+ * coverage; the framework channel resolver wires it into the host via
  * {@link getConnectionCallbackChannelDefinitions}.
  */
 export async function handleConnectionCallbackRequest(

@@ -44,7 +44,7 @@ export const VERCEL_EVE_AGENT_SUMMARY_VERSION = 5;
  * summary file at build time.
  *
  * Lives under `.eve/` — the existing eve-internal cache namespace that
- * already holds `nitro/`, `nitro-output/`, `sandbox-cache/`, etc. (see
+ * already holds host build, output, and sandbox cache directories (see
  * `packages/eve/src/internal/application/paths.ts`). Intentionally
  * outside `.vercel/output/` so the file is not part of the Build Output
  * API surface — the Vercel build container picks it up from this path

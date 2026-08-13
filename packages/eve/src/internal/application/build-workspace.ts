@@ -13,8 +13,6 @@ export interface ApplicationBuildWorkspace {
   };
   readonly host: {
     readonly artifactsDir: string;
-  };
-  readonly nitro: {
     readonly buildDir: string;
   };
   readonly publication: {
@@ -55,9 +53,7 @@ export async function createApplicationBuildWorkspace(
     },
     host: {
       artifactsDir: join(rootDir, "host"),
-    },
-    nitro: {
-      buildDir: join(rootDir, "nitro"),
+      buildDir: join(rootDir, "host-build"),
     },
     publication: {
       output: {

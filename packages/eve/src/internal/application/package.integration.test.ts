@@ -46,7 +46,7 @@ async function writeInstalledEvePackage(appRoot: string): Promise<string> {
 }
 
 async function writeBundle(appRoot: string): Promise<string> {
-  const bundlePath = join(appRoot, ".eve", "dev-hosts", "fixture", "nitro", "dev", "index.mjs");
+  const bundlePath = join(appRoot, ".eve", "dev-hosts", "fixture", "host", "dev", "index.mjs");
 
   await writeFixtureFile(bundlePath, "export {};\n");
   return bundlePath;

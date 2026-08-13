@@ -1,8 +1,8 @@
 /**
- * Serializable subset of H3/Nitro CORS options supported by channel routes.
+ * Serializable subset of H3 CORS options supported by channel routes.
  *
  * Function and RegExp origins are intentionally excluded because channel
- * definitions are compiled into JSON artifacts and virtual Nitro handlers.
+ * definitions are compiled into JSON artifacts consumed by the eve host.
  */
 export interface ChannelCorsOptions {
   /**

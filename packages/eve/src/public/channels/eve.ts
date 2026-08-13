@@ -18,7 +18,7 @@ import { createLogger, logError } from "#internal/logging.js";
 import {
   readAgentInfoRouteResponse,
   readRouteSessionCreator,
-} from "#internal/nitro/routes/channel-route-context.js";
+} from "#internal/host/routes/channel-route-context.js";
 import {
   EVE_MESSAGE_STREAM_CONTENT_TYPE,
   EVE_MESSAGE_STREAM_FORMAT,

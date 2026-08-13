@@ -46,7 +46,7 @@ export interface WebSocketUpgradeServerBridge {
  * Prefer authoring websocket behavior directly with `WS()` hooks. Reach for
  * this only when an SDK or framework binds to `http.Server` upgrade events,
  * such as `engine.attach(server, path, ...)`. It works only on hosts where
- * Nitro exposes a Node upgrade tuple for the matched WebSocket route.
+ * the eve host exposes a Node upgrade tuple for the matched WebSocket route.
  */
 export function createWebSocketUpgradeServer(): WebSocketUpgradeServerBridge {
   const server = createServer();

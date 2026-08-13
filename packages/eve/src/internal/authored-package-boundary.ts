@@ -272,7 +272,7 @@ async function resolveConfiguredExternalModule(
 export function normalizeExternalDependencies(
   externalDependencies: readonly string[] = [],
 ): string[] {
-  // This is intentionally explicit-only. Nitro owns hosted dependency
+  // This is intentionally explicit-only. The host owns dependency
   // classification; applying its trace set to authored generation bundles
   // would turn bundleable packages into a second dev-only packaging graph.
   return [...new Set(externalDependencies)].sort();

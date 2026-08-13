@@ -1,5 +1,5 @@
 import type { CommandLifecycle } from "#cli/shutdown.js";
-import type { DevelopmentServer, DevelopmentServerHandle } from "#internal/nitro/host/types.js";
+import type { DevelopmentServer, DevelopmentServerHandle } from "#internal/host/types.js";
 
 type WaitableServer = DevelopmentServer & { wait?: () => Promise<void> };
 

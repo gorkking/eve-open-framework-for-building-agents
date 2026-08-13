@@ -51,7 +51,7 @@ import type {
   DevelopmentServer,
   DevelopmentServerOptions,
   ProductionServerHandle,
-} from "#internal/nitro/host/types.js";
+} from "#internal/host/types.js";
 
 export { resolveDevUiMode, resolveTuiDisplayOptions };
 
@@ -135,10 +135,10 @@ async function loadStartHost(): Promise<CliRuntimeDependencies["startHost"]> {
 }
 
 const loadIsActiveDevelopmentServerForApp = async () =>
-  (await import("#internal/nitro/host.js")).isActiveDevelopmentServerForApp;
+  (await import("#internal/host.js")).isActiveDevelopmentServerForApp;
 
 async function loadStartProductionHost(): Promise<CliRuntimeDependencies["startProductionHost"]> {
-  return (await import("#internal/nitro/host.js")).startProductionServer;
+  return (await import("#internal/host.js")).startProductionServer;
 }
 
 function hasInteractiveTerminal(): boolean {

@@ -82,7 +82,7 @@ export async function loadResolvedCompiledSchedules(
 }
 
 /**
- * Loads and resolves one compiled authored schedule from its registered Nitro
+ * Loads and resolves one compiled authored schedule from its registered runtime
  * task name.
  */
 export async function loadResolvedCompiledScheduleByTaskName(
@@ -103,7 +103,7 @@ export async function loadResolvedCompiledScheduleByTaskName(
   }
 
   throw new ResolveScheduleError(
-    `No compiled authored schedule is registered for Nitro task "${taskName}".`,
+    `No compiled authored schedule is registered for task "${taskName}".`,
     {
       taskName,
     },

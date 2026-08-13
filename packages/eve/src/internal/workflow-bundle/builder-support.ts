@@ -5,14 +5,14 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { atomicWriteFile } from "#shared/atomic-write-file.js";
 
-import { buildSingleRolldownChunk } from "#internal/bundler/nitro-rolldown.js";
+import { buildSingleRolldownChunk } from "#internal/bundler/rolldown.js";
 import { resolveWorkflowModulePath } from "#internal/application/package.js";
 import {
   applyWorkflowTransform,
   getImportPath,
   type WorkflowManifest,
 } from "#internal/workflow-bundle/workflow-builders.js";
-import { WORKFLOW_STEP_EXTERNAL_PACKAGES } from "#internal/workflow-bundle/vercel-workflow-output.js";
+import { WORKFLOW_STEP_EXTERNAL_PACKAGES } from "#internal/workflow-bundle/workflow-external-packages.js";
 
 export const WORKFLOW_VIRTUAL_ENTRY_ID = "\0eve-workflow-entry";
 
@@ -22,7 +22,6 @@ export interface WorkflowBundleBuilderOptions {
   compiledArtifactsBootstrapPath: string;
   outDir: string;
   rootDir: string;
-  watch: boolean;
   /** Test-harness-only: also scans `src/internal/testing/`. */
   includeTestFixtures?: boolean;
 }
@@ -63,11 +62,8 @@ const IGNORED_INPUT_DIRECTORIES = new Set([
 ]);
 
 export interface WorkflowBundleBuilderConfig {
-  readonly buildTarget: "standalone";
   readonly dirs: readonly string[];
-  readonly externalPackages: readonly string[];
   readonly projectRoot: string;
-  readonly watch: boolean;
   readonly workingDir: string;
 }
 
@@ -78,18 +74,14 @@ export interface WorkflowBundleDiscoveredEntries {
 }
 
 export interface WorkflowBundleCreateWorkflowsBundleOptions {
-  readonly bundleFinalOutput?: boolean;
   readonly discoveredEntries?: WorkflowBundleDiscoveredEntries;
-  readonly format?: "cjs" | "esm";
   readonly inputFiles: readonly string[];
-  readonly keepInterimBundleContext?: boolean;
   readonly outfile: string;
+  readonly stepRegistrationsPath: string;
   readonly tsconfigPath?: string;
 }
 
 export interface WorkflowBundleCreateWorkflowsBundleResult {
-  readonly bundleFinal?: (interimBundleResult: string) => Promise<void>;
-  readonly interimBundleCtx?: undefined;
   readonly manifest: WorkflowManifest;
 }
 
@@ -350,7 +342,7 @@ export async function bundleWorkflowStepRegistrations(input: {
     output: {
       comments: false,
       format: "esm",
-      sourcemap: "inline",
+      sourcemap: false,
     },
   });
   await writeWorkflowBundleAtomically(input.outfile, chunk.code);
@@ -385,41 +377,48 @@ export function createWorkflowNodeBuiltinGuardPlugin(): WorkflowRolldownPlugin {
 }
 
 export async function bundleFinalWorkflowOutput(input: {
-  bundleFinalOutput: boolean;
   code: string;
-  format: "cjs" | "esm";
   outfile: string;
   queueNamespace: string;
+  stepRegistrationsPath?: string;
   workingDir: string;
 }): Promise<void> {
-  const workflowBundleCode = input.code.endsWith("\n") ? input.code : `${input.code}\n`;
-  const workflowRuntimePath = resolveWorkflowModulePath("workflow/runtime").replaceAll("\\", "/");
-  const workflowFunctionCode = `// biome-ignore-all lint: generated file
-/* eslint-disable */
-import { workflowEntrypoint } from ${JSON.stringify(workflowRuntimePath)};
-
-const workflowCode = \`${workflowBundleCode.replace(/[\\`$]/g, "\\$&")}\`;
-
-export const POST = workflowEntrypoint(workflowCode, { namespace: ${JSON.stringify(input.queueNamespace)} });`;
-
-  if (!input.bundleFinalOutput) {
-    await writeWorkflowBundleAtomically(input.outfile, workflowFunctionCode);
-    return;
-  }
-
-  const chunk = await buildSingleRolldownChunk(`final workflow bundle for "${input.outfile}"`, {
-    cwd: input.workingDir,
-    input: WORKFLOW_VIRTUAL_ENTRY_ID,
-    external: (source: string) => source === "@aws-sdk/credential-provider-web-identity",
-    platform: "node",
-    plugins: [createWorkflowVirtualEntryPlugin(workflowFunctionCode)],
-    output: {
-      comments: false,
-      format: input.format,
-      sourcemap: false,
-    },
+  const workflowFunctionCode = createWorkflowEntrypointSource({
+    code: input.code,
+    queueNamespace: input.queueNamespace,
+    stepRegistrationsImport:
+      input.stepRegistrationsPath === undefined
+        ? undefined
+        : toRelativeImportSpecifier(dirname(input.outfile), input.stepRegistrationsPath),
   });
-  await writeWorkflowBundleAtomically(input.outfile, chunk.code);
+
+  await writeWorkflowBundleAtomically(input.outfile, workflowFunctionCode);
+}
+
+export function createWorkflowEntrypointSource(input: {
+  readonly code: string;
+  readonly queueNamespace: string;
+  readonly stepRegistrationsImport?: string;
+}): string {
+  const workflowRuntimePath = resolveWorkflowModulePath("workflow/runtime").replaceAll("\\", "/");
+  const encodedWorkflowCode = Buffer.from(
+    input.code.endsWith("\n") ? input.code : `${input.code}\n`,
+  ).toString("base64");
+  const chunks = encodedWorkflowCode.match(/.{1,16384}/gu) ?? [""];
+
+  const stepRegistrationsImport =
+    input.stepRegistrationsImport === undefined
+      ? ""
+      : `import { __steps_registered as __eveWorkflowStepsRegistered } from ${JSON.stringify(input.stepRegistrationsImport)};\nvoid __eveWorkflowStepsRegistered;`;
+
+  return `// Generated by eve. Do not edit by hand.
+import { workflowEntrypoint } from ${JSON.stringify(workflowRuntimePath)};
+${stepRegistrationsImport}
+
+const workflowCode = Buffer.from(${JSON.stringify(chunks)}.join(""), "base64").toString("utf8");
+
+export const POST = workflowEntrypoint(workflowCode, { namespace: ${JSON.stringify(input.queueNamespace)} });
+`;
 }
 
 export function convertStepsManifest(steps: WorkflowManifest["steps"]): Record<string, unknown> {

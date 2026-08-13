@@ -136,7 +136,7 @@ export class ConnectionAuthorizationFailedError extends Error {
  *
  * Uses `err.name` rather than `instanceof` because user code and
  * framework internals can end up with different class identities
- * after bundling (dual-instance hazard in Nitro output).
+ * after bundling (a dual-instance hazard in server output).
  */
 export function isConnectionAuthorizationRequiredError(
   err: unknown,
@@ -149,7 +149,7 @@ export function isConnectionAuthorizationRequiredError(
  *
  * Uses `err.name` rather than `instanceof` because user code and
  * framework internals can end up with different class identities
- * after bundling (dual-instance hazard in Nitro output).
+ * after bundling (a dual-instance hazard in server output).
  */
 export function isConnectionAuthorizationFailedError(
   err: unknown,

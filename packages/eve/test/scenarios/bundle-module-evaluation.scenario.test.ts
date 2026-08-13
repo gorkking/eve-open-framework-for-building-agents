@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { buildWithNitroRolldown } from "#internal/bundler/nitro-rolldown.js";
+import { buildWithRolldown } from "#internal/bundler/rolldown.js";
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 
@@ -28,13 +28,13 @@ interface RolldownInputOptions {
 
 /**
  * Bundles one entry against the local eve dist into a single concatenated
- * chunk, mirroring the shape of Nitro's `_libs/eve.mjs`.
+ * chunk, mirroring the shape of a generated server chunk.
  * Externalizes non-eve specifiers so the test exercises eve's evaluation
  * order in isolation. Leaves `output.topLevelVar` at the rolldown default
  * (`false`) so any cycle surfaces as a loud TDZ ReferenceError at load.
  */
 async function bundleEveDistAsSingleChunk(input: RolldownInputOptions): Promise<string> {
-  await buildWithNitroRolldown({
+  await buildWithRolldown({
     cwd: input.cwd,
     input: input.entry,
     platform: "node",
@@ -61,7 +61,7 @@ async function bundleEveDistAsSingleChunk(input: RolldownInputOptions): Promise<
 }
 
 describe("eve dist single-chunk module evaluation", () => {
-  it("concatenates the eve dist for a Nitro-style step entry without leaving any imported binding in TDZ", async () => {
+  it("concatenates the eve dist for a workflow step entry without leaving any imported binding in TDZ", async () => {
     // Regression test for a module-evaluation cycle in the BundleKey
     // codec that surfaced as a TDZ ReferenceError when the dist was
     // concatenated into a single chunk.
@@ -69,7 +69,7 @@ describe("eve dist single-chunk module evaluation", () => {
     const outDir = join(scratch, "out");
     await mkdir(outDir, { recursive: true });
 
-    // Mirror the imports `writeNitroStepEntrypoint` generates for a
+    // Mirror the imports `writeWorkflowStepEntrypoint` generates for a
     // workflow's `steps.mjs`.
     const stepSources = [
       "src/internal/workflow/builtins.ts",

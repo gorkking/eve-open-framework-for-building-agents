@@ -11,7 +11,7 @@ beforeEach(() => {
 /**
  * Regression coverage for the instrumentation-config chunk-isolation failure.
  *
- * `eve dev` (Nitro) evaluates `instrumentation-config.ts` twice: once via the
+ * `eve dev` evaluates `instrumentation-config.ts` twice: once via the
  * generated instrumentation plugin (kept external by `file://` URL) and once
  * via the bundled harness chunk (inlined via the `#harness/*` import alias).
  * Each evaluation gets its own module loader, so any module-scoped state

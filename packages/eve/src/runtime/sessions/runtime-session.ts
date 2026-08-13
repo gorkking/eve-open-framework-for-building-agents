@@ -50,7 +50,7 @@ export function createRuntimeSession(id: string = "test-session"): RuntimeSessio
 /**
  * Process-global storage for the current `RuntimeSession`.
  *
- * Rooted on `globalThis` so Nitro-inlined eve and disk-imported eve share
+ * Rooted on `globalThis` so bundled and disk-imported eve modules share
  * the same process default while tests still get async-scoped overrides.
  */
 const RUNTIME_SESSION_STORAGE_GLOBAL_KEY = Symbol.for("eve.runtime-session-storage");

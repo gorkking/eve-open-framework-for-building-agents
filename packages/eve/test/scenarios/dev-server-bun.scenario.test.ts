@@ -7,12 +7,7 @@ import {
 } from "../../src/internal/testing/scenario-app.js";
 import { sendDevelopmentMessage } from "../dev-client-harness/send-message.js";
 import { createDevelopmentSessionState } from "../dev-client-harness/session.js";
-import {
-  hasKnownDevServerFailure,
-  isBunAvailable,
-  runEveDevToExit,
-  startEveDev,
-} from "./dev-server-harness.js";
+import { hasKnownDevServerFailure, isBunAvailable, startEveDev } from "./dev-server-harness.js";
 
 const scenarioApp = useScenarioApp();
 
@@ -60,21 +55,23 @@ describe("eve dev server with bun", () => {
     BUN_DEV_SERVER_TIMEOUT_MS,
   );
 
-  // Bun cannot run the dev server today: Nitro wires crossws's Node adapter
-  // into every dev worker, and that adapter refuses to initialize when the
-  // Bun global exists. Until that support lands upstream, the contract is a
-  // fast, explanatory startup failure instead of a hang or a half-broken
-  // server. Replace this with a boot-and-stream assertion when `bun eve dev`
-  // becomes supported.
   it.skipIf(!bunAvailable)(
-    "fails fast with the worker readiness error when the CLI runs under bun",
+    "serves a streamed turn when the CLI runs under bun",
     async () => {
       const app = await scenarioApp(BUN_LAYOUT_DESCRIPTOR);
+      const server = await startEveDev(app.appRoot, { runtime: "bun" });
 
-      const result = await runEveDevToExit(app.appRoot, { runtime: "bun" });
-
-      expect(result.code).not.toBe(0);
-      expect(result.output).toContain("failed before readiness");
+      try {
+        const messageResult = await sendDevelopmentMessage({
+          message: "What's the weather in Lisbon?",
+          session: createDevelopmentSessionState(),
+          serverUrl: server.url,
+        });
+        expect(messageResult.events.some((event) => event.type === "message.completed")).toBe(true);
+        expect(hasKnownDevServerFailure(`${server.stdout()}\n${server.stderr()}`)).toBe(false);
+      } finally {
+        await server.stop();
+      }
     },
     BUN_DEV_SERVER_TIMEOUT_MS,
   );

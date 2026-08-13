@@ -1,12 +1,12 @@
 import type { ResolvedScheduleDefinition } from "#runtime/types.js";
 
 /**
- * Stable Nitro task-name prefix for framework-owned authored schedules.
+ * Stable task-name prefix for framework-owned authored schedules.
  */
 export const EVE_SCHEDULE_TASK_NAME_PREFIX = "eve.schedule.";
 
 /**
- * One compiled schedule registration consumed by the Nitro host wiring.
+ * One compiled schedule registration consumed by the eve host runtime.
  */
 export interface ScheduleRegistration {
   readonly cron: string;
@@ -52,7 +52,7 @@ export class ScheduleRegistrationError extends Error {
 }
 
 /**
- * Creates stable registration inputs for Nitro's task and cron surfaces from
+ * Creates stable registration inputs for the eve host's task and cron surfaces from
  * resolved authored schedules.
  */
 export function createScheduleRegistrations(

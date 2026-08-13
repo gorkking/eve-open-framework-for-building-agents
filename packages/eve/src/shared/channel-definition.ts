@@ -56,10 +56,10 @@ export interface GenericChannelDefinition<
   deliver?(payload: DeliverPayload, ctx: TCtx): StepInput | void | Promise<StepInput | void>;
   readonly state?: TState;
   /**
-   * CORS policy for this channel's HTTP routes. `true` enables H3/Nitro's
+   * CORS policy for this channel's HTTP routes. `true` enables H3's
    * permissive defaults (`origin`, methods, request headers, and exposed
    * headers all `"*"`); `false` or omission leaves CORS untouched. Pass an
-   * object for a serializable subset of H3/Nitro CORS options.
+   * object for a serializable subset of H3 CORS options.
    */
   readonly cors?: ChannelCors;
   /**

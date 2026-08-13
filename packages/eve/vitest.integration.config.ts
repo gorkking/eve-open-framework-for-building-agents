@@ -6,7 +6,7 @@ import { workflow } from "./src/internal/testing/workflow-vitest-plugin.js";
  * Tier 1 — Integration tests.
  *
  * Tests that exercise multiple eve modules together — typically through the
- * workflow SDK, the compiler, the discover pipeline, or the nitro routes —
+ * workflow SDK, the compiler, the discover pipeline, or the host routes —
  * without spawning subprocesses, binding real TCP ports, or shelling out to
  * the `eve` CLI. These tests may touch the filesystem (tmpdirs, generated
  * fixtures) and currently invoke the real compile pipeline while the

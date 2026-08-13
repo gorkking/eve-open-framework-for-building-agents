@@ -4,7 +4,7 @@ import {
   EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY_ENV,
   EVE_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY_ENV,
 } from "#internal/application/paths.js";
-import type { ApplicationBuildOptions } from "#internal/nitro/host/types.js";
+import type { ApplicationBuildOptions } from "#internal/host/types.js";
 
 type VercelServiceOutput = NonNullable<ApplicationBuildOptions["vercelServiceOutput"]>;
 

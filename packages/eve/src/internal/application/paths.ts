@@ -42,10 +42,10 @@ export function isVercelBuildEnvironment(): boolean {
 }
 
 /**
- * Resolves the programmatic Nitro build directory for an app.
+ * Resolves the programmatic host build directory for an app.
  */
-export function resolveNitroBuildDirectory(appRoot: string): string {
-  return join(appRoot, ".eve", "nitro");
+export function resolveApplicationHostBuildDirectory(appRoot: string): string {
+  return join(appRoot, ".eve", "host-build");
 }
 
 export function resolveApplicationHostArtifactsDirectory(appRoot: string): string {
@@ -117,7 +117,7 @@ export function resolveSandboxCacheDirectory(appRoot: string): string {
 }
 
 /**
- * Resolves the production Nitro output directory for an app.
+ * Resolves the production application output directory for an app.
  */
 export function resolveOutputDirectory(appRoot: string): string {
   if (isVercelBuildEnvironment()) {

@@ -187,7 +187,7 @@ export default defineChannel({
 
 `WS()` handlers receive the same `from`, `to`, and `attachSession` operations,
 `params`, `waitUntil`, and `requestIp` arguments as HTTP route handlers. The
-returned hooks are eve-owned structural types compatible with Nitro/H3 websocket
+returned hooks are eve-owned structural types compatible with H3 and CrossWS
 routing, including `upgrade`, `open`, `message`, `close`, and `error`.
 
 ### Node upgrade server escape hatch
@@ -206,7 +206,7 @@ export default defineChannel({
 });
 ```
 
-The bridge server does not listen on its own port. It receives only upgrade events that matched the eve route, and only on hosts where Nitro exposes the raw Node upgrade request, socket, and head. Treat it as a compatibility adapter for libraries with server-binding APIs, not the primary way to build websocket channels in eve.
+The bridge server does not listen on its own port. It receives only upgrade events that matched the eve route, and only when the host exposes the raw Node upgrade request, socket, and head. Treat it as a compatibility adapter for libraries with server-binding APIs, not the primary way to build websocket channels in eve.
 
 ## Cross-channel hand-off
 

@@ -10,7 +10,7 @@ export function createAuthoredModuleBundleError(modulePath: string, error: unkno
     /native addon|native module|invalid utf-?8|Could not load .*\.node/i.test(message)
   ) {
     hints.push(
-      "If this comes from a native Node package, keep that package external with agent build.externalDependencies so Vercel/Nitro traces it instead of bundling it.",
+      "If this comes from a native Node package, keep that package external with agent build.externalDependencies so the host traces it instead of bundling it.",
     );
   }
 

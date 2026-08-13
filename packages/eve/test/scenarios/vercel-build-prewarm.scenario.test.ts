@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compileAgent } from "../../src/compiler/compile-agent.js";
 import { prewarmAppSandboxes } from "../../src/execution/sandbox/prewarm.js";
-import { runVercelBuildPrewarm } from "../../src/internal/nitro/host/vercel-build-prewarm.js";
+import { runVercelBuildPrewarm } from "../../src/internal/host/vercel-build-prewarm.js";
 import type {
   SandboxBackendPrewarmInput,
   SandboxBackendPrewarmResult,

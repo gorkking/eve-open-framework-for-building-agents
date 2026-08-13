@@ -3,8 +3,8 @@
  * by the {@link ContextKey} constructor so `deserializeContext` can resolve
  * string names back to typed keys without an explicit list.
  *
- * Rooted on `globalThis` so Nitro-inlined eve and disk-imported eve share one
- * registry. Each Nitro workflow chunk can carry its own evaluated copy of
+ * Rooted on `globalThis` so bundled and disk-imported eve modules share one
+ * registry. Each workflow chunk can carry its own evaluated copy of
  * `key.ts`; without a shared registry, a key registered by one chunk is
  * invisible to `resolveKey()` in another, and `serializeContext` /
  * `deserializeContext` silently drop entries at step boundaries.
@@ -77,7 +77,7 @@ export class ContextKey<T> {
     this.name = name;
     this.codec = options.codec;
 
-    // The registry is last-write-wins and is re-populated per Nitro chunk, so a
+    // The registry is last-write-wins and is re-populated per bundled chunk, so a
     // key legitimately re-registers under the same name. But a collision where
     // one key carries a (de)serialization codec and the other does not silently
     // corrupts serialization at step boundaries: the codec-less key wins the

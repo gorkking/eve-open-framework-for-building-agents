@@ -1,13 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { H3Event } from "nitro";
+import type { H3Event } from "h3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compileAgent } from "../../src/compiler/compile-agent.js";
-import { createDevelopmentNitroArtifactsConfig } from "../../src/internal/nitro/host/artifacts-config.js";
-import type { AgentInfoResponse } from "../../src/internal/nitro/routes/agent-info/build-agent-info-response.js";
-import { dispatchChannelRequest } from "../../src/internal/nitro/routes/channel-dispatch.js";
+import { createDevelopmentApplicationArtifactsConfig } from "../../src/internal/host/artifacts-config.js";
+import type { AgentInfoResponse } from "../../src/internal/host/routes/agent-info/build-agent-info-response.js";
+import { dispatchChannelRequest } from "../../src/internal/host/routes/channel-dispatch.js";
 import { EVE_INFO_ROUTE_PATH, EVE_SESSION_ROUTE_PATH } from "../../src/protocol/routes.js";
 import { useTemporaryAppRoots } from "../../src/internal/testing/use-temporary-app-roots.js";
 
@@ -86,7 +86,7 @@ async function requestAgentInfo(appRoot: string, request: Request): Promise<Resp
   return await dispatchChannelRequest(
     createInfoEvent(request),
     INFO_ROUTE_KEY,
-    createDevelopmentNitroArtifactsConfig({ configuredWorld: undefined, appRoot }),
+    createDevelopmentApplicationArtifactsConfig({ configuredWorld: undefined, appRoot }),
   );
 }
 

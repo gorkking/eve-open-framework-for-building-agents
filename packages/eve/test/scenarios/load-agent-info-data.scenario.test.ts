@@ -8,7 +8,7 @@ import { compileAgent } from "../../src/compiler/compile-agent.js";
 import {
   loadAgentInfoData,
   resolveAgentInfoCompiledArtifactsSource,
-} from "../../src/internal/nitro/routes/agent-info/load-agent-info-data.js";
+} from "../../src/internal/host/routes/agent-info/load-agent-info-data.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "../../src/runtime/compiled-artifacts-source.js";
 import { installBundledCompiledArtifacts } from "../../src/runtime/loaders/bundled-artifacts.js";
 import { loadCompiledManifest } from "../../src/runtime/loaders/manifest.js";
