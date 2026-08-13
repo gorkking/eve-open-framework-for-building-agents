@@ -236,10 +236,10 @@ is fully encoded by obligation state).
 
 ### Interpretation
 
-One pure function interprets every interaction input:
+One pure function interprets every HITL input:
 
 ```text
-interpretInteraction(state, input) -> { nextState, effects }
+interpretHitl(state, input) -> { nextState, effects }
 
 input   = delivery | timer | turn-outcome | child-event | control
 effects = one ordered list of emit | restore-group | execute-tool |
@@ -406,8 +406,8 @@ Every label below names one construct; target-state constructs are marked.
 | inbox          | [`SessionCommandInbox`](../packages/eve/src/execution/session-command-inbox.ts)                                                        |
 | driver         | [`runDriverLoop`](../packages/eve/src/execution/workflow-entry.ts)                                                                     |
 | turn step      | [`turnStep`](../packages/eve/src/execution/workflow-steps.ts)                                                                          |
-| interpreter    | `interaction/interpret.ts` (target; today split across `resolvePendingInput`, stale conversion, limit resolution, callback extraction) |
-| store          | `interaction/obligations.ts` (target; today `pending-input-batches`, `pendingAuthorization`, the limit-prompt batch)                   |
+| interpreter    | `hitl/interpret.ts` (target; today split across `resolvePendingInput`, stale conversion, limit resolution, callback extraction) |
+| store          | `hitl/obligations.ts` (target; today `pending-input-batches`, `pendingAuthorization`, the limit-prompt batch)                   |
 | executor       | tool-loop transcript assembly, tool execution, model calls                                                                             |
 
 ### Call graph
@@ -418,12 +418,12 @@ Arrows are calls; annotations are the data crossing the edge.
 channel POST ──channel auth──▶ resumeHook ──DeliverPayload──────────▶ inbox
 callback route ──param projection──▶ resumeHook ──authorizationCallback──▶ inbox   (stage 4)
 inbox ──SessionInboxPayload──▶ driver ──admit / dispatch──▶ turn step
-turn step ──(load state, normalize input)──▶ executeInteraction
-executeInteraction ──(state, input)──▶ interpreter ──decision──▶ executeInteraction
+turn step ──(load state, normalize input)──▶ executeHitl
+executeHitl ──(state, input)──▶ interpreter ──decision──▶ executeHitl
 decision.nextState ──▶ store          (persist before effects; only state writer)
 decision.effects ──in order──▶ executor
                                (emit | restore output | run tool/model | forward | terminate)
-executor outcome ──turn-outcome input──▶ executeInteraction
+executor outcome ──turn-outcome input──▶ executeHitl
 ```
 
 The driver never sees obligation state; the interpreter never performs a side
@@ -982,12 +982,12 @@ Target shape — one harness-owned package implements the machine; everything
 else is an adapter that feeds it inputs or executes its plans:
 
 ```text
-harness/interaction/
+harness/hitl/
   types.ts         state, inputs, transitions, and ordered effects
   obligations.ts   one durable ledger: obligations, groups, candidates,
                    routes, and generations; migration + the only state writer
-  interpret.ts     pure (InteractionState, InteractionInput) ->
-                   InteractionDecision { nextState, effects }
+  interpret.ts     pure (HitlState, HitlInput) ->
+                   HitlDecision { nextState, effects }
   projector.ts     routes: project / forward / re-emit / drop
   events.ts        domain transition -> protocol event
   execute.ts       persist nextState, then perform effects in order
@@ -1082,7 +1082,7 @@ response resumes a disposed child hook and fails the parent.
 
 ## Related work
 
-- [`hitl-interaction-engine.md`](./hitl-interaction-engine.md): implementation
+- [`hitl-engine.md`](./hitl-engine.md): implementation
   architecture for one durable store, pure interpreter, and ordered effect
   executor.
 - [PR #1368](https://github.com/vercel/eve/pull/1368): responder identity,

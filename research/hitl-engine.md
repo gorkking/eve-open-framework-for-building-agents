@@ -1,10 +1,10 @@
 ---
 issue: https://github.com/vercel/eve/issues/1224
 status: proposed
-last_updated: "2026-08-12"
+last_updated: "2026-08-13"
 ---
 
-# One interaction engine for HITL
+# One HITL engine
 
 ## Decision
 
@@ -12,10 +12,10 @@ Implement every HITL transition through one durable state ledger and one pure
 interpreter:
 
 ```ts
-function interpretInteraction(
-  state: InteractionState,
-  input: InteractionInput,
-): InteractionDecision;
+function interpretHitl(
+  state: HitlState,
+  input: HitlInput,
+): HitlDecision;
 ```
 
 The lifecycle contract in
@@ -43,7 +43,7 @@ split among:
 The principal touch surface is 6,780 lines across 14 modules, with 39 source
 files consuming at least one of the fragmented state APIs. Not all of those
 lines are rewritten: `tool-loop.ts` alone is 3,073 lines and should become an
-executor adapter, not move into the interaction package. The problem is
+executor adapter, not move into the HITL package. The problem is
 coupling, not total code volume.
 
 Both known wedges came from that dispersion:
@@ -124,7 +124,7 @@ channel message / response ─┐
 OAuth callback ──────────────┤
 timer / deadline ────────────┼──▶ SessionCommandInbox
 control / cancellation ──────┤          one FIFO stream
-child interaction event ─────┘                │
+child HITL event ─────┘                │
                                               ▼
                                       workflow-entry driver
                                       admit + dispatch only
@@ -132,16 +132,16 @@ child interaction event ─────┘                │
                                               │
                                               ▼
                                        turn input adapter
-                                   normalize InteractionInput
+                                   normalize HitlInput
                                               │
                                               ▼
-                                    executeInteraction
+                                    executeHitl
                                               │
                                               ▼
-                                  load InteractionState
+                                  load HitlState
                                               │
                                               ▼
-                                  interpretInteraction
+                                  interpretHitl
                             pure: (state, input) → decision
                                               │
                            ┌──────────────────┴──────────────────┐
@@ -149,7 +149,7 @@ child interaction event ─────┘                │
                        nextState                        ordered effects
                            │                                     │
                            ▼                                     ▼
-                 persistInteractionState             emit lifecycle event
+                 persistHitlState             emit lifecycle event
                     the only writer                   restore group output
                                                      execute allowed tool
                                                      run model turn
@@ -169,7 +169,7 @@ settle, dismiss, supersede, reject, buffer, or resume an obligation.
 ## Target package
 
 ```text
-packages/eve/src/harness/interaction/
+packages/eve/src/harness/hitl/
   types.ts         state, inputs, transitions, ordered effects
   obligations.ts   durable ledger + migration; the only state writer
   interpret.ts     pure state/input -> decision function
@@ -187,11 +187,11 @@ line cap without distributing policy again.
 ### Input
 
 ```ts
-type InteractionInput =
+type HitlInput =
   | { type: "delivery"; delivery: AdmittedDelivery }
   | { type: "timer"; timer: AuthorizationDeadline | SessionDeadline }
   | { type: "turn-outcome"; outcome: TurnOutcome }
-  | { type: "child-event"; event: ChildInteractionEvent }
+  | { type: "child-event"; event: ChildHitlEvent }
   | { type: "control"; control: CancelTurn | EndSession };
 ```
 
@@ -204,7 +204,7 @@ never reads HTTP requests, hook identities, or continuation tokens.
 ### State
 
 ```ts
-interface InteractionState {
+interface HitlState {
   version: 1;
 
   obligations: Record<ObligationId, Obligation>;
@@ -245,12 +245,12 @@ Forced closure moves it to `suppressed`.
 ### Decision
 
 ```ts
-interface InteractionDecision {
-  nextState: InteractionState;
-  effects: readonly InteractionEffect[];
+interface HitlDecision {
+  nextState: HitlState;
+  effects: readonly HitlEffect[];
 }
 
-type InteractionEffect =
+type HitlEffect =
   | { type: "emit"; event: InputLifecycleEvent }
   | { type: "restore-group"; groupId: GroupId }
   | { type: "execute-tool"; callId: string }
@@ -264,24 +264,24 @@ incorrect because the contract orders them against each other — for example,
 `input.responded` before restored output and tool execution, then
 `message.received` for a compound delivery.
 
-`interpretInteraction` is pure: no context container, persistence, network,
+`interpretHitl` is pure: no context container, persistence, network,
 model, tool, stream, clock, or hook access. Timers and verified identity arrive
 as input values.
 
 ### Execution
 
 ```ts
-async function executeInteraction(
+async function executeHitl(
   session: HarnessSession,
-  input: InteractionInput,
-): Promise<InteractionExecutionResult> {
-  const decision = interpretInteraction(loadInteractionState(session), input);
-  session = persistInteractionState(session, decision.nextState);
+  input: HitlInput,
+): Promise<HitlExecutionResult> {
+  const decision = interpretHitl(loadHitlState(session), input);
+  session = persistHitlState(session, decision.nextState);
 
   for (const effect of decision.effects) {
-    const outcome = await executeInteractionEffect(session, effect);
+    const outcome = await executeHitlEffect(session, effect);
     if (outcome !== undefined) {
-      return executeInteraction(session, { type: "turn-outcome", outcome });
+      return executeHitl(session, { type: "turn-outcome", outcome });
     }
   }
 
@@ -291,7 +291,7 @@ async function executeInteraction(
 
 Persistence precedes side effects. An effect that produces a model/tool/child
 outcome feeds that outcome back through the same interpreter; executors never
-mutate interaction state themselves.
+mutate HITL state themselves.
 
 ## Adapter changes
 
@@ -300,7 +300,7 @@ mutate interaction state themselves.
 The tool loop remains responsible for AI SDK transcript conversion, tool
 execution, and model calls. It stops interpreting HITL:
 
-- step input becomes `InteractionInput.delivery`;
+- step input becomes `HitlInput.delivery`;
 - parked model output becomes an ApprovalBatch continuation;
 - new requests/challenges become `turn-outcome` inputs;
 - `resolvePendingInput`, stale conversion, and limit special cases disappear;
@@ -314,7 +314,7 @@ execution, and model calls. It stops interpreting HITL:
 - callbacks use the same command stream as messages and responses;
 - delete the authorization hook window and source tagging;
 - dispatch each admitted input to the turn adapter in arrival order;
-- session timeout is an `InteractionInput.timer`.
+- session timeout is a `HitlInput.timer`.
 
 ### Workflow steps
 
@@ -339,18 +339,19 @@ After migration and adapter cutover:
 
 - `harness/stale-input-responses.ts`;
 - `harness/input-request-class.ts`;
-- pending-batch and pending-authorization state writers outside interaction;
+- pending-batch and pending-authorization state writers outside the HITL
+  package;
 - driver authorization-window APIs and callback counting;
 - runtime calls to `resolveTextToResponses` (the export remains for channel
   adapters);
 - proxy-request state and settlement logic outside `projector.ts`;
 - `deferredStepInput` as policy. If internal-step plan persistence remains
-  necessary, it stores a serialized effect cursor owned by the interaction
+  necessary, it stores a serialized effect cursor owned by the HITL
   executor, not reinterpretable user input.
 
 ## Migration
 
-`loadInteractionState` reads the new key first, then migrates these legacy
+`loadHitlState` reads the new key first, then migrates these legacy
 sources in memory:
 
 - pending input batch collection and the older singleton batch;
@@ -359,7 +360,7 @@ sources in memory:
 - projected child-request routes;
 - `deferredStepInput`.
 
-The first interaction write stores only `InteractionState`. Legacy deferred
+The first HITL write stores only `HitlState`. Legacy deferred
 messages become ordered pending effects, so upgrading releases already-wedged
 input without matching it against newly created obligations.
 
@@ -373,7 +374,7 @@ interpreter.
 
 Machine-check these at the store/interpreter boundary:
 
-1. Only `persistInteractionState` writes obligation state.
+1. Only `persistHitlState` writes obligation state.
 2. Every obligation belongs to exactly one group.
 3. Terminal obligations never transition again.
 4. A group continuation moves from `pending` exactly once, to either
