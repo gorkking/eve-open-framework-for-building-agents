@@ -16,6 +16,42 @@ import { WorkflowBundleBuilder } from "#internal/workflow-bundle/builder.js";
 import { createWorkflowEntrypointSource } from "#internal/workflow-bundle/builder-support.js";
 import type { WorkflowManifest } from "#internal/workflow-bundle/workflow-builders.js";
 
+const REQUIRE_EXPORT_MARKER = "eve-conditional-require-export";
+const IMPORT_EXPORT_MARKER = "eve-conditional-import-export";
+
+async function writeConditionalRequirePackages(root: string): Promise<void> {
+  const parentRoot = join(root, "node_modules", "cjs-parent");
+  const baseRoot = join(root, "node_modules", "conditional-base");
+  await Promise.all([mkdir(parentRoot, { recursive: true }), mkdir(baseRoot, { recursive: true })]);
+  await Promise.all([
+    writeFile(
+      join(parentRoot, "index.cjs"),
+      'const Base = require("conditional-base");\nmodule.exports = class Child extends Base {};\n',
+    ),
+    writeFile(
+      join(parentRoot, "package.json"),
+      `${JSON.stringify({ main: "./index.cjs", name: "cjs-parent", version: "1.0.0" })}\n`,
+    ),
+    writeFile(
+      join(baseRoot, "import.mjs"),
+      `export default { source: ${JSON.stringify(IMPORT_EXPORT_MARKER)} };\n`,
+    ),
+    writeFile(
+      join(baseRoot, "package.json"),
+      `${JSON.stringify({
+        exports: { ".": { import: "./import.mjs", require: "./require.cjs" } },
+        name: "conditional-base",
+        type: "module",
+        version: "1.0.0",
+      })}\n`,
+    ),
+    writeFile(
+      join(baseRoot, "require.cjs"),
+      `module.exports = class Base { constructor() { this.source = ${JSON.stringify(REQUIRE_EXPORT_MARKER)}; } };\n`,
+    ),
+  ]);
+}
+
 class InspectableWorkflowBundleBuilder extends WorkflowBundleBuilder {
   readonly outDir: string;
 
@@ -153,6 +189,56 @@ describe("WorkflowBundleBuilder", () => {
       expect(JSON.stringify(builder.capturedManifest)).not.toContain(
         "__eveInstallCompiledArtifactsStep",
       );
+    } finally {
+      await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves require exports in workflow CommonJS dependencies", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-bundle-conditions-"));
+    const outDir = join(tempRoot, "workflow-build");
+    const flowFilePath = join(tempRoot, "flow.ts");
+    const compiledArtifactsBootstrapPath = join(tempRoot, "compiled-artifacts-bootstrap.mjs");
+
+    try {
+      await writeConditionalRequirePackages(tempRoot);
+      await Promise.all([
+        writeFile(compiledArtifactsBootstrapPath, "export {};\n"),
+        writeFile(
+          flowFilePath,
+          [
+            'import Child from "cjs-parent";',
+            "export async function conditionalWorkflow() {",
+            '  "use workflow";',
+            "  return new Child().source;",
+            "}",
+            "",
+          ].join("\n"),
+        ),
+      ]);
+
+      const builder = new FixtureWorkflowBundleBuilder(
+        {
+          agentName: "test-agent",
+          appRoot: tempRoot,
+          compiledArtifactsBootstrapPath,
+          outDir,
+          rootDir: tempRoot,
+        },
+        [flowFilePath],
+      );
+
+      await builder.build();
+
+      const workflowsSource = await readFile(join(outDir, "workflows.mjs"), "utf8");
+      const encodedChunksMatch = workflowsSource.match(
+        /Buffer\.from\((\[[\s\S]*?\])\.join\(""\), "base64"\)\.toString\("utf8"\)/,
+      );
+      expect(encodedChunksMatch).not.toBeNull();
+      const encodedChunks = JSON.parse(encodedChunksMatch?.[1] ?? "[]") as string[];
+      const workflowSource = Buffer.from(encodedChunks.join(""), "base64").toString("utf8");
+      expect(workflowSource).toContain(REQUIRE_EXPORT_MARKER);
+      expect(workflowSource).not.toContain(IMPORT_EXPORT_MARKER);
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
     }

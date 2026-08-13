@@ -190,12 +190,9 @@ export function resolveApplicationBundleConditionNames(
 ): readonly string[] {
   const relativeModulePath = normalizeModulePath(relative(packageRoot, packageModulePath));
 
-  return [
-    ...(relativeModulePath.startsWith("src/") ? ["eve-source"] : []),
-    "node",
-    "import",
-    "default",
-  ];
+  // Rolldown supplies `node`/`default` and chooses `import` or `require` per
+  // edge. Listing either import kind here would force it onto every edge.
+  return relativeModulePath.startsWith("src/") ? ["eve-source"] : [];
 }
 
 function createWorkflowModuleAliasPlugin(): object {

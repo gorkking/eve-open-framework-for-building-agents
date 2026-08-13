@@ -235,7 +235,7 @@ export class WorkflowBundleBuilder {
           createWorkflowNodeBuiltinGuardPlugin(),
         ],
         resolve: {
-          conditionNames: ["eve-source", "workflow", "node", "import", "default"],
+          conditionNames: ["eve-source", "workflow"],
           extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
           mainFields: ["module", "main"],
         },

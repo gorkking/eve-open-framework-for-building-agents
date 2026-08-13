@@ -334,7 +334,7 @@ export async function bundleWorkflowStepRegistrations(input: {
       }),
     ],
     resolve: {
-      conditionNames: ["eve-source", "node", "import", "default"],
+      conditionNames: ["eve-source"],
       extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
       mainFields: ["module", "main"],
     },

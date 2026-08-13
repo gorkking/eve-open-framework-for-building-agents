@@ -731,16 +731,8 @@ function getModulePlatform(module) {
   return module.platform ?? "node";
 }
 
-function getDefaultResolve(platform) {
-  return platform === "neutral"
-    ? {
-        conditionNames: ["import", "default"],
-        mainFields: ["module", "main"],
-      }
-    : {
-        conditionNames: ["node", "import", "default"],
-        mainFields: ["module", "main"],
-      };
+function getDefaultResolve() {
+  return { mainFields: ["module", "main"] };
 }
 
 async function bundleStandaloneModule({ destinationRoot, module, packageInfo, packageRoot }) {
@@ -761,7 +753,7 @@ async function bundleStandaloneModule({ destinationRoot, module, packageInfo, pa
     moduleTypes: module.loader ?? {},
     platform,
     plugins: module.plugins ?? [],
-    resolve: module.resolve ?? getDefaultResolve(platform),
+    resolve: module.resolve ?? getDefaultResolve(),
     treeshake: true,
     output: {
       banner: module.banner ?? "/* oxlint-disable */",

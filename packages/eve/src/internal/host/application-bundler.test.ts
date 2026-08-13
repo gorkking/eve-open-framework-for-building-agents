@@ -13,7 +13,7 @@ describe("resolveApplicationBundleConditionNames", () => {
         packageRoot,
         join(packageRoot, "src", "internal", "host", "application-bundler.ts"),
       ),
-    ).toEqual(["eve-source", "node", "import", "default"]);
+    ).toEqual(["eve-source"]);
   });
 
   it("keeps built execution on the published compiled asset tree", () => {
@@ -24,6 +24,6 @@ describe("resolveApplicationBundleConditionNames", () => {
         packageRoot,
         join(packageRoot, "dist", "src", "internal", "host", "application-bundler.js"),
       ),
-    ).toEqual(["node", "import", "default"]);
+    ).toEqual([]);
   });
 });

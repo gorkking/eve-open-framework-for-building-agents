@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -12,8 +12,12 @@ import {
 import type { CompileAgentResult } from "#compiler/compile-agent.js";
 import { createCompiledAgentManifest } from "#compiler/manifest.js";
 import { writeCompiledArtifactsFiles } from "#internal/application/compiled-artifacts.js";
-import { resolveInstalledPackageInfo } from "#internal/application/package.js";
-import { buildApplicationBundle } from "#internal/host/application-bundler.js";
+import { resolveInstalledPackageInfo, resolvePackageRoot } from "#internal/application/package.js";
+import { buildSingleRolldownChunk } from "#internal/bundler/rolldown.js";
+import {
+  buildApplicationBundle,
+  resolveApplicationBundleConditionNames,
+} from "#internal/host/application-bundler.js";
 import { createApplicationRouteRegistryFromInput } from "#internal/host/application-route-registry.js";
 import { useTemporaryAppRoots } from "#internal/testing/use-temporary-app-roots.js";
 import type { PreparedApplicationHost } from "#internal/host/types.js";
@@ -30,6 +34,59 @@ interface BuiltVercelApplication {
 const createTemporaryAppRoot = useTemporaryAppRoots();
 
 describe("buildApplicationBundle", () => {
+  it("preserves require exports inside bundled CommonJS dependencies", async () => {
+    const { appRoot } = await createTemporaryAppRoot("eve-application-bundler-conditions-", {
+      files: {
+        "entry.mjs":
+          'import Child from "cjs-parent";\nimport imported from "conditional-base";\nexport const sources = [new Child().source, imported.source];\n',
+        "node_modules/cjs-parent/index.cjs":
+          'const Base = require("conditional-base");\nmodule.exports = class Child extends Base {};\n',
+        "node_modules/cjs-parent/package.json": `${JSON.stringify(
+          { main: "./index.cjs", name: "cjs-parent", version: "1.0.0" },
+          null,
+          2,
+        )}\n`,
+        "node_modules/conditional-base/import.mjs": 'export default { source: "import" };\n',
+        "node_modules/conditional-base/package.json": `${JSON.stringify(
+          {
+            exports: {
+              ".": {
+                import: "./import.mjs",
+                require: "./require.cjs",
+              },
+            },
+            name: "conditional-base",
+            type: "module",
+            version: "1.0.0",
+          },
+          null,
+          2,
+        )}\n`,
+        "node_modules/conditional-base/require.cjs":
+          'module.exports = class Base { constructor() { this.source = "require"; } };\n',
+      },
+      packageName: "application-bundler-conditions",
+    });
+    const bundlePath = join(appRoot, "bundle.mjs");
+    const chunk = await buildSingleRolldownChunk("conditional-exports fixture", {
+      cwd: appRoot,
+      input: join(appRoot, "entry.mjs"),
+      platform: "node",
+      resolve: {
+        conditionNames: resolveApplicationBundleConditionNames(resolvePackageRoot()),
+        mainFields: ["module", "main"],
+      },
+      output: { comments: false, format: "esm" },
+    });
+    await writeFile(bundlePath, chunk.code);
+
+    const bundle = (await import(`${pathToFileURL(bundlePath).href}?test=${Date.now()}`)) as {
+      sources: readonly string[];
+    };
+
+    expect(bundle.sources).toEqual(["require", "import"]);
+  });
+
   it("emits a Nitro-free Vercel application that serves home and health", async () => {
     const { agentRoot, appRoot } = await createTemporaryAppRoot("eve-application-bundler-live-", {
       files: {
