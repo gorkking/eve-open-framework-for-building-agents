@@ -23,8 +23,8 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
   extension: { current: 1, supported: [1], dropped: {} },
   tool: { current: 12, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], dropped: {} },
   dynamicTool: {
-    current: 15,
-    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    current: 16,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     dropped: {},
   },
   connection: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },

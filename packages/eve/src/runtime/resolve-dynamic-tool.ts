@@ -2,7 +2,11 @@ import type { CompiledDynamicToolDefinition } from "#compiler/manifest.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
 import { expectFunction, expectObjectRecord } from "#internal/authored-module.js";
 import { registerDefinitionSource, stampDefinitionKey } from "#public/tool-result-narrowing.js";
-import { isDynamicSentinel, type DynamicSentinel } from "#shared/dynamic-tool-definition.js";
+import {
+  assertDynamicToolSentinel,
+  isDynamicSentinel,
+  type DynamicToolSentinel,
+} from "#shared/dynamic-tool-definition.js";
 import { toErrorMessage } from "#shared/errors.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";
@@ -76,7 +80,7 @@ export function resolveLoadedDynamicToolDefinition(
 }
 
 function createResolvedDynamicToolResolver(
-  value: DynamicSentinel,
+  value: DynamicToolSentinel,
   source: DynamicToolResolverSource,
   eventNames: readonly string[],
 ): ResolvedDynamicToolResolver {
@@ -102,6 +106,7 @@ function createResolvedDynamicToolResolver(
     exportName: source.exportName,
     extensionNamespace: source.extensionNamespace,
     logicalPath: source.logicalPath,
+    onError: value.onError,
     slug: source.slug,
     sourceId: source.sourceId,
     sourceKind: "module",
@@ -111,11 +116,12 @@ function createResolvedDynamicToolResolver(
 function expectDynamicToolValue(
   value: unknown,
   definition: DynamicToolResolverSource,
-): DynamicSentinel {
+): DynamicToolSentinel {
   const record = expectObjectRecord(value, describe(definition, "to return an object"));
   if (!isDynamicSentinel(record)) {
     throw new Error(describe(definition, "to be created by defineDynamic()"));
   }
+  assertDynamicToolSentinel(record, describe(definition, "to match the dynamic tool shape"));
   expectObjectRecord(record.events, describe(definition, "to provide an events object"));
   return record;
 }

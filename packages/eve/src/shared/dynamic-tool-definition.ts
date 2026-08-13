@@ -137,6 +137,9 @@ export type DynamicEvents<TResult = unknown> = {
   ) => TResult | Promise<TResult>;
 };
 
+/** Behavior when a dynamic tool resolver throws. */
+export type DynamicToolErrorBehavior = "continue" | "throw";
+
 /**
  * Marker discriminator for a `defineDynamic({ events })` export.
  */
@@ -151,6 +154,12 @@ export type DynamicSentinel<TResult = unknown> = {
   readonly events: DynamicEvents<TResult>;
 };
 
+/** Dynamic tool sentinel with tool-specific resolver error behavior. */
+export type DynamicToolSentinel<TResult = unknown> = DynamicSentinel<TResult> & {
+  /** Dynamic-tool error behavior. Defaults to `"continue"`. */
+  readonly onError?: DynamicToolErrorBehavior;
+};
+
 export function assertResolverOnlyDynamicSentinel(
   sentinel: DynamicSentinel,
   message: string,
@@ -158,6 +167,22 @@ export function assertResolverOnlyDynamicSentinel(
   const unknownKeys = Object.keys(sentinel).filter((key) => key !== "events" && key !== "kind");
   if (unknownKeys.length > 0) {
     throw new Error(`${message} Unknown key(s): ${unknownKeys.join(", ")}.`);
+  }
+}
+
+export function assertDynamicToolSentinel(
+  sentinel: DynamicSentinel,
+  message: string,
+): asserts sentinel is DynamicToolSentinel {
+  const unknownKeys = Object.keys(sentinel).filter(
+    (key) => key !== "events" && key !== "kind" && key !== "onError",
+  );
+  if (unknownKeys.length > 0) {
+    throw new Error(`${message} Unknown key(s): ${unknownKeys.join(", ")}.`);
+  }
+  const onError = (sentinel as Partial<DynamicToolSentinel>).onError;
+  if (onError !== undefined && onError !== "continue" && onError !== "throw") {
+    throw new Error(`${message} Expected "onError" to be one of: continue, throw.`);
   }
 }
 

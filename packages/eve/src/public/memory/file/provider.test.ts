@@ -11,6 +11,7 @@ import {
 } from "#protocol/message.js";
 
 const signal = new AbortController().signal;
+const toolContext = { abortSignal: signal } as never;
 const sessionStartedEvent = stampMessageStreamEvent(
   createSessionStartedEvent(),
 ) as HookEventMap["session.started"];
@@ -26,7 +27,7 @@ const compactionCompletedEvent = stampMessageStreamEvent(
 describe("fileMemory", () => {
   it("returns a provider and recalls indexed durable context", async () => {
     const backend = inMemory();
-    const created = fileMemory({ backend, memoryLimit: 100 });
+    const created = fileMemory({ backend, maxEntries: 100 });
     expect(
       await created.events?.["session.started"]?.(sessionStartedEvent, providerContext()),
     ).toBeNull();
@@ -69,7 +70,7 @@ describe("fileMemory", () => {
     const firstTools = await resolveTools(provider);
 
     await expect(
-      firstTools.save_memory.execute({ text: "  Prefers\n dark mode.  " }, {} as never),
+      firstTools.save_memory.execute({ text: "  Prefers\n dark mode.  " }, toolContext),
     ).resolves.toEqual({ index: 0 });
     await expect(backend.read({ key: "mem_scope", signal })).resolves.toMatchObject({
       content: "0: Prefers dark mode.\n",
@@ -77,7 +78,7 @@ describe("fileMemory", () => {
 
     const secondTools = await resolveTools(provider);
     await expect(
-      secondTools.save_memory.execute({ text: "Likes concise answers." }, {} as never),
+      secondTools.save_memory.execute({ text: "Likes concise answers." }, toolContext),
     ).resolves.toEqual({ index: 1 });
     await expect(backend.read({ key: "mem_scope", signal })).resolves.toMatchObject({
       content: "0: Prefers dark mode.\n1: Likes concise answers.\n",
@@ -85,7 +86,7 @@ describe("fileMemory", () => {
 
     const duplicateTools = await resolveTools(provider);
     await expect(
-      duplicateTools.save_memory.execute({ text: "Likes concise answers." }, {} as never),
+      duplicateTools.save_memory.execute({ text: "Likes concise answers." }, toolContext),
     ).resolves.toEqual({ index: 1 });
   });
 
@@ -100,7 +101,7 @@ describe("fileMemory", () => {
     const provider = fileMemory({ backend });
     const tools = await resolveTools(provider);
 
-    await expect(tools.remove_memory.execute({ index: 1 }, {} as never)).resolves.toBeUndefined();
+    await expect(tools.remove_memory.execute({ index: 1 }, toolContext)).resolves.toBeUndefined();
     const removed = await backend.read({ key: "mem_scope", signal });
     expect(removed?.content).toBe("0: First.\n2: Third.\n");
     expect(removed?.version).not.toBe(first.version);
@@ -108,20 +109,20 @@ describe("fileMemory", () => {
     const unchanged = await backend.read({ key: "mem_scope", signal });
     const nextTools = await resolveTools(provider);
     await expect(
-      nextTools.remove_memory.execute({ index: 9 }, {} as never),
+      nextTools.remove_memory.execute({ index: 9 }, toolContext),
     ).resolves.toBeUndefined();
     await expect(backend.read({ key: "mem_scope", signal })).resolves.toEqual(unchanged);
 
     const saveTools = await resolveTools(provider);
     await expect(
-      saveTools.save_memory.execute({ text: "Replacement." }, {} as never),
+      saveTools.save_memory.execute({ text: "Replacement." }, toolContext),
     ).resolves.toEqual({ index: 3 });
     await expect(backend.read({ key: "mem_scope", signal })).resolves.toMatchObject({
       content: "0: First.\n2: Third.\n3: Replacement.\n",
     });
   });
 
-  it("merges concurrent saves and removals with conditional retries", async () => {
+  it("applies saves and removals to the latest document", async () => {
     const backend = inMemory();
     const original = await backend.write({
       content: "0: Original.\n",
@@ -130,7 +131,7 @@ describe("fileMemory", () => {
       signal,
     });
     const provider = fileMemory({ backend });
-    const staleTools = await resolveTools(provider);
+    const tools = await resolveTools(provider);
     await backend.write({
       content: "0: Original.\n1: Concurrent.\n",
       expectedVersion: original.version,
@@ -138,11 +139,10 @@ describe("fileMemory", () => {
       signal,
     });
 
-    await expect(staleTools.save_memory.execute({ text: "Mine." }, {} as never)).resolves.toEqual({
+    await expect(tools.save_memory.execute({ text: "Mine." }, toolContext)).resolves.toEqual({
       index: 2,
     });
 
-    const staleRemoveTools = await resolveTools(provider);
     const beforeRemove = await backend.read({ key: "mem_scope", signal });
     if (beforeRemove === null) throw new Error("expected memory document");
     await backend.write({
@@ -151,9 +151,7 @@ describe("fileMemory", () => {
       key: "mem_scope",
       signal,
     });
-    await expect(
-      staleRemoveTools.remove_memory.execute({ index: 0 }, {} as never),
-    ).resolves.toBeUndefined();
+    await expect(tools.remove_memory.execute({ index: 0 }, toolContext)).resolves.toBeUndefined();
     await expect(backend.read({ key: "mem_scope", signal })).resolves.toMatchObject({
       content: "1: Concurrent.\n2: Mine.\n3: Also concurrent.\n",
     });
@@ -167,19 +165,19 @@ describe("fileMemory", () => {
       key: "mem_scope",
       signal,
     });
-    const provider = fileMemory({ backend, memoryLimit: 2 });
+    const provider = fileMemory({ backend, maxEntries: 2 });
     const tools = await resolveTools(provider);
 
-    await expect(tools.save_memory.execute({ text: "Third." }, {} as never)).rejects.toThrow(
+    await expect(tools.save_memory.execute({ text: "Third." }, toolContext)).rejects.toThrow(
       "configured limit of 2 memories. Remove an outdated memory by index, then retry this save.",
     );
-    await expect(tools.save_memory.execute({ text: "Second." }, {} as never)).resolves.toEqual({
+    await expect(tools.save_memory.execute({ text: "Second." }, toolContext)).resolves.toEqual({
       index: 1,
     });
 
-    await expect(tools.remove_memory.execute({ index: 0 }, {} as never)).resolves.toBeUndefined();
+    await expect(tools.remove_memory.execute({ index: 0 }, toolContext)).resolves.toBeUndefined();
     const nextTools = await resolveTools(provider);
-    await expect(nextTools.save_memory.execute({ text: "Third." }, {} as never)).resolves.toEqual({
+    await expect(nextTools.save_memory.execute({ text: "Third." }, toolContext)).resolves.toEqual({
       index: 2,
     });
     await expect(backend.read({ key: "mem_scope", signal })).resolves.toMatchObject({
@@ -198,19 +196,19 @@ describe("fileMemory", () => {
     });
     const tools = await resolveTools(fileMemory({ backend }));
 
-    await expect(tools.save_memory.execute({ text: "One too many." }, {} as never)).rejects.toThrow(
+    await expect(tools.save_memory.execute({ text: "One too many." }, toolContext)).rejects.toThrow(
       "configured limit of 100 memories. Remove an outdated memory by index, then retry this save.",
     );
   });
 
   it("rejects invalid limits, empty text, and malformed stored documents", async () => {
-    expect(() => fileMemory({ memoryLimit: 0 })).toThrow("positive safe integer");
-    expect(() => fileMemory({ memoryLimit: 1.5 })).toThrow("positive safe integer");
+    expect(() => fileMemory({ maxEntries: 0 })).toThrow("positive safe integer");
+    expect(() => fileMemory({ maxEntries: 1.5 })).toThrow("positive safe integer");
 
     const backend = inMemory();
     const provider = fileMemory({ backend });
     const tools = await resolveTools(provider);
-    await expect(tools.save_memory.execute({ text: " \n " }, {} as never)).rejects.toThrow(
+    await expect(tools.save_memory.execute({ text: " \n " }, toolContext)).rejects.toThrow(
       "cannot be empty",
     );
     await backend.write({
@@ -242,9 +240,29 @@ describe("fileMemory", () => {
     });
     const tools = await resolveTools(provider);
 
-    await expect(tools.save_memory.execute({ text: "Mine." }, {} as never)).resolves.toEqual({
+    await expect(tools.save_memory.execute({ text: "Mine." }, toolContext)).resolves.toEqual({
       index: 1,
     });
+  });
+
+  it("registers tools without reading the backend", async () => {
+    let reads = 0;
+    const backend = {
+      async read() {
+        reads += 1;
+        return null;
+      },
+      async write({ content }: { readonly content: string }) {
+        return { content, version: "v1" };
+      },
+    };
+    const tools = await resolveTools(fileMemory({ backend }));
+
+    expect(reads).toBe(0);
+    await expect(tools.save_memory.execute({ text: "Remembered." }, toolContext)).resolves.toEqual({
+      index: 0,
+    });
+    expect(reads).toBe(1);
   });
 });
 

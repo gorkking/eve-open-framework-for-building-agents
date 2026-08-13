@@ -37,6 +37,7 @@ import type { NamedSkillDefinition } from "#shared/skill-definition.js";
 import type { InternalAgentDefinition } from "#shared/agent-definition.js";
 import type { RuntimeDynamicModelReference } from "#runtime/agent/bootstrap.js";
 import type { InternalToolDefinitionWithExecuteFn } from "#shared/tool-definition.js";
+import type { DynamicToolErrorBehavior } from "#shared/dynamic-tool-definition.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
 import type { SandboxBackend } from "#shared/sandbox-backend.js";
 import type { SandboxBootstrapContext, SandboxSessionContext } from "#shared/sandbox-definition.js";
@@ -365,6 +366,7 @@ interface ResolvedAgentMetadata {
 export interface ResolvedDynamicToolResolver extends Readonly<ModuleSourceRef> {
   readonly slug: string;
   readonly eventNames: readonly string[];
+  readonly onError?: DynamicToolErrorBehavior;
   readonly events: Readonly<
     Record<string, (event: unknown, ctx: unknown) => unknown | Promise<unknown>>
   >;

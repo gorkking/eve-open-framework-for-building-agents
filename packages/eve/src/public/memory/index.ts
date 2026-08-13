@@ -4,11 +4,11 @@ import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ExactDefinition } from "#public/definitions/exact.js";
 import type { HookEventMap } from "#public/definitions/hook.js";
 import {
-  defineDynamic as defineDynamicBase,
+  defineDynamicTool as defineDynamicBase,
   type ToolContext,
   type ToolDefinition,
 } from "#public/definitions/tool.js";
-import type { DynamicSentinel } from "#shared/dynamic-tool-definition.js";
+import type { DynamicToolSentinel } from "#shared/dynamic-tool-definition.js";
 
 /** One opaque identifier in an authored memory partition tuple. */
 export type MemoryScopePart = string;
@@ -86,7 +86,7 @@ type MemoryDynamicResult<TEvents extends MemoryDynamicEvents> = Awaited<
 >;
 
 /** The standard dynamic sentinel with memory-specific events and callback context. */
-type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicSentinel<TResult>, "events"> & {
+type MemoryDynamicSentinel<TResult = unknown> = Omit<DynamicToolSentinel<TResult>, "events"> & {
   readonly events: MemoryDynamicEvents<TResult>;
 };
 
@@ -138,9 +138,10 @@ export function defineMemory<const T extends MemoryDefinition>(
 export function defineDynamic<const TEvents extends MemoryDynamicEvents>(definition: {
   readonly events: TEvents;
 }): MemoryDynamicSentinel<MemoryDynamicResult<TEvents>> {
-  return defineDynamicBase({ events: definition.events as never }) as MemoryDynamicSentinel<
-    MemoryDynamicResult<TEvents>
-  >;
+  return defineDynamicBase({
+    events: definition.events as never,
+    onError: "throw",
+  }) as MemoryDynamicSentinel<MemoryDynamicResult<TEvents>>;
 }
 
 /** Scopes memory to the authenticated caller; unauthenticated turns disable the slot. */
@@ -148,6 +149,11 @@ export function byPrincipal(): MemoryScopeDefinition {
   return (context) => {
     const principal = context.session.auth.current;
     if (principal === null) return null;
-    return [principal.principalType, principal.authenticator, principal.principalId];
+    return [
+      principal.principalType,
+      principal.authenticator,
+      ...(principal.issuer === undefined ? [] : [principal.issuer]),
+      principal.principalId,
+    ];
   };
 }

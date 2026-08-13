@@ -250,10 +250,79 @@ describe("memory lifecycle", () => {
       });
 
       await prepare(requested);
-      setSession(ctx, "user-2", 4);
+      setSession(ctx, "user-1", 4, "other-issuer");
       await expect(prepare(turnStarted(4))).rejects.toThrow(
         /must be resumed by the principal that initiated it/u,
       );
+
+      setSession(ctx, "user-2", 5);
+      await expect(prepare(turnStarted(5))).rejects.toThrow(
+        /must be resumed by the principal that initiated it/u,
+      );
+    });
+  });
+
+  it("resolves a fresh scope for standalone compaction", async () => {
+    let scopeResolutions = 0;
+    const memory: ResolvedMemoryDefinition = {
+      logicalPath: "memory/user.ts",
+      provider: defineMemoryProvider({}),
+      scope: (context) => {
+        scopeResolutions += 1;
+        return [context.session.auth.current!.principalId];
+      },
+      slot: "user",
+      sourceId: "memory/user.ts",
+      sourceKind: "module",
+    };
+    const ctx = createContext();
+    const prepare = (event: Parameters<typeof prepareMemoryLifecycleEvent>[0]["event"]) =>
+      prepareMemoryLifecycleEvent({
+        abortSignal: new AbortController().signal,
+        ctx,
+        event,
+        identity: { agentId: "agent-1", nodeId: "__root__" },
+        memories: [memory],
+      });
+    const compactionRequested = (sequence: number) =>
+      stampMessageStreamEvent(
+        createCompactionRequestedEvent({
+          modelId: "mock/model",
+          sequence,
+          sessionId: "session-1",
+          turnId: `turn-${sequence}`,
+          usageInputTokens: 10,
+        }),
+      );
+    const compactionCompleted = (sequence: number) =>
+      stampMessageStreamEvent(
+        createCompactionCompletedEvent({
+          modelId: "mock/model",
+          sequence,
+          sessionId: "session-1",
+          turnId: `turn-${sequence}`,
+        }),
+      );
+
+    await contextStorage.run(ctx, async () => {
+      await prepare(
+        stampMessageStreamEvent(createTurnStartedEvent({ sequence: 2, turnId: "turn-2" })),
+      );
+      const activeTurnScope = ctx.require(TurnMemoryStateKey).slots[0]!.scope.key;
+
+      await prepare(compactionRequested(2));
+      expect(ctx.require(TurnMemoryStateKey).slots[0]!.scope.key).toBe(activeTurnScope);
+      expect(scopeResolutions).toBe(1);
+
+      setSession(ctx, "user-2", 3);
+      await prepare(compactionRequested(3));
+      const manualCompactionScope = ctx.require(TurnMemoryStateKey).slots[0]!.scope.key;
+      expect(manualCompactionScope).not.toBe(activeTurnScope);
+      expect(scopeResolutions).toBe(2);
+
+      await prepare(compactionCompleted(3));
+      expect(ctx.require(TurnMemoryStateKey).slots[0]!.scope.key).toBe(manualCompactionScope);
+      expect(scopeResolutions).toBe(2);
     });
   });
 
@@ -295,12 +364,18 @@ function createContext(): ContextContainer {
   return ctx;
 }
 
-function setSession(ctx: ContextContainer, principalId: string, sequence: number): void {
+function setSession(
+  ctx: ContextContainer,
+  principalId: string,
+  sequence: number,
+  issuer?: string,
+): void {
   ctx.set(SessionKey, {
     auth: {
       current: {
         attributes: {},
         authenticator: "test",
+        issuer,
         principalId,
         principalType: "user",
       },

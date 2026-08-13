@@ -10,7 +10,7 @@ import {
   defineMemoryProvider,
 } from "#public/memory/index.js";
 
-function scopeContext(principalId?: string): MemoryScopeContext {
+function scopeContext(principalId?: string, issuer?: string): MemoryScopeContext {
   return {
     abortSignal: new AbortController().signal,
     session: {
@@ -21,6 +21,7 @@ function scopeContext(principalId?: string): MemoryScopeContext {
             : {
                 attributes: {},
                 authenticator: "slack",
+                issuer,
                 principalId,
                 principalType: "user",
               },
@@ -84,6 +85,7 @@ describe("memory authoring", () => {
     expect(tools).toMatchObject({
       kind: "eve:dynamic",
       events: { "step.started": expect.any(Function) },
+      onError: "throw",
     });
     expect(provider.tools).toBe(tools);
   });
@@ -101,6 +103,12 @@ describe("memory authoring", () => {
     const scope = byPrincipal();
 
     expect(scope(scopeContext("U123"))).toEqual(["user", "slack", "U123"]);
+    expect(scope(scopeContext("U123", "slack:T123"))).toEqual([
+      "user",
+      "slack",
+      "slack:T123",
+      "U123",
+    ]);
     expect(scope(scopeContext())).toBeNull();
   });
 });

@@ -222,8 +222,11 @@ async function resolveToolsFromEvent(
   // allowed and handled at merge time).
   const dynamicToolOwners = new Map<string, string>();
 
-  for (const outcome of outcomes) {
+  for (const [index, outcome] of outcomes.entries()) {
     if (outcome.status === "rejected") {
+      if (resolvers[index]!.onError === "throw") {
+        throw outcome.reason;
+      }
       log.error(`Dynamic tool resolver (${event.type}) threw — skipping.`, {
         error: toErrorMessage(outcome.reason),
       });

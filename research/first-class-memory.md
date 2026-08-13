@@ -100,7 +100,7 @@ type MemoryScopeDefinition = (
 ) => readonly MemoryScopePart[] | null | Promise<readonly MemoryScopePart[] | null>;
 ```
 
-Scope parts come from trusted auth, application, or channel context. They cannot come from model input or unattested message fields. Parts have no built-in entity types, and no position has special meaning. `[userId, channelId]` means only that both values participate in the provider partition. `byPrincipal()` disables the slot for unauthenticated callers and otherwise returns `[principalType, authenticator, principalId]`.
+Scope parts come from trusted auth, application, or channel context. They cannot come from model input or unattested message fields. Parts have no built-in entity types, and no position has special meaning. `[userId, channelId]` means only that both values participate in the provider partition. `byPrincipal()` disables the slot for unauthenticated callers. It returns `[principalType, authenticator, principalId]` when the principal has no issuer and `[principalType, authenticator, issuer, principalId]` when it does.
 
 For each resolved slot, eve creates this scope value:
 
@@ -231,7 +231,7 @@ Returning `{ content }` materializes one message. Returning an array materialize
 interface FileMemoryOptions {
   readonly backend?: MemoryDocumentBackend;
   /** Defaults to 100. */
-  readonly memoryLimit?: number;
+  readonly maxEntries?: number;
 }
 
 function fileMemory(options?: FileMemoryOptions): MemoryProvider;
@@ -239,7 +239,7 @@ function fileMemory(options?: FileMemoryOptions): MemoryProvider;
 
 It stores one indexed `MEMORY.md`-style document per scope. `session.started` recalls the document once when the session opens, and `compaction.completed` recalls the latest document after every successful automatic or manual compaction. The recalled context is returned as a `MemoryMessage`, so eve persists it as ordinary user history. It is not repeated on every turn.
 
-The provider exposes `save_memory({ text })`, which returns `{ index }`, and `remove_memory({ index })`. The slot name qualifies both tools. The document preserves indexes for surviving entries, normalizes saved text to one line, treats identical saves and missing removals as idempotent, and conditionally replaces the document so concurrent operations preserve unrelated memories. The provider retries write conflicts and enforces `memoryLimit`; it does not run a hidden capture model or save complete transcripts.
+The provider exposes `save_memory({ text })`, which returns `{ index }`, and `remove_memory({ index })`. The slot name qualifies both tools. The document preserves indexes for surviving entries, normalizes saved text to one line, treats identical saves and missing removals as idempotent, and conditionally replaces the document so concurrent operations preserve unrelated memories. The provider retries write conflicts and enforces `maxEntries`; it does not run a hidden capture model or save complete transcripts.
 
 Calling `fileMemory()` without a backend uses this lazy, process-cached selection:
 
@@ -261,7 +261,7 @@ import { fileMemory, inMemory } from "eve/memory/file";
 const backend = inMemory();
 
 export default defineMemory({
-  provider: fileMemory({ backend, memoryLimit: 200 }),
+  provider: fileMemory({ backend, maxEntries: 200 }),
   scope: byPrincipal(),
 });
 ```

@@ -187,6 +187,25 @@ export default defineDynamic({
 
 Resolvers across files run concurrently.
 
+By default, eve logs and skips a dynamic tool resolver that throws, then continues with tools
+from the remaining resolvers. Set `onError: "throw"` when the model must not run without that
+resolver's tools:
+
+```ts title="agent/tools/required.ts"
+import { defineDynamic } from "eve/tools";
+import { loadRequiredTools } from "../lib/tools";
+
+export default defineDynamic({
+  events: {
+    "step.started": async () => loadRequiredTools(),
+  },
+  onError: "throw",
+});
+```
+
+The `onError` option applies to dynamic tools. `"continue"` is the default and preserves the
+other resolved tools; `"throw"` fails the active lifecycle boundary.
+
 ## Dynamic skills
 
 A dynamic skills file resolves which [skill](../skills) a caller can load, keyed on the principal. It resolves on `session.started` and `turn.started` only (`step.started` is reserved for dynamic tools). Read `ctx.session.auth` or channel metadata and return a `defineSkill(...)` (named after the file slug) or `null`:

@@ -4,7 +4,7 @@ import { z } from "#compiled/zod/index.js";
 
 import {
   defineTool,
-  defineDynamic,
+  defineDynamicTool as defineDynamic,
   disableTool,
   experimental_workflow,
 } from "#public/definitions/tool.js";
@@ -249,12 +249,14 @@ describe("normalizeToolDefinition", () => {
           }),
         }),
       },
+      onError: "throw",
     });
 
     const entry = normalizeToolDefinition(dynamicTools, FAILURE_MESSAGE);
     expect(entry.kind).toBe("dynamic-tool");
     if (entry.kind !== "dynamic-tool") throw new Error("expected dynamic-tool");
     expect(entry.eventNames).toEqual(["session.started"]);
+    expect(dynamicTools.onError).toBe("throw");
   });
 
   it("returns a dynamic-tool entry for a defineDynamic({ events }) export with a single entry", () => {

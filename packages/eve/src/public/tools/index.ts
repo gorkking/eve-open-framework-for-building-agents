@@ -6,7 +6,7 @@ export {
   type DisabledToolSentinel,
   type ExperimentalWorkflowToolDefinition,
   type ExperimentalWorkflowToolInput,
-  defineDynamic,
+  defineDynamicTool as defineDynamic,
   defineTool,
   disableTool,
   experimental_workflow,
@@ -39,7 +39,7 @@ export type {
   DynamicEvents,
   DynamicToolEvents,
   DynamicResolveContext,
-  DynamicSentinel,
+  DynamicToolSentinel as DynamicSentinel,
   DynamicToolSet,
   DynamicToolResult,
 } from "#shared/dynamic-tool-definition.js";

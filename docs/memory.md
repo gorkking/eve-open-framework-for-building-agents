@@ -30,7 +30,7 @@ export default defineMemory({
 });
 ```
 
-`byPrincipal()` partitions the slot by the authenticated caller and disables it for unauthenticated turns. For another trusted partition, supply a scope resolver that returns or asynchronously resolves an ordered tuple of non-empty strings or `null`:
+`byPrincipal()` partitions the slot by the authenticated caller, including its issuer when present, and disables it for unauthenticated turns. For another trusted partition, supply a scope resolver that returns or asynchronously resolves an ordered tuple of non-empty strings or `null`:
 
 ```ts
 async scope(ctx) {
@@ -59,7 +59,7 @@ The stored file contains one memory per line, so the recalled context gives the 
 
 eve allocates each new memory one index above the current highest index and never rewrites the indexes of surviving memories. It also normalizes saved text to one line, preserves unrelated memories, and retries conditional writes when another invocation changes the document concurrently. Saving identical text returns its existing index instead of adding a duplicate. Removing an index that no longer exists is a no-op.
 
-The provider stores at most 100 memories by default. Configure `memoryLimit` to change that count. At the limit, a failed save tells the model to remove an outdated memory by index and retry. The provider tells the model to keep stable context and omit secrets, instructions, and current-task details. It does not run a hidden capture model or persist complete transcripts.
+The provider stores at most 100 memories by default. Configure `maxEntries` to change that count. At the limit, a failed save tells the model to remove an outdated memory by index and retry. The provider tells the model to keep stable context and omit secrets, instructions, and current-task details. It does not run a hidden capture model or persist complete transcripts.
 
 On Vercel, the default backend stores private `MEMORY.md` objects in Vercel Blob when `BLOB_STORE_ID` or the legacy `BLOB_READ_WRITE_TOKEN` is available. The store-ID path authenticates with Vercel OIDC at request time. If the deployment does not have an attached Blob store, `fileMemory()` fails on its first storage operation instead of silently using process-local memory. Attach a Blob store to the project or pass an explicit backend. Outside Vercel, development and test environments default to process-local memory. A production deployment outside Vercel must pass an explicit backend so it cannot silently run with memory that disappears on restart.
 
@@ -76,7 +76,7 @@ export default defineMemory({
       prefix: "my-agent/memory/files",
       token: process.env.BLOB_READ_WRITE_TOKEN,
     }),
-    memoryLimit: 200,
+    maxEntries: 200,
   }),
   scope: byPrincipal(),
 });

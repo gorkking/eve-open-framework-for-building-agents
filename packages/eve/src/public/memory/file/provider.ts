@@ -15,7 +15,7 @@ import {
   type MemoryProviderContext,
 } from "#public/memory/index.js";
 
-const DEFAULT_MEMORY_LIMIT = 100;
+const DEFAULT_MAX_ENTRIES = 100;
 const MAX_CONFLICT_RETRIES = 8;
 
 /** Configuration for the bounded, model-maintained memory file provider. */
@@ -23,7 +23,7 @@ export interface FileMemoryOptions {
   /** Storage implementation. Defaults by runtime environment. */
   readonly backend?: MemoryDocumentBackend;
   /** Maximum number of stored memories. Defaults to 100. */
-  readonly memoryLimit?: number;
+  readonly maxEntries?: number;
 }
 
 /** Result returned after saving one memory. */
@@ -43,7 +43,7 @@ interface FileMemoryEntry {
  */
 export function fileMemory(options: FileMemoryOptions = {}): MemoryProvider {
   const backend = options.backend ?? defaultFileMemoryBackend();
-  const memoryLimit = normalizeMemoryLimit(options.memoryLimit);
+  const maxEntries = normalizeMaxEntries(options.maxEntries);
 
   return defineMemoryProvider({
     events: {
@@ -52,37 +52,21 @@ export function fileMemory(options: FileMemoryOptions = {}): MemoryProvider {
     },
     tools: defineDynamic({
       events: {
-        async "step.started"(_event, context) {
+        "step.started"(_event, context) {
           const key = context.memory.scope.key;
-          const document = await readDocument({
-            backend,
-            key,
-            signal: context.abortSignal,
-          });
-          const save = async (input: { readonly text: string }) =>
-            await saveMemory({
-              backend,
-              document,
-              key,
-              memoryLimit,
-              signal: context.abortSignal,
-              text: input.text,
-            });
-          const remove = async (input: { readonly index: number }) => {
-            await removeMemory({
-              backend,
-              document,
-              index: input.index,
-              key,
-              signal: context.abortSignal,
-            });
-          };
 
           return {
             remove_memory: defineTool({
               description:
                 "Remove one persistent memory by the index shown in recalled memory. Use when it is wrong, outdated, or no longer needed.",
-              execute: remove,
+              async execute(input, toolContext) {
+                await removeMemory({
+                  backend,
+                  index: input.index,
+                  key,
+                  signal: toolContext.abortSignal,
+                });
+              },
               inputSchema: z.object({
                 index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
               }),
@@ -90,7 +74,15 @@ export function fileMemory(options: FileMemoryOptions = {}): MemoryProvider {
             save_memory: defineTool({
               description:
                 "Save one concise, stable fact or preference for future conversations. Omit secrets, instructions, and current-task details.",
-              execute: save,
+              async execute(input, toolContext) {
+                return await saveMemory({
+                  backend,
+                  key,
+                  maxEntries,
+                  signal: toolContext.abortSignal,
+                  text: input.text,
+                });
+              },
               inputSchema: z.object({
                 text: z.string().min(1),
               }),
@@ -120,23 +112,22 @@ async function recallMemory(
 
 async function saveMemory(input: {
   readonly backend: MemoryDocumentBackend;
-  readonly document: MemoryDocument | null;
   readonly key: string;
-  readonly memoryLimit: number;
+  readonly maxEntries: number;
   readonly signal: AbortSignal;
   readonly text: string;
 }): Promise<FileMemorySaveResult> {
   const text = normalizeMemoryText(input.text);
-  let document = input.document;
+  let document = await readDocument(input);
   let conflicts = 0;
 
   for (;;) {
     const entries = parseMemoryDocument(document?.content ?? "");
     const existing = entries.find((entry) => entry.text === text);
     if (existing !== undefined) return { index: existing.index };
-    if (entries.length >= input.memoryLimit) {
+    if (entries.length >= input.maxEntries) {
       throw new RangeError(
-        `Memory has reached the configured limit of ${input.memoryLimit} memories. Remove an outdated memory by index, then retry this save.`,
+        `Memory has reached the configured limit of ${input.maxEntries} memories. Remove an outdated memory by index, then retry this save.`,
       );
     }
 
@@ -162,12 +153,11 @@ async function saveMemory(input: {
 
 async function removeMemory(input: {
   readonly backend: MemoryDocumentBackend;
-  readonly document: MemoryDocument | null;
   readonly index: number;
   readonly key: string;
   readonly signal: AbortSignal;
 }): Promise<void> {
-  let document = input.document;
+  let document = await readDocument(input);
   let conflicts = 0;
 
   for (;;) {
@@ -250,12 +240,12 @@ function normalizeMemoryText(value: string): string {
   return text;
 }
 
-function normalizeMemoryLimit(value: number | undefined): number {
-  const memoryLimit = value ?? DEFAULT_MEMORY_LIMIT;
-  if (!Number.isSafeInteger(memoryLimit) || memoryLimit < 1) {
-    throw new TypeError("fileMemory() memoryLimit must be a positive safe integer.");
+function normalizeMaxEntries(value: number | undefined): number {
+  const maxEntries = value ?? DEFAULT_MAX_ENTRIES;
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) {
+    throw new TypeError("fileMemory() maxEntries must be a positive safe integer.");
   }
-  return memoryLimit;
+  return maxEntries;
 }
 
 function formatRecallContext(entries: readonly FileMemoryEntry[]): string {

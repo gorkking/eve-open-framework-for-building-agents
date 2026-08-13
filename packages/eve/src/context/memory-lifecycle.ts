@@ -129,7 +129,12 @@ function principalIdentity(principal: SessionAuthContext | null): string {
   return JSON.stringify(
     principal === null
       ? null
-      : [principal.principalType, principal.authenticator, principal.principalId],
+      : [
+          principal.principalType,
+          principal.authenticator,
+          principal.issuer ?? null,
+          principal.principalId,
+        ],
   );
 }
 
@@ -271,7 +276,7 @@ async function ensureTurnState(
   turnId: string,
 ): Promise<DurableTurnMemoryState> {
   const existing = input.ctx.get(TurnMemoryStateKey);
-  if (existing !== undefined) return existing;
+  if (existing?.sequence === sequence && existing.turnId === turnId) return existing;
   const state = await resolveTurnState({ ...input, sequence, turnId });
   input.ctx.set(TurnMemoryStateKey, state);
   return state;

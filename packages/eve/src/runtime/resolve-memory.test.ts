@@ -34,6 +34,7 @@ describe("resolveMemoryDefinition", () => {
       dynamicToolResolver: {
         eventNames: ["step.started"],
         extensionNamespace: "user",
+        onError: "throw",
       },
       provider,
       slot: "user",

@@ -451,6 +451,7 @@ function createResolver(
   slug: string,
   eventNames: readonly string[],
   handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>,
+  onError?: ResolvedDynamicToolResolver["onError"],
 ): ResolvedDynamicToolResolver {
   const events: Record<string, (event: unknown, ctx: unknown) => unknown | Promise<unknown>> = {};
   for (const name of eventNames) {
@@ -460,6 +461,7 @@ function createResolver(
     slug,
     eventNames,
     events,
+    onError,
     sourceId: `test:${slug}`,
     sourceKind: "module",
     logicalPath: `agent/tools/${slug}.ts`,
@@ -1073,6 +1075,27 @@ describe("dispatchDynamicToolEvent", () => {
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe("working");
+  });
+
+  it("throws when a resolver opts into fail-closed errors", async () => {
+    const ctx = createCtx();
+    const resolver = createResolver(
+      "required",
+      ["step.started"],
+      () => {
+        throw new Error("resolver exploded");
+      },
+      "throw",
+    );
+
+    await expect(
+      dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("step.started"),
+      }),
+    ).rejects.toThrow("resolver exploded");
   });
 
   it("uses file slug when handler returns a single entry", async () => {

@@ -19,6 +19,8 @@ import {
   TOOL_BRAND,
   type DynamicEvents,
   type DynamicSentinel,
+  type DynamicToolErrorBehavior,
+  type DynamicToolSentinel,
 } from "#shared/dynamic-tool-definition.js";
 
 type ApprovalContextInput<TInput> = unknown extends TInput ? Record<string, unknown> : TInput;
@@ -306,11 +308,31 @@ export function defineDynamic<const TEvents extends DynamicEvents>(definition: {
 export function defineDynamic<TResult = unknown>(definition: {
   readonly events: DynamicEvents<TResult>;
 }): DynamicSentinel<TResult> {
-  const sentinel = {
+  return createDynamicSentinel(definition.events);
+}
+
+export function defineDynamicTool<const TEvents extends DynamicEvents>(definition: {
+  readonly events: TEvents;
+  /** Resolver error behavior. Defaults to `"continue"`. */
+  readonly onError?: DynamicToolErrorBehavior;
+}): DynamicToolSentinel<DynamicEventMapResult<TEvents>>;
+export function defineDynamicTool<TResult = unknown>(definition: {
+  readonly events: DynamicEvents<TResult>;
+  readonly onError?: DynamicToolErrorBehavior;
+}): DynamicToolSentinel<TResult> {
+  return createDynamicSentinel(definition.events, definition.onError);
+}
+
+function createDynamicSentinel<TResult>(
+  events: DynamicEvents<TResult>,
+  onError?: DynamicToolErrorBehavior,
+): DynamicToolSentinel<TResult> {
+  const sentinel: DynamicToolSentinel<TResult> = {
     kind: DYNAMIC_SENTINEL_KIND,
-    events: definition.events,
-  } as DynamicSentinel<TResult>;
-  stampDefinitionKey(sentinel, `dynamic:${Object.keys(definition.events).join(",")}`);
+    events,
+  };
+  if (onError !== undefined) Object.assign(sentinel, { onError });
+  stampDefinitionKey(sentinel, `dynamic:${Object.keys(events).join(",")}`);
   return sentinel;
 }
 
