@@ -76,8 +76,18 @@ describe("renderSlackWorkActivity", () => {
     expect(post).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith("chat.update", {
       blocks: [
-        { text: { emoji: true, text: "Working", type: "plain_text" }, type: "header" },
-        { text: { text: "✓ search_docs", type: "mrkdwn" }, type: "section" },
+        {
+          tasks: [
+            {
+              status: "complete",
+              task_id: "work-0",
+              title: "search_docs",
+              type: "task_card",
+            },
+          ],
+          title: "Working",
+          type: "plan",
+        },
       ],
       channel: "C1",
       text: "Working\n✓ search_docs",
@@ -147,8 +157,27 @@ describe("renderSlackWorkActivity", () => {
 
     expect(post).toHaveBeenCalledWith({
       blocks: [
-        { text: { emoji: true, text: "Working", type: "plain_text" }, type: "header" },
-        { text: { text: "◐ *researcher*\n   ✓ discover", type: "mrkdwn" }, type: "section" },
+        {
+          tasks: [
+            {
+              details: {
+                elements: [
+                  {
+                    elements: [{ text: "✓ discover", type: "text" }],
+                    type: "rich_text_section",
+                  },
+                ],
+                type: "rich_text",
+              },
+              status: "in_progress",
+              task_id: "work-0",
+              title: "researcher",
+              type: "task_card",
+            },
+          ],
+          title: "Working",
+          type: "plan",
+        },
       ],
       text: "Working\n◐ researcher\n  ✓ discover",
     });

@@ -116,10 +116,10 @@ function renderWorkActivity(input: {
   const text = ["Working", ...rows.map((row) => row.text)].join("\n");
   return {
     blocks: [
-      { text: { emoji: true, text: "Working", type: "plain_text" }, type: "header" },
       {
-        text: { text: rows.map((row) => row.markdown).join("\n\n"), type: "mrkdwn" },
-        type: "section",
+        tasks: actions.map(workTaskCard),
+        title: "Working",
+        type: "plan",
       },
     ],
     text,
@@ -145,6 +145,47 @@ function renderAction(action: WorkAction): { readonly markdown: string; readonly
     ].join("\n"),
     text: [text, ...childRows.map((row) => `  ${row.text}`)].join("\n"),
   };
+}
+
+function workTaskCard(action: WorkAction, index: number): SlackBlock {
+  const childActions = action.child?.work?.turn?.steps.flatMap((step) => step.actions) ?? [];
+  const details = childActions
+    .map((child) => `${phaseGlyph(child.phase)} ${child.detail ?? child.name}`)
+    .join("\n");
+  return {
+    status: planTaskStatus(action.phase),
+    task_id: `work-${index}`,
+    title: action.name,
+    type: "task_card",
+    ...(details === "" ? {} : { details: richText(details) }),
+  };
+}
+
+function richText(text: string): SlackBlock {
+  return {
+    elements: [
+      {
+        elements: [{ text, type: "text" }],
+        type: "rich_text_section",
+      },
+    ],
+    type: "rich_text",
+  };
+}
+
+function planTaskStatus(phase: WorkPhase): "complete" | "error" | "in_progress" | "pending" {
+  switch (phase) {
+    case "completed":
+      return "complete";
+    case "cancelled":
+    case "failed":
+      return "error";
+    case "blocked":
+    case "queued":
+      return "pending";
+    case "running":
+      return "in_progress";
+  }
 }
 
 function phaseGlyph(phase: WorkPhase): string {

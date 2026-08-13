@@ -3,7 +3,7 @@ import { sleep } from "#compiled/@workflow/core/index.js";
 import { refreshLocalSubagentWorkStep } from "#execution/refresh-local-subagent-work-step.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 
-export const LOCAL_SUBAGENT_WORK_REFRESH_MS = 15_000;
+export const LOCAL_SUBAGENT_WORK_REFRESH_MS = 10_000;
 
 export interface LocalSubagentWorkMonitorInput {
   readonly serializedContext: Record<string, unknown>;
