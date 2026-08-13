@@ -56,6 +56,8 @@ import {
   type LoadThreadContextMessagesOptions,
 } from "#public/channels/slack/thread.js";
 import { buildSlackAuthContext, slackUserIdFromAuthContext } from "#public/channels/slack/auth.js";
+import { renderSlackWorkActivity } from "#public/channels/slack/work-activity.js";
+import { WorkGraphKey } from "#context/keys.js";
 import { SLACK_CHANNEL_DEFAULT_ROUTE } from "#public/channels/slack/constants.js";
 import { handleInteractionPost } from "#public/channels/slack/interactions.js";
 import {
@@ -766,6 +768,11 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
       workActivityTurnId: null,
     },
     fetchFile: slackFetchFile,
+    work: (state, _session, ctx) =>
+      renderSlackWorkActivity({
+        channel: rebuildSlackContext(state, _session, config.credentials),
+        work: ctx.get(WorkGraphKey),
+      }),
     metadata(state): SlackInstrumentationMetadata {
       return {
         channelId: state.channelId,

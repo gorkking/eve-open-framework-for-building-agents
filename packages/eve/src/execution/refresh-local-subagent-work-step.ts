@@ -1,5 +1,7 @@
+import { buildAdapterContext } from "#channel/adapter-context.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import { WorkGraphKey } from "#context/keys.js";
+import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { readLocalSubagentWork } from "#execution/local-subagent-work-query.js";
 import { findRunningLocalAgentHandles } from "#harness/handles/query.js";
@@ -32,5 +34,11 @@ export async function refreshLocalSubagentWorkStep(input: {
 
   if (work === ctx.get(WorkGraphKey)) return { serializedContext: input.serializedContext };
   ctx.set(WorkGraphKey, work);
+  const adapter = ctx.require(ChannelKey);
+  const render = adapter.work?.render;
+  if (render !== undefined) {
+    await render(buildAdapterContext(adapter, ctx));
+    ctx.set(ChannelKey, { ...adapter, state: { ...ctx.require(ChannelKey).state } });
+  }
   return { serializedContext: serializeContext(ctx) };
 }
