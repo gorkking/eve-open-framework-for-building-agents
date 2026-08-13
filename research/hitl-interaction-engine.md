@@ -56,6 +56,116 @@ Both known wedges came from that dispersion:
 In both cases an obligation became control flow. In the target, obligations
 are only data and the scheduler is always receptive.
 
+### Current
+
+Obligation state and interpretation are split across the driver, turn setup,
+tool loop, proxy, and closure paths:
+
+```text
+channel message / response
+           │
+           ▼
+ SessionCommandInbox ───────────────▶ workflow-entry driver
+                                               │
+                                               │ dispatch turn
+                                               ▼
+                                       workflow-steps
+                                  authorization callback pairing
+                                               │
+                                               ▼
+                                          tool-loop
+                                               │
+                ┌──────────────────────────────┼───────────────────────────┐
+                ▼                              ▼                           ▼
+      stale-input-responses          resolvePendingInput          session-limit logic
+      stale → user message           approval/question rules      prompt special cases
+                │                              │                           │
+                └──────────────────────────────┼───────────────────────────┘
+                                               │
+                                     model / tool execution
+                                               │
+                       ┌───────────────────────┼──────────────────────┐
+                       ▼                       ▼                      ▼
+             pendingInputBatches      pendingAuthorization    deferredStepInput
+                       │                       │
+                       │                       │ authorizationNames
+                       │                       ▼
+                       │              workflow-entry changes
+                       │                 its wait source
+                       │                       │
+                       │                       ▼
+                       │                dedicated :auth hook
+                       │
+                       └────── next delivery re-enters several decision paths
+
+OAuth redirect
+     │
+     ▼
+callback route ──▶ dedicated :auth hook ──▶ authorization-only driver wait
+
+child HITL event ──▶ subagent proxy logic ──▶ separate proxy route store
+
+cancel / session end ──▶ settlement sweep ──▶ mutates request state separately
+```
+
+No function sees the complete state and input: the driver interprets
+authorization state by changing its wait source; workflow steps pair
+callbacks; stale conversion, pending-input resolution, and limit enforcement
+each interpret deliveries; proxy and closure paths write related state
+independently.
+
+### Target
+
+All inputs enter one ordered stream. One interpreter decides every transition;
+one store persists it before one executor performs the ordered effects:
+
+```text
+channel message / response ─┐
+OAuth callback ──────────────┤
+timer / deadline ────────────┼──▶ SessionCommandInbox
+control / cancellation ──────┤          one FIFO stream
+child interaction event ─────┘                │
+                                              ▼
+                                      workflow-entry driver
+                                      admit + dispatch only
+                                      no obligation state
+                                              │
+                                              ▼
+                                       turn input adapter
+                                   normalize InteractionInput
+                                              │
+                                              ▼
+                                    executeInteraction
+                                              │
+                                              ▼
+                                  load InteractionState
+                                              │
+                                              ▼
+                                  interpretInteraction
+                            pure: (state, input) → decision
+                                              │
+                           ┌──────────────────┴──────────────────┐
+                           ▼                                     ▼
+                       nextState                        ordered effects
+                           │                                     │
+                           ▼                                     ▼
+                 persistInteractionState             emit lifecycle event
+                    the only writer                   restore group output
+                                                     execute allowed tool
+                                                     run model turn
+                                                     forward child response
+                                                     terminate turn
+                                                             │
+                                                             ▼
+                                                         TurnOutcome
+                                                             │
+                                                             └──▶ interpret again
+```
+
+The architectural invariant is: **the driver schedules, the interpreter
+decides, the store persists, and the executor performs.** No other module may
+settle, dismiss, supersede, reject, buffer, or resume an obligation.
+
 ## Target package
 
 ```text
@@ -182,35 +292,6 @@ async function executeInteraction(
 Persistence precedes side effects. An effect that produces a model/tool/child
 outcome feeds that outcome back through the same interpreter; executors never
 mutate interaction state themselves.
-
-## Call graph
-
-```text
-channel delivery ─┐
-OAuth callback ───┼─▶ SessionCommandInbox ─▶ workflow driver
-timer / control ──┘                             │
-                                                ▼
-                                           turn adapter
-                                                │
-                                    normalize InteractionInput
-                                                │
-                                                ▼
-                                      executeInteraction
-                                                │
-                                  ┌─────────────┴─────────────┐
-                                  ▼                           ▼
-                         persist nextState             ordered effects
-                                                              │
-                                  emit / restore / tool / model / forward
-                                                              │
-                                                              ▼
-                                                         TurnOutcome
-                                                              │
-                                                              └─▶ interpreter
-```
-
-The driver never sees obligation state. The interpreter never performs side
-effects. The store never decides behavior.
 
 ## Adapter changes
 
