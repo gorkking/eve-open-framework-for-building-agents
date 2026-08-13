@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1224
 status: proposed
-last_updated: "2026-08-10"
+last_updated: "2026-08-13"
 ---
 
 # HITL requests must not wedge sessions
@@ -135,15 +135,18 @@ Obligations raised by one park form a **group**, and every group carries a
 | AuthGroup     | challenges from one park                        | re-drive the blocked turn with every callback result available                                          |
 | LimitPrompt   | one Limit(gen)                                  | grant a fresh budget window (continued) or cancel the turn (stopped)                                    |
 
-Closure is derived, never stored: a group is closed exactly when every member
-is terminal. Rules:
+A group becomes eligible for ordinary closure exactly when every member is
+terminal. The ledger then durably claims its continuation once; terminal
+obligations and groups remain as tombstones until the session ends so late and
+duplicate inputs can be classified without a second stale-response mechanism.
+Rules:
 
 - Settling one member of a multi-member group leaves its siblings open and
-  does **not** fire the continuation (the withheld output appears zero times
+  does **not** claim the continuation (the withheld output appears zero times
   in committed history until closure).
 - **Forced closure** — turn cancellation or session end dismissing the
-  members — never fires the continuation: no restored output, no batch tool,
-  no model call.
+  members — suppresses the continuation instead of claiming it: no restored
+  output, no batch tool, no model call.
 - Tools whose approval settled as denied or cancelled do not run. Rejected
   candidates do not change a member's later eligibility.
 - Tool dispatch rechecks turn and session cancellation after the continuation
@@ -209,11 +212,10 @@ External deliveries — one arrival-ordered stream:
 | `Responses(actor, [{requestId, optionId \| text}])` | one or more structured responses                        |
 | `Compound(actor, responses, message)`               | both in one delivery; each part processed exactly once  |
 | `Callback(name, params)`                            | a connection-authorization callback                     |
-| `CancelTurn`, `Clear`, `Compact`, `Reset`           | session controls                                        |
-| `SessionTimeout`                                    | the session deadline, delivered through the same stream |
+| `CancelTurn`, `EndSession`                          | controls normalized by the turn adapter                 |
 
-Timers: `Deadline(challengeId)` — the authorization deadline is a first-class
-input, not an artifact of a wait.
+Timers: `Deadline(challengeId)` and `SessionDeadline` are first-class inputs,
+not artifacts of a wait.
 
 Turn outcomes — outputs of `TurnActive`, not deliveries:
 
@@ -234,12 +236,17 @@ is fully encoded by obligation state).
 
 ### Interpretation
 
-One pure function interprets every delivery:
+One pure function interprets every interaction input:
 
 ```text
-interpret(groups, routes, delivery) -> (transitions, events, turnPlan)
+interpretInteraction(state, input) -> { nextState, effects }
+
+input   = delivery | timer | turn-outcome | child-event | control
+effects = one ordered list of emit | restore-group | execute-tool |
+          run-model | forward-response | terminate-turn
 ```
 
+The executor persists `nextState` before performing the effects in order.
 Drivers schedule; they never interpret. Invariants:
 
 1. **Obligations are data.** No blocked continuation anywhere. The scheduler
@@ -248,15 +255,20 @@ Drivers schedule; they never interpret. Invariants:
    and controls surface in one order; interpretation order is deterministic
    by construction, including under workflow replay.
 3. **Single winner per obligation.** Later candidates are stale events.
-4. **Continuations fire at most once,** and never on forced closure.
-5. **No silent consumption.** Every admitted delivery yields at least one
+4. **Continuations fire at most once.** Their durable state moves from
+   `pending` exactly once, to `claimed` for ordinary closure or `suppressed`
+   for forced closure.
+5. **State before effects.** The executor persists the complete next state
+   before emitting events, restoring output, running tools or models, forwarding
+   a response, or terminating a turn.
+6. **No silent consumption.** Every admitted delivery yields at least one
    observable event: `message.received`, a settlement, a rejection, a
    dismissal, or an authorization event. Every admitted delivery also
    initiates a turn: when responses settle nothing, the turn input is the
    event context — who attempted what, and why it did not settle — so the
    agent can respond in-channel. Retries of the same delivery are
    deduplicated at admission and do not start additional turns.
-6. **Composite states add no cases.** The transition catalog for a session
+7. **Composite states add no cases.** The transition catalog for a session
    with approvals _and_ challenges open is the row-wise union of the
    catalogs for each alone. If a change ever needs a case that is not such a
    union, the encapsulation is broken. This is the standing review test for
@@ -406,11 +418,12 @@ Arrows are calls; annotations are the data crossing the edge.
 channel POST ──channel auth──▶ resumeHook ──DeliverPayload──────────▶ inbox
 callback route ──param projection──▶ resumeHook ──authorizationCallback──▶ inbox   (stage 4)
 inbox ──SessionInboxPayload──▶ driver ──admit / dispatch──▶ turn step
-turn step ──(store.read(), delivery)──▶ interpreter ──plan──▶ turn step
-plan.transitions ──▶ store            (the only writer of obligation state)
-plan.events ──────▶ events.emit ──▶ stream
-plan.turnPlan ────▶ executor          (restore output | run tools | model turn)
-turn outcome ──new requests / challenges──▶ store.append ──▶ events.emit(input.requested)
+turn step ──(load state, normalize input)──▶ executeInteraction
+executeInteraction ──(state, input)──▶ interpreter ──decision──▶ executeInteraction
+decision.nextState ──▶ store          (persist before effects; only state writer)
+decision.effects ──in order──▶ executor
+                               (emit | restore output | run tool/model | forward | terminate)
+executor outcome ──turn-outcome input──▶ executeInteraction
 ```
 
 The driver never sees obligation state; the interpreter never performs a side
@@ -427,10 +440,9 @@ Data at each step for the three flows that historically wedged or clobbered.
 delivery         = Message(actor B, "what's the status?")
 store.read()     = groups: [Batch{ A1: open }]
 interpret        ⊢ no correlated candidate; not limit-gated
-plan.transitions = []                          // A1 untouched
-plan.events      = [message.received]
-plan.turnPlan    = [model-turn(message)]       // model runs WITHOUT the withheld output
-store after      = groups: [Batch{ A1: open }] // still answerable
+decision.state   = groups: [Batch{ A1: open }] // A1 untouched, still answerable
+decision.effects = [emit(message.received),
+                    run-model(message)]        // model runs WITHOUT withheld output
 ```
 
 **Late accepted response** (`owner.approval.response.settle-allow-after-turns`):
@@ -439,10 +451,9 @@ store after      = groups: [Batch{ A1: open }] // still answerable
 delivery         = Responses(actor A, [{ requestId: A1, optionId: allow }])
 store.read()     = groups: [Batch{ A1: open }, withheldOutput W]
 interpret        ⊢ candidate c = {A1, deliveryId}; policy accepts; A1 is the last open member
-plan.transitions = [settle(A1, allowed), close(Batch)]
-plan.events      = [input.responded(A1, c, responder A)]
-plan.turnPlan    = [restore W, run tool(call-1) once, resume model]
-store after      = groups: []
+decision.state   = Batch{ A1: settled(allowed), continuation: claimed }
+decision.effects = [emit(input.responded(A1, c, responder A)),
+                    restore-group(Batch), execute-tool(call-1), run-model(resume)]
 ```
 
 **Authorization callback** (`owner.auth.callback.complete`):
@@ -451,15 +462,14 @@ store after      = groups: []
 delivery         = Callback("weather", { code })
 store.read()     = groups: [AuthGroup{ C1: open }]
 interpret        ⊢ C1 matches; completes(authorized); last member closes the group
-plan.transitions = [complete(C1, authorized), close(AuthGroup)]
-plan.events      = [authorization.completed(C1)]
-plan.turnPlan    = [re-drive blocked turn with the callback result]
-store after      = groups: []
+decision.state   = AuthGroup{ C1: completed(authorized), continuation: claimed }
+decision.effects = [emit(authorization.completed(C1)),
+                    restore-group(AuthGroup)] // re-drive with callback result
 ```
 
-A stale variant of any walk changes exactly one line: `interpret` finds no
-open obligation, `plan.transitions = []`, and `plan.events` carries the
-rejection — the turn still runs with the stale-attempt context.
+A stale variant of any walk changes only the decision: `interpret` finds the
+terminal obligation, leaves `nextState` unchanged, and returns ordered effects
+to emit the rejection and run a turn with the stale-attempt context.
 
 ## Transition catalog
 
@@ -973,23 +983,24 @@ else is an adapter that feeds it inputs or executes its plans:
 
 ```text
 harness/interaction/
-  obligations.ts   one durable store: groups (batches, auth groups, limit
-                   prompts), candidates, generations; the only writer of
-                   obligation state
-  interpret.ts     the pure function: (groups, routes, input) -> plan
-                   where input = delivery | timer | turn outcome | child event
-                   and plan = { transitions, events, turnPlan }
+  types.ts         state, inputs, transitions, and ordered effects
+  obligations.ts   one durable ledger: obligations, groups, candidates,
+                   routes, and generations; migration + the only state writer
+  interpret.ts     pure (InteractionState, InteractionInput) ->
+                   InteractionDecision { nextState, effects }
   projector.ts     routes: project / forward / re-emit / drop
-  events.ts        transition -> wire event emission
+  events.ts        domain transition -> protocol event
+  execute.ts       persist nextState, then perform effects in order
 ```
 
 Adapters after consolidation:
 
-- **tool-loop**: park = append a group; step start = execute the plan.
-  Replaces `resolvePendingInput`, the stale-conversion pass, the limit
-  special cases, and the deferral _decisions_. The AI SDK constraint that an
-  approval response resolves in isolation becomes an ordered `turnPlan`, not
-  a hidden state key.
+- **tool-loop**: parked model output becomes an ApprovalBatch continuation;
+  new requests and challenges return as turn outcomes. `execute.ts` owns the
+  ordered effects. This replaces `resolvePendingInput`, the stale-conversion
+  pass, the limit special cases, and deferral _decisions_. The AI SDK constraint
+  that an approval response resolves in isolation becomes an ordered effect
+  sequence, not a hidden state key.
 - **workflow-steps**: callback extraction and `authorization.completed`
   emission become `interpret(Callback)`; `derivePendingState` reads the one
   store.
@@ -1006,8 +1017,9 @@ Adapters after consolidation:
 
 Deleted outright: `stale-input-responses.ts` (becomes the `reject-stale`
 rows), `input-request-class.ts` (classification is the obligation kind), the
-inbox window machinery, and `deferredStepInput` as a decision mechanism — it
-survives at most as plan persistence across internal steps.
+inbox window machinery, and `deferredStepInput` as a decision mechanism. If
+internal-step persistence remains necessary, it stores an executor-owned effect
+cursor, never reinterpretable user input.
 
 ### Stages
 
