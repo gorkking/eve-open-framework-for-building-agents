@@ -382,6 +382,10 @@ async function waitForRuntimeActionResults(input: {
       return "cancelled";
     }
     if (next.kind === "work-refresh") {
+      console.info("[eve.work] parent refresh tick", {
+        pendingActionKeys: input.pendingActionKeys,
+        sessionId: input.cursor.sessionState.sessionId,
+      });
       const { refreshLocalSubagentWorkStep } =
         await import("#execution/refresh-local-subagent-work-step.js");
       const refreshed = await refreshLocalSubagentWorkStep({
@@ -400,6 +404,10 @@ async function waitForRuntimeActionResults(input: {
     nextPromise = input.iterator.next();
     nextPromise.catch(() => {});
     if (value.kind === "runtime-action-result") {
+      console.info("[eve.work] parent received child result", {
+        callIds: value.results.map((result) => result.callId),
+        sessionId: input.cursor.sessionState.sessionId,
+      });
       // The inbox token is shared by every callee in the batch, so an inbox
       // subagent result must bind to a running agent handle in the adopted
       // session snapshot: its callId on the handle's operation and, when it
@@ -412,6 +420,11 @@ async function waitForRuntimeActionResults(input: {
       const accepted = value.results.filter((result) =>
         isInboxSubagentResultFromRunningHandle(sessionSnapshotState, result),
       );
+      console.info("[eve.work] parent child result binding", {
+        acceptedCallIds: accepted.map((result) => result.callId),
+        receivedCallIds: value.results.map((result) => result.callId),
+        sessionId: input.cursor.sessionState.sessionId,
+      });
       if (accepted.length > 0) {
         const acceptedAtMs = Date.now();
         results.push(...accepted);

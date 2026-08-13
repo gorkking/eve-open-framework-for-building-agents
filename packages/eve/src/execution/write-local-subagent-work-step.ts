@@ -10,7 +10,11 @@ export async function writeLocalSubagentWorkStep(input: {
 
   const ctx = await deserializeContext(input.serializedContext);
   const work = ctx.get(WorkGraphKey);
-  if (work === undefined || work.revision === 0) return;
+  if (work === undefined || work.revision === 0) {
+    console.info("[eve.work] child projection skipped", { reason: "no-work" });
+    return;
+  }
+  console.info("[eve.work] child projection write", { revision: work.revision });
   const writer = input.workWritable.getWriter();
   try {
     await writer.write(work);

@@ -19,20 +19,42 @@ export async function refreshLocalSubagentWorkStep(input: {
   if (work === undefined) return { serializedContext: input.serializedContext };
 
   const handles = findRunningLocalAgentHandles(input.sessionState.snapshot?.session.state);
+  console.info("[eve.work] querying direct local subagents", {
+    callIds: handles.map((handle) => handle.operation.callId),
+    parentSessionId: input.sessionState.sessionId,
+  });
   for (const handle of handles) {
     const child = await readLocalSubagentWork({
       callId: handle.operation.callId,
       parentState: input.sessionState.snapshot?.session.state,
     });
+    console.info("[eve.work] local subagent work query", {
+      callId: handle.operation.callId,
+      childSessionId: handle.address.sessionId,
+      outcome: child.kind === "available" ? `available:${child.revision}` : child.reason,
+      parentSessionId: input.sessionState.sessionId,
+    });
     if (child.kind !== "available") continue;
+    const priorRevision = work.revision;
     work = adoptChildWorkSnapshot(work, {
       callId: handle.operation.callId,
       sessionId: handle.address.sessionId,
       snapshot: child.work,
     });
+    console.info("[eve.work] local subagent work adoption", {
+      callId: handle.operation.callId,
+      childRevision: child.revision,
+      parentRevision: work.revision,
+      parentRevisionBefore: priorRevision,
+    });
   }
 
-  if (work === ctx.get(WorkGraphKey)) return { serializedContext: input.serializedContext };
+  if (work === ctx.get(WorkGraphKey)) {
+    console.info("[eve.work] parent refresh unchanged", {
+      parentSessionId: input.sessionState.sessionId,
+    });
+    return { serializedContext: input.serializedContext };
+  }
   ctx.set(WorkGraphKey, work);
   const adapter = ctx.require(ChannelKey);
   const render = adapter.work?.render;
