@@ -4,10 +4,19 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": "public",
   "rewrites": [
-    { "source": "/:ref*/eve.tgz", "destination": "/api/package?ref=:ref" },
     {
-      "source": "/main/latest.json",
-      "destination": "/api/package?ref=main&manifest=1"
-    }
+      "source": "/unverified/sha/:sha/eve.tgz",
+      "destination": "/api/package?scope=unverified&ref=:sha"
+    },
+    {
+      "source": "/unverified/pr/:pr/eve.tgz",
+      "destination": "/api/package?scope=unverified&pr=:pr"
+    },
+    {
+      "source": "/unverified/pr/:pr/latest.json",
+      "destination": "/api/package?scope=unverified&pr=:pr&manifest=1"
+    },
+    { "source": "/:ref/eve.tgz", "destination": "/api/package?ref=:ref" },
+    { "source": "/main/latest.json", "destination": "/api/package?ref=main&manifest=1" }
   ]
 }
