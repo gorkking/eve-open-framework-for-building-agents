@@ -1994,7 +1994,7 @@
         {
           "path": "registry/instrumentation/braintrust.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/braintrust.ts"
         },
         {
           "path": "registry/instrumentation/braintrust-hook.ts",
@@ -2008,13 +2008,7 @@
       "type": "registry:item",
       "title": "PostHog",
       "description": "Send agent traces and generations to PostHog AI Observability.",
-      "dependencies": [
-        "@posthog/ai@^7.19.6",
-        "@opentelemetry/api",
-        "@opentelemetry/exporter-trace-otlp-http",
-        "@opentelemetry/sdk-trace-base",
-        "@vercel/otel"
-      ],
+      "dependencies": ["@posthog/ai@^7.19.6"],
       "envVars": {
         "POSTHOG_PROJECT_TOKEN": "",
         "POSTHOG_HOST": ""
@@ -2023,7 +2017,7 @@
         {
           "path": "registry/instrumentation/posthog.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/posthog.ts"
         }
       ]
     },
@@ -2041,7 +2035,7 @@
         {
           "path": "registry/instrumentation/sentry.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/sentry.ts"
         }
       ]
     },
@@ -2059,7 +2053,7 @@
         {
           "path": "registry/instrumentation/datadog.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/datadog.ts"
         }
       ]
     },
@@ -2076,7 +2070,7 @@
         {
           "path": "registry/instrumentation/honeycomb.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/honeycomb.ts"
         }
       ]
     },
@@ -2094,7 +2088,7 @@
         {
           "path": "registry/instrumentation/arize.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/arize.ts"
         }
       ]
     },
@@ -2111,7 +2105,7 @@
         {
           "path": "registry/instrumentation/raindrop.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/raindrop.ts"
         }
       ]
     },
@@ -2125,7 +2119,7 @@
         {
           "path": "registry/instrumentation/jaeger.ts",
           "type": "registry:file",
-          "target": "agent/instrumentation.ts"
+          "target": "agent/instrumentation/jaeger.ts"
         }
       ]
     }
