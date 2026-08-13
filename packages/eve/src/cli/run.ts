@@ -49,6 +49,7 @@ import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
 import { startCliLiveRow } from "#cli/ui/live-row.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
 import { createLogger } from "#internal/logging.js";
+import { canonicalCommand, createEveCliTelemetry } from "#cli/telemetry/index.js";
 import type {
   DevelopmentServer,
   DevelopmentServerOptions,
@@ -668,12 +669,18 @@ export async function runCli(
       input = ["dev"];
     }
   }
+  const telemetry = createEveCliTelemetry(resolveInstalledPackageInfo().version);
+  telemetry.trackCommand(canonicalCommand(input));
+  telemetry.trackDevContext(input);
 
   try {
     await program.parseAsync(input, {
       from: "user",
     });
+    telemetry.trackOutcome("success");
   } catch (error) {
+    telemetry.trackOutcome("error");
+    telemetry.trackError(error);
     if (error instanceof CommanderError) {
       if (error.exitCode === 0) {
         return;
@@ -695,5 +702,7 @@ export async function runCli(
     }
 
     throw error;
+  } finally {
+    await telemetry.flush();
   }
 }

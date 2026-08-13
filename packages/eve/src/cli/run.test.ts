@@ -1,8 +1,15 @@
 import { resolve } from "node:path";
+import { spawn } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: vi.fn(),
+}));
+
 import { resolveDevUiMode, resolveTuiDisplayOptions, runCli } from "#cli/run.js";
+import { createEveCliTelemetry } from "#cli/telemetry/index.js";
 import { MockScreen } from "#cli/dev/tui/test/mock-terminal.js";
 import type { RunDevelopmentTuiInput } from "#cli/dev/tui/tui.js";
 import type { DevelopmentServerOptions } from "#internal/nitro/host/types.js";
@@ -54,6 +61,30 @@ async function runInteractiveDev(
   );
   return runDevelopmentTui;
 }
+
+describe("CLI telemetry", () => {
+  it("does not send telemetry while tests run", async () => {
+    await runCli(["--help"], { error: () => {}, log: () => {} });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("flushes to the configured endpoint when telemetry is enabled", async () => {
+    const child = { unref: vi.fn() };
+    vi.mocked(spawn).mockReturnValue(child as never);
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("EVE_TELEMETRY_ENDPOINT", "http://localhost/events");
+    const telemetry = createEveCliTelemetry("1.0.0");
+    telemetry.trackCommand("info");
+    telemetry.trackOutcome("success");
+    await telemetry.flush();
+    expect(spawn).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining(["http://localhost/events"]),
+      expect.objectContaining({ detached: true }),
+    );
+    expect(child.unref).toHaveBeenCalled();
+  });
+});
 
 describe("CLI command registration", () => {
   it("lists the current project creation and Vercel commands", async () => {
