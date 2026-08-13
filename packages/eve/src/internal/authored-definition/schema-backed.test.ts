@@ -180,6 +180,20 @@ describe("normalizeToolDefinition", () => {
     expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
   });
 
+  it("accepts explicit request and response approval policies", () => {
+    const tool = defineTool({
+      approval: {
+        request: () => "user-approval",
+        response: () => ({ status: "allowed" }),
+      },
+      description: "Uses response authorization.",
+      execute: () => null,
+      inputSchema: z.object({ city: z.string() }),
+    });
+
+    expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
+  });
+
   it("accepts generic approval helpers on schema-typed tools", () => {
     const tool = defineTool({
       description: "Uses a reusable approval helper.",
@@ -262,15 +276,17 @@ describe("normalizeToolDefinition", () => {
   });
 
   it("rejects a defineDynamic tool export carrying a fallback", () => {
-    const dynamicTools = defineDynamic({
+    const dynamicTools = {
+      ...defineDynamic({
+        events: {
+          "session.started": async () => ({}),
+        },
+      }),
       fallback: "not-supported-here",
-      events: {
-        "session.started": async () => ({}),
-      },
-    });
+    } as never;
 
     expect(() => normalizeToolDefinition(dynamicTools, FAILURE_MESSAGE)).toThrow(
-      '"fallback" is only supported on a dynamic agent model',
+      "Unknown key(s): fallback",
     );
   });
 

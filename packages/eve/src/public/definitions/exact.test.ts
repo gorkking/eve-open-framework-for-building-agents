@@ -101,6 +101,33 @@ describe("definition helper exact inputs", () => {
 });
 
 function typeOnlyFixtures(): void {
+  defineDynamic({
+    // @ts-expect-error defineDynamic is resolver-only.
+    fallback: "anthropic/claude-sonnet-5",
+    events: {
+      "session.started": () => "anthropic/claude-sonnet-5",
+    },
+  });
+
+  defineAgent({
+    // @ts-expect-error Dynamic model handlers must return a concrete selection.
+    model: defineDynamic({
+      events: {
+        "session.started": () => null,
+      },
+    }),
+  });
+
+  // @ts-expect-error Dynamic model metadata belongs on each returned selection.
+  defineAgent({
+    model: defineDynamic({
+      events: {
+        "session.started": () => "anthropic/claude-sonnet-5",
+      },
+    }),
+    modelContextWindowTokens: 200_000,
+  });
+
   // @ts-expect-error Dynamic subagents require a parent-facing description.
   defineDynamic({
     events: {
@@ -133,6 +160,21 @@ function typeOnlyFixtures(): void {
         defineAgent({
           description: "Delegate research tasks.",
           model: "anthropic/claude-sonnet-5",
+        }),
+    },
+  });
+
+  // @ts-expect-error A dynamic local-subagent selection must use a static model.
+  defineDynamic({
+    events: {
+      "session.started": () =>
+        defineAgent({
+          description: "Delegate research tasks.",
+          model: defineDynamic({
+            events: {
+              "session.started": () => "anthropic/claude-sonnet-5",
+            },
+          }),
         }),
     },
   });
@@ -179,11 +221,18 @@ function typeOnlyFixtures(): void {
   // @ts-expect-error Instructions identity is path-derived.
   defineInstructions(instructionsWithName);
 
+  defineInstrumentation({
+    isEnabled: true,
+    recordInputs: true,
+  });
+
+  // Unlike the helpers above, `defineInstrumentation` takes a generic union — a
+  // config and a provider overlap on `events` and `setup` — so it cannot use
+  // `ExactDefinition`. Excess keys reach `eve build` instead.
   const instrumentationWithEnabled = {
     isEnabled: true,
     recordInputs: true,
   };
-  // @ts-expect-error Instrumentation has no separate enable toggle.
   defineInstrumentation(instrumentationWithEnabled);
 
   defineInstrumentation({
