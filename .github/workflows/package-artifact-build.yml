@@ -49,7 +49,7 @@ jobs:
 
       - name: Build package artifact
         env:
-          EVE_PACKAGE_OUTPUT_DIRECTORY: package-artifact
+          EVE_PACKAGE_OUTPUT_DIRECTORY: ${{ github.workspace }}/package-artifact
           EVE_PACKAGE_PUBLIC_ORIGIN: https://pkg.eve.dev
           EVE_PACKAGE_REF: ${{ steps.source.outputs.ref }}
           EVE_PACKAGE_SOURCE_SHA: ${{ steps.source.outputs.sha }}
