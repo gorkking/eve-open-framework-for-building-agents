@@ -27,7 +27,7 @@ The filename is the slot name: `agent/instrumentation/otel.ts` fills the `otel` 
 ```text
 agent/instrumentation/
   otel.ts        the process-wide OpenTelemetry settings
-  braintrust.ts  a destination
+  datadog.ts     a destination
   local.ts       eve's local trace spool, reconfigured or turned off
   audit.ts       a provider that only handles events
 ```
@@ -69,14 +69,16 @@ Omitting this file is the common case. eve registers the pipeline for whatever d
 
 `otelIntegration()` is a destination, and there may be as many as there are files. A `traceExporter` is wrapped in eve's batching processor, which is what makes the one-line form enough:
 
-```ts title="agent/instrumentation/braintrust.ts"
-import { BraintrustExporter } from "@braintrust/otel";
+```ts title="agent/instrumentation/datadog.ts"
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { otelIntegration } from "eve/instrumentation/otel";
 
 export default otelIntegration({
-  traceExporter: new BraintrustExporter({ filterAISpans: true }),
+  traceExporter: new OTLPTraceExporter(),
 });
 ```
+
+For Datadog, enable [OTLP ingestion in the Datadog Agent](https://docs.datadoghq.com/opentelemetry/setup/otlp_ingest_in_the_agent/) and set `OTEL_EXPORTER_OTLP_ENDPOINT` in the agent application to the local Agent endpoint.
 
 Pass `spanProcessors` instead when the destination needs its own batching, sampling, or filtering. Both may be given: declared processors come first, and the wrapped exporter is appended after them.
 
@@ -128,9 +130,12 @@ present only for providers that capture content.
 
 `recordInputs` and `recordOutputs` belong to a destination, not to the process. Content is written onto a span if any destination wants it, and each destination that declined never exports it. A local spool and a hosted backend no longer have to agree:
 
-```ts title="agent/instrumentation/braintrust.ts"
+```ts title="agent/instrumentation/datadog.ts"
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { otelIntegration } from "eve/instrumentation/otel";
+
 export default otelIntegration({
-  traceExporter: new BraintrustExporter({ filterAISpans: true }),
+  traceExporter: new OTLPTraceExporter(),
   recordInputs: false,
   recordOutputs: false,
 });

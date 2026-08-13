@@ -24,7 +24,7 @@ The two configurable surfaces send AI SDK spans to your OpenTelemetry backend. W
 ## Define instrumentation
 
 ```ts title="agent/instrumentation.ts"
-import { BraintrustExporter } from "@braintrust/otel";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { defineInstrumentation } from "eve/instrumentation";
 import { registerOTel } from "@vercel/otel";
 
@@ -32,10 +32,7 @@ export default defineInstrumentation({
   setup: ({ agentName }) =>
     registerOTel({
       serviceName: agentName,
-      traceExporter: new BraintrustExporter({
-        parent: `project_name:${agentName}`,
-        filterAISpans: true,
-      }),
+      traceExporter: new OTLPTraceExporter(),
     }),
 });
 ```
@@ -46,7 +43,7 @@ Export the result of `defineInstrumentation` as the default export.
 
 Use the `setup` callback to register your OTel provider (for example `registerOTel` from `@vercel/otel`). The framework invokes it at server startup with the resolved agent name. `context.agentName` is resolved at compile time from your project (the package's `name`, falling back to the app directory name), so you never hard-code a service name.
 
-Any OTel-compatible backend works (Braintrust, PostHog, Raindrop, Arize, Honeycomb, Datadog, Jaeger). Install the exporter package you need and configure it in the callback. The [PostHog AI Observability integration](/integrations/posthog-instrumentation) provides a ready-to-install exporter and optional user identification.
+Any OTel-compatible backend works (Datadog, PostHog, Raindrop, Arize, Honeycomb, Jaeger). Install the exporter package you need and configure it in the callback. For Datadog, enable [OTLP ingestion in the Datadog Agent](https://docs.datadoghq.com/opentelemetry/setup/otlp_ingest_in_the_agent/) and set `OTEL_EXPORTER_OTLP_ENDPOINT` in the agent application to the local Agent endpoint. The [PostHog AI Observability integration](/integrations/posthog-instrumentation) provides a ready-to-install exporter and optional user identification.
 
 Three more fields control what the AI SDK records inside those spans (see the AI SDK's [telemetry reference](https://ai-sdk.dev/docs/ai-sdk-core/telemetry)):
 
@@ -173,7 +170,7 @@ Per-turn usage tags are written on each step of a turn, accumulating cumulative 
 
 Tag writes are best-effort: a failure is logged once per process and then swallowed, so a broken tag emit never breaks the agent.
 
-These tags power the **Agent Runs** tab in the Vercel dashboard. When you deploy on Vercel, the platform auto-detects `eve` as the framework and surfaces an Agent Runs view under your project's **Observability** tab, where you can browse sessions and drill into each conversation's trace, with no `instrumentation.ts` required. The tab is currently gated per team. See [Deploy to Vercel](./deployment/vercel#inspect-agent-runs) for enablement. Agent Runs is separate from the OpenTelemetry export above. Use OTel when you want spans in Braintrust, PostHog, Datadog, or another third-party backend.
+These tags power the **Agent Runs** tab in the Vercel dashboard. When you deploy on Vercel, the platform auto-detects `eve` as the framework and surfaces an Agent Runs view under your project's **Observability** tab, where you can browse sessions and drill into each conversation's trace, with no `instrumentation.ts` required. The tab is currently gated per team. See [Deploy to Vercel](./deployment/vercel#inspect-agent-runs) for enablement. Agent Runs is separate from the OpenTelemetry export above. Use OTel when you want spans in Datadog, PostHog, Honeycomb, or another third-party backend.
 
 Note: By default, telemetry records full message history and model outputs You may need to disclose these data flows in your privacy materials if utilized.
 
