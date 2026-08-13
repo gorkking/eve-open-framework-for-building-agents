@@ -4,8 +4,12 @@ on:
   workflow_run:
     workflows: [Package artifact build]
     types: [completed]
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to publish
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -15,16 +19,18 @@ permissions:
 jobs:
   publish:
     if: >-
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '/publish-package') ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     concurrency:
-      group: package-artifact-publish-${{ github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || 'main' }}
+      group: package-artifact-publish-${{ github.event_name == 'workflow_dispatch' && format('pr-{0}', inputs.pull_request) || 'main' }}
       cancel-in-progress: false
     steps:
-      - name: Resolve trusted publication target
+      - name: Resolve publication target
         id: target
         uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        env:
+          PULL_REQUEST: ${{ inputs.pull_request }}
         with:
           script: |
             if (context.eventName === "workflow_run") {
@@ -44,16 +50,10 @@ jobs:
               return;
             }
 
-            const pullNumber = context.payload.issue.number;
-            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              username: context.actor,
-            });
-            if (!["admin", "maintain", "write"].includes(permission.permission)) {
-              throw new Error(`${context.actor} is not authorized to publish package artifacts.`);
+            if (!/^[1-9]\d*$/.test(process.env.PULL_REQUEST ?? "")) {
+              throw new Error("pull_request must be a positive integer.");
             }
-
+            const pullNumber = Number(process.env.PULL_REQUEST);
             const { data: pull } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -95,10 +95,10 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ steps.target.outputs.run-id }}
 
-      - name: Checkout trusted publisher
+      - name: Checkout publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || 'main' }}
           path: trusted
           persist-credentials: false
 
@@ -112,7 +112,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: trusted/pnpm-lock.yaml
 
-      - name: Install trusted publisher dependencies
+      - name: Install publisher dependencies
         working-directory: trusted
         run: pnpm install --frozen-lockfile --ignore-scripts
 
