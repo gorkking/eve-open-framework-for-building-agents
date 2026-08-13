@@ -5,6 +5,7 @@
     "multi-tenant-memory",
     "dynamic-scheduling",
     "multi-tenant-auth",
-    "multi-tenant-approvals"
+    "multi-tenant-approvals",
+    "shared-sandbox"
   ]
 }
