@@ -194,7 +194,7 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         await acknowledgeDelegatedTasksStep({ tasks: dispatchResult.pendingTasks });
         await startLocalSubagentWorkMonitorStep({
           serializedContext: cursor.serializedContext,
-          sessionState: cursor.sessionState,
+          sessionState: dispatchResult.sessionState,
         });
 
         const results = await waitForRuntimeActionResults({
