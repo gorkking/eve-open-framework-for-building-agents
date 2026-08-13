@@ -12,13 +12,6 @@ const manifest = {
   version: `0.33.0+main.${sha}`,
   tarball: `https://packages.example.com/${sha}/eve.tgz`,
   sha256: "b".repeat(64),
-  trust: "trusted",
-};
-const unverifiedManifest = {
-  ...manifest,
-  version: `0.33.0+unverified.${sha}`,
-  tarball: `https://packages.example.com/unverified/sha/${sha}/eve.tgz`,
-  trust: "unverified",
 };
 
 function response() {
@@ -34,7 +27,6 @@ function response() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.VERCEL_GIT_COMMIT_SHA = sha;
-  process.env.EVE_UNVERIFIED_BLOB_READ_WRITE_TOKEN = "unverified-token";
   get.mockImplementation(async (pathname) => ({
     stream: new Blob([
       pathname.endsWith("manifest.json") ? JSON.stringify(manifest) : "package bytes",
@@ -47,7 +39,9 @@ describe("package route", () => {
     const res = response();
     await handler({ query: { ref: "main" } }, res);
 
-    expect(get).toHaveBeenCalledWith(`packages/${sha}/manifest.json`, { access: "private" });
+    expect(get).toHaveBeenCalledWith(`packages/${sha}/manifest.json`, {
+      access: "private",
+    });
     expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "public, max-age=60");
     expect(res.redirect).toHaveBeenCalledWith(302, manifest.tarball);
   });
@@ -63,7 +57,9 @@ describe("package route", () => {
   test("serves SHA tarballs but not SHA latest manifests", async () => {
     const artifact = response();
     await handler({ query: { ref: sha } }, artifact);
-    expect(get).toHaveBeenLastCalledWith(`packages/${sha}/eve.tgz`, { access: "private" });
+    expect(get).toHaveBeenLastCalledWith(`packages/${sha}/eve.tgz`, {
+      access: "private",
+    });
     expect(artifact.setHeader).toHaveBeenCalledWith(
       "Cache-Control",
       "public, max-age=31536000, immutable",
@@ -74,44 +70,6 @@ describe("package route", () => {
     const latest = response();
     await handler({ query: { ref: sha, manifest: "1" } }, latest);
     expect(latest.status).toHaveBeenCalledWith(404);
-  });
-
-  test("serves immutable unverified SHA tarballs", async () => {
-    get.mockImplementation(async (pathname) => ({
-      stream: new Blob([
-        pathname.endsWith("manifest.json") ? JSON.stringify(unverifiedManifest) : "package bytes",
-      ]).stream(),
-    }));
-    const artifact = response();
-    await handler({ query: { scope: "unverified", ref: sha } }, artifact);
-
-    expect(get).toHaveBeenCalledWith(`unverified/sha/${sha}/manifest.json`, {
-      access: "private",
-      token: "unverified-token",
-    });
-    expect(get).toHaveBeenLastCalledWith(`unverified/sha/${sha}/eve.tgz`, {
-      access: "private",
-      token: "unverified-token",
-    });
-    expect(artifact.setHeader).toHaveBeenCalledWith(
-      "Cache-Control",
-      "public, max-age=31536000, immutable",
-    );
-  });
-
-  test("redirects a pull request to its immutable unverified artifact", async () => {
-    get.mockResolvedValue({
-      stream: new Blob([JSON.stringify({ ...unverifiedManifest, pullRequest: 123 })]).stream(),
-    });
-    const res = response();
-    await handler({ query: { scope: "unverified", pr: "123" } }, res);
-
-    expect(get).toHaveBeenCalledWith("unverified/pr/123/latest.json", {
-      access: "private",
-      token: "unverified-token",
-    });
-    expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "public, max-age=60");
-    expect(res.redirect).toHaveBeenCalledWith(302, unverifiedManifest.tarball);
   });
 
   test("rejects unsupported refs and missing artifacts", async () => {
