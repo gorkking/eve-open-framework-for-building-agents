@@ -382,7 +382,7 @@ async function waitForRuntimeActionResults(input: {
       return "cancelled";
     }
     if (next.kind === "work-refresh") {
-      console.info("[eve.work] parent refresh tick", {
+      console.error("[eve.work] parent refresh tick", {
         pendingActionKeys: input.pendingActionKeys,
         sessionId: input.cursor.sessionState.sessionId,
       });
@@ -404,7 +404,7 @@ async function waitForRuntimeActionResults(input: {
     nextPromise = input.iterator.next();
     nextPromise.catch(() => {});
     if (value.kind === "runtime-action-result") {
-      console.info("[eve.work] parent received child result", {
+      console.error("[eve.work] parent received child result", {
         callIds: value.results.map((result) => result.callId),
         sessionId: input.cursor.sessionState.sessionId,
       });
@@ -420,7 +420,7 @@ async function waitForRuntimeActionResults(input: {
       const accepted = value.results.filter((result) =>
         isInboxSubagentResultFromRunningHandle(sessionSnapshotState, result),
       );
-      console.info("[eve.work] parent child result binding", {
+      console.error("[eve.work] parent child result binding", {
         acceptedCallIds: accepted.map((result) => result.callId),
         receivedCallIds: value.results.map((result) => result.callId),
         sessionId: input.cursor.sessionState.sessionId,
