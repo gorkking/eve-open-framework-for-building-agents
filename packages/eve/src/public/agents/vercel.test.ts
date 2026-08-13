@@ -22,6 +22,7 @@ describe("defineVercelBranchAgent", () => {
     });
 
     expect(agent).toMatchObject({
+      branch: "feature/preview-agent",
       description: "Preview agent.",
       forwardPrincipal: true,
       kind: "remote",

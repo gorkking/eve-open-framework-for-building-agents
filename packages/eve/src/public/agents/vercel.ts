@@ -22,21 +22,29 @@ export interface VercelBranchAgentInput extends Omit<RemoteAgentDefinitionInput,
   readonly url: string;
 }
 
+/** A remote agent definition carrying the Git branch it represents. */
+export interface VercelBranchAgentDefinition extends RemoteAgentDefinition {
+  readonly branch: string;
+}
+
 /**
  * Returns a normal remote-agent definition for a Vercel branch Preview
  * Deployment. Outbound Vercel OIDC authenticates this deployment to the
  * preview; forwarding the end-user principal remains an explicit opt-in.
  */
-export function defineVercelBranchAgent(input: VercelBranchAgentInput): RemoteAgentDefinition {
+export function defineVercelBranchAgent(
+  input: VercelBranchAgentInput,
+): VercelBranchAgentDefinition {
   const { branch: rawBranch, ...remote } = input;
   const branch = rawBranch.trim();
   if (!branch) throw new Error("defineVercelBranchAgent requires a non-empty branch.");
 
   const agent = Object.assign(defineRemoteAgent(remote), { auth: vercelDeploymentOidc });
-  Object.defineProperty(agent, "__eveResolveRemoteAgentCredentials", {
-    value: vercelBranchAgentCredentials,
+  Object.defineProperties(agent, {
+    __eveResolveRemoteAgentCredentials: { value: vercelBranchAgentCredentials },
+    branch: { value: branch },
   });
-  return agent;
+  return agent as typeof agent & VercelBranchAgentDefinition;
 }
 
 const VERCEL_BRANCH_AGENT_CREDENTIALS_STEP_ID = "eve:vercel-branch-agent//credentials";
