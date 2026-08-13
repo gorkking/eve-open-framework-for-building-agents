@@ -22,7 +22,7 @@ A pull-request build is available at `/pr/<number>/eve.tgz` after its package wo
 
 [Package artifact build](../../.github/workflows/package-artifact-build.yml) runs for `main` pushes and pull requests without credentials. It checks out the exact source SHA, packages eve, and uploads the tarball and metadata as a short-lived GitHub Actions artifact.
 
-[Package artifact publish](../../.github/workflows/package-artifact-publish.yml) publishes `main` automatically through `workflow_run`, while pull requests require a manual `workflow_dispatch` with the PR number. GitHub loads the publisher from trusted `main`; it resolves the PR's current head through the API, finds that SHA's successful package build, downloads its artifact, checks out the trusted publisher from `main`, and uploads the bytes without executing or extracting them. Pull-request code controls package contents but never receives the Blob token or controls the destination paths.
+[Package artifact publish](../../.github/workflows/package-artifact-publish.yml) publishes `main` automatically through `workflow_run`. A repository collaborator with write access can publish a pull request by commenting `/publish-package` on it. Both triggers load the publisher from trusted `main`; it resolves the PR's current head through the API, finds that SHA's successful package build, downloads its artifact, checks out the trusted publisher from `main`, and uploads the bytes without executing or extracting them. Pull-request code controls package contents but never receives the Blob token or controls the destination paths.
 
 The publisher writes:
 
@@ -45,6 +45,6 @@ The Vercel package project must:
 - set its Ignored Build Step to `test "$VERCEL_GIT_COMMIT_REF" != "main"`; and
 - disable Deployment Protection so package managers can reach the public proxy.
 
-Set the repository Actions secret `EVE_PACKAGE_BLOB_READ_WRITE_TOKEN` to the package store's write token. The build workflow never references this secret; only the publisher loaded from trusted `main` can access it. Pull-request builds inherit the repository's existing contributor approval policy, and publishing a PR requires a separate manual run of **Package artifact publish** from `main`.
+Set the repository Actions secret `EVE_PACKAGE_BLOB_READ_WRITE_TOKEN` to the package store's write token. The build workflow never references this secret; only the publisher loaded from trusted `main` can access it. Pull-request builds inherit the repository's existing contributor approval policy, and publishing a PR requires a separate `/publish-package` command from an authorized collaborator.
 
 The smoke check verifies public access and the downloaded main artifact's gzip signature.

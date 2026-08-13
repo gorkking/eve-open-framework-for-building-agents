@@ -4,12 +4,8 @@ on:
   workflow_run:
     workflows: [Package artifact build]
     types: [completed]
-  workflow_dispatch:
-    inputs:
-      pull_request:
-        description: Pull request number to publish
-        required: true
-        type: string
+  issue_comment:
+    types: [created]
 
 permissions:
   actions: read
@@ -19,15 +15,16 @@ permissions:
 jobs:
   publish:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '/publish-package') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    concurrency:
+      group: package-artifact-publish-${{ github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || 'main' }}
+      cancel-in-progress: false
     steps:
       - name: Resolve trusted publication target
         id: target
         uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
-        env:
-          PULL_REQUEST: ${{ inputs.pull_request }}
         with:
           script: |
             if (context.eventName === "workflow_run") {
@@ -47,10 +44,16 @@ jobs:
               return;
             }
 
-            if (!/^[1-9]\d*$/.test(process.env.PULL_REQUEST ?? "")) {
-              throw new Error("pull_request must be a positive integer.");
+            const pullNumber = context.payload.issue.number;
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.actor,
+            });
+            if (!["admin", "maintain", "write"].includes(permission.permission)) {
+              throw new Error(`${context.actor} is not authorized to publish package artifacts.`);
             }
-            const pullNumber = Number(process.env.PULL_REQUEST);
+
             const { data: pull } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
