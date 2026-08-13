@@ -1070,6 +1070,9 @@ response resumes a disposed child hook and fails the parent.
 
 ## Related work
 
+- [`hitl-interaction-engine.md`](./hitl-interaction-engine.md): implementation
+  architecture for one durable store, pure interpreter, and ordered effect
+  executor.
 - [PR #1368](https://github.com/vercel/eve/pull/1368): responder identity,
   authorization, Allow, Cancel, and request settlement.
 - [PR #1231](https://github.com/vercel/eve/pull/1231): makes every message
