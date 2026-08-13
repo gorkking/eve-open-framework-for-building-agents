@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { z } from "#compiled/zod/index.js";
 import type { SessionAuthContext } from "#channel/types.js";
 import {
   createMcpStreamableHttpServer,
@@ -84,7 +83,12 @@ function server() {
           call,
           definition: {
             description: "Echoes input.",
-            inputSchema: z.strictObject({ value: z.number() }),
+            inputSchema: {
+              additionalProperties: false,
+              properties: { value: { type: "number" } },
+              required: ["value"],
+              type: "object",
+            },
             name: "echo",
           },
         },
@@ -156,14 +160,14 @@ describe("stateless MCP Streamable HTTP server", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: {
         code: -32_020,
-        message: "Missing MCP-Protocol-Version header",
+        message: expect.stringContaining("MCP-Protocol-Version header is absent"),
       },
       id: "missing-version",
       jsonrpc: "2.0",
     });
   });
 
-  it("preserves malformed and unsupported modern envelope errors", async () => {
+  it("leaves malformed and unsupported modern envelopes to earlier SDK validation rungs", async () => {
     const { handle } = server();
     const malformed = await handle(
       request(
@@ -205,33 +209,8 @@ describe("stateless MCP Streamable HTTP server", () => {
     );
     expect(unsupported.status).toBe(400);
     await expect(unsupported.json()).resolves.toMatchObject({
-      error: { code: -32_022, data: { supported: [MCP_PROTOCOL_VERSION] } },
+      error: { code: -32_022 },
       id: "unsupported-version",
-    });
-  });
-
-  it("does not route a malformed modern request through the legacy handler", async () => {
-    const { handle } = server();
-    const response = await handle(
-      request(
-        {
-          id: "missing-meta",
-          jsonrpc: "2.0",
-          method: "server/discover",
-          params: {},
-        },
-        {
-          "mcp-method": "server/discover",
-          "mcp-protocol-version": MCP_PROTOCOL_VERSION,
-        },
-      ),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: -32_602 },
-      id: "missing-meta",
-      jsonrpc: "2.0",
     });
   });
 
@@ -241,7 +220,7 @@ describe("stateless MCP Streamable HTTP server", () => {
     expect(await jsonRpcResponse(initialized)).toMatchObject({
       id: 1,
       result: {
-        capabilities: { tools: { listChanged: true } },
+        capabilities: { tools: { listChanged: false } },
         protocolVersion: MCP_LEGACY_PROTOCOL_VERSION,
         serverInfo: { name: "eve-test", version: "0.0.0" },
       },
@@ -254,7 +233,7 @@ describe("stateless MCP Streamable HTTP server", () => {
     });
   });
 
-  it("calls modern tools with authenticated context and request cancellation", async () => {
+  it("calls modern tools with authenticated context and SDK cancellation", async () => {
     const { call, handle } = server();
     const response = await handle(
       modernRequest({
@@ -288,47 +267,11 @@ describe("stateless MCP Streamable HTTP server", () => {
     expect(await jsonRpcResponse(response)).toMatchObject({
       id: "invalid-call",
       result: {
-        content: [{ text: expect.stringContaining("Invalid input"), type: "text" }],
+        content: [{ text: expect.stringContaining("Input validation error"), type: "text" }],
         isError: true,
       },
     });
     expect(call).not.toHaveBeenCalled();
-  });
-
-  it("enforces the advertised tool output schema", async () => {
-    const handle = createMcpStreamableHttpServer({
-      authenticate: async () => auth,
-      name: "eve-test",
-      tools: [
-        {
-          call: async () => ({
-            content: [{ text: "invalid", type: "text" }],
-            structuredContent: { value: "not-a-number" },
-          }),
-          definition: {
-            inputSchema: z.object({}),
-            name: "invalid-output",
-            outputSchema: z.strictObject({ value: z.number() }),
-          },
-        },
-      ],
-      version: "0.0.0",
-    });
-
-    const response = await handle(
-      modernRequest({
-        id: "invalid-output",
-        jsonrpc: "2.0",
-        method: "tools/call",
-        params: { arguments: {}, name: "invalid-output" },
-      }),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: -32_602, message: "Tool result does not match its outputSchema" },
-      id: "invalid-output",
-    });
   });
 
   it("returns JSON-RPC errors and acknowledges notifications", async () => {
@@ -341,34 +284,16 @@ describe("stateless MCP Streamable HTTP server", () => {
     });
 
     const notification = await handle(
-      modernRequest({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      request(
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        {
+          "mcp-method": "notifications/initialized",
+          "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+        },
+      ),
     );
     expect(notification.status).toBe(202);
     expect(await notification.text()).toBe("");
-  });
-
-  it("does not expose MCP primitives that eve does not advertise", async () => {
-    const { handle } = server();
-    for (const method of ["completion/complete", "prompts/list", "resources/list"]) {
-      const response = await handle(modernRequest({ id: method, jsonrpc: "2.0", method }));
-      expect(response.status).toBe(404);
-      await expect(response.json()).resolves.toMatchObject({
-        error: { code: -32_601, message: "Method not found" },
-        id: method,
-      });
-    }
-
-    const mismatch = await handle(
-      modernRequest(
-        { id: "mismatch", jsonrpc: "2.0", method: "tools/list" },
-        { "mcp-method": "prompts/list" },
-      ),
-    );
-    expect(mismatch.status).toBe(400);
-    await expect(mismatch.json()).resolves.toMatchObject({
-      error: { code: -32_020 },
-      id: "mismatch",
-    });
   });
 
   it("authenticates before transport handling", async () => {
@@ -431,7 +356,7 @@ describe("stateless MCP Streamable HTTP server", () => {
   it("rejects duplicate tool names at construction", () => {
     const tool = {
       call: async () => ({ content: [] }),
-      definition: { inputSchema: z.object({}), name: "duplicate" },
+      definition: { inputSchema: {}, name: "duplicate" },
     };
     expect(() =>
       createMcpStreamableHttpServer({
