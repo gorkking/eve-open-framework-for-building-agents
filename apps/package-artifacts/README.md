@@ -34,10 +34,10 @@ An unverified builder must be a **separate** Vercel project connected only to a 
 
 The unverified builder needs write access only to the unverified store. The trusted package host reads that store with `EVE_UNVERIFIED_BLOB_READ_WRITE_TOKEN` in its Production environment and proxies it through `pkg.eve.dev`; never configure that token in the unverified builder.
 
-Only `main` Production builds publish trusted artifacts. For the trusted project, set the Ignored Build Step to:
+Only `main` builds may run in the trusted project. Set its Ignored Build Step to:
 
 ```sh
-test "$VERCEL_ENV" = "production" && test "$VERCEL_GIT_COMMIT_REF" != "main"
+test "$VERCEL_GIT_COMMIT_REF" != "main"
 ```
 
-That permits Preview deployments while preventing a non-main Production deployment from publishing. The smoke check verifies public access and the downloaded artifact's gzip signature.
+This skips every non-main revision before dependency installation and prevents untrusted branch code from running with the trusted project’s Blob access. The separate unverified builder is the only project that builds Preview branches. The smoke check verifies public access and the downloaded artifact's gzip signature.
