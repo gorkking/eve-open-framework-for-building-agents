@@ -173,7 +173,10 @@ export type ChannelAdapter<TCtx extends ChannelAdapterContext<any> = ChannelAdap
 
   /** Internal channel-owned rendering of a changed active work graph. */
   readonly work?: {
-    readonly render: (ctx: TCtx) => void | Promise<void>;
+    readonly render: (
+      ctx: TCtx,
+      options?: { readonly allowPost?: boolean },
+    ) => void | Promise<void>;
   };
 } & ChannelEventHandlers<TCtx>;
 

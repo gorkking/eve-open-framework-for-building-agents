@@ -768,8 +768,9 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
       workActivityTurnId: null,
     },
     fetchFile: slackFetchFile,
-    work: (state, _session, ctx) =>
+    work: (state, _session, ctx, options) =>
       renderSlackWorkActivity({
+        allowPost: options?.allowPost,
         channel: rebuildSlackContext(state, _session, config.credentials),
         work: ctx.get(WorkGraphKey),
       }),

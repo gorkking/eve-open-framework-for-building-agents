@@ -37,6 +37,7 @@ export async function settleSlackWorkActivity(channel: SlackWorkActivityChannel)
 }
 
 export async function renderSlackWorkActivity(input: {
+  readonly allowPost?: boolean;
   readonly channel: SlackWorkActivityChannel;
   readonly work: WorkGraph | undefined;
 }): Promise<void> {
@@ -65,6 +66,8 @@ export async function renderSlackWorkActivity(input: {
       return;
     }
   }
+
+  if (input.allowPost === false) return;
 
   try {
     const posted = await input.channel.thread.post(text);
@@ -100,7 +103,10 @@ function renderAction(action: WorkAction): string {
 }
 
 function summarizeChild(actions: readonly WorkAction[]): string | undefined {
-  return actions.find((action) => action.phase === "running")?.name ?? actions.at(-1)?.name;
+  const action = actions.find((action) => action.phase === "running") ?? actions.at(-1);
+  return action === undefined
+    ? undefined
+    : [action.name, action.detail].filter(Boolean).join(" — ");
 }
 
 function phaseGlyph(phase: WorkPhase): string {

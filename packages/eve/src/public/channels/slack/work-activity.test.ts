@@ -98,6 +98,7 @@ describe("renderSlackWorkActivity", () => {
                               {
                                 callId: "stage-1",
                                 kind: "tool-call",
+                                detail: "discover",
                                 name: "research_stage",
                                 phase: "completed",
                               },
@@ -122,7 +123,41 @@ describe("renderSlackWorkActivity", () => {
       },
     });
 
-    expect(post).toHaveBeenCalledWith("*Working*\n\n◐ researcher — research_stage");
+    expect(post).toHaveBeenCalledWith("*Working*\n\n◐ researcher — research_stage — discover");
+  });
+
+  it("does not post when a monitor cannot find the parent-owned activity message", async () => {
+    const post = vi.fn(async () => ({ id: "activity-2" }));
+    const request = vi.fn(async () => ({ error: "message_not_found", ok: false }));
+    const channel = {
+      slack: { channelId: "C1", request },
+      state: { workActivityMessageTs: "missing", workActivityTurnId: "turn-1" },
+      thread: { post },
+    };
+
+    await renderSlackWorkActivity({
+      allowPost: false,
+      channel,
+      work: {
+        revision: 1,
+        turn: {
+          blockers: [],
+          id: "turn-1",
+          phase: "running",
+          steps: [
+            {
+              actions: [
+                { callId: "call-1", kind: "tool-call", name: "search_docs", phase: "running" },
+              ],
+              phase: "running",
+              stepIndex: 0,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("reposts when its tracked message is gone", async () => {

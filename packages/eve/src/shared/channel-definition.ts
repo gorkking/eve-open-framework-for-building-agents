@@ -106,6 +106,7 @@ export interface GenericChannelDefinition<
     state: NonNullable<TState>,
     session: SessionHandle,
     ctx: ContextAccessor,
+    options?: { readonly allowPost?: boolean },
   ) => void | Promise<void>;
 
   /**

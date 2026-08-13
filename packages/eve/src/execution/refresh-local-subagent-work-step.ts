@@ -115,7 +115,7 @@ export async function refreshLocalSubagentWorkStep(input: {
     revision: work.revision,
   });
   if (render !== undefined) {
-    await render(buildAdapterContext(adapter, ctx));
+    await render(buildAdapterContext(adapter, ctx), { allowPost: false });
     ctx.set(ChannelKey, { ...adapter, state: { ...ctx.require(ChannelKey).state } });
   }
   const serializedContext = serializeContext(ctx);
