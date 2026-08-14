@@ -239,6 +239,7 @@ import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { RunMode } from "#shared/run-mode.js";
 import {
   type CompactionConfig,
+  type HarnessEmitFn,
   type HarnessSession,
   type HarnessToolMap,
   requireSessionModelReference,
@@ -266,6 +267,29 @@ const environment = process.env.NODE_ENV ?? "unknown";
 const eveVersion = resolveInstalledPackageInfo().version;
 
 const log = createLogger("harness.tool-loop");
+
+class TurnStartedEventHandlerError extends Error {
+  readonly handlerError: unknown;
+
+  constructor(handlerError: unknown) {
+    super("turn.started event handler failed");
+    this.name = "TurnStartedEventHandlerError";
+    this.handlerError = handlerError;
+  }
+}
+
+function recoverableTurnPreambleEmitter(emitFn: HarnessEmitFn): HarnessEmitFn {
+  return async (event, messages) => {
+    try {
+      await emitFn(event, messages);
+    } catch (error) {
+      if (event.type === "turn.started" && !isDynamicModelSelectionError(error)) {
+        throw new TurnStartedEventHandlerError(error);
+      }
+      throw error;
+    }
+  };
+}
 
 /**
  * Wired as the agent's `onToolExecutionEnd`. On the `tool-error` branch
@@ -673,6 +697,39 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         session,
       };
     };
+    const parkOnBoundaryEventFailure = async (
+      error: unknown,
+      failureState: ReturnType<typeof getHarnessEmissionState>,
+    ): Promise<StepResult> => {
+      throwIfTurnAborted(config.abortSignal);
+      if (!emit || config.mode === "task") {
+        throw error;
+      }
+      if (turnSpan) {
+        recordErrorOnSpan(turnSpan, error);
+      }
+
+      const errorId = createErrorId();
+      const message = toErrorMessage(error);
+      log.error("turn boundary event handler failed; parking session for retry by the user", {
+        error,
+        errorId,
+        sessionId: session.sessionId,
+        turnId: failureState.turnId,
+      });
+      const failedEmissionState = await emitRecoverableFailedTurn(emit, failureState, {
+        code: "EVENT_HANDLER_FAILED",
+        continuationToken: session.continuationToken,
+        details: { errorId },
+        message,
+      });
+
+      return {
+        next: null,
+        session: setHarnessEmissionState(session, failedEmissionState),
+        settledTurn: { isError: true, output: message },
+      };
+    };
     const preparePreambleTrace = async (): Promise<RuntimeTraceContext | undefined> => {
       const spanContext = turnSpan?.spanContext();
       const authoredTraceContext =
@@ -979,7 +1036,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         try {
           const traceContext = await preparePreambleTrace();
           emissionState = await emitTurnPreamble(
-            emit,
+            recoverableTurnPreambleEmitter(emit),
             preambleStepInput ?? {},
             emissionState,
             config.runtimeIdentity,
@@ -993,13 +1050,19 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             history: [...parkedSession.history, ...instructionMessages],
           };
           session = parkedSession;
-          if (!isDynamicModelSelectionError(error)) throw error;
-          return failModelSelection(error, {
+          const failureState = {
             sessionStarted: true,
             sequence: emissionState.sequence,
             stepIndex: 0,
             turnId: `turn_${emissionState.sequence}`,
-          });
+          };
+          if (error instanceof TurnStartedEventHandlerError) {
+            return parkOnBoundaryEventFailure(error.handlerError, failureState);
+          }
+          if (isDynamicModelSelectionError(error)) {
+            return failModelSelection(error, failureState);
+          }
+          throw error;
         }
         instructionMessages = store === undefined ? [] : drainDynamicInstructionUserMessages(store);
         parkedSession = {
@@ -1064,7 +1127,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       try {
         const traceContext = await preparePreambleTrace();
         emissionState = await emitTurnPreamble(
-          emit,
+          recoverableTurnPreambleEmitter(emit),
           preambleStepInput ?? {},
           emissionState,
           config.runtimeIdentity,
@@ -1076,13 +1139,19 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           ...pending.session,
           history: [...pending.session.history, ...instructionMessages],
         };
-        if (!isDynamicModelSelectionError(error)) throw error;
-        return failModelSelection(error, {
+        const failureState = {
           sessionStarted: true,
           sequence: emissionState.sequence,
           stepIndex: 0,
           turnId: `turn_${emissionState.sequence}`,
-        });
+        };
+        if (error instanceof TurnStartedEventHandlerError) {
+          return parkOnBoundaryEventFailure(error.handlerError, failureState);
+        }
+        if (isDynamicModelSelectionError(error)) {
+          return failModelSelection(error, failureState);
+        }
+        throw error;
       }
       instructionMessages = store === undefined ? [] : drainDynamicInstructionUserMessages(store);
 
@@ -1184,12 +1253,15 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const model = resolvedModel.model;
 
     if (emit) {
-      await emitStepStarted(
-        emit,
-        emissionState,
-        requireSessionModelReference(session).id,
-        messages,
-      );
+      const modelId = requireSessionModelReference(session).id;
+      try {
+        await emitStepStarted(emit, emissionState, modelId, messages);
+      } catch (error) {
+        if (isDynamicModelSelectionError(error)) {
+          throw error;
+        }
+        return parkOnBoundaryEventFailure(error, emissionState);
+      }
     }
     const cachePath = detectPromptCachePath(model);
     const marker = cachePath.kind === "anthropic-direct" ? getAnthropicCacheMarker() : undefined;
