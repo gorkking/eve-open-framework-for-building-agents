@@ -31,6 +31,7 @@ const RELEASE_AGE_POLICY =
 const TEST_WEB_PACKAGE_VERSIONS = {
   evePackage: TEST_EVE_PACKAGE,
   aiPackageVersion: "7.0.0",
+  betterAuthPackageVersion: "1.6.26-test",
   nextPackageVersion: "16.2.6",
   reactPackageVersion: "19.2.6",
   reactDomPackageVersion: "19.2.6",
@@ -247,6 +248,7 @@ describe("ensureChannel", () => {
       "withEve",
     );
     const packageJson = await readFile(join(projectRoot, "package.json"), "utf8");
+    expect(packageJson).not.toContain('"better-auth"');
     expect(packageJson).toContain('"next": "16.2.6"');
     expect(packageJson).toContain('"build:eve": "eve build"');
     expect(packageJson).toContain('"dev": "next dev"');
@@ -272,6 +274,69 @@ describe("ensureChannel", () => {
         2,
       )}\n`,
     );
+  });
+
+  test("writes a Sign in with Vercel authenticated Web Chat app", async () => {
+    const projectRoot = await createTempDir();
+    await writeFile(
+      join(projectRoot, "package.json"),
+      `${JSON.stringify({ name: "private-agent", type: "module" }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const result = await ensureChannel({
+      projectRoot,
+      kind: "web",
+      webAuthentication: "sign-in-with-vercel",
+      webPackageVersions: {
+        ...TEST_WEB_PACKAGE_VERSIONS,
+        nextPackageVersion: undefined,
+      },
+    });
+
+    expect(result).toMatchObject({ kind: "web", action: "created" });
+    expect(result.filesWritten).toEqual(
+      expect.arrayContaining([
+        join(projectRoot, "app/_components/web-chat-auth.tsx"),
+        join(projectRoot, "app/api/auth/[...all]/route.ts"),
+        join(projectRoot, "lib/auth-client.ts"),
+        join(projectRoot, "lib/auth.ts"),
+      ]),
+    );
+
+    const packageJson = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    expect(packageJson.dependencies["better-auth"]).toBe("1.6.26-test");
+    expect(packageJson.dependencies.next).toBe("16.3.0");
+
+    const pageSource = await readFile(join(projectRoot, "app/page.tsx"), "utf8");
+    expect(pageSource).toContain("auth.api.getSession");
+    expect(pageSource).toContain("<SignIn />");
+    expect(pageSource).toContain("<AccountControl");
+
+    const authSource = await readFile(join(projectRoot, "lib/auth.ts"), "utf8");
+    expect(authSource).toContain('requireEnvironmentVariable("BETTER_AUTH_SECRET")');
+    expect(authSource).toContain("process.env.VERCEL_PROJECT_PRODUCTION_URL");
+    expect(authSource).toContain('clientId: requireEnvironmentVariable("VERCEL_APP_CLIENT_ID")');
+    expect(authSource).toContain('throw new Error("No trusted deployment hosts are configured")');
+    expect(authSource).not.toContain("*.vercel.app");
+
+    const channelSource = await readFile(join(projectRoot, "agent/channels/eve.ts"), "utf8");
+    expect(channelSource).toContain("auth.api.getSession");
+    expect(channelSource).toContain('authenticator: "better-auth:vercel"');
+    expect(channelSource).not.toContain('issuer: "https://vercel.com"');
+    expect(channelSource).toContain("vercelOidc()");
+    expect(channelSource).toContain("localDev()");
+    expect(channelSource).not.toContain("placeholderAuth");
+
+    const accountSource = await readFile(
+      join(projectRoot, "app/_components/web-chat-auth.tsx"),
+      "utf8",
+    );
+    expect(accountSource).toContain('className="size-9 cursor-pointer');
+    expect(accountSource).toContain("Log out");
+    expect(accountSource).not.toContain("__EVE_INIT_APP_NAME__");
   });
 
   test("overrides an incompatible node engine when adding Web Chat", async () => {
@@ -385,8 +450,9 @@ describe("ensureChannel", () => {
       join(projectRoot, "app/_components/agent-chat.tsx"),
       "utf8",
     );
-    expect(agentChatSource).toContain("preserveCompletedSessions: true");
-    expect(agentChatSource).toContain("session.cancel({ turnId })");
+    expect(agentChatSource).toContain(".attach(sessionId)");
+    expect(agentChatSource).toContain(".cancel({ turnId })");
+    expect(agentChatSource).toContain("onSessionChange(session)");
     expect(agentChatSource).toContain("cancellation.sentTurnId === turnId");
     expect(agentChatSource).not.toContain("onStop={agent.stop}");
   });
@@ -888,7 +954,7 @@ describe("scaffoldBaseProject", () => {
     expect(agentSource).not.toContain("modelOptions");
     const packageJson = await readFile(join(projectRoot, "package.json"), "utf8");
     expect(packageJson).toContain('"eve": "^0.25.0"');
-    // Channels added later (`eve channels add slack`, possibly next to a
+    // Channels added later (`eve add channel/slack`, possibly next to a
     // running `eve dev`) import @vercel/connect; init ships it so a later
     // channel add never introduces a missing dependency.
     expect(packageJson).toContain('"@vercel/connect": "0.2.2"');
@@ -916,6 +982,16 @@ describe("scaffoldBaseProject", () => {
     expect(agentsMd).toContain("installed eve package docs");
     expect(agentsMd).toContain("node_modules/eve/docs/");
     expect(agentsMd).toContain("resolve the\ninstalled `eve` package location");
+    expect(agentsMd).toContain("eve registry search <query> --json");
+    expect(agentsMd).toContain("eve registry view <item>");
+    expect(agentsMd).toContain("eve add <item> --non-interactive");
+    expect(agentsMd).toContain("`implementation` is `native`");
+    expect(agentsMd).toContain("`deploymentRequired: true`");
+    expect(agentsMd).toContain("Exit code 0 means setup completed");
+    expect(agentsMd).toContain("next.command");
+    expect(agentsMd).toContain("--skip-install");
+    expect(agentsMd).toContain("eve link");
+    expect(agentsMd).toContain("external_action_resolved");
     // `vercel deploy` uploads everything a .vercelignore doesn't exclude, and
     // the platform default-ignores only the .env.local variants — eve's dev
     // artifacts and a bare .env must be excluded here or a source deploy

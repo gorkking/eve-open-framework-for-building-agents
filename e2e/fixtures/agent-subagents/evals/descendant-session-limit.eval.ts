@@ -16,6 +16,7 @@ const DELEGATE_PROMPT = [
  * route back to the child that minted it.
  */
 export default defineEval({
+  tags: ["real-model"],
   description:
     "A descendant session-limit prompt reaches the root; continue resumes the child and stop leaves the root session reusable.",
   timeoutMs: 90_000,
@@ -38,10 +39,12 @@ export default defineEval({
       ),
     );
 
-    const resumed = await t.respond({
-      optionId: "continue",
-      requestId: continueRequest.requestId,
-    });
+    const resumed = await t.respond([
+      {
+        optionId: "continue",
+        requestId: continueRequest.requestId,
+      },
+    ]);
     resumed.expectOk();
     t.succeeded();
     t.calledSubagent("limited-worker", { count: 1, output: CHILD_TOKEN });
@@ -56,10 +59,12 @@ export default defineEval({
       toolName: "session_limit_continuation",
     });
 
-    const stopped = await stopSession.respond({
-      optionId: "stop",
-      requestId: stopRequest.requestId,
-    });
+    const stopped = await stopSession.respond([
+      {
+        optionId: "stop",
+        requestId: stopRequest.requestId,
+      },
+    ]);
     stopped.expectOk();
     stopSession.notEvent("turn.failed");
     stopSession.notEvent("session.failed");

@@ -1,10 +1,9 @@
-import type { MessageStreamEvent } from "../../protocol/message.js";
+import type { HandleMessageStreamEvent } from "../../protocol/message.js";
 import type { SessionContext } from "./callback-context.js";
 import type { ExactDefinition } from "./exact.js";
 
-// Stamped, so a hook can read `event.meta` unguarded.
-type ProtocolEvent<TType extends MessageStreamEvent["type"]> = Extract<
-  MessageStreamEvent,
+type ProtocolEvent<TType extends HandleMessageStreamEvent["type"]> = Extract<
+  HandleMessageStreamEvent,
   { type: TType }
 >;
 
@@ -16,12 +15,16 @@ type ProtocolEvent<TType extends MessageStreamEvent["type"]> = Extract<
  * until eve exposes them here.
  */
 export interface HookEventMap {
+  readonly "action.partial": ProtocolEvent<"action.partial">;
   readonly "action.result": ProtocolEvent<"action.result">;
+  readonly "approval.candidate": ProtocolEvent<"approval.candidate">;
+  readonly "approval.settled": ProtocolEvent<"approval.settled">;
   readonly "actions.requested": ProtocolEvent<"actions.requested">;
   readonly "authorization.completed": ProtocolEvent<"authorization.completed">;
   readonly "authorization.required": ProtocolEvent<"authorization.required">;
   readonly "compaction.completed": ProtocolEvent<"compaction.completed">;
   readonly "compaction.requested": ProtocolEvent<"compaction.requested">;
+  readonly "context.cleared": ProtocolEvent<"context.cleared">;
   readonly "input.requested": ProtocolEvent<"input.requested">;
   readonly "message.appended": ProtocolEvent<"message.appended">;
   readonly "message.completed": ProtocolEvent<"message.completed">;

@@ -89,7 +89,8 @@ describe("discoverAgent (memory)", () => {
     expect(result.manifest.instructions).toEqual([
       {
         definition: {
-          markdown: "You are a precise assistant.",
+          content: "You are a precise assistant.",
+          role: "system",
         },
         sourceKind: "markdown",
         logicalPath: "instructions.md",
@@ -174,7 +175,8 @@ describe("discoverAgent (memory)", () => {
     expect(result.manifest.instructions).toEqual([
       {
         definition: {
-          markdown: "You are a precise assistant.",
+          content: "You are a precise assistant.",
+          role: "system",
         },
         sourceKind: "markdown",
         logicalPath: "system.md",
@@ -226,7 +228,8 @@ describe("discoverAgent (memory)", () => {
     expect(result.manifest.instructions).toEqual([
       {
         definition: {
-          markdown: "Preferred instructions.",
+          content: "Preferred instructions.",
+          role: "system",
         },
         sourceKind: "markdown",
         logicalPath: "instructions.md",
@@ -252,7 +255,8 @@ describe("discoverAgent (memory)", () => {
     expect(result.manifest.instructions).toEqual([
       {
         definition: {
-          markdown: "Uppercase instructions.",
+          content: "Uppercase instructions.",
+          role: "system",
         },
         sourceKind: "markdown",
         logicalPath: "instructions.md",
@@ -475,7 +479,8 @@ describe("discoverAgent (memory)", () => {
     expect(result.manifest.instructions).toEqual([
       {
         definition: {
-          markdown: "You are a precise assistant.",
+          content: "You are a precise assistant.",
+          role: "system",
         },
         sourceKind: "markdown",
         logicalPath: "instructions.md",
@@ -486,7 +491,7 @@ describe("discoverAgent (memory)", () => {
 
   it("silently ignores generated runtime directories", async () => {
     const project = buildMemoryAgentProject({
-      agentDirectories: [".eve", ".next", ".output", ".vercel", "node_modules"],
+      agentDirectories: [".devtools", ".eve", ".next", ".output", ".vercel", "node_modules"],
       agentFiles: {
         "instructions.md": "You are a precise assistant.",
       },
@@ -502,13 +507,31 @@ describe("discoverAgent (memory)", () => {
     expect(result.manifest.instructions).toEqual([
       {
         definition: {
-          markdown: "You are a precise assistant.",
+          content: "You are a precise assistant.",
+          role: "system",
         },
         sourceKind: "markdown",
         logicalPath: "instructions.md",
         sourceId: "instructions.md",
       },
     ]);
+  });
+
+  it("recognizes the instrumentation provider directory", async () => {
+    const project = buildMemoryAgentProject({
+      agentDirectories: ["instrumentation"],
+      agentFiles: {
+        "instructions.md": "You are a precise assistant.",
+      },
+    });
+
+    const result = await discoverAgent({
+      agentRoot: project.agentRoot,
+      appRoot: project.appRoot,
+      source: project.source,
+    });
+
+    expect(result.diagnostics).toEqual([]);
   });
 
   it("rejects authored tool filenames that violate the tool-name charset", async () => {

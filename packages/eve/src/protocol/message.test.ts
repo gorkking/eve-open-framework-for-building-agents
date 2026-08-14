@@ -5,13 +5,16 @@ import { encodeSandboxRef } from "#internal/attachments/sandbox-refs.js";
 import { serializeUrlFilePart } from "#internal/attachments/url-refs.js";
 import {
   EVE_MESSAGE_STREAM_VERSION,
+  createActionPartialEvent,
   createActionResultEvent,
   createAuthorizationCompletedEvent,
   createAuthorizationRequiredEvent,
+  createContextClearedEvent,
   createMessageReceivedEvent,
   createResultCompletedEvent,
   createSessionWaitingEvent,
   createStepStartedEvent,
+  createSubagentCalledEvent,
   createTurnCancelledEvent,
   encodeMessageStreamEvent,
   stampMessageStreamEvent,
@@ -21,7 +24,62 @@ import { createEveConnectionCallbackRoutePath } from "#protocol/routes.js";
 
 describe("message stream protocol", () => {
   it("pins the stream version for timed session events", () => {
-    expect(EVE_MESSAGE_STREAM_VERSION).toBe("20");
+    expect(EVE_MESSAGE_STREAM_VERSION).toBe("22");
+  });
+
+  it("creates preliminary tool-result snapshots", () => {
+    expect(
+      createActionPartialEvent({
+        result: {
+          callId: "call_1",
+          kind: "tool-result",
+          output: { phase: "collecting" },
+          toolName: "build_report",
+        },
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn_1",
+      }),
+    ).toEqual({
+      data: {
+        result: {
+          callId: "call_1",
+          kind: "tool-result",
+          output: { phase: "collecting" },
+          toolName: "build_report",
+        },
+        sequence: 1,
+        stepIndex: 0,
+        turnId: "turn_1",
+      },
+      type: "action.partial",
+    });
+  });
+
+  it("authors local and remote child stream paths", () => {
+    const input = {
+      callId: "call/1",
+      childSessionId: "child/1",
+      name: "research",
+      sequence: 1,
+      sessionId: "parent/1",
+      toolName: "research",
+      turnId: "turn_1",
+      workflowId: "workflow_1",
+    };
+
+    expect(createSubagentCalledEvent(input).data.childStreamPath).toBe(
+      "/eve/v1/session/child%2F1/stream",
+    );
+    expect(
+      createSubagentCalledEvent({
+        ...input,
+        remote: { resolverId: "remote/research", url: "https://remote.example" },
+      }).data,
+    ).toMatchObject({
+      childStreamPath: "/eve/v1/session/parent%2F1/subagents/call%2F1/child%2F1/stream",
+      remote: { resolverId: "remote/research", url: "https://remote.example" },
+    });
   });
 
   it("publishes the channel-local continuation token on session.waiting", () => {
@@ -38,6 +96,15 @@ describe("message stream protocol", () => {
     expect(createTurnCancelledEvent({ sequence: 2, turnId: "turn_2" })).toEqual({
       data: { sequence: 2, turnId: "turn_2" },
       type: "turn.cancelled",
+    });
+  });
+
+  it("creates context.cleared events", () => {
+    expect(
+      createContextClearedEvent({ sequence: 2, sessionId: "session_1", turnId: "turn_2" }),
+    ).toEqual({
+      data: { sequence: 2, sessionId: "session_1", turnId: "turn_2" },
+      type: "context.cleared",
     });
   });
 
@@ -62,7 +129,12 @@ describe("message stream protocol", () => {
 
   it("stamps durable envelope metadata and preserves it through encoding", () => {
     const stamped = stampMessageStreamEvent(
-      createStepStartedEvent({ sequence: 0, stepIndex: 1, turnId: "turn_0" }),
+      createStepStartedEvent({
+        modelId: "openai/gpt-5.5",
+        sequence: 0,
+        stepIndex: 1,
+        turnId: "turn_0",
+      }),
     );
 
     expect(isEventId(stamped.meta.id)).toBe(true);
@@ -75,7 +147,12 @@ describe("message stream protocol", () => {
   });
 
   it("mints a distinct id for each emission of an identical payload", () => {
-    const event = createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_0" });
+    const event = createStepStartedEvent({
+      modelId: "openai/gpt-5.5",
+      sequence: 0,
+      stepIndex: 0,
+      turnId: "turn_0",
+    });
 
     expect(stampMessageStreamEvent(event).meta.id).not.toBe(stampMessageStreamEvent(event).meta.id);
   });
@@ -101,6 +178,7 @@ describe("message stream protocol", () => {
 
     const webhookUrl = `https://eve.example.com${createEveConnectionCallbackRoutePath(
       "linear",
+      "attempt-1",
       "abc",
     )}`;
     const full = createAuthorizationRequiredEvent({
