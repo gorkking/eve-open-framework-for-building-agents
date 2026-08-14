@@ -2,13 +2,14 @@ export type { ModelMessage } from "ai";
 
 /**
  * Per-session instrumentation metadata for the Telegram channel, exposed to
- * observability tooling. The channel derives `chatId`, `chatType`, and
- * `triggeringUserId` from the current channel state; each stays `null` until an
- * inbound update populates it.
+ * observability tooling. The channel derives `chatId`, `chatType`, `isDM`,
+ * and `triggeringUserId` from the current channel state; each stays `null` until
+ * an inbound update populates it.
  */
 export interface TelegramInstrumentationMetadata extends Record<string, unknown> {
   readonly chatId: string | null;
   readonly chatType: import("#public/channels/telegram/inbound.js").TelegramChatType | null;
+  readonly isDM: boolean | null;
   readonly triggeringUserId: string | null;
 }
 

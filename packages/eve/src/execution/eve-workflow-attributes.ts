@@ -21,13 +21,13 @@
  * - `$eve.parent_turn`  — parent turn id that dispatched the subagent (subagent rows only)
  * - `$eve.subagent`     — active compiled graph node id (subagent rows only)
  * - `$eve.trigger`      — channel adapter kind (session/subagent rows)
- * - `$eve.title`        — truncated session title from the first user message
+ * - `$eve.title`        — truncated session title, or `"Run"` for direct conversations
  * - `$eve.channel_request_id` — inbound channel request id
  * - `$eve.invocation_token` — channel-local continuation token for an external invocation
  * - `$eve.invocation_owner` — SHA-256 fingerprint of the invocation's initiating principal
  */
 
-import { ChannelRequestIdKey } from "#context/keys.js";
+import { ChannelInstrumentationKey, ChannelRequestIdKey } from "#context/keys.js";
 import type { EveAttributeValue } from "#runtime/attributes/normalize.js";
 import { isNonEmptyString } from "#shared/guards.js";
 
@@ -46,6 +46,13 @@ export interface SessionIdentitySummary {
 /** Untyped channel adapter snapshot as it survives serialization. */
 interface SerializedChannelAdapter {
   readonly kind?: unknown;
+}
+
+/** Channel metadata used only to decide whether a run title may contain message text. */
+interface SerializedChannelInstrumentation {
+  readonly metadata?: {
+    readonly isDM?: unknown;
+  };
 }
 
 /** Untyped session parent snapshot as it survives serialization. */
@@ -146,6 +153,23 @@ export function readChannelRequestId(
  */
 export const EVE_SESSION_TITLE_MAX_CHARS = 125;
 
+/** Stable title used when exposing the first message would disclose a direct conversation. */
+export const EVE_REDACTED_SESSION_TITLE = "Run";
+
+/**
+ * Returns whether the built-in channel metadata identifies a DM-like conversation.
+ *
+ * Channel privacy is deliberately out of scope because providers do not expose
+ * ACL visibility consistently on inbound events.
+ */
+export function isDirectConversationSession(serializedContext: Record<string, unknown>): boolean {
+  const channel = serializedContext[ChannelInstrumentationKey.name] as
+    | SerializedChannelInstrumentation
+    | undefined;
+  const metadata = channel?.metadata;
+  return metadata?.isDM === true;
+}
+
 /**
  * Derives the `$eve.title` value from the first user message of a
  * top-level session.
@@ -208,12 +232,19 @@ function collectMessageText(message: unknown): string | undefined {
 export function buildSessionAttributes(input: {
   readonly inputMessage: unknown;
   readonly serializedContext: Record<string, unknown>;
+  readonly title?: string;
 }): Record<string, EveAttributeValue> {
+  const title = deriveSessionTitle(
+    input.title ??
+      (isDirectConversationSession(input.serializedContext)
+        ? EVE_REDACTED_SESSION_TITLE
+        : input.inputMessage),
+  );
   return {
     "$eve.channel_request_id": readChannelRequestId(input.serializedContext),
     "$eve.type": "session",
     "$eve.trigger": readChannelKind(input.serializedContext),
-    "$eve.title": deriveSessionTitle(input.inputMessage),
+    "$eve.title": title,
   };
 }
 

@@ -118,7 +118,7 @@ The callback receives:
 
 A channel exposes its identity through `kind`. For authored channels it is `channel:<name>`, where `<name>` is the channel's filename under `agent/channels/`, so `agent/channels/support.ts` is `channel:support`. Framework channels use `http`, `schedule`, or `subagent`, and an unrecognized or absent kind normalizes to `unknown`. The kind is also emitted as the `eve.channel.kind` span attribute. To access an authored channel's metadata with its precise type, import the channel definition and narrow with `isChannel(input.channel, supportChannel)`.
 
-Channel metadata is channel-owned. Built-in channels expose only the fields they choose to make observable; Slack, for example, projects `channelId`, `teamId`, `threadTs`, and `triggeringUserId` from its durable channel state. User-authored channels expose their own projection by returning `metadata(state)` from `defineChannel`. Runtime instrumentation never falls back to raw channel state.
+Channel metadata is channel-owned. Built-in channels expose only the fields they choose to make observable; Slack, for example, projects `channelId`, `isDM`, `teamId`, `threadTs`, and `triggeringUserId` from its durable channel state. User-authored channels expose their own projection by returning `metadata(state)` from `defineChannel`. Runtime instrumentation never falls back to raw channel state.
 
 ## Authored trace hierarchy
 
@@ -161,7 +161,7 @@ Structural tags describe each run's place in the tree:
 - `$eve.root`: session id of the root session in the chain (group a whole tree with `$eve.root=<id>`)
 - `$eve.subagent`: compiled graph node id (subagent runs only)
 - `$eve.trigger`: the channel kind that started the run
-- `$eve.title`: truncated title derived from the first user message
+- `$eve.title`: explicit run title or a truncated title derived from the first user message; derived titles use `Run` for DMs and equivalent direct conversations identified by a built-in channel
 
 Per-turn usage tags are written on each step of a turn, accumulating cumulative totals (last write wins):
 

@@ -76,6 +76,8 @@ export interface DiscordChannelState {
   conversationId: string | null;
   /** Discord guild id, when the interaction was invoked in a guild. */
   guildId: string | null;
+  /** Whether Discord identified the conversation as outside a guild. */
+  isDM?: boolean | null;
   /** Discord application id from the inbound interaction. */
   applicationId: string | null;
   /** Latest interaction token available to the channel. */
@@ -225,7 +227,11 @@ export function discordChannel(config: DiscordChannelConfig = {}): DiscordChanne
     kindHint: "discord",
     turnPolicy: config.turnPolicy,
     state: initialDiscordState(),
-    metadata: (state) => ({ channelId: state.channelId, guildId: state.guildId }),
+    metadata: (state) => ({
+      channelId: state.channelId,
+      guildId: state.guildId,
+      isDM: state.isDM ?? null,
+    }),
 
     context(state, session) {
       return rebuildDiscordContext(state, session, config);
@@ -304,6 +310,7 @@ export function discordChannel(config: DiscordChannelConfig = {}): DiscordChanne
           guildId: null,
           hasMessageAnchor,
           initialResponseSent: true,
+          isDM: null,
           interactionToken: null,
         },
       });
@@ -645,6 +652,7 @@ function stateFromInteraction(
     guildId: interaction.guildId ?? null,
     hasMessageAnchor: options.hasMessageAnchor,
     initialResponseSent: options.initialResponseSent,
+    isDM: interaction.guildId === undefined,
     interactionToken: interaction.token,
   };
 }
@@ -657,6 +665,7 @@ function initialDiscordState(): DiscordChannelState {
     guildId: null,
     hasMessageAnchor: false,
     initialResponseSent: false,
+    isDM: null,
     interactionToken: null,
   };
 }

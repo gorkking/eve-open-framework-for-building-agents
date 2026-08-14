@@ -222,6 +222,7 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
     metadata: (state) => ({
       chatId: state.chatId,
       chatType: state.chatType,
+      isDM: state.chatType === null ? null : state.chatType === "private",
       triggeringUserId: state.triggeringUserId ?? null,
     }),
     fetchFile: createTelegramFetchFile({

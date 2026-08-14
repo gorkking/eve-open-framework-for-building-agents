@@ -79,6 +79,7 @@ export interface TwilioChannelState {
 /** Per-session instrumentation snapshot for Twilio runtime telemetry. Reports the active phone-number pair and the most recent message and call SIDs. */
 export interface TwilioInstrumentationMetadata extends Record<string, unknown> {
   readonly from: string | null;
+  readonly isDM: true;
   readonly lastCallSid: string | null;
   readonly lastMessageSid: string | null;
   readonly to: string | null;
@@ -310,6 +311,7 @@ export function twilioChannel(config: TwilioChannelConfig): TwilioChannel {
     metadata(state): TwilioInstrumentationMetadata {
       return {
         from: state.from,
+        isDM: true,
         lastCallSid: state.lastCallSid ?? null,
         lastMessageSid: state.lastMessageSid ?? null,
         to: state.to,

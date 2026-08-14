@@ -369,6 +369,30 @@ describe("createWorkflowRuntime#createSession", () => {
     expect(startOptions.attributes["$eve.title"]).toBe("ship it");
   });
 
+  it("redacts a derived title when channel metadata identifies a direct conversation", async () => {
+    const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+    mockBundleAndRun(compiledArtifactsSource);
+    startMock.mockResolvedValue({ runId: "driver-run" });
+    const privateAdapter: ChannelAdapter = {
+      instrumentation: {
+        metadata: () => ({ isDM: true }),
+      },
+      kind: "channel:support",
+      state: {},
+    };
+
+    await buildRuntime(compiledArtifactsSource).createSession({
+      adapter: privateAdapter,
+      auth: null,
+      input: { message: "confidential account details" },
+      mode: "conversation",
+    });
+
+    const [, workflowInput, startOptions] = startMock.mock.calls[0]!;
+    expect(workflowInput[0].input.message).toBe("confidential account details");
+    expect(startOptions.attributes["$eve.title"]).toBe("Run");
+  });
+
   it("passes the configured session timeout to the durable workflow", async () => {
     const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
     mockBundleAndRun(compiledArtifactsSource, 86_400_000);

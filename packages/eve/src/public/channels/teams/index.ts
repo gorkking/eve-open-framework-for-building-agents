@@ -3,12 +3,13 @@ export type { ModelMessage } from "ai";
 /**
  * Instrumentation metadata for Teams sessions, read from the channel state: the
  * Teams team/channel id (`channelId`), the conversation type (`personal`,
- * `groupChat`, `channel`, or platform value), and the team id. Each field is
- * null when the inbound activity did not include it.
+ * `groupChat`, `channel`, or platform value), whether that type is direct, and
+ * the team id. Values are null when the inbound activity did not identify them.
  */
 export interface TeamsInstrumentationMetadata extends Record<string, unknown> {
   readonly channelId: string | null;
   readonly conversationType: string | null;
+  readonly isDM: boolean | null;
   readonly teamId: string | null;
 }
 

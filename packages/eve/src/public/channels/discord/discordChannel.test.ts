@@ -550,6 +550,7 @@ describe("discordChannel() default event handlers", () => {
         hasMessageAnchor: false,
         initialResponseSent: true,
         interactionToken: null,
+        isDM: null,
       },
     });
   });

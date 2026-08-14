@@ -1276,6 +1276,7 @@ describe("slackChannel() inbound mention pipeline", () => {
       message: "Imperative follow-up",
       state: {
         channelId: "C_BOUND",
+        isDM: false,
         teamId: "T01",
         threadTs: "1700000000.000300",
         triggeringUserId: "U01",
@@ -1907,6 +1908,37 @@ describe("slackChannel() generic Events API pipeline", () => {
     expect(compact).toHaveBeenCalledWith("C01:1700000000.000001");
   });
 
+  it("does not mark a private channel as a DM", async () => {
+    const send = vi.fn().mockResolvedValue({ id: "s1" });
+    const channel = slackChannel({
+      credentials: { botToken: "xoxb-test" },
+      async onEvent(ctx) {
+        await ctx.send("follow up", {
+          auth: null,
+          target: { channelId: "C01", threadTs: "1700000000.000001" },
+        });
+      },
+    });
+
+    const body = buildEventBody(
+      { channel_type: "group", type: "reaction_added", user: "U01" },
+      { teamId: "T_WORKSPACE" },
+    );
+    await firePost(channel, buildSignedRequest({ body }), { send });
+
+    expect(send).toHaveBeenCalledWith("C01:1700000000.000001", {
+      auth: null,
+      message: "follow up",
+      state: {
+        channelId: "C01",
+        isDM: false,
+        teamId: "T_WORKSPACE",
+        threadTs: "1700000000.000001",
+        triggeringUserId: "U01",
+      },
+    });
+  });
+
   it("binds Slack session state when a generic event send creates", async () => {
     const send = vi.fn().mockResolvedValue({ id: "s1" });
     const channel = slackChannel({
@@ -1927,6 +1959,7 @@ describe("slackChannel() generic Events API pipeline", () => {
       message: "follow up",
       state: {
         channelId: "C01",
+        isDM: false,
         teamId: "T_WORKSPACE",
         threadTs: "1700000000.000001",
         triggeringUserId: "U01",
@@ -2183,10 +2216,11 @@ describe("slackChannel() inbound direct message pipeline", () => {
     expect(onDirectMessage).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledTimes(1);
     const [, options] = send.mock.calls[0]!;
-    const opts = options as { auth: unknown; state: { channelId: string } };
+    const opts = options as { auth: unknown; state: { channelId: string; isDM: boolean } };
     expect(opts.auth).toMatchObject({ principalId: "U01", authenticator: "test" });
     expect(opts.state.channelId).toBe(channelId);
-    expect(options.title).toBe("hello");
+    expect(opts.state.isDM).toBe(true);
+    expect(options.title).toBeUndefined();
   });
 
   it("uses the run title returned by onDirectMessage", async () => {
@@ -2906,6 +2940,7 @@ describe("slackChannel().receive", () => {
     expect(input.message).toBe("do the thing");
     expect(input.state).toEqual({
       channelId: "C123",
+      isDM: null,
       threadTs: "1700000000.000001",
       teamId: null,
       triggeringUserId: null,

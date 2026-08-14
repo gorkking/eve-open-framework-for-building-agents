@@ -293,6 +293,10 @@ export function teamsChannel(config: TeamsChannelConfig = {}): TeamsChannel {
     metadata: (state) => ({
       channelId: state.channelId,
       conversationType: state.conversationType,
+      isDM:
+        state.conversationType === null
+          ? null
+          : state.conversationType === "personal" || state.conversationType === "groupChat",
       teamId: state.teamId,
     }),
 

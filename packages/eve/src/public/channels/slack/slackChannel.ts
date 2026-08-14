@@ -58,7 +58,6 @@ import { SLACK_CHANNEL_DEFAULT_ROUTE } from "#public/channels/slack/constants.js
 import { handleInteractionPost } from "#public/channels/slack/interactions.js";
 import {
   bindSlackSessionOperations,
-  type SlackSendOptions,
   type SlackSessionOperations,
 } from "#public/channels/slack/session-operations.js";
 import {
@@ -185,6 +184,8 @@ export interface SlackPendingApprovalCard {
 export interface SlackChannelState {
   /** Slack channel id seeded by the inbound mention. */
   channelId: string | null;
+  /** Whether Slack identified the conversation as a direct or group direct message. */
+  isDM?: boolean | null;
   /** Slack thread root ts. */
   threadTs: string | null;
   /** Slack team id, when the inbound event carried one. */
@@ -233,6 +234,7 @@ export interface SlackChannelState {
  */
 export interface SlackInstrumentationMetadata extends Record<string, unknown> {
   readonly channelId: string | null;
+  readonly isDM: boolean | null;
   readonly teamId: string | null;
   readonly threadTs: string | null;
   readonly triggeringUserId: string | null;
@@ -700,6 +702,7 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
     kindHint: "slack",
     state: {
       channelId: null as string | null,
+      isDM: null as boolean | null,
       threadTs: null as string | null,
       teamId: null as string | null,
       triggeringUserId: null,
@@ -715,6 +718,7 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
     metadata(state): SlackInstrumentationMetadata {
       return {
         channelId: state.channelId,
+        isDM: state.isDM ?? null,
         teamId: state.teamId,
         threadTs: state.threadTs,
         triggeringUserId: state.triggeringUserId ?? null,
@@ -793,6 +797,8 @@ async function receiveOnSlack(
     readonly teamId?: string;
     /** Slack user id seeded into session state, when the trigger carried one. */
     readonly triggeringUserId?: string;
+    /** Whether Slack identified the trigger as a direct or group direct message. */
+    readonly isDM?: boolean;
   },
 ): Promise<Session> {
   const receiveTarget = input.target as Partial<SlackReceiveTarget>;
@@ -835,6 +841,7 @@ async function receiveOnSlack(
     auth: input.auth,
     state: {
       channelId,
+      isDM: deps.isDM ?? null,
       threadTs: threadTs || null,
       teamId: deps.teamId ?? null,
       triggeringUserId: deps.triggeringUserId ?? null,
@@ -1067,6 +1074,7 @@ async function dispatchSlackMessage(input: {
     resolveSession: input.resolveSession,
     state: {
       channelId: input.message.channelId,
+      isDM: input.kind === "direct_message" || isSlackDmChannelType(input.message.raw.channel_type),
       teamId: input.message.teamId ?? null,
       threadTs: input.message.threadTs,
       triggeringUserId: author?.userId ?? null,
@@ -1140,6 +1148,7 @@ async function dispatchSlackEvent(input: {
           from: input.from,
           credentials: input.credentials,
           teamId,
+          isDM: isSlackDmChannelType(input.envelope.event.channel_type),
           ...(typeof input.envelope.event.user === "string"
             ? { triggeringUserId: input.envelope.event.user }
             : {}),
@@ -1164,6 +1173,10 @@ async function dispatchSlackEvent(input: {
   }
 
   await Promise.allSettled(waitUntilTasks);
+}
+
+function isSlackDmChannelType(value: unknown): boolean {
+  return value === "im" || value === "mpim";
 }
 
 /**
@@ -1227,11 +1240,15 @@ async function deliverSlackMessage(input: {
     );
 
     const channelContext = input.result.context ?? [];
-    const title = input.result.title ?? message.markdown;
-    const sendOptions: SlackSendOptions =
-      channelContext.length === 0
-        ? { auth: input.result.auth, title }
-        : { auth: input.result.auth, context: channelContext, title };
+    const title =
+      input.result.title ?? (input.kind === "direct_message" ? undefined : message.markdown);
+    const sendOptions: {
+      auth: SessionAuthContext | null;
+      context?: readonly string[];
+      title?: string;
+    } = { auth: input.result.auth };
+    if (channelContext.length > 0) sendOptions.context = channelContext;
+    if (title !== undefined) sendOptions.title = title;
 
     await input.sessionOperations.send(turnMessage, sendOptions);
   } catch (error) {

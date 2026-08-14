@@ -5,14 +5,16 @@ import {
   buildSubagentRootAttributes,
   buildTurnAttributes,
   deriveSessionTitle,
+  EVE_REDACTED_SESSION_TITLE,
   EVE_SESSION_TITLE_MAX_CHARS,
+  isDirectConversationSession,
   readChannelKind,
   readChannelRequestId,
   readParentLineage,
   readParentSessionId,
   readRootSessionId,
 } from "#execution/eve-workflow-attributes.js";
-import { ChannelRequestIdKey } from "#context/keys.js";
+import { ChannelInstrumentationKey, ChannelRequestIdKey } from "#context/keys.js";
 
 const slackChannelCtx = {
   "eve.channel": { kind: "slack", state: { team: "T1" } },
@@ -137,6 +139,39 @@ describe("deriveSessionTitle", () => {
   });
 });
 
+describe("isDirectConversationSession", () => {
+  it.each([
+    ["Slack DM", "slack", { isDM: true }],
+    ["Chat SDK DM", "chat-sdk", { isDM: true }],
+    ["Telegram private chat", "telegram", { isDM: true }],
+    ["Teams personal chat", "teams", { isDM: true }],
+    ["Teams group chat", "teams", { isDM: true }],
+    ["Discord DM", "discord", { isDM: true }],
+    ["Twilio conversation", "twilio", { isDM: true }],
+  ])("recognizes a %s", (_label, kind, metadata) => {
+    expect(
+      isDirectConversationSession({
+        "eve.channel": { kind, state: {} },
+        [ChannelInstrumentationKey.name]: { kind, metadata },
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["Slack channel", "slack", { isDM: false }],
+    ["Telegram group", "telegram", { isDM: false }],
+    ["Teams channel", "teams", { isDM: false }],
+    ["Discord guild channel", "discord", { isDM: false }],
+  ])("does not classify a %s as direct", (_label, kind, metadata) => {
+    expect(
+      isDirectConversationSession({
+        "eve.channel": { kind, state: {} },
+        [ChannelInstrumentationKey.name]: { kind, metadata },
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("buildSessionAttributes", () => {
   it("emits type=session with trigger and derived title", () => {
     const attrs = buildSessionAttributes({
@@ -172,6 +207,37 @@ describe("buildSessionAttributes", () => {
     });
 
     expect(attrs["$eve.channel_request_id"]).toBe("req_session");
+  });
+
+  it("redacts the derived title for direct conversation sessions", () => {
+    const attrs = buildSessionAttributes({
+      inputMessage: "confidential account details",
+      serializedContext: {
+        "eve.channel": { kind: "slack", state: {} },
+        [ChannelInstrumentationKey.name]: {
+          kind: "slack",
+          metadata: { isDM: true },
+        },
+      },
+    });
+
+    expect(attrs["$eve.title"]).toBe(EVE_REDACTED_SESSION_TITLE);
+  });
+
+  it("preserves an explicit title for a private channel session", () => {
+    const attrs = buildSessionAttributes({
+      inputMessage: "confidential account details",
+      serializedContext: {
+        "eve.channel": { kind: "slack", state: {} },
+        [ChannelInstrumentationKey.name]: {
+          kind: "slack",
+          metadata: { isDM: true },
+        },
+      },
+      title: "Support case 123",
+    });
+
+    expect(attrs["$eve.title"]).toBe("Support case 123");
   });
 });
 

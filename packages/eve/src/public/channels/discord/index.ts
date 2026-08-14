@@ -15,6 +15,8 @@ export interface DiscordInstrumentationMetadata extends Record<string, unknown> 
   readonly channelId: string | null;
   /** Originating Discord guild id, or `null` when the interaction was not in a guild. */
   readonly guildId: string | null;
+  /** Whether Discord identified the conversation as outside a guild. */
+  readonly isDM: boolean | null;
 }
 
 export {
