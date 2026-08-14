@@ -85,6 +85,8 @@ A few additional helpers round out the set: `defineGlobTool`, `defineGrepTool`, 
 | `eve/hooks`                                                 | `defineHook`                                                                                              |
 | `eve/memory`                                                | `defineMemory`, `defineMemoryProvider`, `defaultNamespace`, provider APIs plus scope types                |
 | `eve/memory/scope`                                          | `byPrincipal`                                                                                             |
+| `eve/memory/file`                                           | `fileMemory`, `inMemory`, and the versioned document backend contract                                     |
+| `eve/memory/file/vercel`                                    | `vercelBlob` and its backend options                                                                      |
 | `eve/schedules`                                             | `defineSchedule`                                                                                          |
 | `eve/skills`                                                | `defineSkill`, `defineDynamic`                                                                            |
 | `eve/instructions`                                          | `defineInstructions`, `defineDynamic`                                                                     |

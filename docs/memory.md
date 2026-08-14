@@ -138,6 +138,58 @@ Without `description`, eve preserves the provider's tool descriptions unchanged.
 
 Descriptions help the model choose among qualified memory tools; they do not grant access. Continue to enforce the data boundary with `scope`, provider authorization, and tool approval where needed.
 
+## Use file memory
+
+`fileMemory()` provides a bounded, model-maintained memory document for each scope. The smallest complete slot uses it with `byPrincipal`:
+
+```ts title="agent/memory/user.ts"
+import { defineMemory } from "eve/memory";
+import { fileMemory } from "eve/memory/file";
+import { byPrincipal } from "eve/memory/scope";
+
+export default defineMemory({
+  provider: fileMemory(),
+  scope: byPrincipal,
+});
+```
+
+The provider recalls the current document at every turn start and after each successful compaction. It exposes `save_memory({ text })` and `remove_memory({ index })`, which eve qualifies with the slot name as `user__save_memory` and `user__remove_memory`. It does not implement `save`, run a hidden capture model, or persist complete transcripts. The model decides when to maintain the document by calling its tools.
+
+The document stores one memory per line. Recall includes each stable index so the model can remove an entry without rewriting unrelated memories:
+
+```text
+0: Prefers dark mode.
+1: Likes concise answers.
+```
+
+New memories receive an index above the current highest index. Saving normalizes whitespace, and saving the same text again returns its existing index. Removing a missing index does nothing. Conditional writes preserve concurrent changes, and surviving entries keep their indexes.
+
+The default limit is 100 entries. Set `maxEntries` to another positive integer when you need a different bound. At the limit, the model must remove an outdated entry before saving another.
+
+Outside Vercel, `fileMemory()` defaults to process-local storage in non-production environments. That storage is not durable or shared across instances; import `inMemory()` from `eve/memory/file` when you want to select it explicitly in a test. On Vercel, the provider uses private Vercel Blob storage when the deployment has an attached Blob store. It fails on its first storage operation if no store is attached. A production deployment outside Vercel must pass an explicit backend.
+
+You can also select Vercel Blob explicitly:
+
+```ts title="agent/memory/user.ts"
+import { defineMemory } from "eve/memory";
+import { fileMemory } from "eve/memory/file";
+import { vercelBlob } from "eve/memory/file/vercel";
+import { byPrincipal } from "eve/memory/scope";
+
+export default defineMemory({
+  provider: fileMemory({
+    backend: vercelBlob({
+      prefix: "my-agent/memory",
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    }),
+    maxEntries: 200,
+  }),
+  scope: byPrincipal,
+});
+```
+
+For another store, implement `MemoryDocumentBackend` from `eve/memory/file`. It is an optimistic read-and-replace contract for one versioned text document. A stale write must throw `MemoryDocumentConflictError`; `fileMemory()` then reloads the document and reapplies the individual save or remove operation.
+
 ## Control recall visibility
 
 A non-empty recall result appends a scope-attributed message to durable history. The optional `visibility` field controls which earlier recalled messages enter a model request when the slot resolves a different scope:
