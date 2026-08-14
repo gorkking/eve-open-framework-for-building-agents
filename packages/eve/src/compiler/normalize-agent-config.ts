@@ -339,6 +339,7 @@ async function withCompiledRuntimeModelLimits(
   } catch (error) {
     throw new Error(
       `Failed to load AI Gateway model metadata for ${input.purpose} "${model.id}". ${toErrorMessage(error)}`,
+      { cause: error },
     );
   }
 

@@ -245,16 +245,31 @@ describe("createCompiledRuntimeModelCatalogLoader", () => {
 
   it("falls back to built-in limits when fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
-    const loader = createCompiledRuntimeModelCatalogLoader("/tmp/test-app");
+    const loader = createCompiledRuntimeModelCatalogLoader(
+      `/tmp/test-app-built-in-fetch-failure-${Date.now()}`,
+    );
     const limits = await loader.getModelLimits("openai/gpt-5.4");
     expect(limits).toEqual({ contextWindowTokens: 400_000, maxOutputTokens: 128_000 });
   });
 
-  it("returns null for unknown model when fetch fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
-    const loader = createCompiledRuntimeModelCatalogLoader("/tmp/test-app");
-    const limits = await loader.getModelLimits("unknown/model");
-    expect(limits).toBeNull();
+  it("throws for an unknown model when the catalog fetch fails", async () => {
+    const error = new Error("offline");
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(error);
+    const loader = createCompiledRuntimeModelCatalogLoader(
+      `/tmp/test-app-fetch-failure-${Date.now()}`,
+    );
+
+    await expect(loader.getModelLimits("unknown/model")).rejects.toBe(error);
+  });
+
+  it("throws for an unknown provider model when the catalog fetch fails", async () => {
+    const error = new Error("offline");
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(error);
+    const loader = createCompiledRuntimeModelCatalogLoader(
+      `/tmp/test-app-provider-fetch-failure-${Date.now()}`,
+    );
+
+    await expect(loader.getByProviderModelId("unknown", "model")).rejects.toBe(error);
   });
 
   it("returns cache path under .eve/cache", () => {

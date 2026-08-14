@@ -129,48 +129,46 @@ export function createCompiledRuntimeModelCatalogLoader(
   const resolveModelsFromCacheOrFetch = async (): Promise<{
     models: readonly CatalogModel[];
     providerAliases: Readonly<Record<string, string>>;
-  } | null> => {
+  }> => {
     const cachedCatalog = await getCachedCatalog();
 
     if (cachedCatalog !== null && isCacheFresh(cachedCatalog)) {
       return cachedCatalog;
     }
 
-    try {
-      return await getFetchedCatalog();
-    } catch {
-      if (cachedCatalog !== null) {
-        return cachedCatalog;
-      }
-      return null;
-    }
+    return await getFetchedCatalog();
   };
 
   return {
     async getModelLimits(modelId) {
       const normalizedId = normalizeCatalogModelId(modelId);
-      const resolved = await resolveModelsFromCacheOrFetch();
+      const builtInLimits = builtInCompiledRuntimeModelLimitsById.get(normalizedId);
+      let resolved: Awaited<ReturnType<typeof resolveModelsFromCacheOrFetch>>;
 
-      if (resolved !== null) {
-        const model = findCatalogModelBySlug(resolved.models, normalizedId);
-        if (model) {
-          for (const p of model.providers) {
-            const limits = modelCatalogLimitsFromProvider(p);
-            if (limits !== null) {
-              return limits;
-            }
+      try {
+        resolved = await resolveModelsFromCacheOrFetch();
+      } catch (error) {
+        if (builtInLimits !== undefined) {
+          return builtInLimits;
+        }
+        throw error;
+      }
+
+      const model = findCatalogModelBySlug(resolved.models, normalizedId);
+      if (model) {
+        for (const p of model.providers) {
+          const limits = modelCatalogLimitsFromProvider(p);
+          if (limits !== null) {
+            return limits;
           }
         }
       }
 
-      return builtInCompiledRuntimeModelLimitsById.get(normalizedId) ?? null;
+      return builtInLimits ?? null;
     },
 
     async getByProviderModelId(provider, providerModelId) {
       const resolved = await resolveModelsFromCacheOrFetch();
-      if (resolved === null) {
-        return null;
-      }
 
       const match = findCatalogModelByProviderModelId({
         models: resolved.models,

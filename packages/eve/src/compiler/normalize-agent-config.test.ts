@@ -77,6 +77,33 @@ describe("compileAgentConfig", () => {
     expect(compiled.description).toBeUndefined();
     expect(compiled.source?.sourceId).toBe("agent-config");
   });
+
+  it("surfaces model catalog fetch failures with their cause", async () => {
+    const manifest = createAgentSourceManifest({
+      agentId: "app",
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      configModule: createModuleSourceRef({
+        logicalPath: "agent.ts",
+        sourceId: "agent-config",
+      }),
+    });
+    const cause = new Error("offline");
+    const modelCatalog = createModelCatalog();
+    vi.mocked(modelCatalog.getModelLimits).mockRejectedValue(cause);
+
+    const error = await compileAgentConfig(
+      manifest,
+      { modelCatalog },
+      { definition: { model: "anthropic/claude-opus-4.8" } },
+    ).catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      'Failed to load AI Gateway model metadata for the primary compaction trigger model "anthropic/claude-opus-4.8". offline',
+    );
+    expect((error as Error).cause).toBe(cause);
+  });
 });
 
 function createModelCatalog(): ManifestCompileContext["modelCatalog"] {
