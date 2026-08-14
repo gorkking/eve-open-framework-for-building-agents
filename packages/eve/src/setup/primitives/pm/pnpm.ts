@@ -205,6 +205,26 @@ export function findClaimingAncestorPnpmWorkspaceRoot(projectRoot: string): stri
     : undefined;
 }
 
+/** Returns the workspace root only when its manifest explicitly claims `projectRoot`. */
+export function findStrictlyClaimingAncestorPnpmWorkspaceRoot(
+  projectRoot: string,
+): string | undefined {
+  const workspaceRoot = findAncestorPnpmWorkspaceRoot(projectRoot);
+  if (workspaceRoot === undefined) return undefined;
+
+  try {
+    const patterns = parsePnpmWorkspacePackagePatterns(
+      readFileSync(join(workspaceRoot, PNPM_WORKSPACE_PATH), "utf8"),
+    );
+    return patterns !== undefined &&
+      workspacePatternsClaimProject(patterns, workspaceRoot, projectRoot)
+      ? workspaceRoot
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function withPnpmWorkspacePackagePattern(source: string, pattern: string): string {
   const normalized = source.endsWith("\n") ? source : `${source}\n`;
   const lines = normalized.split("\n");
