@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMPACTION_PROMPT_ENVELOPE } from "#harness/compaction-prompt.js";
 import {
   compactMessages,
+  compactMessagesWithProjectionAnchor,
   getInputTokenCount,
   resolveCompactionModel,
   shouldCompact,
@@ -366,6 +367,26 @@ async function compact(
 }
 
 describe("compactMessages: tool-result cap heuristic", () => {
+  it("anchors transient context before the retained recent tail", async () => {
+    const [call, resultMsg] = toolExchange({
+      callId: "call-anchor",
+      payloadChars: 4_000,
+      prose: "Searching first.",
+    });
+    const messages = [user("investigate"), call, resultMsg, user("what did you find?")];
+
+    const outcome = await compactMessagesWithProjectionAnchor(
+      messages,
+      {} as Parameters<typeof compactMessagesWithProjectionAnchor>[1],
+      { recentWindowSize: 1, threshold: ROOMY },
+    );
+
+    expect(outcome.projectionAnchorIndex).toBe(3);
+    expect(outcome.messages.slice(outcome.projectionAnchorIndex)).toEqual([
+      user("what did you find?"),
+    ]);
+  });
+
   it("caps oversized older tool results in place without calling the summarizer", async () => {
     const [call, resultMsg] = toolExchange({
       callId: "call-0",
@@ -572,6 +593,26 @@ describe("compactMessages: forced summary", () => {
 });
 
 describe("compactMessages: summarization fallback", () => {
+  it("anchors transient context after the replacement checkpoint", async () => {
+    const { generateText } = await import("ai");
+    vi.mocked(generateText).mockResolvedValue({
+      text: "Distilled story",
+    } as Awaited<ReturnType<typeof generateText>>);
+    const messages = [user("old context to fold away"), assistant("old reply"), user("continue")];
+
+    const outcome = await compactMessagesWithProjectionAnchor(
+      messages,
+      {} as Parameters<typeof compactMessagesWithProjectionAnchor>[1],
+      { recentWindowSize: 1, threshold: HEURISTICS_FORBIDDEN },
+    );
+
+    expect(outcome.projectionAnchorIndex).toBe(2);
+    expect(outcome.messages.slice(0, outcome.projectionAnchorIndex)).toEqual([
+      user(CHECKPOINT_MARKER),
+      assistant("Distilled story"),
+    ]);
+  });
+
   it("summarizes when capping cannot free enough space", async () => {
     // All bulk is conversational prose — capping removes nothing — and the
     // threshold sits below the prompt envelope, so no heuristic can be

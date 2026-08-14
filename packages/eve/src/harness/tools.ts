@@ -87,9 +87,13 @@ export function buildToolSet(input: {
                   value: authorizationPendingModelText(output.connections),
                 };
               }
-              if (authorToModelOutput !== undefined) {
+              const toModelOutput =
+                definition.resolveToModelOutput === undefined
+                  ? authorToModelOutput
+                  : definition.resolveToModelOutput(toolCallId);
+              if (toModelOutput !== undefined) {
                 return normalizeToolModelOutput({
-                  output: await authorToModelOutput(output),
+                  output: await toModelOutput(output),
                   toolCallId,
                   toolName: definition.name,
                 });
@@ -104,7 +108,7 @@ export function buildToolSet(input: {
               });
             },
           }
-        : authorToModelOutput !== undefined
+        : authorToModelOutput !== undefined || definition.resolveToModelOutput !== undefined
           ? {
               toModelOutput: async ({
                 output,
@@ -112,12 +116,24 @@ export function buildToolSet(input: {
               }: {
                 readonly output: unknown;
                 readonly toolCallId?: string;
-              }) =>
-                normalizeToolModelOutput({
-                  output: await authorToModelOutput(output),
+              }) => {
+                const toModelOutput =
+                  definition.resolveToModelOutput === undefined
+                    ? authorToModelOutput
+                    : definition.resolveToModelOutput(toolCallId);
+                if (toModelOutput === undefined) {
+                  return normalizeToolModelOutput({
+                    output: { type: "json" as const, value: output ?? null },
+                    toolCallId,
+                    toolName: definition.name,
+                  });
+                }
+                return normalizeToolModelOutput({
+                  output: await toModelOutput(output),
                   toolCallId,
                   toolName: definition.name,
-                }),
+                });
+              },
             }
           : {}),
     });

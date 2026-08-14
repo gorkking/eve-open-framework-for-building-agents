@@ -16,6 +16,7 @@ import {
   type AuthorizationSignal,
   consumeAuthorizationResult,
   createAuthorizationAttempt,
+  getAuthorizationResult,
   requestAuthorization,
 } from "#harness/authorization.js";
 import type { JsonValue } from "#public/types/json.js";
@@ -141,13 +142,15 @@ export async function evictScopedToken(input: ScopedAuthorization): Promise<void
 export async function completeScopedAuthorization(input: ScopedAuthorization): Promise<boolean> {
   const { scope, authorization, connection } = input;
   if (!supportsInteractiveAuthorization(authorization)) return false;
+  if (getAuthorizationResult(scope) === undefined) return false;
 
-  const result = consumeAuthorizationResult(scope);
+  const ctx: AlsContext = loadContext();
+  const expectedPrincipal = resolveScopedPrincipal(input, ctx);
+  const result = consumeAuthorizationResult(scope, expectedPrincipal);
   if (result === undefined) return false;
 
   const interactive = authorization as InteractiveAuthorizationDefinition<JsonValue>;
-  const ctx: AlsContext = loadContext();
-  const principal = result.principal ?? resolveScopedPrincipal(input, ctx);
+  const principal = result.principal ?? expectedPrincipal;
   const token = await interactive.completeAuthorization({
     callbackUrl: result.hookUrl,
     connection,

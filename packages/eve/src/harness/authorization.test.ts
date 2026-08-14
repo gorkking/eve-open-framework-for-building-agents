@@ -63,6 +63,82 @@ describe("authorization callback results", () => {
       expect(consumeAuthorizationResult("linear")).toBeUndefined();
     });
   });
+
+  it("consumes only the result owned by the expected principal", () => {
+    const ctx = new ContextContainer();
+    const userA = { id: "user-a", issuer: "idp", type: "user" } as const;
+    const userB = { id: "user-b", issuer: "idp", type: "user" } as const;
+    ctx.set(PendingAuthorizationResultKey, [
+      {
+        callback: { method: "GET", params: { code: "code-a" } },
+        hookUrl: "https://agent.example.com/linear/a",
+        name: "linear",
+        principal: userA,
+      },
+      {
+        callback: { method: "GET", params: { code: "code-b" } },
+        hookUrl: "https://agent.example.com/linear/b",
+        name: "linear",
+        principal: userB,
+      },
+    ]);
+
+    contextStorage.run(ctx, () => {
+      expect(consumeAuthorizationResult("linear", userB)).toMatchObject({
+        callback: { params: { code: "code-b" } },
+        principal: userB,
+      });
+      expect(ctx.get(PendingAuthorizationResultKey)).toMatchObject([
+        { callback: { params: { code: "code-a" } }, principal: userA },
+      ]);
+      expect(
+        consumeAuthorizationResult("linear", {
+          id: "user-c",
+          issuer: "idp",
+          type: "user",
+        }),
+      ).toBeUndefined();
+      expect(ctx.get(PendingAuthorizationResultKey)).toHaveLength(1);
+      expect(consumeAuthorizationResult("linear", userA)).toMatchObject({
+        callback: { params: { code: "code-a" } },
+      });
+    });
+  });
+
+  it("matches user principals by issuer and id, not attributes", () => {
+    const ctx = new ContextContainer();
+    ctx.set(PendingAuthorizationResultKey, [
+      {
+        callback: { method: "GET", params: { code: "code" } },
+        hookUrl: "https://agent.example.com/linear",
+        name: "linear",
+        principal: {
+          attributes: { role: "member" },
+          id: "shared-id",
+          issuer: "issuer-a",
+          type: "user",
+        },
+      },
+    ]);
+
+    contextStorage.run(ctx, () => {
+      expect(
+        consumeAuthorizationResult("linear", {
+          id: "shared-id",
+          issuer: "issuer-b",
+          type: "user",
+        }),
+      ).toBeUndefined();
+      expect(
+        consumeAuthorizationResult("linear", {
+          attributes: { role: "admin" },
+          id: "shared-id",
+          issuer: "issuer-a",
+          type: "user",
+        }),
+      ).toBeDefined();
+    });
+  });
 });
 
 function candidateChallenge(name: string, candidateId: string) {

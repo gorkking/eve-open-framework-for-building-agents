@@ -218,13 +218,29 @@ export async function emitTurnEpilogue(
   state: HarnessEmissionState,
   mode: RunMode,
 ): Promise<HarnessEmissionState> {
+  await emitTurnCompleted(emitFn, state);
+  return emitSessionReady(emitFn, state, mode);
+}
+
+/** Emits the completed-turn boundary without advancing to session readiness. */
+export async function emitTurnCompleted(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+): Promise<void> {
   await emitFn(
     createTurnCompletedEvent({
       sequence: state.sequence,
       turnId: state.turnId,
     }),
   );
+}
 
+/** Emits the mode-specific ready boundary and advances to the next turn. */
+export async function emitSessionReady(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  mode: RunMode,
+): Promise<HarnessEmissionState> {
   if (mode === "conversation") {
     await emitFn(createSessionWaitingEvent());
   } else {

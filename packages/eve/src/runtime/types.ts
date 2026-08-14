@@ -11,6 +11,7 @@ import type { StreamEventHook } from "#public/definitions/hook.js";
 import type { Approval } from "#public/definitions/approval.js";
 import type { ToolModelOutput } from "#public/definitions/tool.js";
 import type { ConnectionToolCallDefinition } from "#public/definitions/connections/tool-call.js";
+import type { MemoryDefinition, MemoryVisibility } from "#public/memory/index.js";
 import type {
   AuthorizationDefinition,
   ConnectionAuthResolver,
@@ -216,6 +217,12 @@ export interface ResolvedHookDefinition extends ResolvedModuleSourceRef {
    * and ignored at dispatch time.
    */
   readonly events: Readonly<Record<string, StreamEventHook<MessageStreamEvent>>>;
+}
+
+/** Runtime-owned authored memory slot with live provider callbacks attached. */
+export interface ResolvedMemoryDefinition extends ResolvedModuleSourceRef, MemoryDefinition {
+  readonly slot: string;
+  readonly visibility: MemoryVisibility;
 }
 
 /**
@@ -453,6 +460,7 @@ export interface ResolvedAgent {
    */
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
   readonly hooks: readonly ResolvedHookDefinition[];
+  readonly memories: readonly ResolvedMemoryDefinition[];
   readonly skills: readonly ResolvedSkillDefinition[];
   readonly tools: readonly ResolvedToolDefinition[];
   readonly workspaceSpec: WorkspaceRuntimeSpec;

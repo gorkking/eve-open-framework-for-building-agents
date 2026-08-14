@@ -35,6 +35,10 @@ export interface HarnessToolDefinition {
   readonly name: string;
   readonly approval?: Approval;
   readonly outputSchema?: FlexibleSchema;
+  /** Selects the model-output mapper for a replayed call whose definition is scope-bound. */
+  readonly resolveToModelOutput?: (
+    toolCallId: string | undefined,
+  ) => ((output: unknown) => unknown) | undefined;
   readonly runtimeAction?: HarnessRuntimeActionDefinition;
   readonly toModelOutput?: (output: unknown) => unknown;
 }

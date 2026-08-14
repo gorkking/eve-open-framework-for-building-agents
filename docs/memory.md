@@ -1,0 +1,220 @@
+---
+title: "Memory"
+description: "Define scoped memory providers and control which recalled context enters model calls."
+---
+
+Memory is a path-authored capability for scoped context that outlives one session. Your provider owns storage, retrieval, formatting, retention, and model-facing operations. eve owns when the provider runs, which trusted scope it receives, where recalled context enters the prompt, and which provider tools the model can call.
+
+Create one flat slot or a directory of named slots:
+
+```text
+agent/memory.ts
+
+# or
+agent/memory/
+├── user.ts
+└── workspace.ts
+```
+
+The two forms are mutually exclusive. The file path determines the slot name: `agent/memory.ts` creates `memory`, while `agent/memory/user.ts` creates `user`. Local subagents can declare their own slots and do not inherit memory from their parent.
+
+## Define a memory slot
+
+Each slot combines a provider with a required trusted scope:
+
+```ts title="agent/memory/user.ts"
+import { byPrincipal, defineMemory } from "eve/memory";
+import { userMemory } from "../lib/user-memory";
+
+export default defineMemory({
+  provider: userMemory,
+  scope: byPrincipal(),
+});
+```
+
+`byPrincipal()` partitions the provider by the authenticated caller. It includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's projections.
+
+For another partition, return an ordered tuple of non-empty strings from authenticated session context, application data, or trusted channel state:
+
+```ts title="agent/memory/workspace.ts"
+import { defineMemory } from "eve/memory";
+import { workspaceMemory } from "../lib/workspace-memory";
+
+export default defineMemory({
+  provider: workspaceMemory,
+  scope(ctx) {
+    const workspaceId = ctx.session.auth.current?.attributes.workspace_id;
+    return typeof workspaceId === "string" ? [workspaceId] : null;
+  },
+});
+```
+
+Do not derive scope parts from model input or unattested message fields. eve derives a collision-resistant `ctx.memory.scope.key` from the application, environment, graph node, slot, and tuple. The original tuple remains available as `ctx.memory.scope.parts`.
+
+eve locks the resolved scope through the active turn, including model steps and durable approved-call continuations. A standalone manual compaction resolves and locks a scope for that operation. Provider tools close over the same scope, so the model never chooses a user, tenant, or container.
+
+## Control projection visibility
+
+A recall produces a scope-bound projection that eve keeps separate from ordinary conversation history. The optional `visibility` field controls what happens to prior projections when the slot resolves a different scope:
+
+```ts title="agent/memory/user.ts"
+import { byPrincipal, defineMemory } from "eve/memory";
+import { userMemory } from "../lib/user-memory";
+
+export default defineMemory({
+  provider: userMemory,
+  scope: byPrincipal(),
+  visibility: "session",
+});
+```
+
+| Value               | Context included after a scope change                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"scope"` (default) | Only the projection whose scope key matches the active turn. Projections recalled for earlier participants are filtered from the request.       |
+| `"session"`         | Every projection recalled for the slot remains visible in anchor order. Use this only when all scopes in the session form one trusted audience. |
+
+Filtering an earlier projection changes the existing prompt prefix and may invalidate the affected prompt cache. A scope change by itself preserves that prefix under `"session"` visibility, but replacing or clearing a projection may still invalidate it. This mode intentionally shares recalled content across scopes.
+
+Visibility changes only memory projections. It does not remove ordinary user, assistant, or tool messages, and it cannot undo information already reflected in an assistant response. Use separate sessions when participants require hard isolation.
+
+## Define a provider
+
+A provider implements required `recall` behavior and may add `save` and `tools`:
+
+```ts title="agent/lib/user-memory.ts"
+import { defineMemoryProvider } from "eve/memory";
+import { defineTool } from "eve/tools";
+import { z } from "zod";
+import { service } from "./service";
+
+export const userMemory = defineMemoryProvider({
+  async recall(ctx) {
+    if (ctx.phase === "turn.started" && ctx.turn.sequence > 0 && ctx.memory.current !== null) {
+      return;
+    }
+
+    const content = await service.recall({
+      history: ctx.messages,
+      input: ctx.turn?.input ?? [],
+      scope: ctx.memory.scope,
+      signal: ctx.abortSignal,
+    });
+
+    return content === null || content.length === 0 ? null : { content };
+  },
+
+  async save(ctx) {
+    if (ctx.phase === "compaction.requested") {
+      await service.checkpoint({
+        history: ctx.messages,
+        operationId: ctx.operationId,
+        scope: ctx.memory.scope,
+        signal: ctx.abortSignal,
+      });
+      return;
+    }
+
+    await service.capture({
+      history: ctx.messages,
+      operationId: ctx.operationId,
+      scope: ctx.memory.scope,
+      signal: ctx.abortSignal,
+      turn: ctx.turn,
+    });
+  },
+
+  tools(ctx) {
+    const scope = ctx.memory.scope;
+
+    return {
+      forget: defineTool({
+        description: "Forget one saved memory.",
+        inputSchema: z.object({ id: z.string() }),
+        execute: ({ id }, toolCtx) =>
+          service.forget({
+            id,
+            scope,
+            signal: toolCtx.abortSignal,
+          }),
+      }),
+    };
+  },
+});
+```
+
+`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their scopes, projections, tools, and lifecycle calls independent.
+
+Every provider call receives:
+
+- `ctx.memory.scope`, the active trusted partition.
+- `ctx.memory.slot`, the path-derived slot name.
+- `ctx.memory.current`, the current projection for this slot and scope, or `null`.
+- `ctx.messages`, durable model history at the boundary, excluding memory projections.
+- `ctx.operationId`, the identifier for one logical slot operation. eve reuses it across workflow replay and when reconstructing a parked approval.
+- `ctx.abortSignal` and the read-only session context.
+
+Turn-aware calls also receive a stable turn ID, a zero-based sequence, and normalized turn input. Step calls include the step index and model ID. Compaction calls include the compaction model ID and, before compaction, input-token usage when available.
+
+## Recall model context
+
+eve calls `recall` when a turn starts and after a successful compaction. Inspect `ctx.phase` to distinguish the two calls:
+
+- `"turn.started"` includes the current `ctx.turn.input`. The first durable turn has `ctx.turn.sequence === 0`.
+- `"compaction.completed"` includes the settled post-compaction history. `ctx.turn` is `null` for standalone manual compaction.
+
+The recall result updates only the active scope's projection:
+
+| Result                          | Effect                                                  |
+| ------------------------------- | ------------------------------------------------------- |
+| `{ content: non-empty string }` | Replace the current projection for this slot and scope. |
+| `null`                          | Clear the current projection for this slot and scope.   |
+| `undefined` / no return         | Preserve the current projection without changing it.    |
+
+Projection content must contain at least one character. An empty string is invalid and fails the recall at that lifecycle boundary; it does not mean clear or skip. Return `null` to clear the projection or `undefined` to preserve it.
+
+A provider can recall on every turn, only when `ctx.turn.sequence === 0`, or whenever `ctx.memory.current === null`. eve still calls the method at each fixed boundary so the provider owns that choice.
+
+The first valid projection for a scope anchors a synthetic user-role message immediately before that scope's current turn input. Later recall results replace or clear the projection at the same anchor. Projections are not emitted as ordinary messages, included in compaction input, or returned through `ctx.messages`. After compaction, eve reanchors the visible projections around the new checkpoint before applying the post-compaction recall result.
+
+This differs from [user-role instructions](./instructions). Instructions append application context to durable conversation history. A memory projection is replaceable provider context that remains attributed to its slot and scope.
+
+## Save durable history
+
+If the provider implements `save`, eve calls it at two boundaries:
+
+- `"compaction.requested"` receives the complete durable history before compaction rewrites it. A failure aborts compaction before history changes.
+- `"turn.completed"` receives the settled history, including the assistant response and tool results. It does not run for failed, cancelled, input-deferred, or adapter-consumed turns.
+
+Use `ctx.operationId` as the idempotency key for externally visible save side effects. It identifies the logical slot operation and may be delivered more than once across workflow replay.
+
+eve awaits a completed-turn save before the next ready boundary. If it fails, eve emits a content-free diagnostic and continues because the completed response cannot be rewritten.
+
+## Provide scope-bound tools
+
+If the provider implements `tools`, eve calls it before every model step with `ctx.phase === "step.started"`. For an ordinary step, that result replaces the slot's previous tool set instead of merging with it. Return a record of ordinary `defineTool(...)` definitions. Return `null` or an empty record to expose no new tools for that slot and step.
+
+eve qualifies each returned key with the slot name. The `forget` tool above becomes `user__forget` when mounted at `agent/memory/user.ts`. The model receives neither the slot nor the scope as tool input. Provider tools otherwise use the standard tool contract, including schemas, authorization, approval, and model-output projection.
+
+Approval helpers keep their standard semantics. In particular, `once()` approves a qualified tool name for the entire session, so that approval also applies after the memory scope changes. Use `always()` or a custom approval policy when an operation needs participant- or scope-specific approval.
+
+A call that parks for approval is an exception to ordinary replacement. To continue it, eve calls `tools` again with the captured originating context and the same `operationId`. The reconstructed definition handles the approved call even if the ordinary result for the current step exposes no new tools; the latest ordinary result still handles unrelated new calls. The same reconstruction applies if that durable historical call later parks for authorization.
+
+A direct inline-authorization park follows the standard tool behavior. Its unfinished assistant/tool exchange does not enter durable history, and the callback makes the credential available only to its matching principal. It does not replay the original execution. A later model step resolves the latest tool set under its current turn and receives a new `operationId`.
+
+Any tool key that can remain parked must stay present with compatible input and output schemas until its calls settle. Because eve may resolve the same logical tool operation more than once, `tools` must be deterministic and must not persist data as a side effect. Perform mutations in the returned tool's `execute` function. If `tools` throws or no longer returns the parked key, eve fails the continuation instead of changing its scope or definition.
+
+## Lifecycle and failure behavior
+
+| Boundary               | Provider call                               | Failure behavior                                                                              |
+| ---------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Turn start             | `recall({ phase: "turn.started" })`         | Fails the turn before the model runs.                                                         |
+| Before compaction      | `save({ phase: "compaction.requested" })`   | Aborts compaction before history changes.                                                     |
+| After compaction       | `recall({ phase: "compaction.completed" })` | Fails an automatically compacting turn; a standalone compaction emits a diagnostic and waits. |
+| Before each model step | `tools({ phase: "step.started" })`          | Fails the model step.                                                                         |
+| After a completed turn | `save({ phase: "turn.completed" })`         | Emits a content-free diagnostic and continues to the ready boundary.                          |
+
+Providers must apply `ctx.memory.scope.key` or `ctx.memory.scope.parts` to every downstream read and write. eve supplies no unscoped provider invocation path, but it cannot prevent provider code from ignoring the supplied scope.
+
+## Package a provider
+
+A provider package can export a `MemoryProvider` or a provider factory with its own credentials, storage, migrations, retrieval, capture, and tools. The consuming agent still declares `defineMemory(...)` with its scope and visibility policy. Extensions cannot contribute memory slots because those audience and partition choices belong to the consuming application.

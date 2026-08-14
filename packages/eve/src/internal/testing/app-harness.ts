@@ -20,6 +20,7 @@ import {
   runWithActiveSessionContext,
 } from "#internal/testing/active-session-context.js";
 import type { MockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
+import type { MemoryDefinition } from "#public/memory/index.js";
 
 /**
  * Declarative, in-memory eve app stand-in used by integration tests.
@@ -54,6 +55,8 @@ export interface TestAppDescriptor {
    * forward it on `runAsSession` when the test reads reference files.
    */
   readonly skills?: readonly CompiledSkillDefinition[];
+  /** Test-local first-class memory slots. */
+  readonly memories?: readonly { readonly definition: MemoryDefinition; readonly slot: string }[];
 }
 
 /**
@@ -153,6 +156,7 @@ export function createTestRuntime(descriptor: TestAppDescriptor = {}): TestRunti
       readonly description: string;
       readonly markdown?: string;
     }[];
+    memories?: readonly { readonly definition: MemoryDefinition; readonly slot: string }[];
   } = {
     name: descriptor.agent?.name ?? DEFAULT_AGENT_NAME,
     model: descriptor.agent?.model ?? TEST_DEFAULT_MODEL_ID,
@@ -181,6 +185,10 @@ export function createTestRuntime(descriptor: TestAppDescriptor = {}): TestRunti
 
       return entry;
     });
+  }
+
+  if (descriptor.memories !== undefined && descriptor.memories.length > 0) {
+    compileInput.memories = descriptor.memories;
   }
 
   const { manifest, moduleMap } = compileFromMemory(compileInput);

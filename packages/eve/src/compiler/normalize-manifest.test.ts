@@ -303,6 +303,51 @@ describe("compileAgentManifest", () => {
     ]);
   });
 
+  it("preserves memory slots alongside role-aware instructions", async () => {
+    const manifest = createAgentSourceManifest({
+      agentId: "root",
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      instructions: [
+        {
+          definition: defineInstructions({ content: "Account context.", role: "user" }),
+          logicalPath: "instructions/context.md",
+          sourceId: "instructions/context.md",
+          sourceKind: "markdown",
+        },
+      ],
+      memories: [
+        {
+          ...createModuleSourceRef({ logicalPath: "memory/user.ts" }),
+          slot: "user",
+        },
+      ],
+    });
+    mocks.compileAgentConfig.mockResolvedValue(createConfig({ name: "root" }));
+
+    const compiled = await compileAgentManifest(manifest);
+
+    expect(compiled.instructions).toEqual([
+      expect.objectContaining({
+        content: "Account context.",
+        role: "user",
+      }),
+    ]);
+    expect(compiled.memories).toEqual([
+      {
+        logicalPath: "memory/user.ts",
+        slot: "user",
+        sourceId: "memory/user.ts",
+        sourceKind: "module",
+      },
+    ]);
+    expect(collectModuleRefsForManifest(compiled)).toContainEqual({
+      logicalPath: "memory/user.ts",
+      sourceId: "memory/user.ts",
+      sourceKind: "module",
+    });
+  });
+
   it("rejects unsupported dynamic instruction event keys", async () => {
     const manifest = createAgentSourceManifest({
       agentId: "root",

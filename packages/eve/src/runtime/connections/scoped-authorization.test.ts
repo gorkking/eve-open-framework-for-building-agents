@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { ContextContainer, contextStorage } from "#context/container.js";
+import { PendingAuthorizationResultKey } from "#harness/authorization.js";
 import {
+  completeScopedAuthorization,
   resolveAuthorizationCallbackUrl,
   stampChallengeDisplayName,
 } from "#runtime/connections/scoped-authorization.js";
-import type { AuthorizationDefinition, TokenResult } from "#runtime/connections/types.js";
+import type {
+  AuthorizationDefinition,
+  ConnectionPrincipal,
+  InteractiveAuthorizationDefinition,
+  TokenResult,
+} from "#runtime/connections/types.js";
 
 function interactiveAuth(
   input: { displayName?: string; connector?: string } = {},
@@ -96,5 +104,70 @@ describe("resolveAuthorizationCallbackUrl", () => {
         callbackUrl,
       }),
     ).toBe(callbackUrl);
+  });
+});
+
+describe("completeScopedAuthorization", () => {
+  it("completes only the callback owned by the bound responder", async () => {
+    const ctx = new ContextContainer();
+    const userA = { id: "user-a", issuer: "idp", type: "user" } as const;
+    const userB = { id: "user-b", issuer: "idp", type: "user" } as const;
+    const completed: ConnectionPrincipal[] = [];
+    const authorization: InteractiveAuthorizationDefinition = {
+      principalType: "user",
+      async getToken(): Promise<TokenResult> {
+        return { token: "tok" };
+      },
+      async startAuthorization() {
+        return { challenge: { url: "https://idp.example/auth" } };
+      },
+      async completeAuthorization(input): Promise<TokenResult> {
+        completed.push(input.principal);
+        return { token: `fresh-${input.principal.type}` };
+      },
+    };
+    ctx.set(PendingAuthorizationResultKey, [
+      {
+        callback: { method: "GET", params: { code: "code-a" } },
+        hookUrl: "https://agent.example.com/linear/a",
+        name: "linear",
+        principal: userA,
+      },
+      {
+        callback: { method: "GET", params: { code: "code-b" } },
+        hookUrl: "https://agent.example.com/linear/b",
+        name: "linear",
+        principal: userB,
+      },
+    ]);
+
+    const completeFor = (principalId: string) =>
+      contextStorage.run(ctx, () =>
+        completeScopedAuthorization({
+          authorization,
+          boundResponder: {
+            attributes: {},
+            authenticator: "idp",
+            issuer: "idp",
+            principalId,
+            principalType: "user",
+          },
+          connection: { url: "https://linear.example.com" },
+          scope: "linear",
+        }),
+      );
+
+    await expect(completeFor("user-b")).resolves.toBe(true);
+    expect(completed).toEqual([userB]);
+    expect(ctx.get(PendingAuthorizationResultKey)).toMatchObject([
+      { callback: { params: { code: "code-a" } }, principal: userA },
+    ]);
+
+    await expect(completeFor("user-b")).resolves.toBe(false);
+    expect(ctx.get(PendingAuthorizationResultKey)).toHaveLength(1);
+
+    await expect(completeFor("user-a")).resolves.toBe(true);
+    expect(completed).toEqual([userB, userA]);
+    expect(ctx.has(PendingAuthorizationResultKey)).toBe(false);
   });
 });

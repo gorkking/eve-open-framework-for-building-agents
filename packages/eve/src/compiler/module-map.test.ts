@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CompiledAgentManifest } from "./manifest.js";
 import {
   COMPILED_AGENT_MANIFEST_VERSION,
+  createCompiledAgentNodeManifest,
   createCompiledAgentResources,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "./manifest.js";
@@ -33,6 +34,7 @@ function createManifestWithTool(agentRoot: string): CompiledAgentManifest {
     dynamicTools: [],
     hooks: [],
     instructions: [],
+    memories: [],
     kind: "eve-agent-compiled-manifest",
     remoteAgents: [],
     schedules: [],
@@ -115,9 +117,76 @@ describe("createCompiledModuleMapSource", () => {
     expect(source).toContain('from "../../subagents/researcher/agent.ts";');
     expect(source).not.toContain("subagents/researcher/subagents/researcher");
   });
+
+  it("imports a local subagent memory module into the child node scope", () => {
+    const childNodeId = "subagents/researcher";
+    const childRoot = "/agent/subagents/researcher";
+    const rootManifest = createManifestWithTool("/agent");
+    const manifest: CompiledAgentManifest = {
+      ...rootManifest,
+      subagents: [
+        {
+          agent: createCompiledAgentNodeManifest({
+            agentRoot: childRoot,
+            appRoot: "/agent",
+            config: rootManifest.config,
+            memories: [
+              {
+                logicalPath: "memory/user.ts",
+                slot: "user",
+                sourceId: "memory/user.ts",
+                sourceKind: "module",
+              },
+            ],
+          }),
+          description: "Research the request.",
+          entryPath: `${childRoot}/agent.ts`,
+          logicalPath: childNodeId,
+          name: "researcher",
+          nodeId: childNodeId,
+          rootPath: childRoot,
+          sourceId: childNodeId,
+          sourceKind: "module",
+        },
+      ],
+    };
+
+    const source = createCompiledModuleMapSource({
+      manifest,
+      moduleMapPath: "/agent/.eve/compile/module-map.mjs",
+    });
+    const rootScopeStart = source.indexOf(`"${ROOT_COMPILED_AGENT_NODE_ID}"`);
+    const childScopeStart = source.indexOf(`"${childNodeId}"`);
+
+    expect(source).toContain('from "../../subagents/researcher/memory/user.ts";');
+    expect(rootScopeStart).toBeGreaterThan(-1);
+    expect(childScopeStart).toBeGreaterThan(rootScopeStart);
+    expect(source.slice(rootScopeStart, childScopeStart)).not.toContain('"memory/user.ts"');
+    expect(source.slice(childScopeStart)).toContain('"memory/user.ts"');
+  });
 });
 
 describe("collectModuleRefsForManifest", () => {
+  it("includes memory slot modules", () => {
+    const manifest: CompiledAgentManifest = {
+      ...createManifestWithTool("/agent"),
+      memories: [
+        {
+          logicalPath: "memory/user.ts",
+          slot: "user",
+          sourceId: "memory/user.ts",
+          sourceKind: "module",
+        },
+      ],
+    };
+
+    expect(collectModuleRefsForManifest(manifest)).toContainEqual({
+      logicalPath: "memory/user.ts",
+      sourceId: "memory/user.ts",
+      sourceKind: "module",
+    });
+  });
+
   it("includes module-sourced schedules with run() so the dispatcher can load the handler", () => {
     const manifest = createManifestWithTool("/agent");
     const manifestWithSchedule: CompiledAgentManifest = {

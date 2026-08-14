@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { buildMemoryAgentProject } from "#internal/testing/memory-agent-source.js";
 import { DISCOVER_SANDBOX_DIRECTORY_INVALID } from "#discover/grammar.js";
 import { discoverAgent } from "#discover/discover-agent.js";
+import { AGENT_SOURCE_MANIFEST_VERSION } from "#discover/manifest.js";
 import {
   DISCOVER_LOCAL_SUBAGENT_SCHEDULES_INVALID,
   DISCOVER_REQUIRED_SUBAGENT_CONFIG_MODULE_MISSING,
@@ -19,12 +20,16 @@ describe("discoverSubagents (memory)", () => {
           'throw new Error("local subagent modules should not execute during discovery");\n',
         "subagents/researcher/lib/client.js":
           'throw new Error("subagent lib modules should not execute during discovery");\n',
+        "subagents/researcher/memory/user.js":
+          'throw new Error("subagent memory modules should not execute during discovery");\n',
         "subagents/researcher/sandbox/sandbox.js":
           'throw new Error("subagent sandboxes should not execute during discovery");\n',
         "subagents/researcher/subagents/reviewer/agent.js":
           'throw new Error("nested local subagent modules should not execute during discovery");\n',
         "subagents/researcher/subagents/reviewer/lib/review.js":
           'throw new Error("nested subagent lib modules should not execute during discovery");\n',
+        "subagents/researcher/subagents/reviewer/memory.mjs":
+          'throw new Error("nested subagent memory modules should not execute during discovery");\n',
         "subagents/researcher/subagents/reviewer/sandbox/sandbox.mjs":
           'throw new Error("nested subagent sandboxes should not execute during discovery");\n',
         "subagents/researcher/subagents/reviewer/instructions.md": "Review drafts for clarity.",
@@ -75,6 +80,14 @@ describe("discoverSubagents (memory)", () => {
             sourceId: "instructions.md",
           },
         ],
+        memories: [
+          {
+            logicalPath: "memory/user.js",
+            slot: "user",
+            sourceId: "memory/user.js",
+            sourceKind: "module",
+          },
+        ],
         sandbox: {
           sourceKind: "module",
           logicalPath: "sandbox/sandbox.js",
@@ -92,7 +105,7 @@ describe("discoverSubagents (memory)", () => {
             sourceId: "tools/search.js",
           },
         ],
-        version: 13,
+        version: AGENT_SOURCE_MANIFEST_VERSION,
       },
       rootPath: researcherRoot,
       sourceId: "subagents/researcher",
@@ -128,6 +141,14 @@ describe("discoverSubagents (memory)", () => {
             sourceId: "instructions.md",
           },
         ],
+        memories: [
+          {
+            logicalPath: "memory.mjs",
+            slot: "memory",
+            sourceId: "memory.mjs",
+            sourceKind: "module",
+          },
+        ],
         sandbox: {
           sourceKind: "module",
           logicalPath: "sandbox/sandbox.mjs",
@@ -138,7 +159,7 @@ describe("discoverSubagents (memory)", () => {
           logicalPath: "agent.js",
           sourceId: "agent.js",
         },
-        version: 13,
+        version: AGENT_SOURCE_MANIFEST_VERSION,
       },
       rootPath: reviewerRoot,
       sourceId: "subagents/reviewer",

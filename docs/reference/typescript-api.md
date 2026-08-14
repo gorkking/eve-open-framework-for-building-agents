@@ -83,6 +83,8 @@ A few additional helpers round out the set: `defineGlobTool`, `defineGrepTool`, 
 | `eve/channels/auth`                                         | `localDev`, `vercelOidc`, `placeholderAuth`                                                               |
 | `eve/channels/{slack,discord,teams,telegram,twilio,github}` | platform channel factories                                                                                |
 | `eve/hooks`                                                 | `defineHook`                                                                                              |
+| `eve/memory`                                                | `defineMemory`, `defineMemoryProvider`, `defaultNamespace`, provider APIs plus address types              |
+| `eve/memory/scope`                                          | `byPrincipal`                                                                                             |
 | `eve/schedules`                                             | `defineSchedule`                                                                                          |
 | `eve/skills`                                                | `defineSkill`, `defineDynamic`                                                                            |
 | `eve/instructions`                                          | `defineInstructions`, `defineDynamic`                                                                     |

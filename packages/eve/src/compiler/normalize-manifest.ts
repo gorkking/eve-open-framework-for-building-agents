@@ -9,6 +9,7 @@ import {
   type CompiledDynamicSkillDefinition,
   type CompiledDynamicToolDefinition,
   type CompiledInstructionsDefinition,
+  type CompiledMemoryDefinition,
   type CompiledSkillDefinition,
   type CompiledToolDefinition,
   type CompiledWorkflowToolDefinition,
@@ -188,6 +189,13 @@ async function compileAgentResources(
     ),
   );
   const hooks = manifest.hooks.map((hookSource) => compileHookEntry(hookSource));
+  const memories: CompiledMemoryDefinition[] = manifest.memories.map((memory) => ({
+    exportName: memory.exportName,
+    logicalPath: memory.logicalPath,
+    slot: memory.slot,
+    sourceId: memory.sourceId,
+    sourceKind: "module",
+  }));
   const schedules = await Promise.all(
     manifest.schedules.map((scheduleSource) =>
       compileScheduleDefinition(manifest.agentRoot, scheduleSource, { externalDependencies }),
@@ -257,6 +265,7 @@ async function compileAgentResources(
     dynamicSkills,
     dynamicTools,
     hooks,
+    memories,
     sandbox:
       manifest.sandbox === null
         ? null

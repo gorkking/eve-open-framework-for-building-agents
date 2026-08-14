@@ -152,6 +152,96 @@ describe("connection dynamic tools", () => {
     expect(Object.keys(tools)).toEqual(["connection_search", "linear__list_issues"]);
     expect(Object.values(tools).every(isBrandedToolEntry)).toBe(true);
   });
+
+  it("locks a resumed discovered tool authorization to the current principal", async () => {
+    const completed: string[] = [];
+    const linear: ResolvedConnectionDefinition = {
+      ...connection("linear"),
+      authorization: {
+        completeAuthorization: async ({ principal }) => {
+          if (principal.type === "user") completed.push(principal.id);
+          return { token: "fresh" };
+        },
+        getToken: async () => ({ token: "cached" }),
+        principalType: "user",
+        startAuthorization: async () => ({
+          challenge: { url: "https://idp.example.com/authorize" },
+        }),
+      },
+    };
+    const connectionRegistry = registry({
+      connections: [linear],
+      loadTools: { linear: async () => [] },
+    });
+    const messages: Msg[] = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "connection_search",
+            output: [
+              {
+                connection: "linear",
+                description: "List issues",
+                inputSchema: { type: "object" },
+                qualifiedName: "linear__list_issues",
+                tool: "list_issues",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const ctx = new ContextContainer();
+    ctx.set(ConnectionRegistryKey, connectionRegistry);
+    ctx.set(AuthKey, {
+      attributes: {},
+      authenticator: "idp",
+      issuer: "idp",
+      principalId: "user-b",
+      principalType: "user",
+    });
+    ctx.set(PendingAuthorizationResultKey, [
+      {
+        callback: { method: "GET", params: { code: "code-a" } },
+        hookUrl: "https://agent.example.com/linear/a",
+        name: "linear",
+        principal: { id: "user-a", issuer: "idp", type: "user" },
+      },
+      {
+        callback: { method: "GET", params: { code: "code-b" } },
+        hookUrl: "https://agent.example.com/linear/b",
+        name: "linear",
+        principal: { id: "user-b", issuer: "idp", type: "user" },
+      },
+    ]);
+
+    const tools = await contextStorage.run(ctx, async () => {
+      const resolve = getConnectionSearchResolver().events["step.started"]!;
+      return (await resolve(
+        {},
+        {
+          channel: {},
+          messages,
+          session: { auth: { current: null, initiator: null }, id: "test-session" },
+        },
+      )) as DynamicToolSet;
+    });
+
+    await contextStorage.run(ctx, () =>
+      tools["linear__list_issues"]!.execute({}, {} as ToolContext),
+    );
+
+    expect(completed).toEqual(["user-b"]);
+    expect(ctx.get(PendingAuthorizationResultKey)).toMatchObject([
+      {
+        callback: { params: { code: "code-a" } },
+        principal: { id: "user-a", issuer: "idp", type: "user" },
+      },
+    ]);
+  });
 });
 
 describe("connection_search", () => {
@@ -342,6 +432,76 @@ describe("connection_search", () => {
       },
     ]);
     expect(notionCompletions).toBe(0);
+  });
+
+  it("completes only the current principal's authorization result", async () => {
+    const completed: string[] = [];
+    const salesforce: ResolvedConnectionDefinition = {
+      ...connection("salesforce"),
+      authorization: {
+        completeAuthorization: async ({ principal }) => {
+          if (principal.type === "user") completed.push(principal.id);
+          return { token: "fresh" };
+        },
+        getToken: async () => ({ token: "cached" }),
+        principalType: "user",
+        startAuthorization: async () => ({
+          challenge: { url: "https://idp.example.com/authorize" },
+        }),
+      },
+    };
+    const connectionRegistry = registry({
+      connections: [salesforce],
+      loadTools: {
+        salesforce: async () => [
+          {
+            description: "List accounts",
+            inputSchema: { type: "object" },
+            name: "list_accounts",
+          },
+        ],
+      },
+    });
+
+    let testContext: ContextContainer | undefined;
+    await expect(
+      executeConnectionSearch(
+        connectionRegistry,
+        { connection: "salesforce", keywords: "list accounts" },
+        (ctx) => {
+          testContext = ctx;
+          ctx.set(AuthKey, {
+            attributes: {},
+            authenticator: "idp",
+            issuer: "idp",
+            principalId: "user-b",
+            principalType: "user",
+          });
+          ctx.set(PendingAuthorizationResultKey, [
+            {
+              callback: { method: "GET", params: { code: "code-a" } },
+              hookUrl: "https://agent.example.com/salesforce/a",
+              name: "salesforce",
+              principal: { id: "user-a", issuer: "idp", type: "user" },
+            },
+            {
+              callback: { method: "GET", params: { code: "code-b" } },
+              hookUrl: "https://agent.example.com/salesforce/b",
+              name: "salesforce",
+              principal: { id: "user-b", issuer: "idp", type: "user" },
+            },
+          ]);
+        },
+      ),
+    ).resolves.toMatchObject([{ qualifiedName: "salesforce__list_accounts" }]);
+
+    expect(completed).toEqual(["user-b"]);
+    expect(testContext?.get(PendingAuthorizationResultKey)).toMatchObject([
+      {
+        callback: { params: { code: "code-a" } },
+        principal: { id: "user-a", issuer: "idp", type: "user" },
+      },
+    ]);
   });
 
   it("returns an authorization signal when sign-in can be started", async () => {

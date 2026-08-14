@@ -234,6 +234,80 @@ export type StepFn = (session: HarnessSession, input?: StepInput) => Promise<Ste
  */
 export type HarnessToolMap = ReadonlyMap<string, HarnessToolDefinition>;
 
+/** Live memory-tool definitions reconstructed for a parked approval or authorization. */
+export interface HarnessMemoryApprovalTools {
+  select(input: {
+    readonly callIds: readonly string[];
+    readonly fallbackTools: HarnessToolMap;
+  }): HarnessToolMap;
+  readonly tools: HarnessToolMap;
+}
+
+/** Execution-owned memory callbacks invoked at exact harness boundaries. */
+export interface HarnessMemoryLifecycle {
+  clearAnchors(session: HarnessSession): HarnessSession;
+  finishCompaction(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly projectionAnchorIndex: number;
+    readonly session: HarnessSession;
+  }): Promise<{ readonly failure?: unknown; readonly session: HarnessSession }>;
+  projectPrompt(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly session: HarnessSession;
+  }): ModelMessage[];
+  recordToolOrigins(input: {
+    readonly calls: readonly {
+      readonly authorizationAttemptIds?: readonly string[];
+      readonly callId: string;
+      readonly toolName: string;
+    }[];
+    readonly session: HarnessSession;
+  }): HarnessSession;
+  releaseToolOrigins(input: {
+    readonly callIds: readonly string[];
+    readonly session: HarnessSession;
+  }): HarnessSession;
+  resolveApprovalTools(input: {
+    readonly callIds: readonly string[];
+    readonly session: HarnessSession;
+  }): Promise<HarnessMemoryApprovalTools>;
+  resolveTools(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly modelId: string;
+    readonly session: HarnessSession;
+  }): Promise<{ readonly session: HarnessSession; readonly tools: HarnessToolMap }>;
+  restoreToolTurn(input: {
+    readonly callIds: readonly string[];
+    readonly projectionAnchorIndex: number;
+    readonly session: HarnessSession;
+  }): HarnessSession;
+  saveCompletedTurn(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly session: HarnessSession;
+  }): Promise<HarnessSession>;
+  startCompaction(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly modelId: string;
+    readonly session: HarnessSession;
+    readonly standalone: boolean;
+    readonly usageInputTokens: number | null;
+  }): Promise<HarnessSession>;
+  startTurn(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly projectionAnchorIndex: number;
+    readonly session: HarnessSession;
+    readonly turn: {
+      readonly input: readonly ModelMessage[];
+      readonly sequence: number;
+      readonly turnId: string;
+    };
+  }): Promise<HarnessSession>;
+  toolOriginCallIds(
+    session: HarnessSession,
+    authorizationAttemptIds?: readonly string[],
+  ): readonly string[];
+}
+
 /**
  * Callback that writes one event to the event stream.
  *
@@ -298,6 +372,8 @@ export interface ToolLoopHarnessConfig {
    * Omitted in production until an instrumentation runtime opts in.
    */
   readonly instrumentation?: HarnessInstrumentation;
+  /** Exact lifecycle adapter for execution-owned first-class memory. */
+  readonly memory?: HarnessMemoryLifecycle;
   /**
    * Execution mode for the current harness.
    *

@@ -7,6 +7,7 @@ import {
   DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED,
   DISCOVER_EXTENSION_MOUNT_AMBIGUOUS,
   DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION,
+  DISCOVER_EXTENSION_MEMORY_UNSUPPORTED,
   DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED,
   DISCOVER_EXTENSION_OVERRIDE_OUTSIDE_MOUNT,
   DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED,
@@ -34,6 +35,7 @@ import {
   readSortedDirectoryEntries,
 } from "#discover/grammar.js";
 import { discoverLibSources } from "#discover/lib.js";
+import { discoverMemorySources } from "#discover/memory.js";
 import {
   type AgentSourceManifest,
   type CreateAgentSourceManifestInput,
@@ -154,6 +156,13 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   });
   diagnostics.push(...connectionsResult.diagnostics);
 
+  const memoryResult = await discoverMemorySources({
+    rootEntries,
+    rootPath: agentRoot,
+    source,
+  });
+  diagnostics.push(...memoryResult.diagnostics);
+
   const sandboxResult = await discoverSandboxSource({
     rootEntries,
     rootPath: agentRoot,
@@ -169,6 +178,17 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
           message:
             "An extension may not declare agent config (agent.ts) — model, limits, and sandbox are the consuming agent's to own.",
           sourcePath: join(agentRoot, configModuleResult.module.logicalPath),
+        }),
+      );
+    }
+    const [firstMemory] = memoryResult.memories;
+    if (firstMemory !== undefined) {
+      diagnostics.push(
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MEMORY_UNSUPPORTED,
+          message:
+            "An extension may not declare memory — partitioning and lifecycle state are the consuming agent's to own.",
+          sourcePath: join(agentRoot, firstMemory.logicalPath),
         }),
       );
     }
@@ -228,6 +248,7 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
   const subagentsResult = await discoverSubagents({
     agentRoot,
     appRoot,
+    role,
     source,
   });
   diagnostics.push(...subagentsResult.diagnostics);
@@ -292,6 +313,7 @@ export async function discoverAgent(input: DiscoverAgentInput): Promise<Discover
     extensions: mountCollection.mounts.map((descriptor) => descriptor.mountRef),
     resolvedExtensions,
     hooks: hooksResult.sources,
+    memories: role === "extension" ? [] : memoryResult.memories,
     lib: libResult.lib,
     instructions: instructionsResult.instructions,
     sandbox: sandboxResult.sandbox,

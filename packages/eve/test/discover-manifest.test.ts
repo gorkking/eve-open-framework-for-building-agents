@@ -8,6 +8,7 @@ import {
   AGENT_SOURCE_MANIFEST_KIND,
   AGENT_SOURCE_MANIFEST_VERSION,
   createAgentSourceManifest,
+  createModuleSourceRef,
   createPathDerivedSourceId,
   deriveAgentIdFromRoots,
 } from "../src/discover/manifest.js";
@@ -38,6 +39,7 @@ describe("agent source manifest", () => {
       instructions: [],
       lib: [],
       kind: AGENT_SOURCE_MANIFEST_KIND,
+      memories: [],
       sandbox: null,
       sandboxWorkspaces: [],
       schedules: [],
@@ -73,6 +75,36 @@ describe("agent source manifest", () => {
       errors: 1,
       warnings: 1,
     });
+  });
+
+  it("preserves instructions and memory source refs together", () => {
+    const manifest = createAgentSourceManifest({
+      agentRoot: "/tmp/weather-agent/agent",
+      appRoot: "/tmp/weather-agent",
+      instructions: [createModuleSourceRef({ logicalPath: "instructions/context.ts" })],
+      memories: [
+        {
+          ...createModuleSourceRef({ logicalPath: "memory/user.ts" }),
+          slot: "user",
+        },
+      ],
+    });
+
+    expect(manifest.instructions).toEqual([
+      {
+        logicalPath: "instructions/context.ts",
+        sourceId: "instructions/context.ts",
+        sourceKind: "module",
+      },
+    ]);
+    expect(manifest.memories).toEqual([
+      {
+        logicalPath: "memory/user.ts",
+        slot: "user",
+        sourceId: "memory/user.ts",
+        sourceKind: "module",
+      },
+    ]);
   });
 
   it("derives stable agent ids and source ids from resolved paths", () => {

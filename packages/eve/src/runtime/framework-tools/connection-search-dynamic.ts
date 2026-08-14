@@ -7,6 +7,7 @@ import {
   type AuthorizationSignal,
   consumeAuthorizationResult,
   createAuthorizationAttempt,
+  getAuthorizationResult,
   requestAuthorization,
 } from "#harness/authorization.js";
 import {
@@ -154,11 +155,13 @@ async function completePendingAuthorizations(
   const ctx = loadContext();
   const completed = new Set<string>();
   for (const conn of connections) {
-    const result = consumeAuthorizationResult(conn.connectionName);
-    if (!result) continue;
+    if (getAuthorizationResult(conn.connectionName) === undefined) continue;
     const auth = await resolveInteractiveAuth(registry, conn.connectionName);
     if (!auth) continue;
-    const principal = result.principal ?? resolveConnectionPrincipal(conn.connectionName, auth);
+    const expectedPrincipal = resolveConnectionPrincipal(conn.connectionName, auth);
+    const result = consumeAuthorizationResult(conn.connectionName, expectedPrincipal);
+    if (!result) continue;
+    const principal = result.principal ?? expectedPrincipal;
     const token = await (
       auth as InteractiveAuthorizationDefinition<JsonValue>
     ).completeAuthorization({
@@ -450,14 +453,13 @@ const connectionSearchDynamicDefinition = defineDynamic({
               | undefined;
 
             let justCompletedAuth = false;
-            if (interactiveAuth) {
-              const authResult = consumeAuthorizationResult(connectionName);
+            if (interactiveAuth && getAuthorizationResult(connectionName) !== undefined) {
+              const expectedPrincipal = resolveConnectionPrincipal(connectionName, interactiveAuth);
+              const authResult = consumeAuthorizationResult(connectionName, expectedPrincipal);
               if (authResult) {
                 justCompletedAuth = true;
                 const ctx = loadContext();
-                const principal =
-                  authResult.principal ??
-                  resolveConnectionPrincipal(connectionName, interactiveAuth);
+                const principal = authResult.principal ?? expectedPrincipal;
                 const token = await interactiveAuth.completeAuthorization({
                   callbackUrl: authResult.hookUrl,
                   connection: { url: conn?.url ?? "" },

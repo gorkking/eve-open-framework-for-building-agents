@@ -94,6 +94,57 @@ export default defineSandbox({
     },
   },
   {
+    descriptor: {
+      files: {
+        "agent/memory/user.ts": `import {
+  byPrincipal,
+  defineMemory,
+  defineMemoryProvider,
+  type MemoryProjection,
+  type MemoryRecallContext,
+  type MemorySaveContext,
+  type MemoryToolsContext,
+  type MemoryVisibility,
+} from "eve/memory";
+
+const provider = defineMemoryProvider({
+  async recall(ctx: MemoryRecallContext): Promise<MemoryProjection | undefined> {
+    if (ctx.phase === "turn.started") {
+      void ctx.turn.sequence;
+    } else {
+      void ctx.compaction.modelId;
+    }
+    return ctx.memory.current ?? { content: ctx.memory.scope.key };
+  },
+  async save(ctx: MemorySaveContext): Promise<void> {
+    void (ctx.phase === "compaction.requested" ? ctx.compaction.modelId : ctx.turn.turnId);
+  },
+  tools(ctx: MemoryToolsContext) {
+    void ctx.step.stepIndex;
+    return null;
+  },
+});
+
+const visibility: MemoryVisibility = "scope";
+
+export default defineMemory({
+  provider,
+  scope: byPrincipal(),
+  visibility,
+});
+`,
+      },
+      name: "memory-public-api-portability",
+    },
+    include: ["src/public/memory/index.ts"],
+    name: "lets tsc typecheck memory providers and slots from the public subpath",
+    packageExports: {
+      "./memory": {
+        types: "./dist/src/public/memory/index.d.ts",
+      },
+    },
+  },
+  {
     descriptor: SLACK_ROUTE_PORTABILITY_DESCRIPTOR,
     include: ["src/public/channels/slack/index.ts", "src/public/definitions/channel.ts"],
     name: "lets tsc typecheck a default-exported slackChannel without extra annotations",

@@ -20,6 +20,7 @@ import {
 } from "../../src/compiler/manifest.js";
 import { createDiscoverWarningDiagnostic } from "../../src/discover/diagnostics.js";
 import {
+  AGENT_SOURCE_MANIFEST_VERSION,
   createAgentSourceManifest,
   createLocalSubagentSourceRef,
   createModuleSourceRef,
@@ -183,7 +184,7 @@ describe("compiler artifacts", () => {
           sourceId: "instructions.md",
         },
       ],
-      version: 13,
+      version: AGENT_SOURCE_MANIFEST_VERSION,
     });
     expect(normalizeArtifactValue(JSON.parse(compiledManifestText), appRoot)).toMatchObject({
       agentRoot: "<app-root>/agent",
@@ -475,6 +476,41 @@ describe("compiler artifacts", () => {
 });
 
 describe("compileAgent", () => {
+  it("discovers and bundles a first-class memory slot from the filesystem", async () => {
+    const app = await scenarioApp({
+      files: {
+        "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
+        "agent/instructions.md": "Use recalled context when it is relevant.\n",
+        "agent/memory/profile.ts": [
+          'import { byPrincipal, defineMemory, defineMemoryProvider } from "eve/memory";',
+          "",
+          "const provider = defineMemoryProvider({",
+          '  recall: () => ({ content: "Prefers concise answers." }),',
+          "});",
+          "",
+          "export default defineMemory({ provider, scope: byPrincipal() });",
+          "",
+        ].join("\n"),
+      },
+      installDependencies: true,
+      name: "first-class-memory-slot",
+    });
+
+    const result = await compileAgent({ startPath: app.appRoot });
+    const moduleMapText = await readFile(result.paths.moduleMapPath, "utf8");
+
+    expect(result.manifest.memories).toEqual([
+      {
+        logicalPath: "memory/profile.ts",
+        slot: "profile",
+        sourceId: "memory/profile.ts",
+        sourceKind: "module",
+      },
+    ]);
+    expect(moduleMapText).toContain('from "../../agent/memory/profile.ts";');
+    expect(moduleMapText).toContain('"memory/profile.ts"');
+  });
+
   it("narrows authored channel metadata without generated declarations", async () => {
     const app = await scenarioApp({
       files: {

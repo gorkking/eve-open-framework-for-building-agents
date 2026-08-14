@@ -43,6 +43,7 @@ import {
   getPendingAuthorization,
   modelFacingAuthorizationOutput,
   requestAuthorization,
+  setPendingAuthorization,
 } from "#harness/authorization.js";
 import {
   getPendingInputRequestIds,
@@ -55,12 +56,18 @@ import { AGENT_HANDLES_STATE_KEY } from "#harness/handles/store.js";
 import { stashToolInterrupt } from "#harness/tool-interrupts.js";
 import { appendMissingToolResultMessages, createToolLoopHarness } from "#harness/tool-loop.js";
 import { isSessionLimitDecline, TurnCancelledError } from "#harness/turn-cancellation.js";
+import { ensureWorkflowContinuationSecurity } from "#harness/workflow-continuation-security.js";
 import {
   getSessionTokenLimitViolation,
   getSessionTokenUsage,
   setTurnUsageState,
 } from "#harness/turn-tag-state.js";
-import type { HarnessEmitFn, HarnessSession, ToolLoopHarnessConfig } from "#harness/types.js";
+import type {
+  HarnessEmitFn,
+  HarnessMemoryLifecycle,
+  HarnessSession,
+  ToolLoopHarnessConfig,
+} from "#harness/types.js";
 import {
   createInstrumentationHooks,
   type InstrumentationContextRunner,
@@ -81,6 +88,12 @@ vi.mock("ai", () => ({
   jsonSchema: vi.fn((s: unknown) => s),
   isStepCount: vi.fn((n: number) => n),
   tool: vi.fn((t: unknown) => t),
+}));
+
+const mockGetWorkflowSandboxInterrupt = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("#shared/workflow-sandbox.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("#shared/workflow-sandbox.js")>()),
+  getWorkflowSandboxInterrupt: (...args: unknown[]) => mockGetWorkflowSandboxInterrupt(...args),
 }));
 
 const {
@@ -132,8 +145,16 @@ function declareTelemetry(config: Readonly<Record<string, unknown>> | undefined)
   );
 }
 
+const mockCompactMessages = vi.hoisted(() => vi.fn());
 vi.mock("./compaction.js", () => ({
-  compactMessages: vi.fn(),
+  compactMessages: mockCompactMessages,
+  compactMessagesWithProjectionAnchor: async (...args: unknown[]) => {
+    const messages = (await mockCompactMessages(...args)) as ModelMessage[];
+    return {
+      messages,
+      projectionAnchorIndex: Math.min(2, messages.length),
+    };
+  },
   estimateTokens: vi.fn().mockReturnValue(5000),
   getInputTokenCount: vi.fn().mockReturnValue(5000),
   resolveCompactionModel: vi.fn(
@@ -151,6 +172,7 @@ vi.mock("./compaction.js", () => ({
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
+  mockGetWorkflowSandboxInterrupt.mockResolvedValue(undefined);
   declareTelemetry(undefined);
   mockGetRegisteredTelemetryIntegrations.mockReturnValue([]);
 });
@@ -190,6 +212,29 @@ function createTestConfig(
         },
       ],
     ]),
+    ...overrides,
+  };
+}
+
+function createMemoryLifecycle(
+  overrides: Partial<HarnessMemoryLifecycle> = {},
+): HarnessMemoryLifecycle {
+  return {
+    clearAnchors: (session) => session,
+    finishCompaction: async ({ session }) => ({ session }),
+    projectPrompt: ({ messages }) => [...messages],
+    recordToolOrigins: ({ session }) => session,
+    releaseToolOrigins: ({ session }) => session,
+    resolveApprovalTools: async () => ({
+      select: ({ fallbackTools }) => fallbackTools,
+      tools: new Map(),
+    }),
+    resolveTools: async ({ session }) => ({ session, tools: new Map() }),
+    restoreToolTurn: ({ session }) => session,
+    saveCompletedTurn: async ({ session }) => session,
+    startCompaction: async ({ session }) => session,
+    startTurn: async ({ session }) => session,
+    toolOriginCallIds: () => [],
     ...overrides,
   };
 }
@@ -1599,6 +1644,51 @@ describe("createToolLoopHarness", () => {
     expect(agentCall!.tools).not.toHaveProperty("Workflow");
   });
 
+  it("rejects a Workflow interrupt mixed with another parked request", async () => {
+    const toolCall = {
+      input: { action: "run" },
+      toolCallId: "gate-1",
+      toolName: "add",
+      type: "tool-call" as const,
+    };
+    setupMockAgent({
+      content: [
+        toolCall,
+        { approvalId: "approval-1", toolCallId: "gate-1", type: "tool-approval-request" },
+      ],
+      finishReason: "tool-calls",
+      response: {
+        messages: [
+          {
+            content: [
+              toolCall,
+              {
+                approvalId: "approval-1",
+                toolCallId: "gate-1",
+                type: "tool-approval-request",
+              },
+            ],
+            role: "assistant",
+          },
+        ],
+      },
+      text: "",
+      toolCalls: [toolCall],
+      toolResults: [],
+    });
+    mockGetWorkflowSandboxInterrupt.mockResolvedValueOnce({});
+
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", undefined, { workflow: true }),
+    );
+
+    await expect(
+      runStep(ensureWorkflowContinuationSecurity(createTestSession()), { message: "Run both" }),
+    ).rejects.toThrow(
+      "Workflow cannot park alongside approval, question, or authorization requests in one model step.",
+    );
+  });
+
   it("forwards the agent reasoning effort to the model call", async () => {
     setupMockAgent({
       finishReason: "stop",
@@ -1750,11 +1840,20 @@ describe("createToolLoopHarness", () => {
 
   it("parks on a deterministic continuation prompt when the session reaches its token limit", async () => {
     const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+    const resolveTools = vi.fn(async ({ session }: { readonly session: HarnessSession }) => ({
+      session,
+      tools: new Map(),
+    }));
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory: createMemoryLifecycle({ resolveTools }),
+      }),
+    );
 
     const result = await runStep(createLimitReachedSession(), { message: "Hi again" });
 
     expect(vi.mocked(ToolLoopAgent)).not.toHaveBeenCalled();
+    expect(resolveTools).not.toHaveBeenCalled();
     expect(result.next).toBeNull();
     expect(result.settledTurn).toBeUndefined();
     expect(events.map((event) => event.type)).toEqual([
@@ -3777,6 +3876,9 @@ describe("createToolLoopHarness", () => {
   it("propagates streamed cancellation without waiting for onStepFinish or emitting failures", async () => {
     const abortController = new AbortController();
     const abortReason = new TurnCancelledError();
+    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+      Promise.resolve(session),
+    );
 
     vi.mocked(ToolLoopAgent).mockImplementation(function (
       this: ToolLoopAgent,
@@ -3809,7 +3911,10 @@ describe("createToolLoopHarness", () => {
 
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
-      createTestConfig("conversation", emit, { abortSignal: abortController.signal }),
+      createTestConfig("conversation", emit, {
+        abortSignal: abortController.signal,
+        memory: createMemoryLifecycle({ saveCompletedTurn }),
+      }),
     );
 
     await expect(runStep(createTestSession(), { message: "Hi" })).rejects.toBe(abortReason);
@@ -3818,6 +3923,7 @@ describe("createToolLoopHarness", () => {
     expect(eventTypes).not.toContain("step.failed");
     expect(eventTypes).not.toContain("turn.failed");
     expect(eventTypes).not.toContain("session.failed");
+    expect(saveCompletedTurn).not.toHaveBeenCalled();
   });
 
   it("does not retry or recover a model call once the turn signal has aborted", async () => {
@@ -4052,8 +4158,15 @@ describe("createToolLoopHarness", () => {
   it("emits a recoverable failure cascade and parks the session on a non-terminal model-call error", async () => {
     setupMockAgentError(new Error("Model blew up"));
 
+    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+      Promise.resolve(session),
+    );
     const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory: createMemoryLifecycle({ saveCompletedTurn }),
+      }),
+    );
 
     const result = await runStep(createTestSession(), { message: "Hi" });
 
@@ -4079,6 +4192,7 @@ describe("createToolLoopHarness", () => {
       message: "Model blew up",
     });
     expect((stepFailed!.data as { details?: { errorId?: string } }).details?.errorId).toBeDefined();
+    expect(saveCompletedTurn).not.toHaveBeenCalled();
   });
 
   it("rethrows a recoverable task-mode model error for durable step retry", async () => {
@@ -5698,6 +5812,9 @@ describe("createToolLoopHarness", () => {
 
     it("still parks on authorization without emitting action.result when interactive auth fires in the same step", async () => {
       const { full, modelFacing } = createAuthSignals();
+      const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+        Promise.resolve(session),
+      );
 
       setupMockAgent({
         finishReason: "tool-calls",
@@ -5753,6 +5870,7 @@ describe("createToolLoopHarness", () => {
       const { emit, events } = createEventCollector();
       const runStep = createToolLoopHarness(
         createTestConfig("conversation", emit, {
+          memory: createMemoryLifecycle({ saveCompletedTurn }),
           tools: new Map([
             [
               "protected_action",
@@ -5784,6 +5902,182 @@ describe("createToolLoopHarness", () => {
 
       const actionResults = events.filter((event) => event.type === "action.result");
       expect(actionResults).toHaveLength(0);
+      expect(saveCompletedTurn).not.toHaveBeenCalled();
+    });
+
+    it("persists every parallel authorization signal and memory origin", async () => {
+      const first = requestAuthorization([
+        {
+          attemptId: "attempt-first",
+          name: "first_connection",
+          challenge: { url: "https://idp.example/first" },
+          hookUrl: "https://app.example/first",
+          principal: { type: "app" },
+        },
+      ]);
+      const second = requestAuthorization([
+        {
+          attemptId: "attempt-second",
+          name: "second_connection",
+          challenge: { url: "https://idp.example/second" },
+          hookUrl: "https://app.example/second",
+          principal: { type: "app" },
+        },
+      ]);
+      const calls = [
+        {
+          input: {},
+          toolCallId: "call-first",
+          toolName: "user__first",
+          type: "tool-call" as const,
+        },
+        {
+          input: {},
+          toolCallId: "call-second",
+          toolName: "user__second",
+          type: "tool-call" as const,
+        },
+      ];
+      const results = [
+        {
+          output: modelFacingAuthorizationOutput(first),
+          toolCallId: "call-first",
+          toolName: "user__first",
+          type: "tool-result" as const,
+        },
+        {
+          output: modelFacingAuthorizationOutput(second),
+          toolCallId: "call-second",
+          toolName: "user__second",
+          type: "tool-result" as const,
+        },
+      ];
+      setupMockAgent({
+        finishReason: "tool-calls",
+        response: { messages: [{ content: calls, role: "assistant" }] },
+        text: "",
+        toolCalls: calls,
+        toolResults: results,
+      });
+
+      const memoryTools = new Map(
+        calls.map((call) => [
+          call.toolName,
+          {
+            description: call.toolName,
+            execute: vi.fn(),
+            inputSchema: jsonSchema({ type: "object" }),
+            name: call.toolName,
+          },
+        ]),
+      );
+      const recordToolOrigins = vi.fn(
+        ({ session }: { readonly calls: readonly unknown[]; readonly session: HarnessSession }) =>
+          session,
+      );
+      const memory = createMemoryLifecycle({
+        recordToolOrigins,
+        resolveTools: async ({ session }) => ({ session, tools: memoryTools }),
+      });
+      const { emit, events } = createEventCollector();
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", emit, { memory, tools: new Map() }),
+      );
+      const ctx = new ContextContainer();
+      stashToolInterrupt(ctx, "call-first", first);
+      stashToolInterrupt(ctx, "call-second", second);
+
+      const result = await contextStorage.run(ctx, () =>
+        runStep(createTestSession(), { message: "run both" }),
+      );
+
+      expect(getPendingAuthorization(result.session.state)?.challenges).toEqual([
+        ...first.challenges,
+        ...second.challenges,
+      ]);
+      expect(recordToolOrigins).toHaveBeenCalledWith({
+        calls: [
+          {
+            authorizationAttemptIds: ["attempt-first"],
+            callId: "call-first",
+            toolName: "user__first",
+          },
+          {
+            authorizationAttemptIds: ["attempt-second"],
+            callId: "call-second",
+            toolName: "user__second",
+          },
+        ],
+        session: expect.any(Object),
+      });
+      expect(
+        events
+          .filter((event) => event.type === "authorization.required")
+          .map((event) => event.data.name),
+      ).toEqual(["first_connection", "second_connection"]);
+    });
+
+    it("releases a memory origin when a newer authorization attempt supersedes it", async () => {
+      const { full, modelFacing } = createAuthSignals();
+      const previous = requestAuthorization([
+        {
+          ...full.challenges[0]!,
+          attemptId: "attempt-previous",
+          resume: { nonce: "previous" },
+        },
+      ]);
+      setupMockAgent({
+        finishReason: "tool-calls",
+        fullStreamParts: [
+          {
+            input: { action: "run" },
+            toolCallId: "call-new",
+            toolName: "protected_action",
+            type: "tool-call",
+          },
+          {
+            output: modelFacing,
+            toolCallId: "call-new",
+            toolName: "protected_action",
+            type: "tool-result",
+          },
+          { finishReason: "tool-calls", type: "finish-step" },
+        ],
+        response: { messages: [] },
+        text: "",
+        toolCalls: [],
+        toolResults: [
+          {
+            output: modelFacing,
+            toolCallId: "call-new",
+            toolName: "protected_action",
+            type: "tool-result",
+          },
+        ],
+      });
+
+      const releaseToolOrigins = vi.fn(
+        ({ session }: { readonly callIds: readonly string[]; readonly session: HarnessSession }) =>
+          session,
+      );
+      const toolOriginCallIds = vi.fn((_session: HarnessSession, attemptIds?: readonly string[]) =>
+        attemptIds?.includes("attempt-previous") === true ? ["call-previous"] : [],
+      );
+      const memory = createMemoryLifecycle({ releaseToolOrigins, toolOriginCallIds });
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", undefined, { memory }),
+      );
+      const session = createTestSession({
+        state: setPendingAuthorization(undefined, { challenges: previous.challenges }),
+      });
+      const ctx = new ContextContainer();
+      stashToolInterrupt(ctx, "call-new", full);
+
+      await contextStorage.run(ctx, () => runStep(session, { message: "try again" }));
+
+      expect(releaseToolOrigins).toHaveBeenCalledWith(
+        expect.objectContaining({ callIds: ["call-previous"] }),
+      );
     });
   });
 
@@ -7139,11 +7433,15 @@ describe("createToolLoopHarness", () => {
   });
 
   it("parks tool approval with one durable model-visible projection", async () => {
+    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+      Promise.resolve(session),
+    );
     setupMockAgent(pendingBashApprovalResult());
 
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
+        memory: createMemoryLifecycle({ saveCompletedTurn }),
         tools: new Map([
           [
             "bash",
@@ -7236,6 +7534,7 @@ describe("createToolLoopHarness", () => {
       },
       type: "input.requested",
     });
+    expect(saveCompletedTurn).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -8412,6 +8711,9 @@ describe("createToolLoopHarness", () => {
   });
 
   it("emits input.requested for ask_question and does not emit actions.requested", async () => {
+    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+      Promise.resolve(session),
+    );
     setupMockAgent({
       content: [],
       finishReason: "tool-calls",
@@ -8450,7 +8752,11 @@ describe("createToolLoopHarness", () => {
     });
 
     const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory: createMemoryLifecycle({ saveCompletedTurn }),
+      }),
+    );
     const session = createTestSession({
       agent: {
         modelReference: { id: "test-model" },
@@ -8495,6 +8801,7 @@ describe("createToolLoopHarness", () => {
       },
       type: "input.requested",
     });
+    expect(saveCompletedTurn).not.toHaveBeenCalled();
   });
 
   it("delivers a stale ask_question selection as a new user turn while another question is pending", async () => {
@@ -8725,6 +9032,273 @@ describe("createToolLoopHarness", () => {
     });
   });
 
+  it("projects memory into the model call without persisting it in history", async () => {
+    const order: string[] = [];
+    const events: UnstampedMessageStreamEvent[] = [];
+    const startTurn = vi.fn(async ({ session }: { session: HarnessSession }) => session);
+    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) => {
+      order.push("memory.save");
+      return session;
+    });
+    const memory = createMemoryLifecycle({
+      projectPrompt: ({ messages }) => [
+        ...messages.slice(0, 1),
+        { content: "recalled context", role: "user" },
+        ...messages.slice(1),
+      ],
+      saveCompletedTurn,
+      startTurn,
+    });
+    const emit: HarnessEmitFn = async (event) => {
+      events.push(event);
+      order.push(event.type);
+    };
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Got it.", role: "assistant" }] },
+      text: "Got it.",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const runStep = createToolLoopHarness(createTestConfig("conversation", emit, { memory }));
+    const result = await runStep(
+      createTestSession({ history: [{ content: "Earlier", role: "user" }] }),
+      { message: "Current" },
+    );
+    const agent = vi.mocked(ToolLoopAgent).mock.results.at(-1)?.value;
+    const modelMessages = vi.mocked(agent?.stream).mock.calls[0]?.[0].messages;
+
+    expect(startTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [{ content: "Earlier", role: "user" }],
+        projectionAnchorIndex: 1,
+        turn: {
+          input: [{ content: "Current", role: "user" }],
+          sequence: 0,
+          turnId: "turn_0",
+        },
+      }),
+    );
+    expect(modelMessages).toEqual([
+      { content: "Earlier", role: "user" },
+      { content: "recalled context", role: "user" },
+      { content: "Current", role: "user" },
+    ]);
+    expect(result.session.history).toEqual([
+      { content: "Earlier", role: "user" },
+      { content: "Current", role: "user" },
+      { content: "Got it.", role: "assistant" },
+    ]);
+    expect(saveCompletedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: result.session.history }),
+    );
+    expect(order.indexOf("turn.completed")).toBeLessThan(order.indexOf("memory.save"));
+    expect(order.indexOf("memory.save")).toBeLessThan(order.indexOf("session.waiting"));
+    expect(events.some((event) => JSON.stringify(event).includes("recalled context"))).toBe(false);
+  });
+
+  it("reaches the ready boundary without exposing a completed-turn memory save failure", async () => {
+    const saveCompletedTurn = vi.fn(async () => {
+      throw new Error("private completed-turn memory failure");
+    });
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Settled response", role: "assistant" }] },
+      text: "Settled response",
+      toolCalls: [],
+      toolResults: [],
+    });
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory: createMemoryLifecycle({ saveCompletedTurn }),
+      }),
+    );
+
+    const result = await runStep(createTestSession(), { message: "Current" });
+
+    expect(saveCompletedTurn).toHaveBeenCalledOnce();
+    expect(result.session.history).toEqual([
+      { content: "Current", role: "user" },
+      { content: "Settled response", role: "assistant" },
+    ]);
+    expect(result.settledTurn).toEqual({ output: "Settled response" });
+    expect(getCompatibilityEventTypes(events).slice(-2)).toEqual([
+      "turn.completed",
+      "session.waiting",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("private completed-turn memory failure");
+  });
+
+  it("runs memory compaction calls around the durable rewrite before resolving tools", async () => {
+    vi.mocked(shouldCompact).mockReturnValue(true);
+    vi.mocked(compactMessages).mockResolvedValue([
+      { content: "Summary of our conversation so far:", role: "user" },
+      { content: "summary", role: "assistant" },
+      { content: "Current", role: "user" },
+    ]);
+    const order: string[] = [];
+    const memory = createMemoryLifecycle({
+      finishCompaction: async ({ session }) => {
+        order.push("memory.recall.compaction.completed");
+        return { session };
+      },
+      resolveTools: async ({ session }) => {
+        order.push("memory.tools.step.started");
+        return { session, tools: new Map() };
+      },
+      saveCompletedTurn: async ({ session }) => {
+        order.push("memory.save.turn.completed");
+        return session;
+      },
+      startCompaction: async ({ session }) => {
+        order.push("memory.save.compaction.requested");
+        return session;
+      },
+    });
+    const emit: HarnessEmitFn = async (event) => {
+      order.push(event.type);
+    };
+    setupMockAgent({
+      finishReason: "stop",
+      response: { messages: [{ content: "Got it.", role: "assistant" }] },
+      text: "Got it.",
+      toolCalls: [],
+      toolResults: [],
+    });
+
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory,
+        resolveModel: vi
+          .fn()
+          .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
+      }),
+    );
+    await runStep(createTestSession({ history: [{ content: "Earlier", role: "user" }] }), {
+      message: "Current",
+    });
+
+    expect(order).toEqual(
+      expect.arrayContaining([
+        "memory.save.compaction.requested",
+        "memory.recall.compaction.completed",
+        "memory.tools.step.started",
+        "memory.save.turn.completed",
+      ]),
+    );
+    expect(order.indexOf("step.started")).toBeLessThan(order.indexOf("compaction.requested"));
+    expect(order.indexOf("compaction.requested")).toBeLessThan(
+      order.indexOf("memory.save.compaction.requested"),
+    );
+    expect(order.indexOf("memory.save.compaction.requested")).toBeLessThan(
+      order.indexOf("compaction.completed"),
+    );
+    expect(order.indexOf("compaction.completed")).toBeLessThan(
+      order.indexOf("memory.recall.compaction.completed"),
+    );
+    expect(order.indexOf("memory.recall.compaction.completed")).toBeLessThan(
+      order.indexOf("memory.tools.step.started"),
+    );
+  });
+
+  it("aborts automatic compaction before rewriting history when memory pre-save fails", async () => {
+    vi.mocked(shouldCompact).mockReturnValue(true);
+    const startCompaction = vi.fn(async () => {
+      throw new Error("private automatic pre-save failure");
+    });
+    const memory = createMemoryLifecycle({ startCompaction });
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory,
+        resolveModel: vi
+          .fn()
+          .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
+      }),
+    );
+    const session = createTestSession({
+      history: [{ content: "Earlier", role: "user" }],
+    });
+
+    const result = await runStep(session, { message: "Current" });
+
+    expect(startCompaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { content: "Earlier", role: "user" },
+          { content: "Current", role: "user" },
+        ],
+        standalone: false,
+      }),
+    );
+    expect(result.session.history).toEqual(session.history);
+    expect(result.settledTurn).toEqual({
+      isError: true,
+      output: "Memory could not be prepared for this turn.",
+    });
+    expect(getCompatibilityEventTypes(events)).toEqual([
+      "session.started",
+      "turn.started",
+      "message.received",
+      "step.started",
+      "compaction.requested",
+      "step.failed",
+      "turn.failed",
+      "session.waiting",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("private automatic pre-save failure");
+    expect(compactMessages).not.toHaveBeenCalled();
+    expect(ToolLoopAgent).not.toHaveBeenCalled();
+  });
+
+  it("keeps the compacted checkpoint when post-compaction memory recall fails", async () => {
+    vi.mocked(shouldCompact).mockReturnValue(true);
+    const compactedHistory: ModelMessage[] = [
+      { content: "Summary of our conversation so far:", role: "user" },
+      { content: "durable summary", role: "assistant" },
+      { content: "Current", role: "user" },
+    ];
+    vi.mocked(compactMessages).mockResolvedValue(compactedHistory);
+    const memory = createMemoryLifecycle({
+      finishCompaction: async ({ session }) => ({
+        failure: new Error("private provider failure"),
+        session,
+      }),
+    });
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        memory,
+        resolveModel: vi
+          .fn()
+          .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
+      }),
+    );
+
+    const result = await runStep(
+      createTestSession({ history: [{ content: "Earlier", role: "user" }] }),
+      { message: "Current" },
+    );
+
+    expect(result.session.history).toEqual(compactedHistory);
+    expect(result.settledTurn).toEqual({
+      isError: true,
+      output: "Memory could not be prepared for this turn.",
+    });
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "compaction.completed",
+        "step.failed",
+        "turn.failed",
+        "session.waiting",
+      ]),
+    );
+    expect(JSON.stringify(events)).not.toContain("private provider failure");
+    expect(ToolLoopAgent).not.toHaveBeenCalled();
+  });
+
   it("emits compaction.requested and compaction.completed when compaction triggers", async () => {
     vi.mocked(shouldCompact).mockReturnValue(true);
     vi.mocked(compactMessages).mockResolvedValue([
@@ -8932,6 +9506,38 @@ describe("createToolLoopHarness", () => {
     expect(result.next).toBeNull();
     expect(result.session).toBe(session);
     expect(getCompatibilityEventTypes(events)).toEqual(["compaction.requested", "session.waiting"]);
+    expect(ToolLoopAgent).not.toHaveBeenCalled();
+  });
+
+  it("keeps history unchanged when standalone memory pre-save fails", async () => {
+    const startCompaction = vi.fn(async () => {
+      throw new Error("private standalone pre-save failure");
+    });
+    const { emit, events } = createEventCollector();
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", emit, {
+        compactOnly: true,
+        memory: createMemoryLifecycle({ startCompaction }),
+        resolveModel: vi
+          .fn()
+          .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
+      }),
+    );
+    const session = createTestSession({
+      history: [{ content: "old message", role: "user" }],
+    });
+
+    const result = await runStep(session);
+
+    expect(startCompaction).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: session.history, standalone: true }),
+    );
+    expect(result.next).toBeNull();
+    expect(result.session).toBe(session);
+    expect(result.session.history).toEqual(session.history);
+    expect(getCompatibilityEventTypes(events)).toEqual(["compaction.requested", "session.waiting"]);
+    expect(JSON.stringify(events)).not.toContain("private standalone pre-save failure");
+    expect(compactMessages).not.toHaveBeenCalled();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
   });
 

@@ -94,4 +94,15 @@ describe("resolveDiscoveryProject (memory)", () => {
       resolveDiscoveryProject(project.appRoot, { source: project.source }),
     ).rejects.toBeInstanceOf(DiscoveryProjectResolutionError);
   });
+
+  it("does not treat a standalone memory directory as a flat agent root", async () => {
+    const project = buildMemoryAgentProject({
+      appDirectories: ["memory"],
+      packageName: "not-an-agent",
+    });
+
+    await expect(
+      resolveDiscoveryProject(project.appRoot, { source: project.source }),
+    ).rejects.toBeInstanceOf(DiscoveryProjectResolutionError);
+  });
 });

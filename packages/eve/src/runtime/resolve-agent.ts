@@ -13,6 +13,7 @@ export { ResolveAgentError } from "#runtime/resolve-helpers.js";
 
 import { resolveConnectionDefinition } from "#runtime/resolve-connection.js";
 import { resolveHookDefinition } from "#runtime/resolve-hook.js";
+import { resolveMemoryDefinition } from "#runtime/resolve-memory.js";
 import { createResolvedModuleSourceRef } from "#runtime/resolve-helpers.js";
 import { resolveSandboxDefinition } from "#runtime/resolve-sandbox.js";
 import { resolveDynamicInstructionsDefinition } from "#runtime/resolve-dynamic-instructions.js";
@@ -96,6 +97,11 @@ export async function resolveAgent(input: ResolveAgentInput): Promise<ResolvedAg
       resolveConnectionDefinition(connectionDefinition, input.moduleMap, input.nodeId),
     ),
   );
+  const resolvedMemories = await Promise.all(
+    input.manifest.memories.map((memoryDefinition) =>
+      resolveMemoryDefinition(memoryDefinition, input.moduleMap, input.nodeId),
+    ),
+  );
   const authoredSandbox =
     input.manifest.sandbox === null
       ? null
@@ -122,6 +128,7 @@ export async function resolveAgent(input: ResolveAgentInput): Promise<ResolvedAg
       appRoot: input.manifest.appRoot,
       diagnosticsSummary: input.manifest.diagnosticsSummary,
     },
+    memories: resolvedMemories,
     sandbox: authoredSandbox,
     workspaceResourceRoot,
     skills: resolvedSkills,

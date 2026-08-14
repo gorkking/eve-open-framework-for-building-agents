@@ -23,7 +23,9 @@ import {
   readSortedDirectoryEntries,
 } from "#discover/grammar.js";
 import { DISCOVER_HOOKS_DIRECTORY_INVALID } from "#discover/grammar.js";
+import { DISCOVER_EXTENSION_MEMORY_UNSUPPORTED } from "#discover/extensions.js";
 import { discoverLibSources } from "#discover/lib.js";
+import { discoverMemorySources } from "#discover/memory.js";
 import {
   type CreateAgentSourceManifestInput,
   createAgentSourceManifest,
@@ -55,6 +57,7 @@ export const DISCOVER_SUBAGENTS_DIRECTORY_INVALID = "discover/subagents-director
 interface DiscoverSubagentsInput {
   agentRoot: string;
   appRoot: string;
+  role?: "agent" | "extension";
   /**
    * Optional {@link ProjectSource} used for all filesystem reads. Defaults
    * to a disk-backed source so disk callers keep their current behaviour.
@@ -139,6 +142,7 @@ export async function discoverSubagents(
 
     const localSubagentResult = await discoverLocalSubagentPackage({
       appRoot: input.appRoot,
+      role: input.role ?? "agent",
       source,
       subagentId: entry.name,
       subagentLogicalPath: join(subagentsLogicalPath, entry.name),
@@ -183,6 +187,7 @@ function discoverSingleFileSubagent(input: {
 
 async function discoverLocalSubagentPackage(input: {
   appRoot: string;
+  role: "agent" | "extension";
   source: ProjectSource;
   subagentId: string;
   subagentLogicalPath: string;
@@ -231,6 +236,26 @@ async function discoverLocalSubagentPackage(input: {
     source: input.source,
   });
   diagnostics.push(...connectionsResult.diagnostics);
+
+  const memoryResult = await discoverMemorySources({
+    rootEntries,
+    rootPath: input.subagentRoot,
+    source: input.source,
+  });
+  diagnostics.push(...memoryResult.diagnostics);
+  if (input.role === "extension") {
+    const [firstMemory] = memoryResult.memories;
+    if (firstMemory !== undefined) {
+      diagnostics.push(
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MEMORY_UNSUPPORTED,
+          message:
+            "An extension may not declare memory in a contributed subagent — partitioning and lifecycle state are the consuming agent's to own.",
+          sourcePath: join(input.subagentRoot, firstMemory.logicalPath),
+        }),
+      );
+    }
+  }
 
   const sandboxResult = await discoverSandboxSource({
     rootEntries,
@@ -281,6 +306,7 @@ async function discoverLocalSubagentPackage(input: {
   const subagentsResult = await discoverSubagents({
     agentRoot: input.subagentRoot,
     appRoot: input.appRoot,
+    role: input.role,
     source: input.source,
   });
   diagnostics.push(...subagentsResult.diagnostics);
@@ -321,6 +347,7 @@ async function discoverLocalSubagentPackage(input: {
     hooks: hooksResult.sources,
     lib: libResult.lib,
     instructions: instructionsResult.instructions,
+    memories: input.role === "extension" ? [] : memoryResult.memories,
     sandbox: sandboxResult.sandbox,
     sandboxWorkspaces:
       sandboxResult.sandboxWorkspace === null ? [] : [sandboxResult.sandboxWorkspace],

@@ -2,11 +2,31 @@ import type { LanguageModel } from "ai";
 
 import type { Runtime, SessionCapabilities } from "#channel/types.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
+import {
+  clearMemoryAnchors,
+  finishMemoryCompaction,
+  getMemoryToolOriginCallIds,
+  projectMemoryPrompt,
+  recordMemoryToolOrigins,
+  releaseMemoryToolOrigins,
+  resolveMemoryApprovalTools,
+  resolveMemoryTools,
+  restoreMemoryToolTurn,
+  saveCompletedMemoryTurn,
+  startMemoryCompaction,
+  startMemoryTurn,
+  type MemoryRuntimeIdentity,
+} from "#context/memory-lifecycle.js";
 import { createHarnessDelegationToolDefinition } from "#execution/delegation-tool.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
 import { createToolLoopHarness } from "#harness/tool-loop.js";
-import type { HandleEventFn, HarnessToolMap, StepFn } from "#harness/types.js";
+import type {
+  HandleEventFn,
+  HarnessMemoryLifecycle,
+  HarnessToolMap,
+  StepFn,
+} from "#harness/types.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { getInstrumentationRuntime } from "#harness/instrumentation/runtime.js";
 import { createLogger } from "#internal/logging.js";
@@ -38,6 +58,7 @@ import { findRegisteredRuntimeTool } from "#runtime/tools/registry.js";
 import type { ResolvedToolDefinition } from "#runtime/types.js";
 import { preserveFrameworkStateOnCompaction } from "#execution/compaction.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
+import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
 const log = createLogger("execution.node-step");
 
@@ -100,6 +121,10 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
         );
   const tools = createNodeHarnessTools({ node: input.node });
   const instrumentation = getInstrumentationRuntime();
+  const memory = createHarnessMemoryLifecycle({
+    abortSignal: input.abortSignal,
+    node: input.node,
+  });
   const step = createToolLoopHarness({
     abortSignal: input.abortSignal,
     capabilities: input.capabilities,
@@ -110,6 +135,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     webSearchProvider: input.node.agent.webSearchProvider,
     handleEvent: input.handleEvent,
     instrumentation,
+    memory,
     mode: input.mode,
     onCompaction: preserveFrameworkStateOnCompaction,
     persistentSubagentSessions:
@@ -127,6 +153,86 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     } finally {
       await instrumentation.forceFlush();
     }
+  };
+}
+
+function createHarnessMemoryLifecycle(input: {
+  readonly abortSignal?: AbortSignal;
+  readonly node: ResolvedRuntimeAgentNode;
+}): HarnessMemoryLifecycle | undefined {
+  const memories = input.node.agent.memories ?? [];
+  if (memories.length === 0) return undefined;
+  const identity = createMemoryRuntimeIdentity(input.node);
+  const abortSignal = input.abortSignal;
+
+  return {
+    clearAnchors: clearMemoryAnchors,
+    finishCompaction: ({ messages, projectionAnchorIndex, session }) =>
+      finishMemoryCompaction({
+        abortSignal,
+        memories,
+        messages,
+        projectionAnchorIndex,
+        session,
+      }),
+    projectPrompt: ({ messages, session }) => projectMemoryPrompt({ memories, messages, session }),
+    recordToolOrigins: recordMemoryToolOrigins,
+    releaseToolOrigins: releaseMemoryToolOrigins,
+    resolveApprovalTools: ({ callIds, session }) =>
+      resolveMemoryApprovalTools({
+        abortSignal,
+        callIds,
+        memories,
+        session,
+      }),
+    resolveTools: ({ messages, modelId, session }) =>
+      resolveMemoryTools({
+        abortSignal,
+        memories,
+        messages,
+        modelId,
+        session,
+      }),
+    restoreToolTurn: restoreMemoryToolTurn,
+    saveCompletedTurn: ({ messages, session }) =>
+      saveCompletedMemoryTurn({ abortSignal, memories, messages, session }),
+    startCompaction: ({ messages, modelId, session, standalone, usageInputTokens }) =>
+      startMemoryCompaction({
+        abortSignal,
+        identity,
+        memories,
+        messages,
+        modelId,
+        session,
+        standalone,
+        usageInputTokens,
+      }),
+    startTurn: ({ messages, projectionAnchorIndex, session, turn }) =>
+      startMemoryTurn({
+        abortSignal,
+        identity,
+        memories,
+        messages,
+        projectionAnchorIndex,
+        session,
+        turn,
+      }),
+    toolOriginCallIds: getMemoryToolOriginCallIds,
+  };
+}
+
+function createMemoryRuntimeIdentity(node: ResolvedRuntimeAgentNode): MemoryRuntimeIdentity {
+  const projectId = resolveVercelProjectIdFromEnvironment();
+  const appRoot = node.agent.metadata.appRoot;
+  const environment =
+    process.env.VERCEL_TARGET_ENV?.trim() ||
+    process.env.VERCEL_ENV?.trim() ||
+    process.env.NODE_ENV?.trim() ||
+    "unknown";
+  return {
+    applicationId: projectId === undefined ? `local:${appRoot}` : `vercel:${projectId}`,
+    environment,
+    nodeId: node.nodeId,
   };
 }
 

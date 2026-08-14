@@ -9,6 +9,40 @@ import {
 import { classifyModelRouting } from "#internal/classify-model-routing.js";
 
 describe("compiledAgentManifestSchema", () => {
+  it("preserves role-aware instructions alongside memory slots", () => {
+    const manifest = createCompiledAgentManifest({
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      config: {
+        model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
+        name: "app",
+      },
+      instructions: [
+        {
+          content: "User-provided context.",
+          logicalPath: "instructions/context.ts",
+          name: "context",
+          role: "user",
+          sourceId: "instructions/context.ts",
+          sourceKind: "module",
+        },
+      ],
+      memories: [
+        {
+          logicalPath: "memory/user.ts",
+          slot: "user",
+          sourceId: "memory/user.ts",
+          sourceKind: "module",
+        },
+      ],
+    });
+
+    const parsed = compiledAgentManifestSchema.parse(manifest);
+
+    expect(parsed.instructions).toEqual(manifest.instructions);
+    expect(parsed.memories).toEqual(manifest.memories);
+  });
+
   it("accepts authored HEAD and OPTIONS channel routes", () => {
     const channel = {
       adapterKind: "mcp",

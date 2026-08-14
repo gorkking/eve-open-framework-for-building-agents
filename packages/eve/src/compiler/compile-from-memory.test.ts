@@ -7,6 +7,7 @@ import {
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import { compileFromMemory } from "#compiler/compile-from-memory.js";
+import { defineMemory, defineMemoryProvider } from "#public/memory/index.js";
 
 describe("compileFromMemory", () => {
   it("produces a manifest and module map with minimal input", () => {
@@ -72,6 +73,39 @@ describe("compileFromMemory", () => {
     expect(skill?.markdown).toBe("# greet\n");
     expect(skill?.sourceKind).toBe("markdown");
     expect(skill?.logicalPath).toBe("skills/greetings.md");
+  });
+
+  it("projects memory definitions into the manifest and module map", () => {
+    const definition = defineMemory({
+      provider: defineMemoryProvider({ recall: () => undefined }),
+      scope: () => ["test-scope"],
+    });
+    const { manifest, moduleMap } = compileFromMemory({
+      memories: [
+        { definition, slot: "user" },
+        { definition, slot: "memory" },
+      ],
+      model: "openai/gpt-5.4",
+    });
+
+    expect(manifest.memories).toEqual([
+      {
+        logicalPath: "memory/user.ts",
+        slot: "user",
+        sourceId: "memory::memory/user.ts",
+        sourceKind: "module",
+      },
+      {
+        logicalPath: "memory.ts",
+        slot: "memory",
+        sourceId: "memory::memory.ts",
+        sourceKind: "module",
+      },
+    ]);
+    expect(moduleMap.nodes[ROOT_COMPILED_AGENT_NODE_ID]?.modules).toMatchObject({
+      "memory::memory.ts": { default: definition },
+      "memory::memory/user.ts": { default: definition },
+    });
   });
 
   it("produces a manifest that passes the versioned schema validation", () => {

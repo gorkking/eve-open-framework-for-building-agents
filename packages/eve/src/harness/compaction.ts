@@ -109,7 +109,11 @@ interface CompactionHeuristicInput {
  * failure channel — anything exceptional throws.
  */
 type CompactionHeuristicOutcome =
-  | { readonly messages: ModelMessage[]; readonly type: "within-limit" }
+  | {
+      readonly messages: ModelMessage[];
+      readonly projectionAnchorIndex: number;
+      readonly type: "within-limit";
+    }
   | { readonly type: "insufficient" };
 
 type CompactionHeuristic = (input: CompactionHeuristicInput) => CompactionHeuristicOutcome;
@@ -147,7 +151,11 @@ function toolResultCapHeuristic(input: CompactionHeuristicInput): CompactionHeur
   // re-fire every step without compaction ever making progress.
   const evaluation = evaluateThreshold(capped, input.config, "should-compact");
   return evaluation.type === "within-limit"
-    ? { messages: capped, type: "within-limit" }
+    ? {
+        messages: capped,
+        projectionAnchorIndex: checkpointHead.length + input.older.length,
+        type: "within-limit",
+      }
     : { type: "insufficient" };
 }
 
@@ -176,7 +184,17 @@ function evaluateThreshold(
  * model — keeping the recent tail verbatim when it fits, degrading it to
  * text-only, then shrinking the window.
  */
-export async function compactMessages(
+export interface CompactedMessages {
+  readonly messages: ModelMessage[];
+  /** Boundary after rewritten context and before the retained recent tail. */
+  readonly projectionAnchorIndex: number;
+}
+
+/**
+ * Compacts messages and identifies the stable boundary where transient
+ * framework context can be re-anchored without entering durable history.
+ */
+export async function compactMessagesWithProjectionAnchor(
   messages: ModelMessage[],
   model: LanguageModel,
   config: CompactionConfig,
@@ -185,7 +203,7 @@ export async function compactMessages(
   headers?: Record<string, string>,
   abortSignal?: AbortSignal,
   forceSummary = false,
-): Promise<ModelMessage[]> {
+): Promise<CompactedMessages> {
   const { conversation, previousCheckpoint } = extractPreviousCheckpoint(messages);
   const recentConfig = forceSummary ? { ...config, recentWindowSize: 1 } : config;
   let keep = selectRecentWindowSize(conversation, recentConfig);
@@ -193,13 +211,19 @@ export async function compactMessages(
   if (!forceSummary) {
     const { older, recent } = splitMessagesForCompaction(conversation, keep);
     if (older.length === 0 && previousCheckpoint === undefined) {
-      return keepNonToolResultMessages(recent);
+      return {
+        messages: keepNonToolResultMessages(recent),
+        projectionAnchorIndex: 0,
+      };
     }
 
     for (const heuristic of COMPACTION_HEURISTICS) {
       const outcome = heuristic({ config, conversation, older, previousCheckpoint, recent });
       if (outcome.type === "within-limit") {
-        return outcome.messages;
+        return {
+          messages: outcome.messages,
+          projectionAnchorIndex: outcome.projectionAnchorIndex,
+        };
       }
     }
   }
@@ -234,7 +258,7 @@ export async function compactMessages(
     // smaller window, only under threshold pressure.
     const verbatim = withResumptionGuard([...summaryHead, ...recent], conversation);
     if (evaluateThreshold(verbatim, config, "estimate").type === "within-limit") {
-      return verbatim;
+      return { messages: verbatim, projectionAnchorIndex: summaryHead.length };
     }
 
     const stripped = withResumptionGuard(
@@ -242,11 +266,36 @@ export async function compactMessages(
       conversation,
     );
     if (evaluateThreshold(stripped, config, "estimate").type === "within-limit" || keep === 0) {
-      return stripped;
+      return { messages: stripped, projectionAnchorIndex: summaryHead.length };
     }
 
     keep -= 1;
   }
+}
+
+/** Compacts durable model history without exposing its projection boundary. */
+export async function compactMessages(
+  messages: ModelMessage[],
+  model: LanguageModel,
+  config: CompactionConfig,
+  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"],
+  telemetry?: TelemetryOptions,
+  headers?: Record<string, string>,
+  abortSignal?: AbortSignal,
+  forceSummary = false,
+): Promise<ModelMessage[]> {
+  return (
+    await compactMessagesWithProjectionAnchor(
+      messages,
+      model,
+      config,
+      providerOptions,
+      telemetry,
+      headers,
+      abortSignal,
+      forceSummary,
+    )
+  ).messages;
 }
 
 const CAPPED_RESULT_ANNOTATION =

@@ -1,16 +1,17 @@
 ---
 title: "Context Control"
-description: "Choose what an eve agent's model sees and when, across instructions, skills, tools, the workspace, and subagents."
+description: "Choose what an eve agent's model sees and when, across instructions, memory, skills, tools, the workspace, and subagents."
 ---
 
-Control context by putting information in the narrowest surface that needs it. Keep permanent rules in instructions, load optional procedures as skills, let the model inspect runtime files through sandbox tools, and delegate specialist work to a subagent.
+Control context by putting information in the narrowest surface that needs it. Keep permanent rules in instructions, project scoped context through memory, load optional procedures as skills, let the model inspect runtime files through sandbox tools, and delegate specialist work to a subagent.
 
 ## Recommended context layout
 
 | Need                                                 | Use                                                    | What the model sees                                                              |
 | ---------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
 | Permanent identity, rules, or constraints            | System-role [instructions](../instructions)            | System context on every model call                                               |
-| Durable application or retrieved context             | User-role [instructions](../instructions)              | A message added to conversation history at its lifecycle boundary                |
+| Application context that should become history       | User-role [instructions](../instructions)              | A message added to durable conversation history at its lifecycle boundary        |
+| Scoped context that outlives one session             | [Memory](../memory)                                    | Replaceable user-role projections selected by the slot's visibility policy       |
 | A procedure needed only for some tasks               | A [skill](../skills)                                   | Its description until the model loads the full skill                             |
 | A typed action or external operation                 | A [tool](../tools) or [connection](../connections)     | The callable schema and the result of each call                                  |
 | Files or command execution                           | The [sandbox workspace](../sandbox)                    | A workspace hint, then files and command output the model requests through tools |
@@ -24,6 +25,12 @@ Use system-role instructions for stable behavior that should apply throughout a 
 ### Compose instructions in TypeScript with `instructions.ts`
 
 Use `instructions.ts` when you need typed helpers, build-time composition, or a user-role message. User-role instructions become ordinary durable history rather than system context. See [Instructions](../instructions) for both formats, directory composition, and runtime resolution.
+
+## Project scoped context with memory
+
+Use a memory slot for provider-owned context that must survive across sessions and remain attributed to a trusted user, tenant, workspace, or other scope. eve recalls the provider at fixed lifecycle boundaries and inserts its latest projection into model calls without adding it to ordinary conversation history.
+
+The memory definition controls whether projections from earlier scopes remain visible in a shared session. Scope visibility is the default; session visibility is an explicit cross-scope disclosure policy. See [Memory](../memory) for scope resolution, projection placement, provider tools, and compaction behavior.
 
 ## Load procedures on demand with `skills/`
 
@@ -59,9 +66,12 @@ See [Dynamic capabilities](../guides/dynamic-capabilities) for the resolver API,
 
 User-role instructions follow the normal history lifecycle. Compaction can summarize them, and clear removes them without rerunning their static definitions or dynamic resolvers. System-role instructions remain outside history and continue to apply after either operation.
 
+Memory projections also remain outside ordinary history, but they are scope-bound and replaceable. Compaction does not summarize them; eve reanchors visible projections around the new checkpoint and calls the provider's post-compaction `recall` method.
+
 ## What to read next
 
 - [Instructions](../instructions): author the always-on system prompt.
+- [Memory](../memory): project scoped provider context across sessions.
 - [Skills](../skills): provide procedures that load on demand.
 - [Sandbox](../sandbox): give the model files and command execution.
 - [Subagents](../subagents): isolate specialist work.

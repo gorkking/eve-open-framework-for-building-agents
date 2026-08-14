@@ -143,13 +143,23 @@ export function getAuthorizationResult(name?: string): AuthorizationResult | und
  * Callback results are one-shot inputs to `completeAuthorization`. Consuming
  * before completion prevents a failed or replayed callback from poisoning
  * every later tool call in the same step.
+ *
+ * When `expectedPrincipal` is provided, only a result owned by that principal
+ * is consumed. Results for other principals remain available to their owner.
  */
-export function consumeAuthorizationResult(name: string): AuthorizationResult | undefined {
+export function consumeAuthorizationResult(
+  name: string,
+  expectedPrincipal?: ConnectionPrincipal,
+): AuthorizationResult | undefined {
   const ctx = loadContext();
   const results = ctx.get(PendingAuthorizationResultKey);
   if (!results || results.length === 0) return undefined;
 
-  const index = results.findIndex((result) => result.name === name);
+  const index = results.findIndex(
+    (result) =>
+      result.name === name &&
+      (expectedPrincipal === undefined || samePrincipal(result.principal, expectedPrincipal)),
+  );
   if (index === -1) return undefined;
 
   const result = results[index]!;

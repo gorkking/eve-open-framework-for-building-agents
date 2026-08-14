@@ -7,7 +7,9 @@ Extensions package eve tools, channels, connections, skills, schedules, subagent
 
 Ready-made extensions can also be distributed through an eve integration registry. See [Add Integrations](./install-integrations) to discover and add one with `eve add`; this page explains how extension packages are authored, mounted, configured, and overridden.
 
-This enables sharing many different capability sets. A browser extension might include several tools for navigating a site. A memory extension could use hooks to capture context and tools to recall it. A self-improving extension could pair hooks with dynamic instructions.
+This enables sharing many different capability sets. A browser extension might include several tools for navigating a site. A self-improving extension could pair hooks with dynamic instructions.
+
+A package may export a reusable [memory provider](./memory), but a mounted extension cannot contribute a memory slot. The consuming agent must declare `agent/memory.ts` or `agent/memory/<slot>.ts` so it owns the trusted scope and cross-scope visibility policy.
 
 ## Author: create an extension
 
@@ -43,7 +45,7 @@ Each listed slot accepts the same authored forms as its agent counterpart. Stati
 
 Names come from paths, so call the tool `search`, not `crm_search`; the consumer's mount adds the `crm__` prefix. The same prefix applies to channel, schedule, and parent-visible subagent IDs, while channel route paths and schedule cron expressions stay unchanged. Keep shared code in `extension/lib/`.
 
-The extension root cannot declare agent configuration, a sandbox, or nested extensions. A subagent contributed under `extension/subagents/` owns its own agent configuration and sandbox like any other [declared subagent](./subagents).
+The extension root cannot declare agent configuration, memory slots, a sandbox, or nested extensions. A subagent contributed under `extension/subagents/` owns its own agent configuration and sandbox like any other [declared subagent](./subagents), but memory slots remain consumer-owned and cannot be contributed anywhere in a mounted extension.
 
 ### Add configuration and contributions
 
@@ -340,6 +342,7 @@ At build time, eve checks the extension's generated capability metadata. If the 
 - [Tools](/docs/tools): static tools, approval, and tool output
 - [Dynamic capabilities](/docs/guides/dynamic-capabilities): dynamic tools, skills, and instructions
 - [Instructions](/docs/instructions): static and TypeScript instructions
+- [Memory](/docs/memory): scoped provider context that outlives a session
 - [Skills](/docs/skills): package procedures and supporting files
 - [Connections](/docs/connections): integrate external services
 - [Channels](/docs/channels/overview): receive messages and expose routes
