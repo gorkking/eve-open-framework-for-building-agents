@@ -71,6 +71,14 @@ The `eve.agents` declaration marks the project as a workspace. eve then validate
 
 An agent may have its own `package.json` when the root package-manager workspace claims `agents/*` (for example, with `packages: ["agents/*"]` in `pnpm-workspace.yaml`). A member package's `build` script runs for its service; otherwise eve runs `eve build` from that agent directory. Member packages can therefore use their own dependencies and build steps while sharing the root workspace installation.
 
+### Choose a workspace or independent packages
+
+Use an agent workspace when one Vercel project should deploy several peer eve agents together. The root owns the Vercel link, deployment, shared environment, and public route prefixes, while member packages can still own dependencies and build scripts. For example, a support and research suite can deploy from one root and serve its agents at `/eve/agents/support/eve/v1/*` and `/eve/agents/research/eve/v1/*`.
+
+Keep agents as independent packages when they need separate Vercel projects or deployment lifecycles. A repository can still be a pnpm, npm, Yarn, or Bun workspace with `agents/*` package members without adding `eve.agents`; run `eve link`, `eve deploy`, and `eve build` from each agent package instead. This is the better structure for a mixed monorepo, such as one that contains agents with their own `vercel.json`, framework applications, or non-agent packages.
+
+`eve.agents` is not a generic monorepo marker. It matches every direct `agents/*` directory, and each matched directory must contain `agent/`. Do not use it for a tree that includes non-agent packages under `agents/` or for agents that must retain separate Vercel service graphs.
+
 With no authored `vercel.json#services`, `eve build` derives the complete Vercel Services graph on every build. If `vercel.json` declares `services`, that authored graph is authoritative instead; use `vercel build` to build and validate the complete project. This supports heterogeneous projects with frontends, private APIs, bindings, and other non-eve services without generated configuration files.
 
 Deploy the linked project to production:
