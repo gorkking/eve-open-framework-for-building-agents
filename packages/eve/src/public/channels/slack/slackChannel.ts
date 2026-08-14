@@ -292,6 +292,8 @@ export interface SlackInitialMessage {
 export interface SlackEventSendOptions {
   readonly auth: SessionAuthContext | null;
   readonly target: SlackReceiveTarget;
+  /** Agent Runs title for a newly created session, independent of the model message. */
+  readonly title?: string;
 }
 
 /** Options for answering pending input requests from a generic Slack event handler. */
@@ -425,6 +427,8 @@ export interface SlackInteractionUser {
 export type SlackMentionResult = {
   readonly auth: SessionAuthContext | null;
   readonly context?: readonly string[];
+  /** Agent Runs title for a newly created session. Overrides the message-derived default. */
+  readonly title?: string;
 } | null;
 
 export type SlackMentionResultOrPromise = SlackMentionResult | Promise<SlackMentionResult>;
@@ -783,6 +787,7 @@ async function receiveOnSlack(
     readonly auth: SessionAuthContext | null;
     readonly message: string | UserContent;
     readonly target: SlackReceiveTarget;
+    readonly title?: string;
   },
   deps: {
     readonly from: ChannelFrom<SlackChannelState>;
@@ -829,7 +834,11 @@ async function receiveOnSlack(
   // Slack post supplies the real thread timestamp and re-keys the session.
   const continuationThreadTs = threadTs || crypto.randomUUID();
 
-  return deps.from(slackContinuationToken(channelId, continuationThreadTs)).send(input.message, {
+  const sendOptions: {
+    auth: SessionAuthContext | null;
+    state: SlackChannelState;
+    title?: string;
+  } = {
     auth: input.auth,
     state: {
       channelId,
@@ -837,7 +846,12 @@ async function receiveOnSlack(
       teamId: deps.teamId ?? null,
       triggeringUserId: deps.triggeringUserId ?? null,
     },
-  });
+  };
+  if (input.title !== undefined) sendOptions.title = input.title;
+
+  return deps
+    .from(slackContinuationToken(channelId, continuationThreadTs))
+    .send(input.message, sendOptions);
 }
 
 /**
@@ -1131,18 +1145,24 @@ async function dispatchSlackEvent(input: {
       input.resolveSession(slackContinuationToken(target.channelId, target.threadTs)),
     respond: (inputResponses, { auth, target }) =>
       sourceFor(target).respond(inputResponses, { auth }),
-    send: (message, { auth, target }) =>
-      receiveOnSlack(
-        { auth, message, target },
-        {
-          from: input.from,
-          credentials: input.credentials,
-          teamId,
-          ...(typeof input.envelope.event.user === "string"
-            ? { triggeringUserId: input.envelope.event.user }
-            : {}),
-        },
-      ),
+    send: (message, { auth, target, title }) => {
+      const receiveInput: {
+        auth: SessionAuthContext | null;
+        message: string | UserContent;
+        target: SlackReceiveTarget;
+        title?: string;
+      } = { auth, message, target };
+      if (title !== undefined) receiveInput.title = title;
+
+      return receiveOnSlack(receiveInput, {
+        from: input.from,
+        credentials: input.credentials,
+        teamId,
+        ...(typeof input.envelope.event.user === "string"
+          ? { triggeringUserId: input.envelope.event.user }
+          : {}),
+      });
+    },
     slack: buildSlackWorkspaceHandle({
       botToken: input.credentials?.botToken,
       teamId,
@@ -1189,7 +1209,7 @@ async function verifyInbound(
 async function deliverSlackMessage(input: {
   readonly sessionOperations: SlackSessionOperations;
   readonly credentials: SlackChannelCredentials | undefined;
-  readonly kind: string;
+  readonly kind: "app_mention" | "channel_message" | "direct_message";
   readonly message: SlackMessage;
   readonly result: Exclude<SlackInboundResult, null>;
   readonly thread: SlackThread;
@@ -1225,13 +1245,17 @@ async function deliverSlackMessage(input: {
     );
 
     const channelContext = input.result.context ?? [];
+    // Workflow titles are visible outside the Slack conversation, so direct
+    // messages need a content-free default unless the handler supplies one.
+    const title =
+      input.result.title ?? (input.kind === "direct_message" ? "Run" : message.markdown);
     const sendOptions: SlackSendOptions =
       channelContext.length === 0
-        ? { auth: input.result.auth, title: message.markdown }
+        ? { auth: input.result.auth, title }
         : {
             auth: input.result.auth,
             context: channelContext,
-            title: message.markdown,
+            title,
           };
 
     await input.sessionOperations.send(turnMessage, sendOptions);

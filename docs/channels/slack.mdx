@@ -125,7 +125,7 @@ Check the delivery path in order so you can identify where a Slack event stops:
 
 ### Message hooks
 
-Message hooks return `{ auth }` to dispatch, `null` to drop, or `{ auth, context }` to inject background into history.
+Message hooks return `{ auth }` to dispatch, `null` to drop, or `{ auth, context }` to inject background into history. Add `title` to set the Agent Runs title without changing the model message. When `title` is omitted, direct messages use `Run` so private content does not appear in the run list; other Slack messages keep their message-derived titles.
 
 - `onMessage(ctx, message)` handles Slack `message` events. eve drops messages authored by the installed app before this hook runs, preventing self-reply loops. Messages from other bots remain visible; check `message.author?.isBot` when those should also be ignored. `ctx.isBotMentioned()` and `ctx.isSubscribed()` support mention and active-thread policies.
 - `onAppMention(ctx, message)` handles only `app_mention` and takes precedence over `onMessage`. Its default derives workspace-scoped auth and posts `Thinking…`.
@@ -287,7 +287,7 @@ Reset returns `{ status: "reset", previousSessionId }` when the thread had a ses
 
 ### Other Events API callbacks
 
-Use `onEvent` for subscribed events such as `reaction_added`, `team_join`, or `channel_created`. It receives the raw, open-ended Slack event and owns control flow. Call `ctx.send(message, { target, auth })` zero, one, or many times to start turns. Each call returns the resulting session.
+Use `onEvent` for subscribed events such as `reaction_added`, `team_join`, or `channel_created`. It receives the raw, open-ended Slack event and owns control flow. Call `ctx.send(message, { target, auth, title })` zero, one, or many times to start turns. `title` sets the Agent Runs title independently of the model message. Each call returns the resulting session.
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";

@@ -1900,6 +1900,7 @@ describe("slackChannel() generic Events API pipeline", () => {
         await ctx.send("follow up", {
           auth: null,
           target: { channelId: "C01", threadTs: "1700000000.000001" },
+          title: "New teammate onboarding",
         });
       },
     });
@@ -1916,6 +1917,7 @@ describe("slackChannel() generic Events API pipeline", () => {
         threadTs: "1700000000.000001",
         triggeringUserId: "U01",
       },
+      title: "New teammate onboarding",
     });
   });
 
@@ -2168,9 +2170,10 @@ describe("slackChannel() inbound direct message pipeline", () => {
     expect(onDirectMessage).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledTimes(1);
     const [, options] = send.mock.calls[0]!;
-    const opts = options as { auth: unknown; state: { channelId: string } };
+    const opts = options as { auth: unknown; state: { channelId: string }; title: string };
     expect(opts.auth).toMatchObject({ principalId: "U01", authenticator: "test" });
     expect(opts.state.channelId).toBe(channelId);
+    expect(opts.title).toBe("Run");
   });
 
   it("does not dispatch when onDirectMessage resolves to null", async () => {
@@ -2183,6 +2186,19 @@ describe("slackChannel() inbound direct message pipeline", () => {
     const { send } = await firePost(channel, buildSignedRequest({ body }));
 
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("preserves an explicit Agent Runs title for a direct message", async () => {
+    const channel = slackChannel({
+      credentials: { botToken: "xoxb-test" },
+      onDirectMessage: () => ({ auth: null, title: "Private support request" }),
+    });
+
+    const { body } = buildDirectMessageBody({ text: "sensitive account details" });
+    const { send } = await firePost(channel, buildSignedRequest({ body }));
+
+    expect(send.mock.calls[0]![1].title).toBe("Private support request");
+    expect(send.mock.calls[0]![1].message).toContain("sensitive account details");
   });
 
   it("ignores message events that are not IM (channel posts)", async () => {
