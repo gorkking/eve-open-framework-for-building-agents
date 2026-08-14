@@ -1,17 +1,33 @@
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { AgentWorkspace } from "#internal/agent-workspace.js";
+import type { AgentWorkspace, AgentWorkspaceMember } from "#internal/agent-workspace.js";
 import { assembleEveVercelServices } from "#internal/vercel/assemble-eve-services.js";
 import { quoteVercelShellArgument, toVercelRelativePath } from "#internal/vercel/build-command.js";
 import { resolveAgentWorkspaceDeploymentMode } from "#internal/vercel/agent-workspace-deployment.js";
 import { resolveEveBinaryPath } from "#shared/resolve-eve-binary.js";
+import { detectPackageManager, type PackageManagerKind } from "#setup/package-manager.js";
+import { parseJsonObject } from "#shared/json.js";
 
 const VERCEL_BUILD_OUTPUT_VERSION = 3;
 
-function resolveMemberBuildCommand(appRoot: string): string {
+async function hasBuildScript(member: AgentWorkspaceMember): Promise<boolean> {
+  if (member.packageJsonPath === undefined) return false;
+
+  const packageJson = parseJsonObject(JSON.parse(await readFile(member.packageJsonPath, "utf8")));
+  if (packageJson.scripts === undefined) return false;
+  const scripts = parseJsonObject(packageJson.scripts);
+  return typeof scripts.build === "string";
+}
+
+async function resolveMemberBuildCommand(
+  member: AgentWorkspaceMember,
+  packageManager: PackageManagerKind,
+): Promise<string> {
+  if (await hasBuildScript(member)) return `${packageManager} run build`;
+
   return `node ${quoteVercelShellArgument(
-    toVercelRelativePath(appRoot, resolveEveBinaryPath(appRoot)),
+    toVercelRelativePath(member.appRoot, resolveEveBinaryPath(member.appRoot)),
   )} build`;
 }
 
@@ -23,28 +39,28 @@ export async function buildAgentWorkspace(workspace: AgentWorkspace): Promise<st
     );
   }
 
-  const agents = workspace.members.map((member) => ({
-    agent: {
-      appRoot: member.appRoot,
-      buildCommand: resolveMemberBuildCommand(member.appRoot),
-      name: member.name,
-      publicRoutePrefix: `/eve/agents/${member.name}`,
-    },
-    target: {
-      hostOutputDirectory: join(workspace.root, ".vercel", "output"),
-      projectRoot: workspace.root,
-    },
-  }));
+  const packageManager = await detectPackageManager(workspace.root);
+  const agents = await Promise.all(
+    workspace.members.map(async (member) => ({
+      agent: {
+        appRoot: member.appRoot,
+        buildCommand: await resolveMemberBuildCommand(member, packageManager.kind),
+        name: member.name,
+        publicRoutePrefix: `/eve/agents/${member.name}`,
+      },
+      target: {
+        hostOutputDirectory: join(workspace.root, ".vercel", "output"),
+        projectRoot: workspace.root,
+      },
+    })),
+  );
   const assembled = assembleEveVercelServices({ agents });
 
   const outputDirectory = join(workspace.root, ".vercel", "output");
   await rm(outputDirectory, { force: true, recursive: true });
   await mkdir(outputDirectory, { recursive: true });
   await Promise.all(
-    assembled.rootDirectories.map(async (rootDirectory) => {
-      await mkdir(join(rootDirectory, ".vercel"), { recursive: true });
-      await symlink(outputDirectory, join(rootDirectory, ".vercel", "output"), "junction");
-    }),
+    assembled.rootDirectories.map((rootDirectory) => mkdir(rootDirectory, { recursive: true })),
   );
   await writeFile(
     join(outputDirectory, "config.json"),
