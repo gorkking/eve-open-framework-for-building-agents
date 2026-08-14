@@ -1,0 +1,14 @@
+import { defineMemory } from "eve/memory";
+import { fileMemory, inMemory } from "eve/memory/file";
+
+const provider = process.env.VERCEL
+  ? fileMemory()
+  : fileMemory({
+      backend: inMemory(),
+    });
+
+export default defineMemory({
+  provider,
+  scope: () =>
+    process.env.VERCEL_DEPLOYMENT_ID?.trim() || process.env.VERCEL_URL?.trim() || "local-e2e",
+});
