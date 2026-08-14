@@ -1,7 +1,7 @@
 ---
 issue: TBD
 status: proposed
-last_updated: "2026-08-10"
+last_updated: "2026-08-14"
 ---
 
 # Instrumentation providers
@@ -462,6 +462,16 @@ export interface OtelOptions {
   /** Composed into one propagator. All inject; the first to extract wins. */
   readonly propagators?: readonly TextMapPropagator[];
 
+  /**
+   * OpenTelemetry `Instrumentation` instances, passed through to
+   * `registerOTel`. Use them to patch Node.js built-ins (HTTP, DNS, fs, etc.)
+   * for automatic spans around outbound work. Disabled by default because eve
+   * imports the model SDK before registration, so patching cannot reach it —
+   * but code loaded after registration (tool modules, connection clients) will
+   * be instrumented.
+   */
+  readonly instrumentations?: readonly Instrumentation[];
+
   // No `spanProcessors` and no `traceExporter`. Every destination is an
   // `otelIntegration` in its own file, which is what makes this file's fields
   // exactly the ones a process can only have one of.
@@ -483,6 +493,18 @@ export interface OtelIntegrationOptions {
    * takes only one exporter, so wrapping is what lets each file carry its own.
    */
   readonly traceExporter?: SpanExporter;
+  /**
+   * Contributes runtime context that the AI SDK merges into telemetry spans
+   * for each model call. Child spans inherit the values, so a destination can
+   * stamp channel or auth identity onto every span in the turn — the same
+   * propagation the legacy `events["step.started"]` return provided.
+   *
+   * Synchronous: the harness collects from every destination before the model
+   * call, so a return that is not a plain object is dropped (warning-only).
+   * Keys beginning with `eve.` are reserved and dropped. Return `undefined`
+   * to contribute nothing.
+   */
+  readonly runtimeContext?: (input: InstrumentationRuntimeContextInput) => JsonObject | undefined;
 }
 
 // eve installs its two built-in integrations itself. Local traces are on in
@@ -503,19 +525,23 @@ export interface ContentOptions {
   readonly recordOutputs?: boolean;
 }
 
-// Not offered: `contextManager`, which eve's span nesting depends on, and
-// `instrumentations`, which cannot reach anything eve imported before `setup`.
+// Not offered: `contextManager`, which eve's span nesting depends on.
 ```
 
-Dropping `instrumentations` is a removal rather than a simplification, though
-what it removes never worked: eve imports the model SDK before an authored
-`setup` runs, so an auto-instrumentation registered there could not patch it.
-`runtimeContext` goes with it, and that one did work. Today an author returns it
-from a `step.started` handler and eve merges it onto the AI SDK's telemetry span
-as `ai.settings.context.*`; on the new bus there is no return value and no
-ambient span, so both halves are gone rather than one. Enrichment that has to
-reach a span belongs on `otel()`, where eve builds the spans and can say which
-one it means — the shape of that surface is the open question here.
+`instrumentations` is offered on `otel()` with a caveat: eve imports the model
+SDK before registration, so patching cannot reach it. Code loaded after
+registration — tool modules, connection clients — will be instrumented. The
+common case is `@opentelemetry/auto-instrumentations-node` with HTTP disabled
+when the host runtime already covers it.
+
+`runtimeContext` moves onto `otelIntegration()`, where it belongs: per
+destination, not per process. Today an author returns it from a `step.started`
+handler and eve merges it onto the AI SDK's telemetry span; on the new bus
+there is no return value from event handlers, so the resolver is a dedicated
+field. The harness collects from every destination before each model call and
+merges results with framework `eve.*` keys. Child spans inherit the values,
+which is the propagation the legacy hook provided and a side-effect
+`trace.getActiveSpan()?.setAttribute(...)` cannot match.
 
 `recordInputs` and `recordOutputs` are per destination, so eve implements them as
 a span processor in front of that destination's exporter. It cannot edit the span
@@ -723,8 +749,14 @@ handed into its own pipeline, but only for an author who went through
 around it, and the failure returns as something silent that depends on which
 import you reached for.
 
-`runtimeContext` is the one field the error cannot name a replacement for,
-because there is not one yet. Everything else is a file move. The integrations
-eve ships are one edit each and go out with the change, and an agent that wrote
-its own `instrumentation.ts` gets a build error the first time it compiles
-against the new version — which is where a break like this should land.
+`runtimeContext` moves from the `step.started` event return to the
+`otelIntegration` that needs it. An author who returned
+`{ runtimeContext: { "posthog.distinct_id": principalId } }` from a
+`step.started` handler instead passes a `runtimeContext(input)` function to
+the `otelIntegration` call in `instrumentation/posthog.ts`. The harness
+collects from every destination and merges before each model call, so
+propagation to child spans is preserved. Everything is a file move. The
+integrations eve ships are one edit each and go out with the change, and an
+agent that wrote its own `instrumentation.ts` gets a build error the first
+time it compiles against the new version — which is where a break like this
+should land.
