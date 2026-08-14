@@ -8,6 +8,7 @@ import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
+  ConversationTopFade,
 } from "@/components/ai-elements/conversation";
 import {
   PromptInput,
@@ -95,6 +96,7 @@ export function AgentChat() {
 
       {isEmpty ? null : (
         <Conversation className="min-h-0 flex-1">
+          <ConversationTopFade />
           <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6 sm:px-6">
             {agent.data.messages.map((message, index) => (
               <AgentMessage

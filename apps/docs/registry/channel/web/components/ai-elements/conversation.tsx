@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
 import type { ComponentProps } from "react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
@@ -25,6 +25,49 @@ export type ConversationContentProps = ComponentProps<typeof StickToBottom.Conte
 export const ConversationContent = ({ className, ...props }: ConversationContentProps) => (
   <StickToBottom.Content className={cn("flex flex-col gap-8 p-4", className)} {...props} />
 );
+
+export type ConversationTopFadeProps = ComponentProps<"div">;
+
+export const ConversationTopFade = ({ className, ...props }: ConversationTopFadeProps) => {
+  const { contentRef, scrollRef } = useStickToBottomContext();
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    if (scrollElement === null) return;
+
+    const updateVisibility = () => {
+      setIsVisible(scrollElement.scrollTop > 0);
+    };
+
+    updateVisibility();
+    scrollElement.addEventListener("scroll", updateVisibility, { passive: true });
+
+    const resizeObserver = new ResizeObserver(updateVisibility);
+    resizeObserver.observe(scrollElement);
+    if (contentRef.current !== null) {
+      resizeObserver.observe(contentRef.current);
+    }
+
+    return () => {
+      scrollElement.removeEventListener("scroll", updateVisibility);
+      resizeObserver.disconnect();
+    };
+  }, [contentRef, scrollRef]);
+
+  return (
+    <div
+      {...props}
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-linear-to-b from-background via-background/80 to-transparent transition-opacity duration-150",
+        isVisible ? "opacity-100" : "opacity-0",
+        className,
+      )}
+      data-slot="conversation-top-fade"
+    />
+  );
+};
 
 export type ConversationEmptyStateProps = ComponentProps<"div"> & {
   title?: string;

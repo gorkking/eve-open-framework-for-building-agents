@@ -59,6 +59,7 @@ export function AgentMessage({
         {message.parts.map((part, index) => (
           <AgentMessagePart
             canRespond={canRespond}
+            hasFollowingText={lastTextIndex > index}
             key={partKey(part, index)}
             onInputResponses={onInputResponses}
             part={part}
@@ -72,11 +73,13 @@ export function AgentMessage({
 
 function AgentMessagePart({
   canRespond,
+  hasFollowingText,
   onInputResponses,
   part,
   showCaret,
 }: {
   readonly canRespond: boolean;
+  readonly hasFollowingText: boolean;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveMessagePart;
   readonly showCaret: boolean;
@@ -92,7 +95,10 @@ function AgentMessagePart({
       );
     case "reasoning":
       return (
-        <Reasoning defaultOpen isStreaming={part.state === "streaming"}>
+        <Reasoning
+          defaultOpen={!hasFollowingText}
+          isStreaming={part.state === "streaming" && !hasFollowingText}
+        >
           <ReasoningTrigger />
           <ReasoningContent>{part.text}</ReasoningContent>
         </Reasoning>
