@@ -44,6 +44,7 @@ describe("parseBlockActionsPayload", () => {
       payload: JSON.stringify(
         makePayload({
           type: "block_actions",
+          app_installed_team_id: "T_INSTALLATION",
           actions: [
             {
               action_id: "priority",
@@ -72,6 +73,7 @@ describe("parseBlockActionsPayload", () => {
 
     expect(parsed).toMatchObject({
       channelId: "C0123456789",
+      installationTeamId: "T_INSTALLATION",
       threadTs: "1700000000.000100",
       teamId: "T0123456789",
     });

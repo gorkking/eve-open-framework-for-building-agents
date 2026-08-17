@@ -133,6 +133,7 @@ export interface SlackEventCallback {
   readonly team_id?: string;
   readonly authorizations?: readonly {
     readonly is_bot?: boolean;
+    readonly team_id?: string;
     readonly user_id?: string;
   }[];
   readonly event?: { readonly type?: string } & Record<string, unknown>;
@@ -197,6 +198,16 @@ export function slackEventBotUserId(envelope: SlackEventCallback): string | unde
     (entry) => entry.is_bot === true && typeof entry.user_id === "string",
   );
   return authorization?.user_id;
+}
+
+/** Returns the workspace whose app installation authorized this event. */
+export function slackEventInstallationTeamId(envelope: SlackEventCallback): string | undefined {
+  const authorizations = envelope.authorizations ?? [];
+  const botAuthorization = authorizations.find(
+    (entry) => entry.is_bot === true && typeof entry.team_id === "string",
+  );
+  if (botAuthorization?.team_id !== undefined) return botAuthorization.team_id;
+  return authorizations.find((entry) => typeof entry.team_id === "string")?.team_id;
 }
 
 /** Parses a Slack message event without applying bot or subtype policy. */

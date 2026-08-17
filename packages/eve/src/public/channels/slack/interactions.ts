@@ -68,6 +68,7 @@ const log = createLogger("slack.interactions");
 interface ParsedBlockActionsPayload {
   readonly actions: SlackInteractionAction[];
   readonly channelId: string;
+  readonly installationTeamId: string | undefined;
   readonly threadTs: string;
   readonly teamId: string | undefined;
   /**
@@ -132,6 +133,7 @@ export function parseBlockActionsPayload(
       user,
     })),
     channelId: channel,
+    installationTeamId: readInstallationTeamId(rawBody),
     threadTs,
     teamId,
     messageBlocks,
@@ -164,6 +166,7 @@ function parseSharedBlockActionsPayload(
       },
     })),
     channelId: body.channelId,
+    installationTeamId: readInstallationTeamId(body.raw),
     threadTs: body.threadTs,
     teamId: body.teamId,
     messageBlocks: body.messageBlocks ?? [],
@@ -264,6 +267,11 @@ function actionsContainActionId(actions: unknown, actionId: string): boolean {
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function readInstallationTeamId(value: unknown): string | undefined {
+  if (!isObjectRecord(value)) return undefined;
+  return typeof value.app_installed_team_id === "string" ? value.app_installed_team_id : undefined;
 }
 
 function answeredBlocksFromActionBlock(input: {
@@ -404,6 +412,7 @@ export async function handleInteractionPost(
         botToken: deps.config.credentials?.botToken,
         channelId: interaction.channelId,
         threadTs: interaction.threadTs,
+        installationTeamId: interaction.installationTeamId,
         teamId: interaction.teamId,
       });
       const slackCtx: SlackInteractionContext = {
@@ -420,6 +429,7 @@ export async function handleInteractionPost(
           resolveSession: ctx.resolveSession,
           state: {
             channelId: interaction.channelId,
+            installationTeamId: interaction.installationTeamId ?? null,
             teamId: interaction.teamId ?? null,
             threadTs: interaction.threadTs,
             triggeringUserId: actionUser.id,
@@ -452,6 +462,7 @@ async function dispatchBlockInputResponses(input: {
   const result = await authorizeInputResponse({
     channelId: input.interaction.channelId,
     deps: input.deps,
+    installationTeamId: input.interaction.installationTeamId,
     submission: input.submission,
     teamId: input.interaction.teamId,
     threadTs: input.interaction.threadTs,
@@ -505,6 +516,7 @@ async function openFreeformModal(input: {
       input.interaction.threadTs,
     ),
     channelId: input.interaction.channelId,
+    installationTeamId: input.interaction.installationTeamId,
     threadTs: input.interaction.threadTs,
     messageTs,
     requestId,
@@ -512,7 +524,9 @@ async function openFreeformModal(input: {
 
   const promptText = readPromptTextFromBlocks(input.interaction.messageBlocks);
   const view = buildFreeformModalView({ metadata, prompt: promptText });
-  const token = await resolveSlackBotToken(input.deps.config.credentials?.botToken);
+  const token = await resolveSlackBotToken(input.deps.config.credentials?.botToken, {
+    teamId: input.interaction.installationTeamId,
+  });
 
   const response = await fetch("https://slack.com/api/views.open", {
     method: "POST",
@@ -569,6 +583,7 @@ async function handleViewSubmission(
   const user = payload.user;
   const triggeringUserId = payload.userId;
   const teamId = user?.teamId ?? payload.teamId ?? null;
+  const installationTeamId = metadata.installationTeamId ?? readInstallationTeamId(payload.raw);
   const submission: SlackInputResponseSubmission = {
     type: "view_submission",
     inputResponses: [{ requestId: metadata.requestId, text }],
@@ -580,7 +595,17 @@ async function handleViewSubmission(
     },
   };
 
-  ctx.waitUntil(dispatchViewInputResponse({ ctx, deps, metadata, submission, teamId, text }));
+  ctx.waitUntil(
+    dispatchViewInputResponse({
+      ctx,
+      deps,
+      installationTeamId,
+      metadata,
+      submission,
+      teamId,
+      text,
+    }),
+  );
 
   return ack;
 }
@@ -588,6 +613,7 @@ async function handleViewSubmission(
 async function dispatchViewInputResponse(input: {
   readonly ctx: { from: ChannelFrom<SlackChannelState> };
   readonly deps: InteractionHandlerDeps;
+  readonly installationTeamId: string | undefined;
   readonly metadata: HitlFreeformModalMetadata;
   readonly submission: Extract<SlackInputResponseSubmission, { type: "view_submission" }>;
   readonly teamId: string | null;
@@ -596,6 +622,7 @@ async function dispatchViewInputResponse(input: {
   const result = await authorizeInputResponse({
     channelId: input.metadata.channelId,
     deps: input.deps,
+    installationTeamId: input.installationTeamId,
     submission: input.submission,
     teamId: input.teamId,
     threadTs: input.metadata.threadTs,
@@ -619,6 +646,7 @@ async function dispatchViewInputResponse(input: {
       messageTs: input.metadata.messageTs,
       answerLabel: input.text,
       userId: input.submission.user.id,
+      installationTeamId: input.installationTeamId,
       deps: input.deps,
     });
   } catch (error) {
@@ -643,7 +671,9 @@ async function updateAnsweredHitlCard(
     userId: hitlAction.user.id,
   });
 
-  const token = await resolveSlackBotToken(deps.config.credentials?.botToken);
+  const token = await resolveSlackBotToken(deps.config.credentials?.botToken, {
+    teamId: interaction.installationTeamId,
+  });
   const response = await fetch("https://slack.com/api/chat.update", {
     method: "POST",
     headers: {
@@ -667,6 +697,7 @@ async function updateAnsweredFreeformCard(input: {
   readonly messageTs: string;
   readonly answerLabel: string;
   readonly userId?: string;
+  readonly installationTeamId?: string;
   readonly deps: InteractionHandlerDeps;
 }): Promise<void> {
   const blocks = buildAnsweredBlocks({
@@ -674,7 +705,9 @@ async function updateAnsweredFreeformCard(input: {
     answerLabel: input.answerLabel,
     userId: input.userId,
   });
-  const token = await resolveSlackBotToken(input.deps.config.credentials?.botToken);
+  const token = await resolveSlackBotToken(input.deps.config.credentials?.botToken, {
+    teamId: input.installationTeamId,
+  });
   const response = await fetch("https://slack.com/api/chat.update", {
     method: "POST",
     headers: {
