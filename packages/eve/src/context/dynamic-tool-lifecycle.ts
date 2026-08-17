@@ -348,7 +348,6 @@ async function resolveToolsFromEvent(
       let executeStepFnName = stepFn?.stepId;
       let serializedClosureVars =
         closureVars !== undefined ? safeSerialize(closureVars) : undefined;
-      let requiresLiveDefinition = false;
 
       // Framework tools skip the bundler AST transform. Turn-scoped tools
       // register their closure for durable replay; session-scoped tools are
@@ -366,7 +365,6 @@ async function resolveToolsFromEvent(
         }
         executeStepFnName = syntheticId;
         serializedClosureVars = {};
-        requiresLiveDefinition = event.type === "session.started";
       }
 
       let approvalStepFnName: string | undefined;
@@ -392,7 +390,6 @@ async function resolveToolsFromEvent(
             );
           }
         }
-        requiresLiveDefinition ||= event.type === "session.started";
       }
 
       metadata.push({
@@ -406,7 +403,6 @@ async function resolveToolsFromEvent(
         approvalStepFnName,
         approvalResponseStepFnName,
         closureVars: serializedClosureVars,
-        requiresLiveDefinition: requiresLiveDefinition || undefined,
       });
     }
   }

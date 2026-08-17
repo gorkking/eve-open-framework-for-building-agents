@@ -637,12 +637,6 @@ describe("dispatchDynamicToolEvent", () => {
         messages: [],
         event: makeEvent("session.started"),
       });
-      ctx.set(
-        SessionDynamicToolMetadataKey,
-        (ctx.get(SessionDynamicToolMetadataKey) ?? []).map(
-          ({ requiresLiveDefinition: _legacyFlag, ...legacyEntry }) => legacyEntry,
-        ),
-      );
       ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
 
       approvalStepFnName = ctx.get(SessionDynamicToolMetadataKey)?.[0]?.approvalStepFnName;

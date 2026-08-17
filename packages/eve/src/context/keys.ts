@@ -161,7 +161,6 @@ export interface DurableDynamicToolMetadata {
   readonly approvalStepFnName?: string;
   readonly approvalResponseStepFnName?: string;
   readonly closureVars?: Record<string, unknown>;
-  readonly requiresLiveDefinition?: true;
 }
 
 /**
