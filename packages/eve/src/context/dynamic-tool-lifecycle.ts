@@ -27,6 +27,7 @@ import {
   LiveSessionToolsKey,
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
+  SessionIdKey,
   TurnDynamicToolMetadataKey,
   LiveStepToolsKey,
 } from "#context/keys.js";
@@ -166,6 +167,80 @@ function selectLiveSessionTools(
 ): HarnessToolDefinition[] {
   const liveNames = new Set(metadata.filter(requiresLiveDynamicTool).map((entry) => entry.name));
   return liveTools.filter((tool) => liveNames.has(tool.name));
+}
+
+const cachedLiveSessionTools = new WeakMap<
+  ResolvedDynamicToolResolver,
+  Map<string, readonly HarnessToolDefinition[]>
+>();
+const MAX_CACHED_LIVE_SESSIONS_PER_RESOLVER = 100;
+
+function cacheLiveSessionTools(
+  ctx: ContextContainer,
+  resolvers: readonly ResolvedDynamicToolResolver[],
+  metadata: readonly DurableDynamicToolMetadata[],
+  liveTools: readonly HarnessToolDefinition[],
+): void {
+  const sessionId = ctx.get(SessionIdKey);
+  if (sessionId === undefined) return;
+
+  for (const resolver of resolvers) {
+    const names = new Set(
+      metadata
+        .filter((entry) => entry.resolverSlug === resolver.slug && requiresLiveDynamicTool(entry))
+        .map((entry) => entry.name),
+    );
+    if (names.size === 0) continue;
+
+    let bySession = cachedLiveSessionTools.get(resolver);
+    if (bySession === undefined) {
+      bySession = new Map();
+      cachedLiveSessionTools.set(resolver, bySession);
+    }
+    if (!bySession.has(sessionId) && bySession.size >= MAX_CACHED_LIVE_SESSIONS_PER_RESOLVER) {
+      const oldestSessionId = bySession.keys().next().value;
+      if (oldestSessionId !== undefined) bySession.delete(oldestSessionId);
+    }
+    bySession.set(
+      sessionId,
+      liveTools.filter((tool) => names.has(tool.name)),
+    );
+  }
+}
+
+function readCachedLiveSessionTools(
+  ctx: ContextContainer,
+  resolvers: readonly ResolvedDynamicToolResolver[],
+  metadata: readonly DurableDynamicToolMetadata[],
+): {
+  readonly missingResolverSlugs: ReadonlySet<string>;
+  readonly tools: readonly HarnessToolDefinition[];
+} {
+  const sessionId = ctx.get(SessionIdKey);
+  const requiredNamesBySlug = new Map<string, Set<string>>();
+  for (const entry of metadata.filter(requiresLiveDynamicTool)) {
+    const names = requiredNamesBySlug.get(entry.resolverSlug) ?? new Set<string>();
+    names.add(entry.name);
+    requiredNamesBySlug.set(entry.resolverSlug, names);
+  }
+
+  const missingResolverSlugs = new Set(requiredNamesBySlug.keys());
+  const tools: HarnessToolDefinition[] = [];
+  if (sessionId === undefined) return { missingResolverSlugs, tools };
+
+  for (const resolver of resolvers) {
+    const requiredNames = requiredNamesBySlug.get(resolver.slug);
+    if (requiredNames === undefined) continue;
+
+    const cached = cachedLiveSessionTools.get(resolver)?.get(sessionId) ?? [];
+    const cachedNames = new Set(cached.map((tool) => tool.name));
+    if ([...requiredNames].every((name) => cachedNames.has(name))) {
+      missingResolverSlugs.delete(resolver.slug);
+      tools.push(...cached.filter((tool) => requiredNames.has(tool.name)));
+    }
+  }
+
+  return { missingResolverSlugs, tools };
 }
 
 function replaceResolverMetadata(
@@ -474,7 +549,9 @@ export async function dispatchDynamicToolEvent(input: {
 
   if (event.type === "session.started") {
     ctx.set(SessionDynamicToolMetadataKey, metadata);
-    ctx.setVirtualContext(LiveSessionToolsKey, selectLiveSessionTools(metadata, liveTools));
+    const selectedLiveTools = selectLiveSessionTools(metadata, liveTools);
+    cacheLiveSessionTools(ctx, matching, metadata, selectedLiveTools);
+    ctx.setVirtualContext(LiveSessionToolsKey, selectedLiveTools);
     return;
   }
 
@@ -506,10 +583,18 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
     return;
   }
 
+  const cached = sameRevision
+    ? readCachedLiveSessionTools(input.ctx, input.resolvers, storedMetadata)
+    : { missingResolverSlugs: new Set<string>(), tools: [] };
+  if (sameRevision && cached.missingResolverSlugs.size === 0) {
+    input.ctx.setVirtualContext(LiveSessionToolsKey, [...cached.tools]);
+    return;
+  }
+
   const matching = input.resolvers.filter(
     (resolver) =>
       resolver.eventNames.includes("session.started") &&
-      (!sameRevision || liveResolverSlugs.has(resolver.slug)),
+      (!sameRevision || cached.missingResolverSlugs.has(resolver.slug)),
   );
   const { metadata, liveTools, failedResolverSlugs } =
     matching.length === 0
@@ -540,6 +625,8 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
     ? replaceResolverMetadata(storedMetadata, metadata, refreshedSlugs)
     : metadata;
   input.ctx.set(SessionDynamicToolMetadataKey, nextMetadata);
-  input.ctx.setVirtualContext(LiveSessionToolsKey, selectLiveSessionTools(nextMetadata, liveTools));
+  const refreshedLiveTools = selectLiveSessionTools(nextMetadata, liveTools);
+  cacheLiveSessionTools(input.ctx, matching, nextMetadata, refreshedLiveTools);
+  input.ctx.setVirtualContext(LiveSessionToolsKey, [...cached.tools, ...refreshedLiveTools]);
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
 }

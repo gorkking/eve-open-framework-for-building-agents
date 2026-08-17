@@ -24,6 +24,7 @@ const { buildDynamicTools, buildResponseAuthorizationTools } =
   await import("#context/build-dynamic-tools.js");
 
 import { ContextContainer } from "#context/container.js";
+import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
   LiveStepToolsKey,
   SessionIdKey,
@@ -565,6 +566,32 @@ describe("dispatchDynamicToolEvent", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it("restores live session tools from the process cache without rerunning the resolver", async () => {
+    let ctx = createCtx();
+    const handler = vi.fn(() => ({ tool: createFrameworkTool("cached live tool") }));
+    const resolver = createResolver("live", ["session.started"], handler);
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
+    ctx = await deserializeContext(serializeContext(ctx));
+
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_current",
+    });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(buildDynamicTools(ctx).map((tool) => tool.name)).toEqual(["tool"]);
+  });
+
   it("rebuilds a missing approval callback after a same-revision cold start", async () => {
     const ctx = createCtx();
     const stepId = `test-step-${++stepCounter}`;
@@ -621,7 +648,10 @@ describe("dispatchDynamicToolEvent", () => {
 
       await refreshDynamicSessionToolsForRuntimeRevision({
         ctx,
-        resolvers: [resolver, stableResolver],
+        resolvers: [
+          createResolver("governed", ["session.started"], handler),
+          createResolver("stable", ["session.started"], stableHandler),
+        ],
         messages: [],
         event: createSessionStartedEvent(),
         runtimeRevision: "deployment:dpl_current",
@@ -703,7 +733,7 @@ describe("dispatchDynamicToolEvent", () => {
       ctx.clearVirtualContext();
       await refreshDynamicSessionToolsForRuntimeRevision({
         ctx,
-        resolvers: [resolver],
+        resolvers: [createResolver("live", ["session.started"], handler)],
         messages: [],
         event: createSessionStartedEvent(),
         runtimeRevision: "deployment:dpl_current",
@@ -1492,7 +1522,7 @@ describe("framework dynamic tools (no bundler transform)", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      resolvers: [resolver],
+      resolvers: [createResolver("session_guard", ["session.started"], handler)],
       runtimeRevision: "deployment:dpl_current",
     });
 
