@@ -65,6 +65,7 @@ describe("local subagent workflow tool", () => {
           },
           sessionState: createDurableSessionState({ session }),
         },
+        tool: localSubagentWorkflowTool,
       });
       const result = dispatched.result.results[0];
       const pendingTask = dispatched.result.pendingTasks[0];

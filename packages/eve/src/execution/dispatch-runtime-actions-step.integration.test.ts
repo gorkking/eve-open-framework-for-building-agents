@@ -7,6 +7,10 @@ import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import {
+  dispatchLocalSubagentWorkflow,
+  dispatchRemoteSubagentWorkflow,
+} from "#execution/tasks/parent/subagent/dispatch.js";
+import {
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
@@ -143,6 +147,8 @@ vi.mock("#execution/remote-agent-dispatch.js", async (importOriginal) => ({
 }));
 
 const ADAPTER: ChannelAdapter = { kind: "channel:test" };
+const LOCAL_WORKFLOW_TOOL = {};
+const REMOTE_WORKFLOW_TOOL = {};
 const BASE_STATE: DurableSessionState = {
   continuationToken: "parent-token",
   emissionState: { sequence: 0, sessionStarted: false, stepIndex: 0, turnId: "" },
@@ -343,6 +349,9 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         taskRunId: "task-run-1",
       }),
     ]);
+    expect(dispatchLocalSubagentWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: LOCAL_WORKFLOW_TOOL }),
+    );
   });
 
   it("routes a tasks-mode remote child through the remote Workflow definition", async () => {
@@ -385,6 +394,9 @@ describe("dispatchRuntimeActionsStep child starts", () => {
       },
       phase: "addressed",
     });
+    expect(dispatchRemoteSubagentWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: REMOTE_WORKFLOW_TOOL }),
+    );
   });
 
   it("silently rejects a tasks-mode start that failed before index admission", async () => {
@@ -1155,7 +1167,12 @@ function installContext(
   const bundle = {
     compiledArtifactsSource: {},
     resolvedAgent: { config: tasks ? { experimental: { tasks: true } } : {} },
-    subagentRegistry: { subagentsByNodeId },
+    subagentRegistry: {
+      subagentsByNodeId,
+      workflowTools: tasks
+        ? { local: LOCAL_WORKFLOW_TOOL, remote: REMOTE_WORKFLOW_TOOL }
+        : undefined,
+    },
     turnAgent: {
       id: "test-agent",
       instructions: [],

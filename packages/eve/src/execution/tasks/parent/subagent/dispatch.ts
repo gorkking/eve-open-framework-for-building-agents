@@ -3,18 +3,16 @@ import type {
   RuntimeActionDispatchResult,
 } from "#execution/dispatch-runtime-actions-shared.js";
 import {
-  LOCAL_SUBAGENT_WORKFLOW_CONTEXT_KIND,
-  localSubagentWorkflowTool,
   type LocalSubagentWorkflowContext,
   type LocalSubagentWorkflowEntry,
   type LocalSubagentWorkflowInput,
+  type LocalSubagentWorkflowTool,
 } from "#execution/tasks/parent/subagent/local.js";
 import {
-  REMOTE_SUBAGENT_WORKFLOW_CONTEXT_KIND,
-  remoteSubagentWorkflowTool,
   type RemoteSubagentWorkflowContext,
   type RemoteSubagentWorkflowEntry,
   type RemoteSubagentWorkflowInput,
+  type RemoteSubagentWorkflowTool,
 } from "#execution/tasks/parent/subagent/remote.js";
 import { start, type WorkflowMetadata } from "#internal/workflow/runtime.js";
 import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
@@ -29,17 +27,17 @@ export async function dispatchLocalSubagentWorkflow(input: {
   readonly entry: LocalSubagentWorkflowEntry;
   readonly fanoutSize: number;
   readonly runtimeInput: RuntimeActionDispatchInput;
+  readonly tool: LocalSubagentWorkflowTool;
 }): Promise<SubagentWorkflowDispatch> {
   const action = input.entry.kind === "resume" ? input.entry.action : input.entry.target.action;
   const run = await start<
     [LocalSubagentWorkflowInput, LocalSubagentWorkflowContext],
     RuntimeActionDispatchResult
-  >(readWorkflowMetadata(localSubagentWorkflowTool.execute, "Local"), [
+  >(readWorkflowMetadata(input.tool.execute, "Local"), [
     PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
     {
       entry: input.entry,
       fanoutSize: input.fanoutSize,
-      kind: LOCAL_SUBAGENT_WORKFLOW_CONTEXT_KIND,
       runtimeInput: input.runtimeInput,
     },
   ]);
@@ -52,17 +50,17 @@ export async function dispatchRemoteSubagentWorkflow(input: {
   readonly entry: RemoteSubagentWorkflowEntry;
   readonly fanoutSize: number;
   readonly runtimeInput: RuntimeActionDispatchInput;
+  readonly tool: RemoteSubagentWorkflowTool;
 }): Promise<SubagentWorkflowDispatch> {
   const action = input.entry.kind === "resume" ? input.entry.action : input.entry.target.action;
   const run = await start<
     [RemoteSubagentWorkflowInput, RemoteSubagentWorkflowContext],
     RuntimeActionDispatchResult
-  >(readWorkflowMetadata(remoteSubagentWorkflowTool.execute, "Remote"), [
+  >(readWorkflowMetadata(input.tool.execute, "Remote"), [
     PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
     {
       entry: input.entry,
       fanoutSize: input.fanoutSize,
-      kind: REMOTE_SUBAGENT_WORKFLOW_CONTEXT_KIND,
       runtimeInput: input.runtimeInput,
     },
   ]);

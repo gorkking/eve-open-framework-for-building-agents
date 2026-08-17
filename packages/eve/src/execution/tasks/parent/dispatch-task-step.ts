@@ -40,6 +40,10 @@ export async function dispatchTaskStep(
   if (initial === undefined) {
     return { results: [], sessionState: input.sessionState, pendingTasks: [] };
   }
+  const workflowTools = initial.bundle.subagentRegistry.workflowTools;
+  if (workflowTools === undefined) {
+    throw new Error("Task dispatch requires registered subagent Workflow tools.");
+  }
 
   let sessionState = input.sessionState;
   const results: RuntimeActionResult[] = [];
@@ -84,12 +88,14 @@ export async function dispatchTaskStep(
         entry,
         fanoutSize: initial.fanoutSize,
         runtimeInput: { ...input, sessionState },
+        tool: workflowTools.local,
       });
     } else if (isRemoteSubagentWorkflowEntry(entry)) {
       dispatched = await dispatchRemoteSubagentWorkflow({
         entry,
         fanoutSize: initial.fanoutSize,
         runtimeInput: { ...input, sessionState },
+        tool: workflowTools.remote,
       });
     } else {
       throw new Error("Task dispatch produced an unclassified subagent transport.");

@@ -10,20 +10,27 @@ transports converge on the durable task lifecycle.**
 1. `turnStep` reads `resolvedAgent.config.experimental.tasks`. The turn
    workflow selects `dispatchTaskStep` only when that value is `true`; plain
    mode continues to select `dispatchRuntimeActionsStep`.
-2. `dispatchTaskStep` leaves rejections and task-control calls in the parent
-   step. It classifies each delegation once and calls either
-   `subagent/local.ts` or `subagent/remote.ts` with the model-authored input and
-   a private, serializable invocation context.
-3. Each module owns a separate `defineTool` value and Workflow executor with a
-   distinct compiler-assigned `workflowId`. Each dispatch attempt therefore
-   starts an addressable, transport-specific Workflow run.
-4. Each tool workflow invokes the shared admission step only after transport
+2. During graph resolution, that same flag lazily registers the local and
+   remote `defineTool` values in the runtime subagent registry. Flag-off
+   registries contain neither definition. The existing model-visible
+   subagent descriptors still emit `runtimeAction`, which is the parent
+   session's park/resume boundary.
+3. `dispatchTaskStep` leaves rejections and task-control calls in the parent
+   step. It requires the registered Workflow tools, classifies each delegation
+   once, and passes the matching definition to the local or remote launcher
+   with the model-authored input and a private, serializable invocation
+   context.
+4. `subagent/local.ts` and `subagent/remote.ts` own separate `defineTool`
+   values and Workflow executors with distinct compiler-assigned `workflowId`
+   values. Each dispatch attempt therefore starts the executor selected from
+   the registry as an addressable, transport-specific Workflow run.
+5. Each tool workflow invokes the shared admission step only after transport
    selection. That step
    rehydrates the current parent session, verifies that the pending action and
    serialized tool input still match the original plan entry, asserts that the
    entry matches the selected transport, and executes it without reclassifying
    a continuation as a fresh start.
-5. The subagent admission step creates the task run before the child start,
+6. The subagent admission step creates the task run before the child start,
    starts the real local eve runtime or remote transport, persists the child
    address, and returns the normal working-task receipt. The task run remains
    the sole writer for progress, input, completion, failure, and cancellation.
@@ -69,6 +76,9 @@ caller.
   enabled. The turn-workflow unit test then proves that this value selects
   `dispatchTaskStep`; the existing plain-mode case continues to select
   `dispatchRuntimeActionsStep`.
+- The runtime-graph unit test proves that both branded Workflow tools are
+  registered only when `experimental.tasks` is enabled. The task-dispatch
+  integration proves that local and remote calls use those registered values.
 
 ## Scope boundary
 
