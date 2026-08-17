@@ -273,11 +273,14 @@ Drivers schedule; they never interpret. Invariants:
    never as settlements. An obligation enters history only through its real
    settlement or dismissal outcome at group closure.
 4. **A newly raised approval is checked against open approval intent before
-   append.** Approval intent is the tool's approval key —
-   `approvalKey(toolInput)`, defaulting to the tool name. A park raising an
-   approval whose intent matches an open approval must not open a second
-   obligation for that intent; one settlement adjudicates one intent once
-   (`owner.batch.park.dedupe-open-intent`).
+   append.** Approval intent is the tool's authored approval key,
+   `approvalKey(toolInput)`. A park raising an approval whose intent equals
+   an open approval's intent must not open a second obligation for that
+   intent; one settlement adjudicates one intent once
+   (`owner.batch.park.dedupe-open-intent`). Tools without an authored key
+   never share an intent — a duplicate card is the fail-open default,
+   because the tool name alone would wrongly coalesce distinct actions (two
+   different `bash` commands).
 5. **One arrival-ordered delivery stream.** Callbacks, messages, responses,
    and controls surface in one order; interpretation order is deterministic
    by construction, including under workflow replay.
@@ -957,12 +960,13 @@ Every entry uses the same fields:
 
 #### owner.batch.park.dedupe-open-intent
 
-- **Example:** The `bash npm publish` approval is open; Dana chats; the model
-  retries `bash npm publish` inside that chat turn. No second card appears —
-  the retry is told the approval is already pending.
+- **Example:** The `bash npm publish` approval is open — `bash` authors an
+  `approvalKey` that keys by command. Dana chats; the model retries
+  `bash npm publish` inside that chat turn. No second card appears — the
+  retry is told the approval is already pending.
 - **Given:** `Batch B1 { A1: open }` where `A1` carries approval intent `K` —
-  the tool's `approvalKey(toolInput)`, defaulting to the tool name — and a
-  later model turn is running (for example via
+  the tool's authored `approvalKey(toolInput)`; unkeyed tools never share an
+  intent — and a later model turn is running (for example via
   `owner.approval.message.run-open`).
 - **When:** that turn's outcome raises an approval whose intent is also `K`
   (invariant 4).
@@ -1464,6 +1468,9 @@ response resumes a disposed child hook and fails the parent.
 
 ## Related work
 
+- [`hitl-admission-invariants.md`](./hitl-admission-invariants.md): decision
+  record for invariants 1–4 — the spec changes they forced, tradeoffs, and
+  the open duplicate-intent resolution.
 - [`hitl-engine.md`](./hitl-engine.md): implementation
   architecture for one durable store, pure interpreter, and ordered effect
   executor.

@@ -384,10 +384,10 @@ Machine-check these at the store/interpreter boundary:
 7. Every admitted input produces an observable effect or a documented no-op
    transition; nothing is silently buffered.
 8. Interpreter output is deterministic for equal state and input.
-9. No two open approval obligations share one approval intent key
-   (`approvalKey(toolInput)`, defaulting to the tool name) — the
-   store-checkable form of the lifecycle contract's
-   `owner.batch.park.dedupe-open-intent` row.
+9. No two open approval obligations share one authored approval intent key
+   (`approvalKey(toolInput)`; obligations of tools without an authored key
+   never compare equal) — the store-checkable form of the lifecycle
+   contract's `owner.batch.park.dedupe-open-intent` row.
 
 ## Test strategy
 
