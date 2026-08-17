@@ -15,25 +15,24 @@ channel effects. A root channel can render a selected view without rebuilding
 execution ownership from raw streams.
 
 ```text
-runtime lifecycle + child observations
-                 │
-                 ▼
-        durable work graph
-                 │
-                 ▼
-     channel-specific presentation
+runtime lifecycle + task updates
+                │
+                ▼
+       durable work graph
+                │
+                ▼
+    channel-specific presentation
 ```
 
-The implementation experiment has validated the main boundary:
+The implementation experiment validated the main boundary:
 
-- ordinary turn, step, action, blocker, and local-child state can reduce into a
+- ordinary turn, step, action, blocker, and child-task state can reduce into a
   useful graph without authored progress calls;
-- local child snapshots can be read without forwarding every child event;
 - Slack can render compact status and hierarchical activity from the same graph;
-- observation polling must remain separate from the parent's terminal-result
-  control loop;
-- channel presentation state needs explicit ownership across parent and monitor
-  workflows.
+- channel presentation state needs explicit ownership across parent and
+  rendering workflows;
+- polling child streams adds orchestration and does not scale to background or
+  remote work, so it should not be part of the proposed architecture.
 
 Since the original proposal, eve also gained child-authored `task_update`
 notifications for background tasks in [PR #2113](https://github.com/vercel/eve/pull/2113).
@@ -81,25 +80,25 @@ and presentation.
    the complete audit trail.
 5. **Reduction is framework-owned.** Agents do not customize graph invariants,
    child revisions, retention, or terminal precedence.
-6. **Children own their projections.** Parents read versioned child state rather
-   than ingesting every raw child event.
-7. **Control and observation stay separate.** Terminal results, input, and
-   authorization use immediate control paths. Routine child observations must
-   not destabilize or wake the parent turn for every step.
+6. **Task runs own child delivery.** Parents consume durable task views and
+   deduplicated task notifications rather than raw child events.
+7. **Reuse task delivery.** Terminal results, input, authorization, and explicit
+   task updates use the existing task inbox or callback transport. Progress
+   must not introduce child-stream readers or polling workflows.
 8. **Presentation belongs to channels.** The graph contains no Slack blocks,
    message IDs, API operations, or presentation timers.
 9. **Blockers are first-class.** Waiting for input, authorization, or approval is
    authoritative state, not an absence of progress.
-10. **Terminal state wins.** Late, replayed, or polled updates cannot resurrect
-    settled actions or channel activity.
+10. **Terminal state wins.** Late or replayed updates cannot resurrect settled
+    actions or channel activity.
 
 ## Proposed core semantics
 
 ### Session-relative work graph
 
 The initial graph should remain small and internal. A session-relative shape is
-sufficient; recursive child snapshots provide hierarchy without requiring a
-public root wrapper:
+sufficient. Delegated task nodes provide hierarchy without importing a child's
+raw event stream:
 
 ```ts
 type WorkPhase = "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
@@ -129,15 +128,16 @@ interface WorkAction {
   readonly phase: WorkPhase;
   readonly detail?: string;
   readonly update?: WorkUpdate;
-  readonly child?: {
-    readonly sessionId: string;
-    readonly work?: WorkGraph;
+  readonly task?: {
+    readonly taskId: string;
+    readonly sessionId?: string;
+    readonly phase: WorkPhase;
   };
 }
 
 interface WorkUpdate {
+  readonly id: string;
   readonly message: string;
-  readonly revision: number;
   readonly source: "task-update";
 }
 
@@ -166,15 +166,14 @@ turn [running]
 └── step 1 [running]
     ├── run reproduction [running]
     └── researcher [running]
-        └── child turn
-            ├── discover [completed]
-            └── inspect [running]
+        └── Inspecting the deployment trace
 ```
 
 Actions observed under the same `stepIndex` are siblings. A delegated action
-owns its child graph. Tool inputs may contribute bounded deterministic detail
-when a renderer-safe field is known, but the graph must not expose arbitrary
-arguments or infer future work.
+owns a task node whose lifecycle comes from the durable task view and whose
+current semantic detail may come from `task_update`. Tool inputs may contribute
+bounded deterministic detail when a renderer-safe field is known, but the graph
+must not expose arbitrary arguments or infer future work.
 
 The graph does not infer a plan, user intent, or a relationship between an
 action and a hypothetical task.
@@ -202,96 +201,136 @@ The live graph is not an audit log:
   active presentation;
 - collapse completed step internals as the turn advances;
 - retain failure or cancellation detail needed to explain the outcome;
-- retain active child graphs until their owning action settles;
+- retain active task nodes until their owning action settles;
 - remove the completed turn from live session state after settlement;
 - preserve the full sequence in the existing durable event stream.
 
-The implementation experiment retained more completed child actions than this
-minimal policy so Slack could show observed stage history. The final compaction
-rule should be based on bounded size and renderer needs, not on the fixture's
-three-stage shape.
+The implementation experiment retained completed child actions so Slack could
+show observed stage history. Without child event propagation, free-form task
+updates contribute one current semantic detail rather than recreating that
+history. Any future history must be explicitly bounded.
 
-## Child observation and control
+## Child updates and work composition
 
-### Local child work projections
-
-A local child writes its latest committed `WorkGraph` to a child-owned,
-namespaced workflow stream. A reader resolves the child session through the
-parent's running handle and reads the latest committed snapshot.
-
-```text
-child turn workflow
-  └── commit work graph → child eve.work projection
-
-parent control path
-  └── wait for terminal/input/auth inbox messages
-
-sibling work monitor
-  ├── read direct child eve.work tails
-  ├── compose newer snapshots
-  ├── render changed desired state
-  └── sleep for a bounded interval
-```
-
-This structure follows from a failed experiment. Racing a durable timer against
-the parent turn's inbox iterator introduced competing replay paths and prevented
-the turn from reliably advancing after both child results were ready. Polling in
-a sibling workflow leaves the existing result-wait protocol unchanged.
-
-The monitor is observational:
-
-- it does not own terminal child results;
-- it does not mutate the parent's turn cursor;
-- it adopts only newer child revisions;
-- it stops when observed children are terminal;
-- polling failure must not fail the parent turn.
-
-The prototype uses a ten-second interval. That value is an operational default,
-not part of the graph contract.
-
-### Background task updates
-
-Merged background-task support gives task-owned children an immediate semantic
-path:
+Merged background-task support gives task-owned children one immediate update
+path for local and remote execution:
 
 ```text
 task-owned child
   └── task_update({ message })
         └── local task inbox or remote callback
-              └── deduplicated parent notification
+              └── deduplicated parent delivery
+                    └── work graph reduction
+                          └── channel rendering
 ```
 
-A task update should annotate the matching child action or task node. It should
-not change the action's phase, append unbounded history, or replace framework-
-observed lifecycle facts.
+This path resolves the main orchestration question from the original proposal.
+eve should not consume child event streams or poll child-owned projections.
+Those approaches add serverless invocations, scale with the number of children,
+and do not naturally cover tasks that outlive a parent turn. The durable task
+run already owns child routing, deduplication, lifecycle transitions, and parent
+wake policy.
 
-The two sources have different guarantees:
+### Keep `task_update` free-form
 
-| Source        | Meaning                            | Delivery                 | Coverage                             |
-| ------------- | ---------------------------------- | ------------------------ | ------------------------------------ |
-| Work snapshot | Framework-observed lifecycle state | Bounded local polling    | Local delegated sessions             |
-| `task_update` | Child-authored semantic milestone  | Immediate task transport | Task-owned local and remote children |
+`task_update({ message })` should remain a separate child-only tool with one
+terse, activity-focused message. It should not accept work-graph structure or
+let the child claim lifecycle status.
 
-A practical next integration should use immediate task updates when available
-and retain snapshot polling as reconciliation and as a fallback for ordinary
-local subagents. The framework should coalesce repeated authored updates and
-bind them to stable task or call identity.
+```ts
+task_update({
+  message: "Inspecting the deployment trace",
+});
+```
+
+Keeping the tool free-form preserves a useful division of authority:
+
+- the child describes its current semantic activity;
+- the task run owns durable task identity and delivery;
+- the runtime owns `working`, `input_required`, and terminal lifecycle state;
+- the work reducer binds the update to the owning task or action;
+- the parent channel decides what to expose.
+
+A structured progress tool would let a model duplicate or contradict facts the
+runtime already knows. Numeric progress, nested item creation, and phase changes
+should therefore stay out of `task_update` until a concrete use case cannot be
+represented by task lifecycle plus one current message.
+
+### Add structure at the transport boundary
+
+The model-facing tool can stay free-form while the framework notification gains
+the identity needed for deterministic reduction. The current delivery ID already
+uses task, child turn, child step, and tool call identity. The work reducer
+should receive equivalent internal metadata:
+
+```ts
+interface TaskWorkUpdate {
+  readonly kind: "task-update";
+  readonly taskId: string;
+  readonly childTurnId: string;
+  readonly childStepIndex: number;
+  readonly callId: string;
+  readonly message: string;
+}
+```
+
+The task update does not need a child-authored revision. Its existing identity
+forms an idempotency key, and each accepted update replaces the current message
+on the owning task node. The graph stores bounded desired state, not an update
+history.
+
+The task view should remain the lifecycle source of truth. Whether the current
+message also belongs in `TaskView` requires a separate decision: persisting it
+there makes `task_peek` and late renderers consistent, but changes a model-
+visible task contract. The narrow first integration can project the update into
+the active parent work graph without expanding `TaskView`.
+
+### Parent wake policy
+
+`task_update` currently sends a deduplicated parent delivery. A parked parent may
+start a turn, and an active parent observes it at a safe boundary. That behavior
+is appropriate for agent-to-agent communication, but presentation should not
+require a new model turn for every update.
+
+The integration should split one accepted update into two consumers:
+
+```text
+accepted task update
+  ├── parent notification for model awareness
+  └── framework work update for channel presentation
+```
+
+Both consumers use the same task identity and deduplication key. The channel
+consumer must not append the message to model history or independently change
+task lifecycle state. If immediate channel rendering cannot reuse the parent
+notification without waking model execution, the task run should emit a
+framework-owned presentation callback rather than reintroducing polling.
+
+### Non-task subagents
+
+A synchronous declared subagent that is not task-owned has no explicit
+intermediate-update transport. Without polling or child stream attachment, its
+parent graph can show dispatch, running, blockers already proxied to the parent,
+and terminal settlement, but not the child's internal tool ladder.
+
+That is an acceptable boundary for the first integration. Fine-grained child
+activity should require task ownership and `task_update` rather than adding a
+second transport for ordinary subagents. If synchronous subagents later need the
+same capability, eve should generalize the task notification transport instead
+of reviving child stream polling.
 
 ### Terminal precedence
 
-Control and presentation can still race. The following sequence is valid:
+Task lifecycle remains authoritative when updates race settlement:
 
-```text
-parent terminal renderer deletes or settles activity
-late monitor poll attempts an update
-channel rejects or ignores the stale update
-```
+- buffer a fast update until task dispatch is acknowledged;
+- deliver buffered updates before the terminal wake when they win the race;
+- reject or ignore updates after the task is terminal;
+- prevent a late presentation effect from recreating terminal channel activity.
 
-The channel must fence terminal presentation. In the Slack experiment, the
-parent owns creation and terminal deletion of the transient activity message;
-the monitor may update an existing message but cannot recreate a missing one.
-A general channel contract needs equivalent ownership without exposing Slack
-message semantics in the graph.
+A channel-specific renderer still owns external message identity and terminal
+cleanup. The work graph expresses terminal desired state; it does not encode
+Slack message operations.
 
 ## Slack as the proving ground
 
@@ -307,17 +346,15 @@ reasoning does not belong in the work graph.
 ### Hierarchical activity
 
 The activity renderer maintains one transient Slack message with one native
-`task_card` block per direct action or subagent. Child actions appear as
-rich-text details:
+`task_card` block per direct action or task. A task update supplies the current
+rich-text detail without changing the card's framework-owned status:
 
 ```text
 Researcher [in progress]
-  ✓ discover
-  ◐ inspect
+  Inspecting the deployment trace
 
 Verifier [in progress]
-  ✓ prepare
-  ◐ validate
+  Validating the reproduction
 ```
 
 The experiment established several presentation constraints:
@@ -330,8 +367,8 @@ The experiment established several presentation constraints:
   updates are a better candidate for native live agent progress than repeated
   full-message replacement, but adopting them changes response ownership and
   needs separate design;
-- the parent must own terminal cleanup so a stale monitor cannot leave a live
-  card after the final response.
+- the parent must own terminal cleanup so a late task update cannot leave live
+  activity after the final response.
 
 The current activity renderer should remain internal while those tradeoffs are
 evaluated. A generic public channel progress hook is premature.
@@ -344,16 +381,17 @@ Reduce existing turn, step, action, blocker, delegation, cancellation, and
 failure facts. Prove deterministic identity and terminal precedence with unit
 tests.
 
-### 2. Child-owned local projections
+### 2. Task-update composition
 
-Write committed local child snapshots to a namespaced stream and support direct
-latest-snapshot reads. Keep this layer independent of channels.
+Project merged `task_update` notifications onto the owning task or child action.
+Preserve the free-form child tool while carrying stable task, turn, step, and
+call identity through the internal notification.
 
-### 3. Isolated observation monitor
+### 3. Presentation delivery
 
-Run bounded polling in a sibling workflow. Do not race observation timers
-against the parent control inbox. Prove replay, result delivery, cancellation,
-and monitor settlement independently.
+Deliver changed work to channels without polling child streams or requiring a
+new model turn for each presentation update. Reuse task-run deduplication and
+terminal precedence. Keep this internal until the effect ownership is proven.
 
 ### 4. Slack consumers
 
@@ -361,11 +399,10 @@ Consume the same graph for compact status and hierarchical activity. Keep
 message identity, Block Kit, API calls, fallback behavior, and terminal cleanup
 inside Slack.
 
-### 5. Task-update composition
+### 5. Remote and background validation
 
-Project merged `task_update` notifications onto the owning task or child action.
-Use them for immediate semantic milestones while preserving observed graph phase
-and bounded snapshot reconciliation.
+Validate the same task-update reduction for local tasks, remote tasks, concurrent
+children, and tasks that outlive the dispatching turn.
 
 Acceptance criteria:
 
@@ -373,9 +410,10 @@ Acceptance criteria:
 - an update cannot revive a terminal task or action;
 - a fast update that races terminal settlement converges on terminal state;
 - local and remote task updates use the same annotation semantics;
-- ordinary local subagents remain useful without authored updates;
-- renderers can prefer a fresh semantic message without losing structured child
-  lifecycle state.
+- tasks remain useful without authored updates through their observed lifecycle;
+- renderers can prefer a fresh semantic message without losing authoritative
+  task lifecycle state;
+- no child stream polling or monitor workflow is required.
 
 ### 6. Reassess authored tool progress
 
@@ -410,8 +448,8 @@ internal stabilization.
 ### Remote child observations
 
 `task_update` covers semantic milestones for task-owned remote children, not a
-complete remote work graph. Full remote observation still requires capability
-negotiation or a coarse compatibility projection.
+complete remote internal action graph. A future remote protocol may expose more
+observed structure, but it should not be a prerequisite for useful task status.
 
 ### Streaming Slack tasks
 
@@ -429,22 +467,21 @@ of recent activity must not automatically imply failure.
 
 Use the narrowest tier for each invariant:
 
-- unit tests for pure reduction, compaction, child adoption, and Slack rendering;
-- integration tests for in-memory child composition and task-update projection;
-- scenario tests for workflow replay, monitor isolation, cancellation, and
+- unit tests for pure reduction, compaction, task updates, and Slack rendering;
+- integration tests for task-view composition and task-update projection;
+- scenario tests for workflow replay, task-update delivery, cancellation, and
   terminal races;
 - deterministic fixture evals for final Slack behavior.
 
 The design is successful when:
 
 - planless root work reduces deterministically;
-- nested local work composes without channel-side child stream attachment;
-- the parent control path remains unchanged by observation polling;
+- task work composes without child stream attachment or polling;
 - authored task updates annotate rather than replace observed state;
-- stale child or monitor updates cannot overwrite terminal state;
+- stale task updates cannot overwrite terminal state;
 - compact and hierarchical renderers consume the same graph;
 - the graph remains free of Slack state;
-- ordinary tools and subagents remain useful without authored progress calls.
+- ordinary tools and tasks remain useful without authored progress calls.
 
 ## Out of scope
 
