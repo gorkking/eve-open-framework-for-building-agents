@@ -35,10 +35,10 @@ export interface RuntimeSubagentRegistry {
   readonly subagentsByName: ReadonlyMap<string, RuntimeRegisteredSubagent>;
   readonly subagentsByNodeId: ReadonlyMap<string, RuntimeRegisteredSubagent>;
   /** Internal execution definitions registered only for `experimental.tasks`. */
-  readonly workflowTools?: RuntimeSubagentWorkflowTools;
+  readonly taskTools?: RuntimeSubagentTaskTools;
 }
 
-export interface RuntimeSubagentWorkflowTools {
+export interface RuntimeSubagentTaskTools {
   readonly local: LocalSubagentWorkflowTool;
   readonly remote: RemoteSubagentWorkflowTool;
 }
@@ -102,7 +102,7 @@ export function createRuntimeSubagentRegistry(input: {
   readonly persistentSessions?: boolean;
   readonly reservedToolNames?: readonly string[];
   readonly subagents: readonly ResolvedRuntimeDelegationNode[];
-  readonly workflowTools?: RuntimeSubagentWorkflowTools;
+  readonly taskTools?: RuntimeSubagentTaskTools;
 }): RuntimeSubagentRegistry {
   const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions === true);
   const preparedTools: PreparedRuntimeDelegationTool[] = [];
@@ -166,7 +166,7 @@ export function createRuntimeSubagentRegistry(input: {
     preparedTools,
     subagentsByName: registry.asMap(),
     subagentsByNodeId,
-    workflowTools: input.workflowTools,
+    taskTools: input.taskTools,
   };
 }
 

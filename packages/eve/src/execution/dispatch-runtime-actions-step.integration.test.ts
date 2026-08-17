@@ -1169,9 +1169,7 @@ function installContext(
     resolvedAgent: { config: tasks ? { experimental: { tasks: true } } : {} },
     subagentRegistry: {
       subagentsByNodeId,
-      workflowTools: tasks
-        ? { local: LOCAL_WORKFLOW_TOOL, remote: REMOTE_WORKFLOW_TOOL }
-        : undefined,
+      taskTools: tasks ? { local: LOCAL_WORKFLOW_TOOL, remote: REMOTE_WORKFLOW_TOOL } : undefined,
     },
     turnAgent: {
       id: "test-agent",

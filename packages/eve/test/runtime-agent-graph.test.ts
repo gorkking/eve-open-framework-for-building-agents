@@ -117,7 +117,7 @@ describe("resolveRuntimeAgentGraph", () => {
       graph.nodesByNodeId.get("subagents/researcher")?.sandboxRegistry.sandbox?.definition.backend
         .name,
     ).toBe("vercel");
-    expect(graph.root.subagentRegistry.workflowTools).toBeUndefined();
+    expect(graph.root.subagentRegistry.taskTools).toBeUndefined();
   });
 
   it("registers the subagent Workflow tools only for experimental.tasks", async () => {
@@ -143,12 +143,12 @@ describe("resolveRuntimeAgentGraph", () => {
       import("../src/execution/tasks/parent/subagent/remote.js"),
     ]);
 
-    expect(graph.root.subagentRegistry.workflowTools).toEqual({
+    expect(graph.root.subagentRegistry.taskTools).toEqual({
       local: localSubagentWorkflowTool,
       remote: remoteSubagentWorkflowTool,
     });
-    expect(isBrandedToolEntry(graph.root.subagentRegistry.workflowTools?.local)).toBe(true);
-    expect(isBrandedToolEntry(graph.root.subagentRegistry.workflowTools?.remote)).toBe(true);
+    expect(isBrandedToolEntry(graph.root.subagentRegistry.taskTools?.local)).toBe(true);
+    expect(isBrandedToolEntry(graph.root.subagentRegistry.taskTools?.remote)).toBe(true);
   });
 
   it("keeps dynamic subagents out of the static toolset and resolves their handlers", async () => {

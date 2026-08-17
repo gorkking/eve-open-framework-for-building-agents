@@ -28,7 +28,7 @@ import { createRuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
 import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
 import {
   createRuntimeSubagentRegistry,
-  type RuntimeSubagentWorkflowTools,
+  type RuntimeSubagentTaskTools,
 } from "#runtime/subagents/registry.js";
 import { createRuntimeToolRegistry } from "#runtime/tools/registry.js";
 import { WORKFLOW_TOOL_NAME } from "#shared/workflow-sandbox.js";
@@ -235,8 +235,8 @@ async function resolveRuntimeAgentNode(
       parentNodeId: input.nodeId,
       subagentNodesById: input.subagentNodesById,
     }),
-    workflowTools:
-      agent.config?.experimental?.tasks === true ? await loadSubagentWorkflowTools() : undefined,
+    taskTools:
+      agent.config?.experimental?.tasks === true ? await loadSubagentTaskTools() : undefined,
   });
   const resolvedAgent = {
     ...agent,
@@ -265,7 +265,7 @@ async function resolveRuntimeAgentNode(
   return node;
 }
 
-async function loadSubagentWorkflowTools(): Promise<RuntimeSubagentWorkflowTools> {
+async function loadSubagentTaskTools(): Promise<RuntimeSubagentTaskTools> {
   // Keep the Workflow modules out of flag-off graph resolution. A static
   // import would also cycle through their dispatch step back into this loader.
   const [{ localSubagentWorkflowTool }, { remoteSubagentWorkflowTool }] = await Promise.all([
