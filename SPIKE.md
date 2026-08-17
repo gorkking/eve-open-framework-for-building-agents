@@ -15,8 +15,8 @@ transports converge on the durable task lifecycle.**
    `subagent/local.ts` or `subagent/remote.ts` with the model-authored input and
    a private, serializable invocation context.
 3. Each module owns a separate `defineTool` value and Workflow executor with a
-   distinct compiler-assigned `workflowId`. One model call therefore maps to
-   one addressable, transport-specific Workflow run.
+   distinct compiler-assigned `workflowId`. Each dispatch attempt therefore
+   starts an addressable, transport-specific Workflow run.
 4. Each tool workflow invokes the shared admission step only after transport
    selection. That step
    rehydrates the current parent session, verifies that the pending action and
@@ -83,3 +83,11 @@ operate on the parent session's task index and do not invoke an agent. Plain
 mode is unchanged. A public lowering that removes `runtimeAction` entirely
 would be a separate API change with a larger harness contract and is not
 required to validate this execution model.
+
+The wrapper Workflow start is an external side effect inside the retryable task
+dispatch step. Task and child admission remain replay-safe because their
+identities are deterministic, but this spike does not deduplicate or retain the
+wrapper run ID: a retry after `start()` succeeds can leave an extra completed
+wrapper run. A production contract that requires exactly one observable tool
+run per call needs a persisted idempotency boundary the current Workflow
+`start()` API does not expose.
