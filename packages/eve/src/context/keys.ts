@@ -188,12 +188,6 @@ export const TurnDynamicToolMetadataKey = new ContextKey<readonly DurableDynamic
 );
 
 /**
- * Virtual live session-scoped tool definitions for entries whose callbacks
- * cannot be reconstructed from durable metadata alone.
- */
-export const LiveSessionToolsKey = new ContextKey<HarnessToolDefinition[]>("eve.liveSessionTools");
-
-/**
  * Virtual (non-serialized) live step-scoped tool definitions from
  * `step.started` resolvers. Carries original execute closures so
  * framework tools (which lack bundler step-function metadata) work.

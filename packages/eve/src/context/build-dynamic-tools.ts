@@ -4,14 +4,9 @@ import type { ContextReader } from "#context/key.js";
 import {
   SessionDynamicToolMetadataKey,
   TurnDynamicToolMetadataKey,
-  LiveSessionToolsKey,
   LiveStepToolsKey,
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
-import {
-  requiresLiveDynamicTool,
-  requiresLiveDynamicToolExecution,
-} from "#context/dynamic-tool-metadata.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createLogger } from "#internal/logging.js";
 import type {
@@ -74,28 +69,6 @@ function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessTo
   return tools;
 }
 
-function buildSessionTools(ctx: ContextReader): HarnessToolDefinition[] {
-  const metadata = ctx.get(SessionDynamicToolMetadataKey) ?? [];
-  const liveByName = new Map((ctx.get(LiveSessionToolsKey) ?? []).map((tool) => [tool.name, tool]));
-  const replayMetadata = metadata.map((entry) =>
-    requiresLiveDynamicTool(entry) && !requiresLiveDynamicToolExecution(entry)
-      ? { ...entry, approvalResponseStepFnName: undefined, approvalStepFnName: undefined }
-      : entry,
-  );
-  const replayedByName = new Map(replayTools(replayMetadata).map((tool) => [tool.name, tool]));
-
-  return metadata.flatMap((entry) => {
-    const replayed = replayedByName.get(entry.name);
-    if (!requiresLiveDynamicTool(entry)) return replayed === undefined ? [] : [replayed];
-
-    const live = liveByName.get(entry.name);
-    if (live === undefined) return [];
-    if (requiresLiveDynamicToolExecution(entry)) return [live];
-    if (replayed === undefined) return [];
-    return [{ ...replayed, approval: live.approval }];
-  });
-}
-
 function buildReplayedApproval(
   metadata: DurableDynamicToolMetadata,
 ): HarnessToolDefinition["approval"] | undefined {
@@ -143,8 +116,7 @@ function buildReplayedApproval(
  * so they win on name collision (the tool-loop uses `??=` for dedup).
  *
  * Step tools are live closures (re-resolved every step via
- * `LiveStepToolsKey`). Session tools that carry process-local callbacks
- * use live definitions; other session and turn tools replay durable metadata.
+ * `LiveStepToolsKey`). Session and turn tools replay durable metadata.
  */
 export function buildResponseAuthorizationTools(input: {
   readonly authoredTools: HarnessToolMap;
@@ -163,6 +135,6 @@ export function buildResponseAuthorizationTools(input: {
 export function buildDynamicTools(ctx: ContextReader): readonly HarnessToolDefinition[] {
   const step = ctx.get(LiveStepToolsKey) ?? [];
   const turn = replayTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
-  const session = buildSessionTools(ctx);
+  const session = replayTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
   return [...step, ...turn, ...session];
 }

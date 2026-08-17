@@ -24,7 +24,6 @@ import { toErrorMessage } from "#shared/errors.js";
 import type { ContextContainer } from "#context/container.js";
 import type { ContextKey } from "#context/key.js";
 import {
-  LiveSessionToolsKey,
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
   SessionIdKey,
@@ -33,7 +32,6 @@ import {
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
-import { requiresLiveDynamicTool } from "#context/dynamic-tool-metadata.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 
 const log = createLogger("dynamic-tools");
@@ -161,65 +159,15 @@ function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) |
   }
 }
 
-function selectLiveSessionTools(
-  metadata: readonly DurableDynamicToolMetadata[],
-  liveTools: readonly HarnessToolDefinition[],
-): HarnessToolDefinition[] {
-  const liveNames = new Set(metadata.filter(requiresLiveDynamicTool).map((entry) => entry.name));
-  return liveTools.filter((tool) => liveNames.has(tool.name));
-}
-
-interface LiveSessionToolSnapshot {
-  readonly ownership: string;
-  readonly tools: readonly HarnessToolDefinition[];
-}
-
-const liveSessionToolSnapshots = new Map<string, LiveSessionToolSnapshot>();
-
-function liveSessionToolSnapshotKey(ctx: ContextContainer): string | undefined {
-  const runtimeRevision = ctx.get(SessionDynamicToolRuntimeRevisionKey);
-  const sessionId = ctx.get(SessionIdKey);
-  return runtimeRevision === undefined || sessionId === undefined
-    ? undefined
-    : JSON.stringify([runtimeRevision, sessionId]);
-}
-
-function liveSessionToolOwnership(metadata: readonly DurableDynamicToolMetadata[]): string {
-  return JSON.stringify(
-    metadata.filter(requiresLiveDynamicTool).map((entry) => [entry.resolverSlug, entry.name]),
+function hasMissingProcessCallback(metadata: DurableDynamicToolMetadata): boolean {
+  return (
+    (metadata.executeStepFnName?.startsWith("eve:framework-dynamic:") === true &&
+      lookupStepFunction(metadata.executeStepFnName) === null) ||
+    (metadata.approvalStepFnName !== undefined &&
+      lookupStepFunction(metadata.approvalStepFnName) === null) ||
+    (metadata.approvalResponseStepFnName !== undefined &&
+      lookupStepFunction(metadata.approvalResponseStepFnName) === null)
   );
-}
-
-function cacheLiveSessionTools(
-  ctx: ContextContainer,
-  metadata: readonly DurableDynamicToolMetadata[],
-  liveTools: readonly HarnessToolDefinition[],
-): void {
-  const key = liveSessionToolSnapshotKey(ctx);
-  if (key !== undefined) {
-    liveSessionToolSnapshots.set(key, {
-      ownership: liveSessionToolOwnership(metadata),
-      tools: liveTools,
-    });
-  }
-}
-
-function validateHydratedSessionTools(
-  storedMetadata: readonly DurableDynamicToolMetadata[],
-  resolvedMetadata: readonly DurableDynamicToolMetadata[],
-  liveTools: readonly HarnessToolDefinition[],
-): HarnessToolDefinition[] | undefined {
-  const resolvedOwners = new Map(resolvedMetadata.map((entry) => [entry.name, entry.resolverSlug]));
-  const liveByName = new Map(liveTools.map((tool) => [tool.name, tool]));
-  const snapshot: HarnessToolDefinition[] = [];
-
-  for (const entry of storedMetadata.filter(requiresLiveDynamicTool)) {
-    if (resolvedOwners.get(entry.name) !== entry.resolverSlug) return undefined;
-    const live = liveByName.get(entry.name);
-    if (live === undefined) return undefined;
-    snapshot.push(live);
-  }
-  return snapshot;
 }
 
 function registerStepFunction(stepId: string, fn: Function): void {
@@ -349,20 +297,16 @@ async function resolveToolsFromEvent(
       let serializedClosureVars =
         closureVars !== undefined ? safeSerialize(closureVars) : undefined;
 
-      // Framework tools skip the bundler AST transform. Turn-scoped tools
-      // register their closure for durable replay; session-scoped tools are
-      // re-resolved into virtual context on each workflow step.
+      const callbackScope = event.type === "session.started" ? `${ctx.require(SessionIdKey)}:` : "";
       if (executeStepFnName === undefined) {
-        const syntheticId = `eve:framework-dynamic:${resolver.slug}:${entryKey}`;
+        const syntheticId = `eve:framework-dynamic:${callbackScope}${resolver.slug}:${entryKey}`;
         const originalExecute = entry.execute.bind(entry);
-        if (event.type === "turn.started") {
-          registerStepFunction(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
-            originalExecute(
-              input as Record<string, unknown>,
-              ctx as Parameters<typeof entry.execute>[1],
-            ),
-          );
-        }
+        registerStepFunction(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
+          originalExecute(
+            input as Record<string, unknown>,
+            ctx as Parameters<typeof entry.execute>[1],
+          ),
+        );
         executeStepFnName = syntheticId;
         serializedClosureVars = {};
       }
@@ -370,25 +314,21 @@ async function resolveToolsFromEvent(
       let approvalStepFnName: string | undefined;
       let approvalResponseStepFnName: string | undefined;
       if (entry.approval !== undefined) {
-        approvalStepFnName = `eve:dynamic-tool-approval:${resolver.slug}:${entryKey}`;
+        approvalStepFnName = `eve:dynamic-tool-approval:${callbackScope}${resolver.slug}:${entryKey}`;
         const originalApproval = resolveApprovalPolicy(entry.approval).bind(entry);
-        if (event.type === "turn.started") {
-          registerStepFunction(approvalStepFnName, (_closureVars: unknown, approvalCtx: unknown) =>
-            originalApproval(approvalCtx as ApprovalContext),
-          );
-        }
+        registerStepFunction(approvalStepFnName, (_closureVars: unknown, approvalCtx: unknown) =>
+          originalApproval(approvalCtx as ApprovalContext),
+        );
 
         const responsePolicy =
           typeof entry.approval === "function" ? undefined : entry.approval.response;
         if (responsePolicy !== undefined) {
-          approvalResponseStepFnName = `eve:dynamic-tool-approval-response:${resolver.slug}:${entryKey}`;
-          if (event.type === "turn.started") {
-            registerStepFunction(
-              approvalResponseStepFnName,
-              (_closureVars: unknown, responseCtx: unknown) =>
-                responsePolicy(responseCtx as ApprovalResponseContext),
-            );
-          }
+          approvalResponseStepFnName = `eve:dynamic-tool-approval-response:${callbackScope}${resolver.slug}:${entryKey}`;
+          registerStepFunction(
+            approvalResponseStepFnName,
+            (_closureVars: unknown, responseCtx: unknown) =>
+              responsePolicy(responseCtx as ApprovalResponseContext),
+          );
         }
       }
 
@@ -481,7 +421,7 @@ export async function dispatchDynamicToolEvent(input: {
     return;
   }
 
-  const { metadata, liveTools } = await resolveToolsFromEvent(ctx, matching, event, messages);
+  const { metadata } = await resolveToolsFromEvent(ctx, matching, event, messages);
 
   // Session/turn: store durable metadata for cross-step replay via
   // the bundler's registered step functions.
@@ -490,9 +430,6 @@ export async function dispatchDynamicToolEvent(input: {
 
   if (event.type === "session.started") {
     ctx.set(SessionDynamicToolMetadataKey, metadata);
-    const selectedLiveTools = selectLiveSessionTools(metadata, liveTools);
-    cacheLiveSessionTools(ctx, metadata, selectedLiveTools);
-    ctx.setVirtualContext(LiveSessionToolsKey, selectedLiveTools);
     return;
   }
 
@@ -521,47 +458,45 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   const matching = input.resolvers.filter((resolver) =>
     resolver.eventNames.includes("session.started"),
   );
-  const { metadata, liveTools } =
+  const { metadata } =
     matching.length === 0
-      ? { metadata: [], liveTools: [] }
+      ? { metadata: [] }
       : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
 
   input.ctx.set(SessionDynamicToolMetadataKey, metadata);
-  const selectedLiveTools = selectLiveSessionTools(metadata, liveTools);
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
-  cacheLiveSessionTools(input.ctx, metadata, selectedLiveTools);
-  input.ctx.setVirtualContext(LiveSessionToolsKey, selectedLiveTools);
 }
 
-/** Restores process-local session tool callbacks after virtual context resets. */
+/** Re-registers missing process-local session callbacks in a fresh runtime. */
 export async function hydrateDynamicSessionTools(input: {
   readonly ctx: ContextContainer;
   readonly resolvers: readonly ResolvedDynamicToolResolver[];
   readonly event: SessionStartedStreamEvent;
   readonly messages: readonly ModelMessage[];
 }): Promise<void> {
-  if (input.ctx.get(LiveSessionToolsKey) !== undefined) return;
-
   const storedMetadata = input.ctx.get(SessionDynamicToolMetadataKey) ?? [];
-  const key = liveSessionToolSnapshotKey(input.ctx);
-  const cached = key === undefined ? undefined : liveSessionToolSnapshots.get(key);
-  if (cached?.ownership === liveSessionToolOwnership(storedMetadata)) {
-    input.ctx.setVirtualContext(LiveSessionToolsKey, [...cached.tools]);
-    return;
-  }
+  const missing = storedMetadata.filter(hasMissingProcessCallback);
+  if (missing.length === 0) return;
 
-  const requiredOwners = new Set(
-    storedMetadata.filter(requiresLiveDynamicTool).map((entry) => entry.resolverSlug),
-  );
+  const owners = new Set(missing.map((entry) => entry.resolverSlug));
   const matching = input.resolvers.filter(
-    (resolver) =>
-      resolver.eventNames.includes("session.started") && requiredOwners.has(resolver.slug),
+    (resolver) => resolver.eventNames.includes("session.started") && owners.has(resolver.slug),
   );
-  const { metadata, liveTools } =
+  const { metadata } =
     matching.length === 0
-      ? { metadata: [], liveTools: [] }
+      ? { metadata: [] }
       : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
-  const snapshot = validateHydratedSessionTools(storedMetadata, metadata, liveTools);
-  if (snapshot !== undefined) cacheLiveSessionTools(input.ctx, storedMetadata, snapshot);
-  input.ctx.setVirtualContext(LiveSessionToolsKey, snapshot ?? []);
+  const durableOwners = new Map(storedMetadata.map((entry) => [entry.name, entry.resolverSlug]));
+  const resolvedOwners = new Map(metadata.map((entry) => [entry.name, entry.resolverSlug]));
+  if (metadata.some((entry) => durableOwners.get(entry.name) !== entry.resolverSlug)) {
+    throw new Error("Dynamic session tool callback hydration changed durable ownership.");
+  }
+  if (
+    missing.some(
+      (entry) =>
+        resolvedOwners.get(entry.name) !== entry.resolverSlug || hasMissingProcessCallback(entry),
+    )
+  ) {
+    log.warn("Dynamic session tool callback hydration did not reproduce durable ownership.");
+  }
 }

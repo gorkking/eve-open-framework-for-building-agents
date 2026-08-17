@@ -486,6 +486,21 @@ const registrySym = Symbol.for("@workflow/core//registeredSteps");
 const testRegistry = getOrCreateStepRegistry(registrySym);
 let stepCounter = 0;
 
+function simulateColdStart(ctx: ContextContainer): void {
+  for (const metadata of ctx.get(SessionDynamicToolMetadataKey) ?? []) {
+    if (metadata.executeStepFnName?.startsWith("eve:framework-dynamic:")) {
+      testRegistry.delete(metadata.executeStepFnName);
+    }
+    if (metadata.approvalStepFnName !== undefined) {
+      testRegistry.delete(metadata.approvalStepFnName);
+    }
+    if (metadata.approvalResponseStepFnName !== undefined) {
+      testRegistry.delete(metadata.approvalResponseStepFnName);
+    }
+  }
+  ctx.clearVirtualContext();
+}
+
 /**
  * Creates a tool entry with bundler-injected step function fields so
  * `buildDynamicTools` can replay it from durable metadata.
@@ -640,8 +655,10 @@ describe("dispatchDynamicToolEvent", () => {
       ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
 
       approvalStepFnName = ctx.get(SessionDynamicToolMetadataKey)?.[0]?.approvalStepFnName;
-      expect(approvalStepFnName).toBe("eve:dynamic-tool-approval:governed:governed");
-      ctx.clearVirtualContext();
+      expect(approvalStepFnName).toBe(
+        `eve:dynamic-tool-approval:${ctx.get(SessionIdKey)}:governed:governed`,
+      );
+      simulateColdStart(ctx);
 
       await hydrateDynamicSessionTools({
         ctx,
@@ -661,9 +678,9 @@ describe("dispatchDynamicToolEvent", () => {
       ]);
       const tool = buildDynamicTools(ctx)[0]!;
       expect(tool.description).toBe("approval policy");
-      expect(
+      await expect(
         resolveApprovalPolicy(tool.approval!)(createApprovalContext({ toolName: tool.name })),
-      ).toBe("not-applicable");
+      ).resolves.toBe("not-applicable");
     } finally {
       testRegistry.delete(stepId);
       testRegistry.delete(stableStepId);
@@ -683,8 +700,7 @@ describe("dispatchDynamicToolEvent", () => {
       messages: [],
       event: makeEvent("session.started"),
     });
-    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:fresh-process");
-    ctx.clearVirtualContext();
+    simulateColdStart(ctx);
 
     await expect(
       hydrateDynamicSessionTools({
@@ -725,16 +741,16 @@ describe("dispatchDynamicToolEvent", () => {
 
     const sessionATool = buildDynamicTools(contexts[0]!)[0]!;
     const sessionBTool = buildDynamicTools(contexts[1]!)[0]!;
-    expect(
+    await expect(
       resolveApprovalPolicy(sessionATool.approval!)(
         createApprovalContext({ toolName: sessionATool.name }),
       ),
-    ).toBe("not-applicable");
-    expect(
+    ).resolves.toBe("not-applicable");
+    await expect(
       resolveApprovalPolicy(sessionBTool.approval!)(
         createApprovalContext({ toolName: sessionBTool.name }),
       ),
-    ).toBe("user-approval");
+    ).resolves.toBe("user-approval");
   });
 
   it("preserves metadata and retries when cold hydration fails", async () => {
@@ -755,7 +771,7 @@ describe("dispatchDynamicToolEvent", () => {
     const originalMetadata = ctx.get(SessionDynamicToolMetadataKey);
 
     for (let attempt = 0; attempt < 2; attempt++) {
-      ctx.clearVirtualContext();
+      simulateColdStart(ctx);
       await hydrateDynamicSessionTools({
         ctx,
         resolvers: [createResolver("live", ["session.started"], handler)],
@@ -1270,7 +1286,9 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     const metadata = ctx.get(SessionDynamicToolMetadataKey);
     expect(metadata).toHaveLength(1);
-    expect(metadata![0]!.executeStepFnName).toBe("eve:framework-dynamic:fwk:search");
+    expect(metadata![0]!.executeStepFnName).toBe(
+      `eve:framework-dynamic:${ctx.get(SessionIdKey)}:fwk:search`,
+    );
     expect(metadata![0]!.closureVars).toEqual({});
 
     const tools = buildDynamicTools(ctx);
@@ -1278,13 +1296,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(tools[0]!.name).toBe("search");
 
     // Simulate step boundary — virtual context cleared, durable survives
-    ctx.clearVirtualContext();
-    await hydrateDynamicSessionTools({
-      ctx,
-      resolvers: [resolver],
-      messages: [],
-      event: createSessionStartedEvent(),
-    });
 
     const replayedTools = buildDynamicTools(ctx);
     expect(replayedTools).toHaveLength(1);
@@ -1342,14 +1353,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
     const metadata = ctx.get(SessionDynamicToolMetadataKey);
     expect(metadata).toHaveLength(2);
 
-    ctx.clearVirtualContext();
-    await hydrateDynamicSessionTools({
-      ctx,
-      resolvers: [frameworkResolver, authoredResolver],
-      messages: [],
-      event: createSessionStartedEvent(),
-    });
-
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(2);
     expect(tools.map((t) => t.name).sort()).toEqual(["query", "search"]);
@@ -1366,14 +1369,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
       resolvers: [resolver],
       messages: [],
       event: makeEvent("session.started"),
-    });
-
-    ctx.clearVirtualContext();
-    await hydrateDynamicSessionTools({
-      ctx,
-      resolvers: [resolver],
-      messages: [],
-      event: createSessionStartedEvent(),
     });
 
     const tools = buildDynamicTools(ctx);
@@ -1429,14 +1424,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
       resolvers: [resolver],
       messages: [],
       event: makeEvent("session.started"),
-    });
-
-    ctx.clearVirtualContext();
-    await hydrateDynamicSessionTools({
-      ctx,
-      resolvers: [resolver],
-      messages: [],
-      event: createSessionStartedEvent(),
     });
 
     const tools = buildDynamicTools(ctx);
@@ -1536,8 +1523,7 @@ describe("framework dynamic tools (no bundler transform)", () => {
     });
     ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
 
-    // A new isolate retains durable metadata but not virtual live definitions.
-    ctx.clearVirtualContext();
+    simulateColdStart(ctx);
     await hydrateDynamicSessionTools({
       ctx,
       event: createSessionStartedEvent(),
@@ -1614,14 +1600,6 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     const metadata = ctx.get(SessionDynamicToolMetadataKey);
     expect(metadata?.[0]?.outputSchema).toEqual(outputSchema);
-
-    ctx.clearVirtualContext();
-    await hydrateDynamicSessionTools({
-      ctx,
-      resolvers: [resolver],
-      messages: [],
-      event: createSessionStartedEvent(),
-    });
 
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(1);
