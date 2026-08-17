@@ -452,7 +452,8 @@ function createResolver(
   };
 }
 
-function createCtx(sessionId = "test-session"): ContextContainer {
+let contextCounter = 0;
+function createCtx(sessionId = `test-session-${++contextCounter}`): ContextContainer {
   const ctx = new ContextContainer();
   ctx.set(SessionIdKey, sessionId);
   return ctx;
@@ -571,6 +572,7 @@ describe("dispatchDynamicToolEvent", () => {
     let ctx = createCtx();
     const handler = vi.fn(() => ({ tool: createFrameworkTool("cached live tool") }));
     const resolver = createResolver("live", ["session.started"], handler);
+    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
 
     await dispatchDynamicToolEvent({
       ctx,
@@ -578,7 +580,6 @@ describe("dispatchDynamicToolEvent", () => {
       messages: [],
       event: makeEvent("session.started"),
     });
-    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
     ctx = await deserializeContext(serializeContext(ctx));
 
     await hydrateDynamicSessionTools({
@@ -674,6 +675,34 @@ describe("dispatchDynamicToolEvent", () => {
       testRegistry.delete(stableStepId);
       if (approvalStepFnName !== undefined) testRegistry.delete(approvalStepFnName);
     }
+  });
+
+  it("rejects cross-resolver collisions while rebuilding a live snapshot", async () => {
+    const ctx = createCtx();
+    const original = [
+      createResolver("alpha", ["session.started"], () => ({ a: createFrameworkTool() })),
+      createResolver("beta", ["session.started"], () => ({ b: createFrameworkTool() })),
+    ];
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: original,
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:fresh-process");
+    ctx.clearVirtualContext();
+
+    await expect(
+      hydrateDynamicSessionTools({
+        ctx,
+        resolvers: [
+          createResolver("alpha", ["session.started"], () => ({ a: createFrameworkTool() })),
+          createResolver("beta", ["session.started"], () => ({ a: createFrameworkTool() })),
+        ],
+        messages: [],
+        event: createSessionStartedEvent(),
+      }),
+    ).rejects.toThrow('Dynamic tool "a" from resolver "beta" collides');
   });
 
   it("keeps replay callbacks isolated between sessions", async () => {

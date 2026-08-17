@@ -11,22 +11,13 @@ import {
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import { preserveSerializedSessionDynamicModelSelection } from "#context/serialized-dynamic-model-selection.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
-import {
-  dispatchDynamicSubagentEvent,
-  refreshDynamicSessionSubagentsForRuntimeRevision,
-} from "#context/dynamic-subagent-lifecycle.js";
+import { dispatchDynamicSubagentEvent } from "#context/dynamic-subagent-lifecycle.js";
+import { prepareDynamicSessionCapabilities } from "#context/dynamic-session-lifecycle.js";
 import {
   dispatchDynamicToolEvent,
   hydrateDynamicSessionTools,
-  refreshDynamicSessionToolsForRuntimeRevision,
 } from "#context/dynamic-tool-lifecycle.js";
-import {
-  AuthKey,
-  CapabilitiesKey,
-  ModeKey,
-  SessionDynamicSubagentRuntimeRevisionKey,
-  SessionDynamicToolRuntimeRevisionKey,
-} from "#context/keys.js";
+import { AuthKey, CapabilitiesKey, ModeKey } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
@@ -95,7 +86,6 @@ import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
-import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
 
@@ -358,36 +348,17 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   };
   const runtimeIdentity = buildRuntimeIdentity(effectiveNode);
   const sessionStarted = initialEmissionState.sessionStarted;
-  let dynamicRuntimeRevision: string;
   try {
-    const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
-    dynamicRuntimeRevision = deploymentId
-      ? `deployment:${deploymentId}`
-      : await resolveRuntimeCompiledArtifactsVersionedCacheKey(bundle.compiledArtifactsSource);
-
-    if (!sessionStarted) {
-      ctx.set(SessionDynamicSubagentRuntimeRevisionKey, dynamicRuntimeRevision);
-      ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
-    } else {
-      const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
-      await Promise.all([
-        refreshDynamicSessionSubagentsForRuntimeRevision({
-          ctx,
-          resolvers: dynamicSubagentResolvers,
-          event: refreshEvent,
-          messages: initialSession.history,
-          persistentSessions: persistentSubagentSessions,
-          runtimeRevision: dynamicRuntimeRevision,
-        }),
-        refreshDynamicSessionToolsForRuntimeRevision({
-          ctx,
-          resolvers: dynamicToolResolvers,
-          event: refreshEvent,
-          messages: initialSession.history,
-          runtimeRevision: dynamicRuntimeRevision,
-        }),
-      ]);
-    }
+    await prepareDynamicSessionCapabilities({
+      compiledArtifactsSource: bundle.compiledArtifactsSource,
+      ctx,
+      event: createSessionStartedEvent({ runtime: runtimeIdentity }),
+      messages: initialSession.history,
+      persistentSubagentSessions,
+      sessionStarted,
+      subagentResolvers: dynamicSubagentResolvers,
+      toolResolvers: dynamicToolResolvers,
+    });
   } catch (error) {
     await failChannelDeliveries(error);
     throw error;
