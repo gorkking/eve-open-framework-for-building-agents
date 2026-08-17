@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createCompiledAgentManifest } from "#compiler/manifest.js";
+import { createCompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import { serializeCompiledManifestForFingerprint } from "#internal/compiled-manifest-fingerprint.js";
 
 function manifestWithRoot(runtimeAppRoot: string, agentRoot = join(runtimeAppRoot, "agent")) {

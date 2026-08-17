@@ -8,7 +8,7 @@ import { compileAgent } from "../../src/compiler/compile-agent.js";
 import { writeCompiledArtifactsFiles } from "../../src/internal/application/compiled-artifacts.js";
 import { resolvePackageSourceFilePath } from "../../src/internal/application/package.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "../../src/runtime/compiled-artifacts-source.js";
-import { loadCompileMetadata } from "../../src/runtime/loaders/compile-metadata.js";
+import { loadCompileMetadata } from "../../src/runtime/loaders/compiled-application.js";
 import {
   createRuntimeSession,
   withRuntimeSession,

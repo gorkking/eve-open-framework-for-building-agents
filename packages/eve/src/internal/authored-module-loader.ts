@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import { createCompiledModuleMapSource } from "#compiler/module-map.js";
 import { createAuthoredAssetImportPlugin } from "#internal/authored-asset-import-plugin.js";
 import { assertNoWorkflowDirectivePrologue } from "#internal/authored-directive-prologue.js";

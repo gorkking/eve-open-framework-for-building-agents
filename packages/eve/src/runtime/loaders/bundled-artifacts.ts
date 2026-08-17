@@ -1,6 +1,4 @@
-import type { CompileMetadata } from "#compiler/artifacts.js";
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { BundledCompiledApplicationArtifacts } from "#internal/compiled-application/artifacts.js";
 import {
   createRuntimeSession,
   getActiveRuntimeSession,
@@ -11,11 +9,7 @@ import {
  * Bundled compiled artifacts installed by Nitro when authored runtime state is
  * embedded directly into the server bundle.
  */
-export interface BundledCompiledArtifacts {
-  manifest: CompiledAgentManifest;
-  metadata?: CompileMetadata;
-  moduleMap: CompiledModuleMap;
-}
+export type BundledCompiledArtifacts = BundledCompiledApplicationArtifacts;
 
 /**
  * Input for running code against one isolated bundled compiled-artifact

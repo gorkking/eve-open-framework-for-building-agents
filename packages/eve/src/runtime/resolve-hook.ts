@@ -1,5 +1,5 @@
-import type { CompiledHookDefinition } from "../compiler/manifest.js";
-import type { CompiledModuleMap } from "../compiler/module-map.js";
+import type { CompiledHookDefinition } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import { expectFunction, expectObjectRecord } from "../internal/authored-module.js";
 import type { MessageStreamEvent } from "../protocol/message.js";
 import type { StreamEventHook } from "../public/definitions/hook.js";

@@ -1,6 +1,6 @@
 import { stripLogicalPathExtension } from "../discover/filesystem.js";
 import type { HookSourceRef } from "#discover/manifest.js";
-import type { CompiledHookDefinition } from "./manifest.js";
+import type { CompiledHookDefinition } from "#internal/compiled-application/manifest.js";
 
 /**
  * Compiles one authored hook module into the manifest entry stored on

@@ -6,7 +6,7 @@ import { normalizeSkillDefinition } from "#internal/authored-definition/core.js"
 import type {
   CompiledDynamicSkillDefinition,
   CompiledSkillDefinition,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

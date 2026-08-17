@@ -13,7 +13,7 @@ import {
 import { loadCompiledModuleMapFromAuthoredSource } from "../../src/internal/authored-module-map-loader.js";
 import { useScenarioApp } from "../../src/internal/testing/scenario-app.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "../../src/runtime/compiled-artifacts-source.js";
-import { loadCompiledManifest } from "../../src/runtime/loaders/manifest.js";
+import { loadCompiledManifest } from "../../src/runtime/loaders/compiled-application.js";
 import { resolveRuntimeAgentGraph } from "../../src/runtime/resolve-agent-graph.js";
 import { loadResolvedModuleExport } from "../../src/runtime/resolve-helpers.js";
 

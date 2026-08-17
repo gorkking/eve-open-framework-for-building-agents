@@ -4,7 +4,7 @@ import { z } from "#compiled/zod/index.js";
 import { createLogger } from "#internal/logging.js";
 import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import type { ToolModelOutputPart } from "#shared/tool-definition.js";
-import { formatValidationError } from "#runtime/validation.js";
+import { formatValidationError } from "#shared/validation.js";
 import { withToolOutputSerializationError } from "#harness/tool-output-serialization.js";
 
 /**

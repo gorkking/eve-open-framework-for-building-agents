@@ -12,9 +12,9 @@ import {
   type CompiledSubagentEdge,
   type CompiledSubagentNode,
   createCompiledSubagentNodeId,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { composeAgentSubagentSources } from "#compiler/normalize-extension.js";
-import type { CompiledDynamicSubagentDefinition } from "#compiler/remote-agent-node.js";
+import type { CompiledDynamicSubagentDefinition } from "#internal/compiled-application/remote-agent-node.js";
 import {
   loadModuleBackedDefinition,
   type ManifestCompileContext,

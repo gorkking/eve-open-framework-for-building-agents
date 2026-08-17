@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CompiledSkillDefinition } from "#compiler/manifest.js";
+import type { CompiledSkillDefinition } from "#internal/compiled-application/manifest.js";
 import { formatAvailableSkillsSection } from "#execution/skills/instructions.js";
 
 function createTestSkill(

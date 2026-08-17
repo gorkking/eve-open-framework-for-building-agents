@@ -5,7 +5,7 @@ import {
   COMPILED_AGENT_MANIFEST_VERSION,
   compiledAgentManifestSchema,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { compileFromMemory } from "#compiler/compile-from-memory.js";
 
 describe("compileFromMemory", () => {

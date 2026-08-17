@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { CompiledAgentManifest } from "./manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import {
   COMPILED_AGENT_MANIFEST_VERSION,
   createCompiledAgentResources,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "./manifest.js";
-import { collectModuleRefsForManifest, createCompiledModuleMapSource } from "./module-map.js";
+} from "#internal/compiled-application/manifest.js";
+import { collectModuleRefsForManifest } from "#internal/compiled-application/module-map.js";
+import { createCompiledModuleMapSource } from "./module-map.js";
 
 function createManifestWithTool(agentRoot: string): CompiledAgentManifest {
   return {

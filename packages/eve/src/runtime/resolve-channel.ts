@@ -1,7 +1,7 @@
 import { setChannelInstrumentationKind } from "#channel/compiled-channel.js";
 import { HTTP_ADAPTER_KIND } from "#channel/http.js";
-import type { CompiledChannelDefinition } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { CompiledChannelDefinition } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import {
   isHttpRouteDefinition,
   isWebSocketRouteDefinition,

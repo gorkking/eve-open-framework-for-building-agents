@@ -7,8 +7,8 @@ import {
   type CompiledToolDefinition,
   createCompiledAgentManifest,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+} from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 
 /**
  * Declarative description of an in-memory authored agent used by the test

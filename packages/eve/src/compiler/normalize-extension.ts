@@ -17,7 +17,7 @@ import type {
   CompiledScheduleDefinition,
   CompiledSkillDefinition,
   CompiledToolDefinition,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { compileChannelDefinition } from "#compiler/normalize-channel.js";
 import { compileConnectionDefinition } from "#compiler/normalize-connection.js";
 import type { ManifestCompileContext } from "#compiler/normalize-helpers.js";

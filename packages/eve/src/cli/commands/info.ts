@@ -1,5 +1,5 @@
 import { type ApplicationInspection, inspectApplication } from "#services/inspect-application.js";
-import type { CompiledInstructionsDefinition } from "#compiler/manifest.js";
+import type { CompiledInstructionsDefinition } from "#internal/compiled-application/manifest.js";
 import { type CliRow, createCliTheme, renderCliBanner, renderCliSection } from "#cli/ui/output.js";
 
 interface CliInfoLogger {

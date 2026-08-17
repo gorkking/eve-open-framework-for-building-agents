@@ -11,7 +11,7 @@ import type {
   CompiledSkillDefinition,
   CompiledSubagentNode,
   CompiledToolDefinition,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import {
   type VercelEveAgentSummary,

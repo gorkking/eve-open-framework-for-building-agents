@@ -7,9 +7,9 @@ import {
   createModuleSourceRef,
 } from "#discover/manifest.js";
 import { classifyModelRouting } from "#internal/classify-model-routing.js";
-import type { CompiledAgentDefinition } from "#compiler/manifest.js";
+import type { CompiledAgentDefinition } from "#internal/compiled-application/manifest.js";
 import { compileAgentManifest } from "#compiler/normalize-manifest.js";
-import { collectModuleRefsForManifest } from "#compiler/module-map.js";
+import { collectModuleRefsForManifest } from "#internal/compiled-application/module-map.js";
 import { defineAgent, defineDynamic } from "#public/definitions/agent.js";
 import { defineInstructions } from "#public/definitions/instructions.js";
 import { experimental_workflow } from "#public/definitions/tool.js";

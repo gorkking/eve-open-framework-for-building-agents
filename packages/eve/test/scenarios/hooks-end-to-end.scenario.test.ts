@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { compileAgent } from "#compiler/compile-agent.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
-import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
-import { loadCompiledModuleMap } from "#runtime/loaders/module-map.js";
+import {
+  loadCompiledManifest,
+  loadCompiledModuleMap,
+} from "#runtime/loaders/compiled-application.js";
 import { resolveRuntimeAgentGraph } from "#runtime/resolve-agent-graph.js";
 import { useTemporaryAppRoots } from "#internal/testing/use-temporary-app-roots.js";
 

@@ -5,7 +5,7 @@ import {
   createCompiledAgentResources,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { classifyModelRouting } from "#internal/classify-model-routing.js";
 
 describe("compiledAgentManifestSchema", () => {

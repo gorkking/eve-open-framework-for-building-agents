@@ -2,7 +2,7 @@ import { stripLogicalPathExtension } from "#discover/filesystem.js";
 import type { ScheduleSourceRef } from "#discover/manifest.js";
 import { normalizeScheduleDefinition } from "#internal/authored-definition/core.js";
 import type { ScheduleDefinition } from "#public/definitions/schedule.js";
-import type { CompiledScheduleDefinition } from "#compiler/manifest.js";
+import type { CompiledScheduleDefinition } from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

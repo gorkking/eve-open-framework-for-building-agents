@@ -4,8 +4,8 @@ import {
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "../src/compiler/manifest.js";
-import type { CompiledModuleMap } from "../src/compiler/module-map.js";
+} from "../src/internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "../src/internal/compiled-application/module-map.js";
 import { defineAgent } from "../src/public/definitions/agent.js";
 import { defineDynamic } from "../src/public/definitions/tool.js";
 import { createNodeHarnessTools } from "../src/execution/node-step.js";

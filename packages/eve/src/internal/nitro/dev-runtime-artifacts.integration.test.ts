@@ -14,7 +14,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { CompileAgentResult } from "#compiler/compile-agent.js";
-import { createCompiledAgentManifest, ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import {
+  createCompiledAgentManifest,
+  ROOT_COMPILED_AGENT_NODE_ID,
+} from "#internal/compiled-application/manifest.js";
 import { createCompiledModuleMapSource } from "#compiler/module-map.js";
 import { loadAuthoredModuleNamespace } from "#internal/authored-module-loader.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";

@@ -9,7 +9,7 @@ import {
   filterEventsByType,
 } from "#internal/testing/events.js";
 import { waitForHook } from "#internal/testing/workflow-test-helpers.js";
-import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import { ROOT_COMPILED_AGENT_NODE_ID } from "#internal/compiled-application/manifest.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
 import { turnCancellationHookToken } from "#execution/turn-cancellation-token.js";

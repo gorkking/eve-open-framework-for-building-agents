@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach } from "vitest";
 
-import type { CompiledSkillDefinition } from "#compiler/manifest.js";
+import type { CompiledSkillDefinition } from "#internal/compiled-application/manifest.js";
 
 /**
  * Declarative description of one synthetic authored skill.

@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { z } from "#compiled/zod/index.js";
-import { formatValidationError } from "#runtime/validation.js";
+import { formatValidationError } from "#shared/validation.js";
 
 /** Stable kind for an extension distribution compatibility manifest. */
 export const EXTENSION_COMPATIBILITY_MANIFEST_KIND = "eve-extension";

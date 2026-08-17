@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COMPILED_AGENT_MANIFEST_VERSION } from "#compiler/manifest.js";
+import { COMPILED_AGENT_MANIFEST_VERSION } from "#internal/compiled-application/manifest.js";
 import { installBundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
 import { createRuntimeSession, withRuntimeSession } from "#runtime/sessions/runtime-session.js";
 import { resolveNitroCompiledArtifactsSource } from "#internal/nitro/routes/runtime-artifacts.js";

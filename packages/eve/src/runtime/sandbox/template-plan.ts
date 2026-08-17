@@ -1,4 +1,4 @@
-import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
+import type { CompiledWorkspaceResourceRoot } from "#internal/compiled-application/manifest.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
 
 /**

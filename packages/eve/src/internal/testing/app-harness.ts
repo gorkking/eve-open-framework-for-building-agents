@@ -1,8 +1,11 @@
 import type { JsonObject } from "#shared/json.js";
 import type { ChannelAdapter } from "#channel/adapter.js";
 import { compileFromMemory } from "#compiler/compile-from-memory.js";
-import type { CompiledAgentManifest, CompiledSkillDefinition } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type {
+  CompiledAgentManifest,
+  CompiledSkillDefinition,
+} from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import type { SessionParent, SessionTurn } from "#context/keys.js";
 import { installBundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
 import type { SandboxAccess } from "#sandbox/state.js";

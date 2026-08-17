@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AgentInfoResultSchema } from "#client/agent-info-schema.js";
-import { createCompiledAgentManifest } from "#compiler/manifest.js";
+import { createCompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import { buildAgentInfoResponseFromManifest } from "#internal/nitro/routes/agent-info/build-agent-info-response-from-manifest.js";
 
 describe("buildAgentInfoResponseFromManifest", () => {

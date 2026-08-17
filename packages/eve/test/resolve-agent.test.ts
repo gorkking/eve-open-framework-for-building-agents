@@ -5,8 +5,8 @@ import {
   type CompiledChannelDefinition,
   createCompiledAgentManifest,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "../src/compiler/manifest.js";
-import type { CompiledModuleMap } from "../src/compiler/module-map.js";
+} from "../src/internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "../src/internal/compiled-application/module-map.js";
 import { TEST_DEFAULT_MODEL_ID } from "../src/internal/testing/app-harness.js";
 import { ResolveAgentError, resolveAgent } from "../src/runtime/resolve-agent.js";
 import { serializeInputSchema } from "../src/shared/tool-schema.js";

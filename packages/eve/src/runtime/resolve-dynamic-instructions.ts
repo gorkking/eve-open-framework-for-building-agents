@@ -1,5 +1,5 @@
-import type { CompiledDynamicInstructionsDefinition } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { CompiledDynamicInstructionsDefinition } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import { expectFunction, expectObjectRecord } from "#internal/authored-module.js";
 import { toErrorMessage } from "#shared/errors.js";
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";

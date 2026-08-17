@@ -4,7 +4,7 @@ import {
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "../src/compiler/manifest.js";
+} from "../src/internal/compiled-application/manifest.js";
 import { createNodeHarnessTools } from "../src/execution/node-step.js";
 import { TEST_DEFAULT_MODEL_ID } from "../src/internal/testing/app-harness.js";
 import { resolveRuntimeAgentGraph } from "../src/runtime/resolve-agent-graph.js";

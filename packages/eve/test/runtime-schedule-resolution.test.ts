@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCompiledAgentManifest } from "../src/compiler/manifest.js";
+import { createCompiledAgentManifest } from "../src/internal/compiled-application/manifest.js";
 import { TEST_DEFAULT_MODEL_ID } from "../src/internal/testing/app-harness.js";
 import { resolveSchedules } from "../src/runtime/schedules/resolve-schedule.js";
 

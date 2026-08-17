@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import type { RuntimeTurnAgent } from "#runtime/agent/bootstrap.js";
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
@@ -13,8 +14,7 @@ import {
 } from "#runtime/compiled-artifacts-source.js";
 import { getResolvedRuntimeAgentNode, type ResolvedAgentGraphBundle } from "#runtime/graph.js";
 import type { RuntimeHookRegistry } from "#runtime/hooks/registry.js";
-import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
-import { loadCompiledModuleMap } from "#runtime/loaders/module-map.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
 import { resolveRuntimeAgentGraph } from "#runtime/resolve-agent-graph.js";
 import type { RuntimeSubagentRegistry } from "#runtime/subagents/registry.js";
 import type { RuntimeToolRegistry } from "#runtime/tools/registry.js";
@@ -67,10 +67,9 @@ async function loadFullBundle(
 ): Promise<CompiledRuntimeAgentBundle> {
   const normalizedCompiledArtifactsSource =
     normalizeCompiledArtifactsSource(compiledArtifactsSource);
-  const [manifest, moduleMap] = await Promise.all([
-    loadCompiledManifest({ compiledArtifactsSource: normalizedCompiledArtifactsSource }),
-    loadRuntimeCompiledModuleMap(normalizedCompiledArtifactsSource),
-  ]);
+  const { manifest, moduleMap } = await loadRuntimeCompiledApplication(
+    normalizedCompiledArtifactsSource,
+  );
   const graph = await resolveRuntimeAgentGraph({ manifest, moduleMap });
   const rootNode = graph.root;
 
@@ -89,17 +88,30 @@ async function loadFullBundle(
   };
 }
 
-async function loadRuntimeCompiledModuleMap(
+async function loadRuntimeCompiledApplication(
   compiledArtifactsSource: RuntimeCompiledArtifactsSource,
-): Promise<CompiledModuleMap> {
+): Promise<{
+  readonly manifest: CompiledAgentManifest;
+  readonly moduleMap: CompiledModuleMap;
+}> {
   if (
     compiledArtifactsSource.kind === "disk" &&
     compiledArtifactsSource.moduleMapLoaderPath !== undefined
   ) {
-    return await loadAuthoredSourceCompiledModuleMap(compiledArtifactsSource);
+    const [artifacts, moduleMap] = await Promise.all([
+      loadRuntimeCompiledApplicationArtifacts({
+        artifacts: ["manifest"],
+        compiledArtifactsSource,
+      }),
+      loadAuthoredSourceCompiledModuleMap(compiledArtifactsSource),
+    ]);
+    return { manifest: artifacts.manifest, moduleMap };
   }
 
-  return await loadCompiledModuleMap({ compiledArtifactsSource });
+  return await loadRuntimeCompiledApplicationArtifacts({
+    artifacts: ["manifest", "moduleMap"],
+    compiledArtifactsSource,
+  });
 }
 
 async function loadAuthoredSourceCompiledModuleMap(

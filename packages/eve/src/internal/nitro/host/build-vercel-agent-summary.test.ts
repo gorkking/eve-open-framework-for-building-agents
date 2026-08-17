@@ -11,7 +11,7 @@ import {
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { buildVercelAgentSummary } from "#internal/nitro/host/build-vercel-agent-summary.js";
 import {
   normalizeChannelKindForDisplay,

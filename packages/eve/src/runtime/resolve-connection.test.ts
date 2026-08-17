@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ROOT_COMPILED_AGENT_NODE_ID,
   type CompiledConnectionDefinition,
-} from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+} from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import type { ConnectionToolCallDefinition } from "#public/definitions/connections/tool-call.js";
 import { resolveConnectionDefinition } from "#runtime/resolve-connection.js";
 import type { ConnectionAuthResolver, HeadersDefinition } from "#runtime/connections/types.js";

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import type { BundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
+import type { BundledCompiledApplicationArtifacts } from "#internal/compiled-application/artifacts.js";
 import type { CompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 
 /**
@@ -21,7 +21,7 @@ export interface RuntimeSession {
    * The installed bundled compiled-artifact snapshot, or `null` when no
    * snapshot has been installed in this session yet.
    */
-  compiledArtifacts: BundledCompiledArtifacts | null;
+  compiledArtifacts: BundledCompiledApplicationArtifacts | null;
   /**
    * Cache of resolved compiled-agent bundles, keyed by the versioned cache key
    * derived from the compiled-artifact source.

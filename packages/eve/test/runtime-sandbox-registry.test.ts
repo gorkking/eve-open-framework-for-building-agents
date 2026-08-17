@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CompiledWorkspaceResourceRoot } from "../src/compiler/manifest.js";
+import type { CompiledWorkspaceResourceRoot } from "../src/internal/compiled-application/manifest.js";
 import { docker } from "../src/public/sandbox/backends/docker.js";
 import {
   createFrameworkSandboxDefinition,

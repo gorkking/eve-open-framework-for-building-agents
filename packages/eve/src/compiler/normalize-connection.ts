@@ -3,7 +3,7 @@ import {
   normalizeMcpClientConnectionDefinition,
   normalizeOpenApiConnectionDefinition,
 } from "#internal/authored-definition/connection.js";
-import type { CompiledConnectionDefinition } from "#compiler/manifest.js";
+import type { CompiledConnectionDefinition } from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

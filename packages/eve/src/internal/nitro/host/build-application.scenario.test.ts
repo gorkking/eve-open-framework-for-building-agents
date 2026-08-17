@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Nitro } from "nitro/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCompiledAgentManifest } from "#compiler/manifest.js";
+import { createCompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import {
   APPLICATION_BUILD_PROFILE_SCHEMA_VERSION,
   type ApplicationBuildProfile,

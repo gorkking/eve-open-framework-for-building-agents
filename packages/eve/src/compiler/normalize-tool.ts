@@ -1,7 +1,10 @@
 import { stripLogicalPathExtension } from "#discover/filesystem.js";
 import { normalizeToolDefinition } from "#internal/authored-definition/schema-backed.js";
 import type { ToolSourceRef } from "#discover/manifest.js";
-import type { CompiledToolDefinition, CompiledDynamicToolDefinition } from "#compiler/manifest.js";
+import type {
+  CompiledToolDefinition,
+  CompiledDynamicToolDefinition,
+} from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

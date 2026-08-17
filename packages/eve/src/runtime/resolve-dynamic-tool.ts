@@ -1,5 +1,5 @@
-import type { CompiledDynamicToolDefinition } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { CompiledDynamicToolDefinition } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import { expectFunction, expectObjectRecord } from "#internal/authored-module.js";
 import { registerDefinitionSource, stampDefinitionKey } from "#public/tool-result-narrowing.js";
 import { isDynamicSentinel, type DynamicSentinel } from "#shared/dynamic-tool-definition.js";

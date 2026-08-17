@@ -16,7 +16,10 @@ import {
   type PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
 import type { DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
-import type { CompiledAgentDefinition, CompiledRuntimeModelReference } from "#compiler/manifest.js";
+import type {
+  CompiledAgentDefinition,
+  CompiledRuntimeModelReference,
+} from "#internal/compiled-application/manifest.js";
 import type { CompiledRuntimeModelLimits } from "#compiler/model-catalog.js";
 import {
   loadModuleBackedDefinition,

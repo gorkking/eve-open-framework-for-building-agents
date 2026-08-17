@@ -1,0 +1,40 @@
+export {
+  COMPILED_AGENT_MANIFEST_KIND,
+  COMPILED_AGENT_MANIFEST_VERSION,
+  ROOT_COMPILED_AGENT_NODE_ID,
+  compiledAgentManifestSchema,
+  createCompiledAgentManifest,
+  createCompiledAgentNodeManifest,
+  createCompiledAgentResources,
+  createCompiledSubagentNodeId,
+  deriveResourceRootEntries,
+} from "#internal/compiled-application/manifest-graph.js";
+export type {
+  CompiledAgentManifest,
+  CompiledSubagentEdge,
+  CompiledSubagentNode,
+  CreateCompiledAgentResourcesInput,
+} from "#internal/compiled-application/manifest-graph.js";
+export type {
+  CompiledAgentDefinition,
+  CompiledAgentNodeManifest,
+  CompiledAgentResources,
+  CompiledChannelDefinition,
+  CompiledChannelEntry,
+  CompiledConnectionDefinition,
+  CompiledDynamicInstructionsDefinition,
+  CompiledDynamicModelDefinition,
+  CompiledDynamicSkillDefinition,
+  CompiledDynamicToolDefinition,
+  CompiledExtensionMount,
+  CompiledHookDefinition,
+  CompiledInstructionsDefinition,
+  CompiledRuntimeModelReference,
+  CompiledSandboxDefinition,
+  CompiledScheduleDefinition,
+  CompiledSkillDefinition,
+  CompiledToolDefinition,
+  CompiledWorkflowToolDefinition,
+  CompiledWorkspaceResourceRoot,
+} from "#internal/compiled-application/manifest-resources.js";
+export type { CompiledRemoteAgentNode } from "#internal/compiled-application/remote-agent-node.js";

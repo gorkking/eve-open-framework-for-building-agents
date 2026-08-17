@@ -1,13 +1,22 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 import type { DiscoverDiagnostic, DiscoverDiagnosticsSummary } from "#discover/diagnostics.js";
 import { summarizeDiscoverDiagnostics } from "#discover/diagnostics.js";
 import { normalizeLogicalPath } from "#discover/filesystem.js";
 import type { AgentSourceManifest } from "#discover/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
+import {
+  COMPILE_METADATA_KIND,
+  COMPILE_METADATA_VERSION,
+  type CompileMetadata,
+} from "#internal/compiled-application/metadata.js";
+import {
+  type CompiledApplicationPaths,
+  resolveCompiledApplicationPaths,
+} from "#internal/compiled-application/paths.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
 import { createCompiledModuleMapSource } from "#compiler/module-map.js";
 import { compileAgentManifest } from "#compiler/normalize-manifest.js";
 import { materializeWorkspaceResources } from "#compiler/workspace-resources.js";
@@ -23,30 +32,6 @@ const DISCOVERY_DIAGNOSTICS_ARTIFACT_KIND = "eve-discovery-diagnostics";
 const DISCOVERY_DIAGNOSTICS_ARTIFACT_VERSION = 1;
 
 /**
- * Stable compile metadata artifact kind emitted by the compiler.
- */
-export const COMPILE_METADATA_KIND = "eve-compile-metadata";
-
-/**
- * Current compile metadata schema version.
- */
-export const COMPILE_METADATA_VERSION = 5;
-
-/**
- * Structured paths for compiler-owned artifacts under `.eve/`.
- */
-export interface CompilerArtifactPaths {
-  appRoot: string;
-  compiledManifestPath: string;
-  compileDirectoryPath: string;
-  compileMetadataPath: string;
-  diagnosticsPath: string;
-  discoveryManifestPath: string;
-  discoveryDirectoryPath: string;
-  moduleMapPath: string;
-}
-
-/**
  * Machine-readable discovery diagnostics artifact written by the compiler.
  */
 interface DiscoveryDiagnosticsArtifact {
@@ -54,36 +39,6 @@ interface DiscoveryDiagnosticsArtifact {
   kind: typeof DISCOVERY_DIAGNOSTICS_ARTIFACT_KIND;
   summary: DiscoverDiagnosticsSummary;
   version: typeof DISCOVERY_DIAGNOSTICS_ARTIFACT_VERSION;
-}
-
-/**
- * One artifact digest recorded in compile metadata.
- */
-interface CompileArtifactDigest {
-  path: string;
-  sha256: string;
-}
-
-/**
- * Minimal compiler metadata artifact with versioning and hashes.
- */
-export interface CompileMetadata {
-  compile: {
-    moduleMap: CompileArtifactDigest;
-  };
-  discovery: {
-    diagnostics: CompileArtifactDigest;
-    manifest: CompileArtifactDigest;
-    sourceGraphHash: string;
-    summary: DiscoverDiagnosticsSummary;
-  };
-  generator: {
-    name: string;
-    version: string;
-  };
-  kind: typeof COMPILE_METADATA_KIND;
-  status: "failed" | "ready";
-  version: typeof COMPILE_METADATA_VERSION;
 }
 
 export interface CompilerArtifactLocations {
@@ -109,33 +64,20 @@ interface WriteCompilerArtifactsResult {
   diagnosticsArtifact: DiscoveryDiagnosticsArtifact;
   metadata: CompileMetadata;
   moduleMapSource: string;
-  paths: CompilerArtifactPaths;
+  paths: CompiledApplicationPaths;
 }
 
 /** Resolves stable compiler-owned artifact paths for one application root. */
-export function resolveCompilerArtifactPaths(appRoot: string): CompilerArtifactPaths {
-  return resolveCompilerArtifactPathsAt(appRoot, join(resolve(appRoot), ".eve"));
+export function resolveCompilerArtifactPaths(appRoot: string): CompiledApplicationPaths {
+  const resolvedAppRoot = resolve(appRoot);
+  return resolveCompiledApplicationPaths(resolvedAppRoot);
 }
 
 function resolveCompilerArtifactPathsAt(
   appRoot: string,
   artifactsRoot: string,
-): CompilerArtifactPaths {
-  const resolvedAppRoot = resolve(appRoot);
-  const resolvedArtifactsRoot = resolve(artifactsRoot);
-  const discoveryDirectoryPath = join(resolvedArtifactsRoot, "discovery");
-  const compileDirectoryPath = join(resolvedArtifactsRoot, "compile");
-
-  return {
-    appRoot: resolvedAppRoot,
-    compiledManifestPath: join(compileDirectoryPath, "compiled-agent-manifest.json"),
-    compileDirectoryPath,
-    compileMetadataPath: join(compileDirectoryPath, "compile-metadata.json"),
-    diagnosticsPath: join(discoveryDirectoryPath, "diagnostics.json"),
-    discoveryManifestPath: join(discoveryDirectoryPath, "agent-discovery-manifest.json"),
-    discoveryDirectoryPath,
-    moduleMapPath: join(compileDirectoryPath, "module-map.mjs"),
-  };
+): CompiledApplicationPaths {
+  return resolveCompiledApplicationPaths(resolve(appRoot), resolve(artifactsRoot));
 }
 
 /**
@@ -162,7 +104,7 @@ export function createCompileMetadata(input: {
   diagnosticsSummary: DiscoverDiagnosticsSummary;
   discoveryManifestJson: string;
   moduleMapSource: string;
-  paths: CompilerArtifactPaths;
+  paths: CompiledApplicationPaths;
 }): CompileMetadata {
   const generator = resolveInstalledPackageInfo();
   const manifestHash = createContentHash(input.discoveryManifestJson);

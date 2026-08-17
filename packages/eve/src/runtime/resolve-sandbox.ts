@@ -1,5 +1,5 @@
-import type { CompiledSandboxDefinition } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { CompiledSandboxDefinition } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import { lazyBackend } from "#execution/sandbox/lazy-backend.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
 import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";

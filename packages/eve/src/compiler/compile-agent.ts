@@ -7,13 +7,10 @@ import type { ResolvedDiscoveryProject } from "#discover/project.js";
 import { resolveDiscoveryProject } from "#discover/project.js";
 import { createDiskProjectSource, type ProjectSource } from "#discover/project-source.js";
 import type { AgentSourceManifest } from "#discover/manifest.js";
-import {
-  type CompileMetadata,
-  type CompilerArtifactLocations,
-  type CompilerArtifactPaths,
-  writeCompilerArtifacts,
-} from "#compiler/artifacts.js";
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import { type CompilerArtifactLocations, writeCompilerArtifacts } from "#compiler/artifacts.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
+import type { CompileMetadata } from "#internal/compiled-application/metadata.js";
+import type { CompiledApplicationPaths } from "#internal/compiled-application/paths.js";
 
 /**
  * Input for compiling the current authored agent into framework-owned
@@ -36,7 +33,7 @@ export interface CompileAgentResult {
   diagnostics: DiscoverDiagnostic[];
   manifest: CompiledAgentManifest;
   metadata: CompileMetadata;
-  paths: CompilerArtifactPaths;
+  paths: CompiledApplicationPaths;
   project: ResolvedDiscoveryProject;
 }
 

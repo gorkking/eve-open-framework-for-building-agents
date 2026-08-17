@@ -1,5 +1,5 @@
-import type { CompiledDynamicSubagentDefinition } from "#compiler/remote-agent-node.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+import type { CompiledDynamicSubagentDefinition } from "#internal/compiled-application/remote-agent-node.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import {
   expectFunction,
   expectObjectRecord,

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { SandboxSourceRef } from "#discover/manifest.js";
 import { normalizeSandboxDefinition } from "#internal/authored-definition/sandbox.js";
-import type { CompiledSandboxDefinition } from "#compiler/manifest.js";
+import type { CompiledSandboxDefinition } from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

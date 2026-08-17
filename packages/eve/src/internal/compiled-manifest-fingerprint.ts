@@ -1,6 +1,6 @@
 import { isAbsolute, relative, sep } from "node:path";
 
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 
 const RUNTIME_ROOT_TOKEN = "$runtime";
 

@@ -4,7 +4,7 @@ import { normalizeInstructionsDefinition } from "#internal/authored-definition/c
 import type {
   CompiledDynamicInstructionsDefinition,
   CompiledInstructionsDefinition,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

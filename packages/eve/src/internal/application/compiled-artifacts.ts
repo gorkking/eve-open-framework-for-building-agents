@@ -1,7 +1,7 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { CompileMetadata } from "#compiler/artifacts.js";
+import type { CompileMetadata } from "#internal/compiled-application/metadata.js";
 import type { CompileAgentResult } from "#compiler/compile-agent.js";
 import { createCompiledModuleMapSource } from "#compiler/module-map.js";
 import { stringifyEsmImportSpecifier } from "#internal/application/import-specifier.js";

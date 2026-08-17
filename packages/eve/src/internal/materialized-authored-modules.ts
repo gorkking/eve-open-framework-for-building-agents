@@ -3,8 +3,11 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, readlink, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
-import { COMPILED_AGENT_MANIFEST_KIND, ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
+import {
+  COMPILED_AGENT_MANIFEST_KIND,
+  ROOT_COMPILED_AGENT_NODE_ID,
+} from "#internal/compiled-application/manifest.js";
 import {
   bundleAuthoredModuleForGeneration,
   bundleAuthoredModuleMapForGeneration,

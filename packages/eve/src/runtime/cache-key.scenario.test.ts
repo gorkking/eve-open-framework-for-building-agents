@@ -3,14 +3,17 @@ import { dirname } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { COMPILE_METADATA_KIND, COMPILE_METADATA_VERSION } from "#compiler/artifacts.js";
+import {
+  COMPILE_METADATA_KIND,
+  COMPILE_METADATA_VERSION,
+} from "#internal/compiled-application/metadata.js";
 import { useTemporaryDirectories } from "#internal/testing/use-temporary-app-roots.js";
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import {
   createBundledRuntimeCompiledArtifactsSource,
   createDiskRuntimeCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
-import { resolveRuntimeCompilerArtifactPaths } from "#runtime/loaders/artifact-paths.js";
+import { resolveCompiledApplicationPaths } from "#internal/compiled-application/paths.js";
 
 const createScratchDirectory = useTemporaryDirectories();
 
@@ -88,7 +91,7 @@ async function writeCompileMetadata(input: {
   appRoot: string;
   sourceGraphHash: string;
 }): Promise<string> {
-  const { compileMetadataPath } = resolveRuntimeCompilerArtifactPaths(input.appRoot);
+  const { compileMetadataPath } = resolveCompiledApplicationPaths(input.appRoot);
 
   await mkdir(dirname(compileMetadataPath), {
     recursive: true,

@@ -2,8 +2,8 @@ import type {
   CompiledAgentNodeManifest,
   CompiledAgentResources,
   CompiledInstructionsDefinition,
-} from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+} from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import { resolveChannelDefinition } from "#runtime/resolve-channel.js";
 
 // Re-exported so external consumers (tests, integrations) can keep

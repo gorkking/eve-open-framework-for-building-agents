@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import type { CompileMetadata } from "#compiler/artifacts.js";
+import type { CompileMetadata } from "#internal/compiled-application/metadata.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import {
   getRuntimeCompiledArtifactsSandboxAppRoot,
   getRuntimeCompiledArtifactsCacheKey,
   type RuntimeCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
-import { loadCompileMetadata } from "#runtime/loaders/compile-metadata.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
 import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 import type { RuntimeSandboxTemplatePlan } from "#runtime/sandbox/template-plan.js";
 
@@ -161,7 +161,12 @@ async function loadCompileMetadataForKeys(
   compiledArtifactsSource: RuntimeCompiledArtifactsSource,
 ): Promise<CompileMetadata | null> {
   try {
-    return await loadCompileMetadata({ compiledArtifactsSource });
+    return (
+      await loadRuntimeCompiledApplicationArtifacts({
+        artifacts: ["metadata"],
+        compiledArtifactsSource,
+      })
+    ).metadata;
   } catch {
     // Key derivation must work from whatever artifacts exist; unreadable
     // metadata degrades to the same fallbacks as absent metadata.

@@ -11,8 +11,10 @@ import {
 } from "../../src/internal/nitro/routes/agent-info/load-agent-info-data.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "../../src/runtime/compiled-artifacts-source.js";
 import { installBundledCompiledArtifacts } from "../../src/runtime/loaders/bundled-artifacts.js";
-import { loadCompiledManifest } from "../../src/runtime/loaders/manifest.js";
-import { loadCompiledModuleMap } from "../../src/runtime/loaders/module-map.js";
+import {
+  loadCompiledManifest,
+  loadCompiledModuleMap,
+} from "../../src/runtime/loaders/compiled-application.js";
 import {
   createRuntimeSession,
   withRuntimeSession,

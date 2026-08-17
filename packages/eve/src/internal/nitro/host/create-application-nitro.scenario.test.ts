@@ -5,17 +5,17 @@ import { join } from "node:path";
 import type { Nitro } from "nitro/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resolveCompilerArtifactPaths } from "#compiler/artifacts.js";
 import {
   COMPILE_METADATA_KIND,
   COMPILE_METADATA_VERSION,
   type CompileMetadata,
-  resolveCompilerArtifactPaths,
-} from "#compiler/artifacts.js";
+} from "#internal/compiled-application/metadata.js";
 import {
   createCompiledAgentNodeManifest,
   type CompiledChannelEntry,
   type CompiledSubagentNode,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import {
   resolvePackageSourceDirectoryPath,
   resolvePackageRoot,

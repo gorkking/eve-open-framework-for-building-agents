@@ -1,5 +1,5 @@
 import type { NormalizedChannelCorsOptions } from "#channel/cors.js";
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import type { ChannelRouteMethod } from "#public/definitions/channel.js";
 import {
   EVE_DEV_DISPATCH_SCHEDULE_ROUTE_PATTERN,

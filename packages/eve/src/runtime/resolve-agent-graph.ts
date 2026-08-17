@@ -4,9 +4,9 @@ import type {
   CompiledAgentResources,
   CompiledRemoteAgentNode,
   CompiledSubagentNode,
-} from "#compiler/manifest.js";
-import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
-import type { CompiledModuleMap } from "#compiler/module-map.js";
+} from "#internal/compiled-application/manifest.js";
+import { ROOT_COMPILED_AGENT_NODE_ID } from "#internal/compiled-application/manifest.js";
+import type { CompiledModuleMap } from "#internal/compiled-application/module-map.js";
 import type { HeadersValue } from "#client/types.js";
 import { expectObjectRecord } from "#internal/authored-module.js";
 import { createResolvedRuntimeTurnAgent } from "#runtime/agent/bootstrap.js";

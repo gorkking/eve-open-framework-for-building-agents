@@ -12,7 +12,6 @@
   "rule23_unknownCastByFile": {
     "apps/docs/components/geistdocs/code-block.tsx": 1,
     "packages/eve/src/channel/adapter-context.ts": 1,
-    "packages/eve/src/compiler/manifest.ts": 1,
     "packages/eve/src/evals/runner/reporters/braintrust.ts": 1,
     "packages/eve/src/execution/await-authorization-orchestrator.test.ts": 1,
     "packages/eve/src/execution/connection-auth-steps.ts": 1,

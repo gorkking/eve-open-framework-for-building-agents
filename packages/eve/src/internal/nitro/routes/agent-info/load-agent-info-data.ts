@@ -1,11 +1,13 @@
-import type { CompiledAgentManifest, CompiledSubagentNode } from "#compiler/manifest.js";
+import type {
+  CompiledAgentManifest,
+  CompiledSubagentNode,
+} from "#internal/compiled-application/manifest.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import {
   type NitroArtifactsConfig,
   resolveNitroCompiledArtifactsSource,
 } from "#internal/nitro/routes/runtime-artifacts.js";
-import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
-import { loadCompiledModuleMap } from "#runtime/loaders/module-map.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
 import { resolveAgent } from "#runtime/resolve-agent.js";
 import { resolveSchedules } from "#runtime/schedules/resolve-schedule.js";
 import type {
@@ -47,7 +49,8 @@ export async function loadAgentInfoData(input: {
 export async function loadAgentInfoManifestData(input: {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
 }): Promise<AgentInfoManifestData> {
-  const manifest = await loadCompiledManifest({
+  const { manifest } = await loadRuntimeCompiledApplicationArtifacts({
+    artifacts: ["manifest"],
     compiledArtifactsSource: input.compiledArtifactsSource,
   });
   const schedules = await resolveSchedules({
@@ -73,14 +76,10 @@ export function resolveAgentInfoCompiledArtifactsSource(
 async function loadAgentInfoDataFromArtifacts(
   compiledArtifactsSource: RuntimeCompiledArtifactsSource,
 ): Promise<AgentInfoData> {
-  const [manifest, moduleMap] = await Promise.all([
-    loadCompiledManifest({
-      compiledArtifactsSource,
-    }),
-    loadCompiledModuleMap({
-      compiledArtifactsSource,
-    }),
-  ]);
+  const { manifest, moduleMap } = await loadRuntimeCompiledApplicationArtifacts({
+    artifacts: ["manifest", "moduleMap"],
+    compiledArtifactsSource,
+  });
   const schedules = await resolveSchedules({
     manifest,
   });

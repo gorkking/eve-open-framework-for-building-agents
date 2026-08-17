@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { compileAgent } from "../../src/compiler/compile-agent.js";
 import { createDiskRuntimeCompiledArtifactsSource } from "../../src/runtime/compiled-artifacts-source.js";
-import { loadCompiledManifest } from "../../src/runtime/loaders/manifest.js";
+import { loadCompiledManifest } from "../../src/runtime/loaders/compiled-application.js";
 import { loadCompiledModuleMapFromAuthoredSource } from "../../src/internal/authored-module-map-loader.js";
 import { resolveRuntimeAgentGraph } from "../../src/runtime/resolve-agent-graph.js";
 import { useScenarioApp } from "../../src/internal/testing/scenario-app.js";

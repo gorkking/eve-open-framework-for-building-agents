@@ -37,7 +37,7 @@ import type {
 import { createEveVercelOptions } from "#internal/nitro/host/vercel-build-output-config.js";
 import { applyWorkflowTransform } from "#internal/workflow-bundle/workflow-builders.js";
 import { createDynamicCapabilityTransformPlugin } from "#internal/workflow-bundle/dynamic-capability-transform-plugin.js";
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 
 /**
  * Bare `workflow/*` specifiers that appear in pre-built workflow bundles.

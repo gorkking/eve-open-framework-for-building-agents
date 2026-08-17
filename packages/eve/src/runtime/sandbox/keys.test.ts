@@ -5,8 +5,8 @@ import {
   COMPILE_METADATA_KIND,
   COMPILE_METADATA_VERSION,
   type CompileMetadata,
-} from "#compiler/artifacts.js";
-import { createCompiledAgentManifest } from "#compiler/manifest.js";
+} from "#internal/compiled-application/metadata.js";
+import { createCompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { createFakeVercelOidcToken } from "#internal/testing/vercel-oidc-token.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";

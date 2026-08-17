@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { COMPILE_METADATA_KIND, COMPILE_METADATA_VERSION } from "#compiler/artifacts.js";
+import {
+  COMPILE_METADATA_KIND,
+  COMPILE_METADATA_VERSION,
+} from "#internal/compiled-application/metadata.js";
 import type { CompileAgentResult } from "#compiler/compile-agent.js";
 import {
   createCompiledAgentManifest,
@@ -10,7 +13,7 @@ import {
   type CompiledScheduleDefinition,
   type CompiledSubagentNode,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import { getApplicationInfo } from "#internal/application/paths.js";
 import { inspectApplication } from "#services/inspect-application.js";
 

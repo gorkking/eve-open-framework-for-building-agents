@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
-import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
+import type { CompiledWorkspaceResourceRoot } from "#internal/compiled-application/manifest.js";
+import { resolveCompiledApplicationPaths } from "#internal/compiled-application/paths.js";
 import { loadCompiledModuleMapFromAuthoredSource } from "#internal/authored-module-map-loader.js";
 import { resolvePackageSourceFilePath } from "#internal/application/package.js";
 import { createAuthoredSourceRuntimeCompiledArtifactsSource } from "#internal/application/runtime-compiled-artifacts-source.js";
@@ -18,10 +19,8 @@ import {
   type RuntimeDiskCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
 import { type ResolvedAgentGraphBundle, ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
-import { loadCompileMetadata } from "#runtime/loaders/compile-metadata.js";
 import { withBundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
-import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
-import { resolveRuntimeCompilerArtifactPaths } from "#runtime/loaders/artifact-paths.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
 import { resolveRuntimeAgentGraph } from "#runtime/resolve-agent-graph.js";
 import { createRuntimeSandboxTemplateKey } from "#runtime/sandbox/keys.js";
 import type { RuntimeRegisteredSandbox } from "#runtime/sandbox/registry.js";
@@ -173,7 +172,7 @@ export async function prewarmAppSandboxes(input: {
 
   await prewarmSandboxes({
     appRoot: getRuntimeCompiledArtifactsSandboxAppRoot(compiledArtifactsSource) ?? input.appRoot,
-    compileDirectoryPath: resolveRuntimeCompilerArtifactPaths(compiledArtifactsSource.appRoot)
+    compileDirectoryPath: resolveCompiledApplicationPaths(compiledArtifactsSource.appRoot)
       .compileDirectoryPath,
     compiledArtifactsSource,
     dispatch: input.dispatch,
@@ -198,17 +197,16 @@ export async function prewarmBuiltAppSandboxes(input: {
     moduleMapLoaderPath: resolvePackageSourceFilePath("src/internal/authored-module-map-loader.ts"),
     sandboxAppRoot: input.appRoot,
   });
-  const [metadata, manifest, moduleMap] = await Promise.all([
-    loadCompileMetadata({
-      compiledArtifactsSource: builtArtifactsSource,
-    }),
-    loadCompiledManifest({
+  const [artifacts, moduleMap] = await Promise.all([
+    loadRuntimeCompiledApplicationArtifacts({
+      artifacts: ["manifest", "metadata"],
       compiledArtifactsSource: builtArtifactsSource,
     }),
     loadCompiledModuleMapFromAuthoredSource({
       compiledArtifactsSource: builtArtifactsSource,
     }),
   ]);
+  const { manifest, metadata } = artifacts;
 
   await withBundledCompiledArtifacts(
     {
@@ -227,7 +225,7 @@ export async function prewarmBuiltAppSandboxes(input: {
       await prewarmSandboxes({
         appRoot: input.appRoot,
         compileDirectoryPath:
-          resolveRuntimeCompilerArtifactPaths(builtArtifactsRoot).compileDirectoryPath,
+          resolveCompiledApplicationPaths(builtArtifactsRoot).compileDirectoryPath,
         compiledArtifactsSource,
         dispatch: input.dispatch,
         graph,
@@ -314,8 +312,9 @@ async function loadResourceRootSeedFiles(input: {
 async function loadGraphFromArtifacts(input: {
   readonly compiledArtifactsSource: RuntimeDiskCompiledArtifactsSource;
 }): Promise<ResolvedAgentGraphBundle> {
-  const [manifest, moduleMap] = await Promise.all([
-    loadCompiledManifest({
+  const [artifacts, moduleMap] = await Promise.all([
+    loadRuntimeCompiledApplicationArtifacts({
+      artifacts: ["manifest"],
       compiledArtifactsSource: input.compiledArtifactsSource,
     }),
     loadCompiledModuleMapFromAuthoredSource({
@@ -324,7 +323,7 @@ async function loadGraphFromArtifacts(input: {
   ]);
 
   return await resolveRuntimeAgentGraph({
-    manifest,
+    manifest: artifacts.manifest,
     moduleMap,
   });
 }

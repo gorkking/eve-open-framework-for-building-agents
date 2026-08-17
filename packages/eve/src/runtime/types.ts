@@ -19,7 +19,7 @@ import type {
   ToolFilterDefinition,
 } from "#runtime/connections/types.js";
 import type { OpenAPISpecSource } from "#public/definitions/connections/openapi.js";
-import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
+import type { CompiledWorkspaceResourceRoot } from "#internal/compiled-application/manifest.js";
 import type { WorkspaceRuntimeSpec } from "#runtime/workspace/types.js";
 import type { JsonObject } from "#shared/json.js";
 import type { Optional } from "#shared/optional.js";

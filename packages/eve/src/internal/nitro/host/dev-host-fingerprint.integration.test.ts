@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createCompiledAgentManifest, type CompiledAgentManifest } from "#compiler/manifest.js";
+import {
+  createCompiledAgentManifest,
+  type CompiledAgentManifest,
+} from "#internal/compiled-application/manifest.js";
 import { computeDevelopmentHostFingerprint } from "#internal/nitro/host/dev-host-fingerprint.js";
 import type { PreparedDevelopmentApplicationHost } from "#internal/nitro/host/types.js";
 

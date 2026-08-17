@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveCompilerArtifactPaths } from "../../src/compiler/artifacts.js";
 import { compileAgent } from "../../src/compiler/compile-agent.js";
-import { ROOT_COMPILED_AGENT_NODE_ID } from "../../src/compiler/manifest.js";
+import { ROOT_COMPILED_AGENT_NODE_ID } from "../../src/internal/compiled-application/manifest.js";
 import {
   createBundledRuntimeCompiledArtifactsSource,
   createDiskRuntimeCompiledArtifactsSource,
@@ -15,11 +15,9 @@ import { installBundledCompiledArtifacts } from "../../src/runtime/loaders/bundl
 import {
   LoadCompiledManifestError,
   loadCompiledManifest,
-} from "../../src/runtime/loaders/manifest.js";
-import {
   LoadCompiledModuleMapError,
   loadCompiledModuleMap,
-} from "../../src/runtime/loaders/module-map.js";
+} from "../../src/runtime/loaders/compiled-application.js";
 import { resolveRuntimeAgentGraph } from "../../src/runtime/resolve-agent-graph.js";
 import {
   createRuntimeSession,

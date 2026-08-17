@@ -1,4 +1,4 @@
-import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import { ROOT_COMPILED_AGENT_NODE_ID } from "#internal/compiled-application/manifest.js";
 import {
   getAllFrameworkToolDefinitions,
   getAllFrameworkToolNames,

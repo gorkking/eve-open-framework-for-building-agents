@@ -7,8 +7,11 @@ import type {
   CompiledAgentResources,
   CompiledSkillDefinition,
   CompiledWorkspaceResourceRoot,
-} from "#compiler/manifest.js";
-import { deriveResourceRootEntries, ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
+import {
+  deriveResourceRootEntries,
+  ROOT_COMPILED_AGENT_NODE_ID,
+} from "#internal/compiled-application/manifest.js";
 import { normalizeLogicalPath } from "#discover/filesystem.js";
 import { normalizeSkillPackage, writeSkillPackageDirectory } from "#shared/skill-package.js";
 

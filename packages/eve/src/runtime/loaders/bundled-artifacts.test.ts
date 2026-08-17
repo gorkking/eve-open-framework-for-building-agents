@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCompiledAgentManifest } from "#compiler/manifest.js";
+import { createCompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import {
   readBundledCompiledArtifacts,
   withBundledCompiledArtifacts,

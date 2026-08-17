@@ -2,8 +2,8 @@ import {
   getRuntimeCompiledArtifactsCacheKey,
   type RuntimeCompiledArtifactsSource,
 } from "#runtime/compiled-artifacts-source.js";
-import { resolveRuntimeCompilerArtifactPaths } from "#runtime/loaders/artifact-paths.js";
-import { loadCompileMetadata } from "#runtime/loaders/compile-metadata.js";
+import { resolveCompiledApplicationPaths } from "#internal/compiled-application/paths.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
 
 /**
  * Resolves a cache key for one compiled-artifact source that also fingerprints
@@ -19,7 +19,8 @@ export async function resolveRuntimeCompiledArtifactsVersionedCacheKey(
   const compileMetadataMtimeMs = await resolveCompileMetadataMtimeMs(source);
 
   try {
-    const metadata = await loadCompileMetadata({
+    const { metadata } = await loadRuntimeCompiledApplicationArtifacts({
+      artifacts: ["metadata"],
       compiledArtifactsSource: source,
     });
     const sourceGraphHash = metadata?.discovery.sourceGraphHash;
@@ -54,7 +55,7 @@ async function resolveCompileMetadataMtimeMs(
   }
 
   const { stat } = await import("node:fs/promises");
-  const { compileMetadataPath } = resolveRuntimeCompilerArtifactPaths(source.appRoot);
+  const { compileMetadataPath } = resolveCompiledApplicationPaths(source.appRoot);
 
   try {
     return (await stat(compileMetadataPath)).mtimeMs;

@@ -5,17 +5,17 @@ import type {
   CompiledAgentManifest,
   CompiledAgentNodeManifest,
   CompiledAgentResources,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
-import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import { ROOT_COMPILED_AGENT_NODE_ID } from "#internal/compiled-application/manifest.js";
 import {
   collectModuleRefsForManifest,
   compiledModuleMapSchema,
   type CompiledModuleMap,
-} from "#compiler/module-map.js";
+} from "#internal/compiled-application/module-map.js";
 import type { RuntimeDiskCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
-import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
-import { formatValidationError } from "#runtime/validation.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
+import { formatValidationError } from "#shared/validation.js";
 import { loadAuthoredModuleNamespace } from "#internal/authored-module-loader.js";
 import { readMaterializedAuthoredModuleIndex } from "#internal/materialized-authored-modules.js";
 
@@ -36,7 +36,8 @@ const EXT_CONFIG_SCOPE = Symbol.for("eve.ext-config-scope");
 export async function loadCompiledModuleMapFromAuthoredSource(input: {
   readonly compiledArtifactsSource: RuntimeDiskCompiledArtifactsSource;
 }): Promise<CompiledModuleMap> {
-  const manifest = await loadCompiledManifest({
+  const { manifest } = await loadRuntimeCompiledApplicationArtifacts({
+    artifacts: ["manifest"],
     compiledArtifactsSource: input.compiledArtifactsSource,
   });
 

@@ -16,7 +16,7 @@ import {
   createCompiledAgentNodeManifest,
   createCompiledAgentResources,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "#compiler/manifest.js";
+} from "#internal/compiled-application/manifest.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
 import { createCompiledRuntimeModelCatalogLoader } from "#compiler/model-catalog.js";
 import { compileAgentConfig } from "#compiler/normalize-agent-config.js";

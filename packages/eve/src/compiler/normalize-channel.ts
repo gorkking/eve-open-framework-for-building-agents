@@ -2,7 +2,7 @@ import { stripLogicalPathExtension } from "#discover/filesystem.js";
 import type { ChannelSourceRef } from "#discover/manifest.js";
 import { normalizeChannelDefinition } from "#internal/authored-definition/channel.js";
 import { type ChannelRouteMethod, isDisabledRouteSentinel } from "#public/definitions/channel.js";
-import type { CompiledChannelEntry } from "#compiler/manifest.js";
+import type { CompiledChannelEntry } from "#internal/compiled-application/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,

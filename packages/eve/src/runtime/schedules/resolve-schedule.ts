@@ -1,6 +1,6 @@
-import type { CompiledAgentManifest } from "#compiler/manifest.js";
+import type { CompiledAgentManifest } from "#internal/compiled-application/manifest.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
-import { loadCompiledManifest } from "#runtime/loaders/manifest.js";
+import { loadRuntimeCompiledApplicationArtifacts } from "#runtime/loaders/compiled-application.js";
 import type { ResolvedScheduleDefinition } from "#runtime/types.js";
 import { createScheduleRegistrations } from "#runtime/schedules/register.js";
 
@@ -72,7 +72,8 @@ export async function resolveSchedules(
 export async function loadResolvedCompiledSchedules(
   input: LoadResolvedCompiledSchedulesInput,
 ): Promise<ResolvedScheduleDefinition[]> {
-  const manifest = await loadCompiledManifest({
+  const { manifest } = await loadRuntimeCompiledApplicationArtifacts({
+    artifacts: ["manifest"],
     compiledArtifactsSource: input.compiledArtifactsSource,
   });
 

@@ -7,8 +7,6 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import {
-  COMPILE_METADATA_KIND,
-  COMPILE_METADATA_VERSION,
   createCompileMetadata,
   resolveCompilerArtifactPaths,
   writeCompilerArtifacts,
@@ -17,7 +15,11 @@ import { CompileAgentError, compileAgent } from "../../src/compiler/compile-agen
 import {
   COMPILED_AGENT_MANIFEST_VERSION,
   ROOT_COMPILED_AGENT_NODE_ID,
-} from "../../src/compiler/manifest.js";
+} from "../../src/internal/compiled-application/manifest.js";
+import {
+  COMPILE_METADATA_KIND,
+  COMPILE_METADATA_VERSION,
+} from "../../src/internal/compiled-application/metadata.js";
 import { createDiscoverWarningDiagnostic } from "../../src/discover/diagnostics.js";
 import {
   createAgentSourceManifest,
