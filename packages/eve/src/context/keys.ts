@@ -161,6 +161,7 @@ export interface DurableDynamicToolMetadata {
   readonly approvalStepFnName?: string;
   readonly approvalResponseStepFnName?: string;
   readonly closureVars?: Record<string, unknown>;
+  readonly requiresLiveDefinition?: true;
 }
 
 /**
@@ -186,6 +187,12 @@ export const SessionDynamicToolRuntimeRevisionKey = new ContextKey<string>(
 export const TurnDynamicToolMetadataKey = new ContextKey<readonly DurableDynamicToolMetadata[]>(
   "eve.turnDynamicToolMetadata",
 );
+
+/**
+ * Virtual live session-scoped tool definitions for entries whose callbacks
+ * cannot be reconstructed from durable metadata alone.
+ */
+export const LiveSessionToolsKey = new ContextKey<HarnessToolDefinition[]>("eve.liveSessionTools");
 
 /**
  * Virtual (non-serialized) live step-scoped tool definitions from

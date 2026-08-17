@@ -24,6 +24,7 @@ import { toErrorMessage } from "#shared/errors.js";
 import type { ContextContainer } from "#context/container.js";
 import type { ContextKey } from "#context/key.js";
 import {
+  LiveSessionToolsKey,
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
   TurnDynamicToolMetadataKey,
@@ -31,6 +32,7 @@ import {
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import { requiresLiveDynamicTool } from "#context/dynamic-tool-metadata.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 
 const log = createLogger("dynamic-tools");
@@ -158,6 +160,45 @@ function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) |
   }
 }
 
+function selectLiveSessionTools(
+  metadata: readonly DurableDynamicToolMetadata[],
+  liveTools: readonly HarnessToolDefinition[],
+): HarnessToolDefinition[] {
+  const liveNames = new Set(metadata.filter(requiresLiveDynamicTool).map((entry) => entry.name));
+  return liveTools.filter((tool) => liveNames.has(tool.name));
+}
+
+function replaceResolverMetadata(
+  stored: readonly DurableDynamicToolMetadata[],
+  refreshed: readonly DurableDynamicToolMetadata[],
+  refreshedSlugs: ReadonlySet<string>,
+): DurableDynamicToolMetadata[] {
+  const refreshedBySlug = new Map<string, DurableDynamicToolMetadata[]>();
+  for (const entry of refreshed) {
+    const entries = refreshedBySlug.get(entry.resolverSlug) ?? [];
+    entries.push(entry);
+    refreshedBySlug.set(entry.resolverSlug, entries);
+  }
+
+  const emitted = new Set<string>();
+  const result: DurableDynamicToolMetadata[] = [];
+  for (const entry of stored) {
+    if (!refreshedSlugs.has(entry.resolverSlug)) {
+      result.push(entry);
+    } else if (!emitted.has(entry.resolverSlug)) {
+      result.push(...(refreshedBySlug.get(entry.resolverSlug) ?? []));
+      emitted.add(entry.resolverSlug);
+    }
+  }
+  for (const entry of refreshed) {
+    if (!emitted.has(entry.resolverSlug)) {
+      result.push(...(refreshedBySlug.get(entry.resolverSlug) ?? []));
+      emitted.add(entry.resolverSlug);
+    }
+  }
+  return result;
+}
+
 function registerStepFunction(stepId: string, fn: Function): void {
   getStepRegistry().set(stepId, fn);
 }
@@ -188,22 +229,13 @@ function durableKeyForEvent(
 }
 
 // ---------------------------------------------------------------------------
-// Build: assemble live tools from all scoped durable keys
-// ---------------------------------------------------------------------------
-
-/**
- * Builds live dynamic tool definitions from session + turn + step
- * durable metadata keys. Session-scoped tools appear first, then
- * turn, then step. The tool-loop calls this right before the model
- * call — no virtual key needed.
- */
-// ---------------------------------------------------------------------------
 // Resolve: run resolver handlers, capture closures, write durable metadata
 // ---------------------------------------------------------------------------
 
 interface ResolveResult {
   readonly metadata: readonly DurableDynamicToolMetadata[];
   readonly liveTools: readonly HarnessToolDefinition[];
+  readonly failedResolverSlugs: ReadonlySet<string>;
 }
 
 function readDynamicToolResult(
@@ -252,13 +284,15 @@ async function resolveToolsFromEvent(
 
   const metadata: DurableDynamicToolMetadata[] = [];
   const liveTools: HarnessToolDefinition[] = [];
+  const failedResolverSlugs = new Set<string>();
   // Tracks which resolver claimed each name so two dynamic resolvers can't
   // silently shadow each other (a dynamic tool overriding an authored one is
   // allowed and handled at merge time).
   const dynamicToolOwners = new Map<string, string>();
 
-  for (const outcome of outcomes) {
+  for (const [index, outcome] of outcomes.entries()) {
     if (outcome.status === "rejected") {
+      failedResolverSlugs.add(resolvers[index]!.slug);
       log.error(`Dynamic tool resolver (${event.type}) threw — skipping.`, {
         error: toErrorMessage(outcome.reason),
       });
@@ -294,22 +328,25 @@ async function resolveToolsFromEvent(
       let executeStepFnName = stepFn?.stepId;
       let serializedClosureVars =
         closureVars !== undefined ? safeSerialize(closureVars) : undefined;
+      let requiresLiveDefinition = false;
 
-      // Framework tools skip the bundler AST transform, so they carry
-      // no __executeStepFn/__closureVars. Register the live execute
-      // closure in the step registry so session/turn-scoped metadata
-      // can replay them the same way as authored tools.
+      // Framework tools skip the bundler AST transform. Turn-scoped tools
+      // register their closure for durable replay; session-scoped tools are
+      // re-resolved into virtual context on each workflow step.
       if (executeStepFnName === undefined) {
         const syntheticId = `eve:framework-dynamic:${resolver.slug}:${entryKey}`;
         const originalExecute = entry.execute.bind(entry);
-        registerStepFunction(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
-          originalExecute(
-            input as Record<string, unknown>,
-            ctx as Parameters<typeof entry.execute>[1],
-          ),
-        );
+        if (event.type === "turn.started") {
+          registerStepFunction(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
+            originalExecute(
+              input as Record<string, unknown>,
+              ctx as Parameters<typeof entry.execute>[1],
+            ),
+          );
+        }
         executeStepFnName = syntheticId;
         serializedClosureVars = {};
+        requiresLiveDefinition = event.type === "session.started";
       }
 
       let approvalStepFnName: string | undefined;
@@ -317,20 +354,25 @@ async function resolveToolsFromEvent(
       if (entry.approval !== undefined) {
         approvalStepFnName = `eve:dynamic-tool-approval:${resolver.slug}:${entryKey}`;
         const originalApproval = resolveApprovalPolicy(entry.approval).bind(entry);
-        registerStepFunction(approvalStepFnName, (_closureVars: unknown, approvalCtx: unknown) =>
-          originalApproval(approvalCtx as ApprovalContext),
-        );
+        if (event.type === "turn.started") {
+          registerStepFunction(approvalStepFnName, (_closureVars: unknown, approvalCtx: unknown) =>
+            originalApproval(approvalCtx as ApprovalContext),
+          );
+        }
 
         const responsePolicy =
           typeof entry.approval === "function" ? undefined : entry.approval.response;
         if (responsePolicy !== undefined) {
           approvalResponseStepFnName = `eve:dynamic-tool-approval-response:${resolver.slug}:${entryKey}`;
-          registerStepFunction(
-            approvalResponseStepFnName,
-            (_closureVars: unknown, responseCtx: unknown) =>
-              responsePolicy(responseCtx as ApprovalResponseContext),
-          );
+          if (event.type === "turn.started") {
+            registerStepFunction(
+              approvalResponseStepFnName,
+              (_closureVars: unknown, responseCtx: unknown) =>
+                responsePolicy(responseCtx as ApprovalResponseContext),
+            );
+          }
         }
+        requiresLiveDefinition ||= event.type === "session.started";
       }
 
       metadata.push({
@@ -344,11 +386,12 @@ async function resolveToolsFromEvent(
         approvalStepFnName,
         approvalResponseStepFnName,
         closureVars: serializedClosureVars,
+        requiresLiveDefinition: requiresLiveDefinition || undefined,
       });
     }
   }
 
-  return { metadata, liveTools };
+  return { metadata, liveTools, failedResolverSlugs };
 }
 
 // ---------------------------------------------------------------------------
@@ -422,7 +465,7 @@ export async function dispatchDynamicToolEvent(input: {
     return;
   }
 
-  const { metadata } = await resolveToolsFromEvent(ctx, matching, event, messages);
+  const { metadata, liveTools } = await resolveToolsFromEvent(ctx, matching, event, messages);
 
   // Session/turn: store durable metadata for cross-step replay via
   // the bundler's registered step functions.
@@ -431,6 +474,7 @@ export async function dispatchDynamicToolEvent(input: {
 
   if (event.type === "session.started") {
     ctx.set(SessionDynamicToolMetadataKey, metadata);
+    ctx.setVirtualContext(LiveSessionToolsKey, selectLiveSessionTools(metadata, liveTools));
     return;
   }
 
@@ -452,18 +496,50 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   readonly messages: readonly ModelMessage[];
   readonly runtimeRevision: string;
 }): Promise<void> {
-  if (input.ctx.get(SessionDynamicToolRuntimeRevisionKey) === input.runtimeRevision) {
+  const storedMetadata = input.ctx.get(SessionDynamicToolMetadataKey) ?? [];
+  const sameRevision =
+    input.ctx.get(SessionDynamicToolRuntimeRevisionKey) === input.runtimeRevision;
+  const liveResolverSlugs = new Set(
+    storedMetadata.filter(requiresLiveDynamicTool).map((entry) => entry.resolverSlug),
+  );
+  if (sameRevision && (liveResolverSlugs.size === 0 || input.ctx.get(LiveSessionToolsKey))) {
     return;
   }
 
-  const matching = input.resolvers.filter((resolver) =>
-    resolver.eventNames.includes("session.started"),
+  const matching = input.resolvers.filter(
+    (resolver) =>
+      resolver.eventNames.includes("session.started") &&
+      (!sameRevision || liveResolverSlugs.has(resolver.slug)),
   );
-  const { metadata } =
+  const { metadata, liveTools, failedResolverSlugs } =
     matching.length === 0
-      ? { metadata: [] }
+      ? { metadata: [], liveTools: [], failedResolverSlugs: new Set<string>() }
       : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
 
-  input.ctx.set(SessionDynamicToolMetadataKey, metadata);
+  const refreshedSlugs = new Set(
+    matching
+      .map((resolver) => resolver.slug)
+      .filter((resolverSlug) => !failedResolverSlugs.has(resolverSlug)),
+  );
+  if (sameRevision) {
+    const retainedOwners = new Map(
+      storedMetadata
+        .filter((entry) => !refreshedSlugs.has(entry.resolverSlug))
+        .map((entry) => [entry.name, entry.resolverSlug]),
+    );
+    for (const entry of metadata) {
+      const retainedOwner = retainedOwners.get(entry.name);
+      if (retainedOwner !== undefined && retainedOwner !== entry.resolverSlug) {
+        throw new Error(
+          `Dynamic tool "${entry.name}" from resolver "${entry.resolverSlug}" collides with dynamic resolver "${retainedOwner}". Namespace the map key manually, e.g. "${entry.resolverSlug}__${entry.name}".`,
+        );
+      }
+    }
+  }
+  const nextMetadata = sameRevision
+    ? replaceResolverMetadata(storedMetadata, metadata, refreshedSlugs)
+    : metadata;
+  input.ctx.set(SessionDynamicToolMetadataKey, nextMetadata);
+  input.ctx.setVirtualContext(LiveSessionToolsKey, selectLiveSessionTools(nextMetadata, liveTools));
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
 }

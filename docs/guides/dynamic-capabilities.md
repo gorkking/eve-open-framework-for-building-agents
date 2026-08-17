@@ -160,9 +160,11 @@ export default defineDynamic({
 });
 ```
 
-### `execute` must be an inline function
+### Prefer an inline `execute` function
 
-Write `execute` as an inline function expression, arrow, or method shorthand placed directly as the property value. The bundler transform does not detect `execute: myFn` or `execute: makeFn()`, so those tools work on the first step but do not survive replay (re-running a step after a crash or resume; see [Execution model & durability](../concepts/execution-model-and-durability)). On later steps the transform reconstructs each `execute` from its stored closure variables instead of re-running the resolver, which is why it has to be inline.
+Write `execute` as an inline function expression, arrow, or method shorthand placed directly as the property value. The bundler transform stores the function and its closure variables for durable replay without rerunning the resolver.
+
+The transform does not detect `execute: myFn`, `execute: makeFn()`, or executors created inside an imported dependency. For a `session.started` tool, eve reconstructs these live functions by silently rerunning the owning resolver after a durable continuation. Keep session resolvers idempotent and avoid unnecessary side effects. A `turn.started` tool still requires an inline executor to survive a fresh runtime.
 
 ### Naming
 
@@ -181,9 +183,11 @@ A dynamic tool or skill whose name matches an **authored** one **overrides** it 
 
 | Event             | Resolver runs          | Tools available for             |
 | ----------------- | ---------------------- | ------------------------------- |
-| `session.started` | Once per session       | Every model call in the session |
+| `session.started` | At session start¹      | Every model call in the session |
 | `turn.started`    | Once per turn          | Every model call in the turn    |
 | `step.started`    | Before each model call | That model call                 |
+
+¹ eve may silently rerun a session resolver once per durable continuation to reconstruct executors or approval policies that were not transformed into registered step functions. It does not rerun the resolver before each model call.
 
 ### Execution order
 
