@@ -173,12 +173,10 @@ function createStubSession(overrides: Partial<HarnessSession> = {}): HarnessSess
   };
 }
 
-function createSerializedContext(
-  mode: "conversation" | "task" = "conversation",
-): Record<string, unknown> {
-  const ctx = new ContextContainer();
-  ctx.set(AuthKey, null);
-  ctx.set(BundleKey, {
+type TestAgentConfig = { readonly experimental?: { readonly tasks?: boolean } };
+
+function createTestBundle(config: TestAgentConfig = {}) {
+  return {
     adapterRegistry: {
       adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
     },
@@ -191,11 +189,20 @@ function createSerializedContext(
       },
     },
     hookRegistry: createEmptyHookRegistry(),
-    resolvedAgent: { config: {} },
+    resolvedAgent: { config },
     subagentRegistry: {},
     toolRegistry: {},
     turnAgent: TestTurnAgent,
-  } as never);
+  } as never;
+}
+
+function createSerializedContext(
+  mode: "conversation" | "task" = "conversation",
+  config: TestAgentConfig = {},
+): Record<string, unknown> {
+  const ctx = new ContextContainer();
+  ctx.set(AuthKey, null);
+  ctx.set(BundleKey, createTestBundle(config));
   ctx.set(ChannelKey, threadContextAdapter);
   ctx.set(ContinuationTokenKey, "http:thread-context");
   ctx.set(ModeKey, mode);
@@ -1606,6 +1613,54 @@ describe("turnStep", () => {
       expect(result.settled).toBeUndefined();
     }
   });
+
+  it.each([
+    { config: {}, expected: undefined, title: "disabled" },
+    { config: { experimental: { tasks: true } }, expected: true, title: "enabled" },
+  ])(
+    "reports task dispatch as $title from the resolved agent config",
+    async ({ config, expected }) => {
+      const session = createStubSession();
+      installSessionStoreMocks([session]);
+      vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(createTestBundle(config));
+      vi.mocked(createExecutionNodeStep).mockImplementation(() => {
+        return async (stepSession): Promise<StepResult> => ({
+          next: null,
+          session: setPendingRuntimeActionBatch({
+            actions: [
+              {
+                callId: "call-task-dispatch",
+                description: "Delegate the work.",
+                input: { message: "investigate" },
+                kind: "subagent-call",
+                name: "agent",
+                nodeId: "__root__",
+                subagentName: "agent",
+              },
+            ],
+            event: { sequence: 0, stepIndex: 0, turnId: "turn_0" },
+            responseMessages: [],
+            session: stepSession,
+          }),
+        });
+      });
+
+      const result = await turnStep({
+        input: {
+          kind: "deliver",
+          payloads: [{ message: "delegate" }],
+        },
+        parentWritable: createTestWritable(),
+        serializedContext: createSerializedContext("conversation", config),
+        sessionState: createStubSessionState(),
+      });
+
+      expect(result.action).toBe("park");
+      if (result.action === "park") {
+        expect(result.tasksEnabled).toBe(expected);
+      }
+    },
+  );
 
   it("reads the durable session from normalized turn-step input", async () => {
     const session = createStubSession({

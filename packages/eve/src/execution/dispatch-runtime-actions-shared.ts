@@ -174,6 +174,50 @@ export async function prepareRuntimeActionDispatch(input: {
    */
   readonly taskControls: boolean;
 }): Promise<PreparedRuntimeActionDispatch | undefined> {
+  const preflight = await prepareRuntimeActionDispatchPreflight(input);
+  if (preflight === undefined) return undefined;
+
+  const plan = planDispatch({
+    actions: preflight.prepared.batch.actions,
+    bundle: preflight.prepared.bundle,
+    ctx: preflight.ctx,
+    session: preflight.prepared.session,
+    taskControls: input.taskControls,
+  });
+
+  return {
+    ...preflight.prepared,
+    fanoutSize: plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local")
+      .length,
+    plan,
+  };
+}
+
+/**
+ * Rehydrates current dispatch state while retaining the batch's original plan.
+ * Workflow-backed entries use this after a sibling mutates the session so a
+ * continuation cannot be reclassified as an unrelated fresh start.
+ */
+export async function rehydrateRuntimeActionDispatch(input: {
+  readonly fanoutSize: number;
+  readonly plan: readonly DispatchPlanEntry[];
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<PreparedRuntimeActionDispatch | undefined> {
+  const preflight = await prepareRuntimeActionDispatchPreflight(input);
+  if (preflight === undefined) return undefined;
+  return { ...preflight.prepared, fanoutSize: input.fanoutSize, plan: input.plan };
+}
+
+type RuntimeActionDispatchPreflight = {
+  readonly ctx: Awaited<ReturnType<typeof deserializeContext>>;
+  readonly prepared: Omit<PreparedRuntimeActionDispatch, "fanoutSize" | "plan">;
+};
+
+async function prepareRuntimeActionDispatchPreflight(input: {
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<RuntimeActionDispatchPreflight | undefined> {
   const durableSession = await readDurableSession(input.sessionState);
   const batch = getPendingRuntimeActionBatch(durableSession.state);
 
@@ -192,33 +236,26 @@ export async function prepareRuntimeActionDispatch(input: {
   });
   const adapter = ctx.require(ChannelKey);
 
-  // A corrupt handle store throws; surface that before anything dispatches.
-  // A mid-loop throw after a sibling started would durably replay the whole
-  // batch and re-dispatch that sibling.
+  // Validate the current snapshot before this entry dispatches. Initial
+  // preparation runs before any sibling; workflow rehydration repeats the
+  // validation against the session state returned by the previous entry.
   getAgentHandleStore(durableSession.state);
-  const plan = planDispatch({
-    actions: batch.actions,
-    bundle,
-    ctx,
-    session,
-    taskControls: input.taskControls,
-  });
 
   return {
-    adapter,
-    adapterCtx: buildAdapterContext(adapter, ctx),
-    auth: ctx.get(AuthKey) ?? null,
-    batch,
-    bundle,
-    capabilities: ctx.get(CapabilitiesKey),
-    channelMetadata: ctx.get(ChannelInstrumentationKey),
-    fanoutSize: plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local")
-      .length,
-    initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
-    parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
-    plan,
-    serializedContext: input.serializedContext,
-    session,
+    ctx,
+    prepared: {
+      adapter,
+      adapterCtx: buildAdapterContext(adapter, ctx),
+      auth: ctx.get(AuthKey) ?? null,
+      batch,
+      bundle,
+      capabilities: ctx.get(CapabilitiesKey),
+      channelMetadata: ctx.get(ChannelInstrumentationKey),
+      initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
+      parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
+      serializedContext: input.serializedContext,
+      session,
+    },
   };
 }
 

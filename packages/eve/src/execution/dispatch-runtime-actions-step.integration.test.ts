@@ -61,6 +61,33 @@ vi.mock("#execution/session.js", () => ({
   mintSubagentContinuationToken: (seed: string) => `subagent:${seed}`,
 }));
 
+// This suite owns the local/remote transport boundary through mocks below.
+// Execute the workflow tool's production step in-process so those mocks remain
+// visible; the dedicated workflow-tool integration test owns the real Workflow
+// run boundary.
+vi.mock("#execution/tasks/parent/dispatch-subagent-workflow-tool.js", async () => {
+  const [{ dispatchSubagentWorkflowToolStep }, { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA }] =
+    await Promise.all([
+      import("#execution/tasks/parent/subagent-workflow-tool-step.js"),
+      import("#runtime/subagents/registry.js"),
+    ]);
+
+  return {
+    dispatchSubagentWorkflowTool: vi.fn(async ({ entry, fanoutSize, runtimeInput }) => {
+      const action = entry.kind === "resume" ? entry.action : entry.target.action;
+      return {
+        result: await dispatchSubagentWorkflowToolStep({
+          entry,
+          fanoutSize,
+          runtimeInput,
+          toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+        }),
+        workflowRunId: "workflow-tool-test-run",
+      };
+    }),
+  };
+});
+
 vi.mock("#execution/workflow-runtime.js", () => ({
   createWorkflowRuntime: () => ({
     createSession: mocks.createSession,
@@ -778,51 +805,77 @@ describe("dispatchRuntimeActionsStep agent delivery", () => {
     });
   });
 
-  it("reports AGENT_UNREACHABLE when the handle disappears mid-batch instead of starting a fresh agent", async () => {
-    // Two continuations to one agentId in a single batch: the first delivery
-    // fails permanently and deletes the handle, so the second — planned as a
-    // resume while the handle still existed — must fail rather than fall
-    // back to an unplanned fresh start.
-    const session = setPendingRuntimeActionBatch({
-      actions: [1, 2].map((n) => ({
-        callId: `call-${n}`,
-        description: "Research",
-        input: { agentId: LOCAL_PARKED_HANDLE.identity.id, message: `continue ${n}` },
-        kind: "subagent-call" as const,
-        name: "research",
-        nodeId: "subagents/research",
-        subagentName: "research",
-      })),
-      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
-      responseMessages: [],
-      session: createBaseSession(LOCAL_PARKED_HANDLE),
-    });
-    installContext(session);
-    mocks.dispatchSession.mockResolvedValue({ status: "session_not_active" });
+  it.each([
+    {
+      dispatch: dispatchRuntimeActionsStep,
+      secondCode: "AGENT_UNREACHABLE",
+      tasks: false,
+      title: "plain dispatch",
+    },
+    {
+      dispatch: dispatchTaskStep,
+      secondCode: "AGENT_BUSY",
+      tasks: true,
+      title: "workflow-tool task dispatch",
+    },
+  ])(
+    "does not start a fresh agent through $title when the handle disappears mid-batch",
+    async ({ dispatch, secondCode, tasks }) => {
+      // Two continuations to one agentId in a single batch: the first delivery
+      // fails permanently and deletes the handle, so the second — planned as a
+      // resume while the handle still existed — must fail rather than fall
+      // back to an unplanned fresh start.
+      const handle: AgentHandle = tasks
+        ? {
+            address: LOCAL_PARKED_HANDLE.address,
+            identity: LOCAL_PARKED_HANDLE.identity,
+            phase: "addressed",
+          }
+        : LOCAL_PARKED_HANDLE;
+      const session = setPendingRuntimeActionBatch({
+        actions: [1, 2].map((n) => ({
+          callId: `call-${n}`,
+          description: "Research",
+          input: { agentId: LOCAL_PARKED_HANDLE.identity.id, message: `continue ${n}` },
+          kind: "subagent-call" as const,
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        })),
+        event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+        responseMessages: [],
+        session: createBaseSession(handle),
+      });
+      installContext(session, undefined, tasks);
+      mocks.readDurableSession.mockImplementation(
+        async (state) => state.snapshot?.session ?? session,
+      );
+      mocks.dispatchSession.mockResolvedValue({ status: "session_not_active" });
 
-    const result = await dispatchRuntimeActionsStep({
-      parentContinuationToken: "turn-inbox",
-      parentWritable: createWritable(),
-      serializedContext: {},
-      sessionState: BASE_STATE,
-    });
+      const result = await dispatch({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      });
 
-    expect(mocks.dispatchSession).toHaveBeenCalledTimes(1);
-    expect(mocks.createSession).not.toHaveBeenCalled();
-    expect(result.results).toEqual([
-      expect.objectContaining({
-        isError: true,
-        output: expect.objectContaining({ code: "AGENT_UNREACHABLE" }),
-      }),
-      expect.objectContaining({
-        isError: true,
-        output: expect.objectContaining({ code: "AGENT_UNREACHABLE" }),
-      }),
-    ]);
-    expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({
-      handles: [],
-    });
-  });
+      expect(result.results).toEqual([
+        expect.objectContaining({
+          isError: true,
+          output: expect.objectContaining({ code: "AGENT_UNREACHABLE" }),
+        }),
+        expect.objectContaining({
+          isError: true,
+          output: expect.objectContaining({ code: secondCode }),
+        }),
+      ]);
+      expect(mocks.dispatchSession).toHaveBeenCalledTimes(1);
+      expect(mocks.createSession).not.toHaveBeenCalled();
+      expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({
+        handles: [],
+      });
+    },
+  );
 
   it("continues a stored remote handle and maps a permanent failure to AGENT_UNREACHABLE", async () => {
     const session = createPendingSession({

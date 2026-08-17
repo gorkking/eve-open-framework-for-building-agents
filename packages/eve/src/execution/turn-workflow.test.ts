@@ -4,6 +4,7 @@ import type { HookPayload } from "#channel/types.js";
 import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-step.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
+import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { turnWorkflow } from "#execution/turn-workflow.js";
@@ -43,6 +44,10 @@ vi.mock("./workflow-steps.js", () => ({
 
 vi.mock("./dispatch-runtime-actions-step.js", () => ({
   dispatchRuntimeActionsStep: vi.fn(),
+}));
+
+vi.mock("./tasks/parent/dispatch-task-step.js", () => ({
+  dispatchTaskStep: vi.fn(),
 }));
 
 vi.mock("./dispatch-workflow-runtime-actions-step.js", () => ({
@@ -640,6 +645,75 @@ describe("turnWorkflow", () => {
       }),
     );
     now.mockRestore();
+  });
+
+  it("uses the workflow-tool task dispatcher only when turnStep reports tasks enabled", async () => {
+    const pendingState = createSessionState({ continuationToken: "http:tasks" });
+    const completedState = createSessionState({ continuationToken: "http:tasks" });
+    installInbox([]);
+    vi.mocked(dispatchTaskStep).mockResolvedValue({
+      pendingTasks: [],
+      results: [
+        {
+          backgroundTask: { status: "working", taskId: "task-1" },
+          callId: "call-1",
+          kind: "subagent-result",
+          origin: "child",
+          outcome: {
+            kind: "parked",
+            result: { kind: "succeeded", output: "delegated" },
+            usageDelta: {
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+            },
+          },
+          output: { agentId: "agent-1", status: "working", taskId: "task-1" },
+          subagentName: "delegate",
+        },
+      ],
+      sessionState: pendingState,
+    });
+    vi.mocked(turnStep)
+      .mockResolvedValueOnce({
+        action: "park",
+        hasPendingAuthorization: false,
+        hasPendingInputBatch: false,
+        pendingRuntimeActionKeys: ["subagent-call:delegate:call-1"],
+        serializedContext: { state: "pending" },
+        sessionState: pendingState,
+        tasksEnabled: true,
+      })
+      .mockResolvedValueOnce({
+        action: "done",
+        output: "task receipt consumed",
+        serializedContext: { state: "done" },
+        sessionState: completedState,
+      });
+
+    const { input, parentWritable } = createInput({
+      driverCapabilities: { turnInbox: true },
+      sessionState: pendingState,
+    });
+    await turnWorkflow(input);
+
+    expect(dispatchTaskStep).toHaveBeenCalledWith({
+      callbackBaseUrl: "https://eve.example.com",
+      parentContinuationToken: "turn-token:inbox",
+      parentWritable,
+      serializedContext: { state: "pending" },
+      sessionState: pendingState,
+    });
+    expect(dispatchRuntimeActionsStep).not.toHaveBeenCalled();
+    const resumedInput = vi.mocked(turnStep).mock.calls[1]?.[0].input;
+    expect(resumedInput?.kind).toBe("runtime-action-result");
+    if (resumedInput?.kind !== "runtime-action-result") {
+      throw new Error("Expected the task receipt to resume the turn.");
+    }
+    expect(resumedInput.results[0]).toMatchObject({
+      backgroundTask: { status: "working", taskId: "task-1" },
+    });
   });
 
   it("waits for dispatch adoption before cascading a cancellation", async () => {
