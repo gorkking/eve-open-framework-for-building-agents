@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { getRun } from "#internal/workflow/runtime.js";
 
 import { createDurableSessionState } from "#execution/durable-session-store.js";
-import { dispatchSubagentWorkflowTool } from "#execution/tasks/parent/dispatch-subagent-workflow-tool.js";
+import { dispatchLocalSubagentWorkflow } from "#execution/tasks/parent/subagent/dispatch.js";
+import { localSubagentWorkflowTool } from "#execution/tasks/parent/subagent/local.js";
+import { remoteSubagentWorkflowTool } from "#execution/tasks/parent/subagent/remote.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import { setPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import type { HarnessSession } from "#harness/types.js";
@@ -11,7 +13,13 @@ import { createTestRuntime } from "#internal/testing/app-harness.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
 
-describe("production subagent workflow tool", () => {
+describe("local subagent workflow tool", () => {
+  it("is compiled independently from the remote subagent workflow", () => {
+    expect(readWorkflowId(localSubagentWorkflowTool.execute)).not.toBe(
+      readWorkflowId(remoteSubagentWorkflowTool.execute),
+    );
+  });
+
   it("starts a distinct Workflow that dispatches a real local child and task run", async () => {
     const runtime = createTestRuntime({ agent: { name: "subagent-workflow-tool" } });
 
@@ -39,7 +47,7 @@ describe("production subagent workflow tool", () => {
       });
       const parentWritable = new WritableStream<Uint8Array>({ write() {} });
 
-      const dispatched = await dispatchSubagentWorkflowTool({
+      const dispatched = await dispatchLocalSubagentWorkflow({
         entry: {
           kind: "start",
           target: { action, kind: "local", source: { type: "runtime" } },
@@ -98,3 +106,14 @@ describe("production subagent workflow tool", () => {
     });
   }, 60_000);
 });
+
+function readWorkflowId(value: unknown): string {
+  if (
+    typeof value !== "function" ||
+    !("workflowId" in value) ||
+    typeof value.workflowId !== "string"
+  ) {
+    throw new Error("Expected a compiled Workflow function.");
+  }
+  return value.workflowId;
+}

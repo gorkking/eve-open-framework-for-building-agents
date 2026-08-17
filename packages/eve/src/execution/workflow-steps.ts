@@ -88,6 +88,7 @@ import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
+import { forwardTaskCallbackEvent } from "#execution/task-event-callback.js";
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 
@@ -389,6 +390,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     messages?: readonly import("ai").ModelMessage[],
   ): Promise<void> => {
     const emitted = await emit(event);
+    await forwardTaskCallbackEvent({ ctx, event });
     await dispatchStreamEventHooks({ ctx, registry: hookRegistry, event: emitted });
     if (emitted.type !== "step.started") {
       await dispatchDynamicModelEvent({

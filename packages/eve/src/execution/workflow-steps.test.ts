@@ -9,6 +9,7 @@ import {
   ContinuationTokenKey,
   DynamicSubagentAgentConfigKey,
   ModeKey,
+  SessionCallbackKey,
   SessionDynamicSubagentSelectionsKey,
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
@@ -1268,6 +1269,96 @@ describe("dispatchRuntimeActionsStep", () => {
 });
 
 describe("turnStep", () => {
+  it("posts task-owned remote input requests through the parent callback", async () => {
+    const request = {
+      action: {
+        callId: "ask-region",
+        input: {},
+        kind: "tool-call" as const,
+        toolName: "ask_question",
+      },
+      kind: "question" as const,
+      prompt: "Which region?",
+      requestId: "request-region",
+    };
+    const session = createStubSession({
+      continuationToken: "remote-child-token",
+      sessionId: "remote-child-session",
+    });
+    installSessionStoreMocks([session]);
+    vi.mocked(createExecutionNodeStep).mockImplementation((input) => {
+      return async (stepSession): Promise<StepResult> => {
+        await input.handleEvent?.({
+          data: {
+            requests: [request],
+            sequence: 4,
+            stepIndex: 2,
+            turnId: "turn-child",
+          },
+          type: "input.requested",
+        });
+        return {
+          next: null,
+          session: appendPendingInputBatch({
+            requests: [request],
+            responseMessages: [],
+            session: stepSession,
+          }),
+        };
+      };
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bundle = createTestBundle();
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(bundle);
+    const ctx = new ContextContainer();
+    ctx.set(AuthKey, null);
+    ctx.set(BundleKey, bundle);
+    ctx.set(ChannelKey, threadContextAdapter);
+    ctx.set(ContinuationTokenKey, "remote-child-token");
+    ctx.set(ModeKey, "conversation");
+    ctx.set(SessionIdKey, "remote-child-session");
+    ctx.set(SessionCallbackKey, {
+      callId: "call-task",
+      subagentName: "research",
+      taskId: "task_1",
+      token: "task:task_1:0123456789abcdef0123456789abcdef",
+      url: "https://caller.example.com/eve/v1/callback/task%3Atask_1%3A0123456789abcdef0123456789abcdef",
+    });
+
+    const result = await turnStep({
+      input: { kind: "deliver", payloads: [{ message: "research this" }] },
+      parentWritable: createTestWritable(),
+      serializedContext: serializeContext(ctx),
+      sessionState: createStubSessionState({
+        continuationToken: "remote-child-token",
+        sessionId: "remote-child-session",
+      }),
+    });
+
+    expect(result).toMatchObject({ action: "park", hasPendingInputBatch: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://caller.example.com/eve/v1/callback/task%3Atask_1%3A0123456789abcdef0123456789abcdef",
+      expect.objectContaining({
+        body: JSON.stringify({
+          callId: "call-task",
+          childContinuationToken: "remote-child-token",
+          childSessionId: "remote-child-session",
+          event: {
+            requests: [request],
+            sequence: 4,
+            stepIndex: 2,
+            turnId: "turn-child",
+          },
+          kind: "task.input-requested",
+          subagentName: "research",
+          taskId: "task_1",
+        }),
+      }),
+    );
+  });
+
   it("rejects task completion while input requests remain pending", async () => {
     const session = appendPendingInputBatch({
       requests: [

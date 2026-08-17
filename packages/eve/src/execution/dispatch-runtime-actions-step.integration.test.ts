@@ -62,18 +62,38 @@ vi.mock("#execution/session.js", () => ({
 }));
 
 // This suite owns the local/remote transport boundary through mocks below.
-// Execute the workflow tool's production step in-process so those mocks remain
-// visible; the dedicated workflow-tool integration test owns the real Workflow
-// run boundary.
-vi.mock("#execution/tasks/parent/dispatch-subagent-workflow-tool.js", async () => {
+// Execute each Workflow tool's shared admission step in-process so those mocks
+// remain visible; the dedicated local integration test owns the real Workflow
+// run boundary and verifies the two definitions compile independently.
+vi.mock("#execution/tasks/parent/subagent/local.js", async () => {
+  return {
+    isLocalSubagentWorkflowEntry: vi.fn((entry) =>
+      entry.kind === "start"
+        ? entry.target.kind === "local"
+        : entry.action.kind === "subagent-call",
+    ),
+  };
+});
+
+vi.mock("#execution/tasks/parent/subagent/remote.js", async () => {
+  return {
+    isRemoteSubagentWorkflowEntry: vi.fn((entry) =>
+      entry.kind === "start"
+        ? entry.target.kind === "remote"
+        : entry.action.kind === "remote-agent-call",
+    ),
+  };
+});
+
+vi.mock("#execution/tasks/parent/subagent/dispatch.js", async () => {
   const [{ dispatchSubagentWorkflowToolStep }, { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA }] =
     await Promise.all([
-      import("#execution/tasks/parent/subagent-workflow-tool-step.js"),
+      import("#execution/tasks/parent/subagent/dispatch-step.js"),
       import("#runtime/subagents/registry.js"),
     ]);
 
   return {
-    dispatchSubagentWorkflowTool: vi.fn(async ({ entry, fanoutSize, runtimeInput }) => {
+    dispatchLocalSubagentWorkflow: vi.fn(async ({ entry, fanoutSize, runtimeInput }) => {
       const action = entry.kind === "resume" ? entry.action : entry.target.action;
       return {
         result: await dispatchSubagentWorkflowToolStep({
@@ -81,8 +101,22 @@ vi.mock("#execution/tasks/parent/dispatch-subagent-workflow-tool.js", async () =
           fanoutSize,
           runtimeInput,
           toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+          transport: "local",
         }),
-        workflowRunId: "workflow-tool-test-run",
+        workflowRunId: "local-workflow-tool-test-run",
+      };
+    }),
+    dispatchRemoteSubagentWorkflow: vi.fn(async ({ entry, fanoutSize, runtimeInput }) => {
+      const action = entry.kind === "resume" ? entry.action : entry.target.action;
+      return {
+        result: await dispatchSubagentWorkflowToolStep({
+          entry,
+          fanoutSize,
+          runtimeInput,
+          toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+          transport: "remote",
+        }),
+        workflowRunId: "remote-workflow-tool-test-run",
       };
     }),
   };
@@ -309,6 +343,48 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         taskRunId: "task-run-1",
       }),
     ]);
+  });
+
+  it("routes a tasks-mode remote child through the remote Workflow definition", async () => {
+    const session = createStartSession({ kind: "remote" });
+    installContext(
+      session,
+      { definition: REMOTE_REGISTRY_DEFINITION, nodeId: "remote/research" },
+      true,
+    );
+    vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({
+      runId: "task-run-1",
+    });
+
+    const result = await dispatchTaskStep({
+      callbackBaseUrl: "https://caller.example.com",
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const state = readResultSessionState(result, session);
+
+    expect(mocks.startRemoteAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callbackBaseUrl: "https://caller.example.com",
+        callbackToken: expect.stringMatching(/^task:task_[^:]+:[a-f0-9]{32}$/),
+      }),
+    );
+    expect(result.results[0]).toMatchObject({
+      backgroundTask: { status: "working" },
+      kind: "subagent-result",
+      output: { status: "working" },
+    });
+    expect(getAgentHandleStore(state)?.handles[0]).toMatchObject({
+      address: {
+        callbackBaseUrl: "https://caller.example.com",
+        kind: "agent/remote",
+        sessionId: "remote-session-123456789012",
+        url: "https://registry.example.com",
+      },
+      phase: "addressed",
+    });
   });
 
   it("silently rejects a tasks-mode start that failed before index admission", async () => {

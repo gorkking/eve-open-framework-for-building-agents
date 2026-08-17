@@ -2,12 +2,12 @@
  * Task-mode sibling of `dispatchRuntimeActionsStep`, selected only when the
  * root agent enables `experimental.tasks`.
  *
- * Each local or remote delegation starts the internal `defineTool` executor in
- * `subagent-workflow-tool.ts` as a distinct Workflow run. That run re-enters
- * the existing task dispatcher for one model call, so the durable task run
- * remains the sole lifecycle writer and the existing local/remote transports
- * remain authoritative. Task-control calls execute inline because they operate
- * on the parent session rather than invoking a subagent.
+ * Local and remote delegations start their transport-specific internal
+ * `defineTool` executors as distinct Workflow runs. Each run re-enters the
+ * shared task lifecycle only after transport selection, so the durable task
+ * run remains the sole lifecycle writer while local hooks and remote HTTP
+ * callbacks stay separate. Task-control calls execute inline because they
+ * operate on the parent session rather than invoking a subagent.
  */
 
 import {
@@ -18,7 +18,13 @@ import {
 } from "#execution/dispatch-runtime-actions-shared.js";
 import { createDurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchPreparedTaskEntry } from "#execution/tasks/parent/dispatch-task-entry.js";
-import { dispatchSubagentWorkflowTool } from "#execution/tasks/parent/dispatch-subagent-workflow-tool.js";
+import {
+  dispatchLocalSubagentWorkflow,
+  dispatchRemoteSubagentWorkflow,
+  type SubagentWorkflowDispatch,
+} from "#execution/tasks/parent/subagent/dispatch.js";
+import { isLocalSubagentWorkflowEntry } from "#execution/tasks/parent/subagent/local.js";
+import { isRemoteSubagentWorkflowEntry } from "#execution/tasks/parent/subagent/remote.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
 
 export async function dispatchTaskStep(
@@ -71,11 +77,22 @@ export async function dispatchTaskStep(
       continue;
     }
 
-    const dispatched = await dispatchSubagentWorkflowTool({
-      entry,
-      fanoutSize: initial.fanoutSize,
-      runtimeInput: { ...input, sessionState },
-    });
+    let dispatched: SubagentWorkflowDispatch;
+    if (isLocalSubagentWorkflowEntry(entry)) {
+      dispatched = await dispatchLocalSubagentWorkflow({
+        entry,
+        fanoutSize: initial.fanoutSize,
+        runtimeInput: { ...input, sessionState },
+      });
+    } else if (isRemoteSubagentWorkflowEntry(entry)) {
+      dispatched = await dispatchRemoteSubagentWorkflow({
+        entry,
+        fanoutSize: initial.fanoutSize,
+        runtimeInput: { ...input, sessionState },
+      });
+    } else {
+      throw new Error("Task dispatch produced an unclassified subagent transport.");
+    }
     results.push(...dispatched.result.results);
     pendingTasks.push(...dispatched.result.pendingTasks);
     sessionState = dispatched.result.sessionState;
