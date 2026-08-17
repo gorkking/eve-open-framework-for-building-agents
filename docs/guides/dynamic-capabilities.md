@@ -183,11 +183,11 @@ A dynamic tool or skill whose name matches an **authored** one **overrides** it 
 
 | Event             | Resolver runs                              | Tools available for             |
 | ----------------- | ------------------------------------------ | ------------------------------- |
-| `session.started` | At session start and some durable resumes¹ | Every model call in the session |
+| `session.started` | At session start; sometimes after a pause¹ | Every model call in the session |
 | `turn.started`    | Once per turn                              | Every model call in the turn    |
 | `step.started`    | Before each model call                     | That model call                 |
 
-¹ When a durable resume rebuilds runtime context after parking, such as while waiting for approval or input, eve reruns only session resolvers whose executors or approval policies were not transformed into registered step functions. It does not rerun these resolvers before each model call.
+¹ If a session pauses to wait for approval or other input, eve may run the resolver again when the session continues. Design session resolvers so they can safely run more than once. They do not run before every model call.
 
 ### Execution order
 
