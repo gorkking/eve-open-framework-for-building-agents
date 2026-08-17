@@ -164,7 +164,7 @@ export default defineDynamic({
 
 Write `execute` as an inline function expression, arrow, or method shorthand placed directly as the property value. The bundler transform stores the function and its closure variables for durable replay without rerunning the resolver.
 
-The transform does not detect `execute: myFn`, `execute: makeFn()`, or executors created inside an imported dependency. For a `session.started` tool, eve reconstructs these live functions by silently rerunning the owning resolver after a durable continuation. Keep session resolvers idempotent and avoid unnecessary side effects. A `turn.started` tool still requires an inline executor to survive a fresh runtime.
+The transform does not detect `execute: myFn`, `execute: makeFn()`, or executors created inside an imported dependency. For a `session.started` tool, eve can reconstruct these live functions by rerunning the owning resolver after a durable resume. Keep session resolvers idempotent and avoid unnecessary side effects. A `turn.started` tool still requires an inline executor to survive a fresh runtime.
 
 ### Naming
 
@@ -181,13 +181,13 @@ A dynamic tool or skill whose name matches an **authored** one **overrides** it 
 
 ### Events
 
-| Event             | Resolver runs          | Tools available for             |
-| ----------------- | ---------------------- | ------------------------------- |
-| `session.started` | At session start¹      | Every model call in the session |
-| `turn.started`    | Once per turn          | Every model call in the turn    |
-| `step.started`    | Before each model call | That model call                 |
+| Event             | Resolver runs                              | Tools available for             |
+| ----------------- | ------------------------------------------ | ------------------------------- |
+| `session.started` | At session start and some durable resumes¹ | Every model call in the session |
+| `turn.started`    | Once per turn                              | Every model call in the turn    |
+| `step.started`    | Before each model call                     | That model call                 |
 
-¹ eve may silently rerun a session resolver once per durable continuation to reconstruct executors or approval policies that were not transformed into registered step functions. It does not rerun the resolver before each model call.
+¹ When a durable resume rebuilds runtime context after parking, such as while waiting for approval or input, eve reruns only session resolvers whose executors or approval policies were not transformed into registered step functions. It does not rerun these resolvers before each model call.
 
 ### Execution order
 
