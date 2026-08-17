@@ -23,10 +23,10 @@ transports converge on the durable task lifecycle.**
    serialized tool input still match the original plan entry, asserts that the
    entry matches the selected transport, and executes it without reclassifying
    a continuation as a fresh start.
-5. The existing entry path creates the task run before the child start, starts
-   the real local eve runtime or remote transport, persists the child address,
-   and returns the normal working-task receipt. The task run remains the sole
-   writer for progress, input, completion, failure, and cancellation.
+5. The subagent admission step creates the task run before the child start,
+   starts the real local eve runtime or remote transport, persists the child
+   address, and returns the normal working-task receipt. The task run remains
+   the sole writer for progress, input, completion, failure, and cancellation.
 
 The Workflow tool run ends after dispatch admission. It does not wait for the
 background task to finish, so it neither duplicates the task lifecycle nor
