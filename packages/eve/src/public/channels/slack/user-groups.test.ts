@@ -188,6 +188,22 @@ describe("Slack Preview aliases", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("includes Slack's required scope in failed API errors", async () => {
+    await expect(
+      registerSlackPreviewAgent(
+        registration,
+        slack(async (operation): Promise<SlackApiResponse> => {
+          if (operation === "auth.test") return { ok: true, team_id: "T1", user_id: "UBOT" };
+          if (operation === "usergroups.list") return { ok: true, usergroups: [] };
+          if (operation === "usergroups.create") {
+            return { error: "missing_scope", needed: "usergroups:write", ok: false };
+          }
+          throw new Error(`Unexpected ${operation}`);
+        }),
+      ),
+    ).rejects.toThrow("missing_scope (required scope: usergroups:write)");
+  });
+
   it("disables an owned alias", async () => {
     const calls: string[] = [];
     await expect(

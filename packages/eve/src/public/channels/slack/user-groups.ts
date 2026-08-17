@@ -277,8 +277,11 @@ function isOwnedBy(group: Record<string, unknown> | undefined, userId: string): 
 
 function requireOk(operation: string, response: SlackApiResponse): void {
   if (response.ok) return;
+  const needed = optionalString(response.needed);
   throw new Error(
-    `Slack ${operation} failed: ${optionalString(response.error) ?? "unknown_error"}.`,
+    `Slack ${operation} failed: ${optionalString(response.error) ?? "unknown_error"}${
+      needed === undefined ? "" : ` (required scope: ${needed})`
+    }.`,
   );
 }
 
