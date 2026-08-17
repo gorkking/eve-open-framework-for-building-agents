@@ -9,11 +9,11 @@ import { resolveDiscoveryProject } from "#discover/project.js";
 import { resolveAgentWorkspace } from "#internal/agent-workspace.js";
 import { resolveEveProjectContext } from "#internal/project-context.js";
 
-async function createWorkspace(): Promise<string> {
+async function createWorkspace(agentPatterns: readonly string[] = ["agents/*"]): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "eve-workspace-"));
   await writeFile(
     join(root, "package.json"),
-    JSON.stringify({ eve: { agents: ["agents/*"] }, private: true }),
+    JSON.stringify({ eve: { agents: agentPatterns }, private: true }),
   );
   await Promise.all([
     mkdir(join(root, "agents", "support", "agent"), { recursive: true }),
@@ -23,7 +23,7 @@ async function createWorkspace(): Promise<string> {
 }
 
 describe("resolveAgentWorkspace", () => {
-  it("discovers strict direct children in deterministic order", async () => {
+  it("discovers globbed members in deterministic order", async () => {
     const root = await createWorkspace();
     await expect(resolveAgentWorkspace(root)).resolves.toMatchObject({
       members: [
@@ -34,6 +34,80 @@ describe("resolveAgentWorkspace", () => {
     });
   });
 
+  it("discovers exact paths and glob patterns outside agents/", async () => {
+    const root = await createWorkspace(["agents/support", "products/*/agent-app"]);
+    await mkdir(join(root, "products", "billing", "agent-app", "agent"), { recursive: true });
+    await mkdir(join(root, "products", "ignored", "not-an-agent"), { recursive: true });
+
+    await expect(resolveAgentWorkspace(root)).resolves.toMatchObject({
+      members: [
+        { name: "support", appRoot: join(root, "agents", "support") },
+        { name: "agent-app", appRoot: join(root, "products", "billing", "agent-app") },
+      ],
+    });
+  });
+
+  it("supports recursive glob patterns", async () => {
+    const root = await createWorkspace(["products/**/agent-app"]);
+    await mkdir(join(root, "products", "billing", "agent-app", "agent"), { recursive: true });
+    await mkdir(join(root, "products", "support", "specialists", "agent-app", "agent"), {
+      recursive: true,
+    });
+
+    await expect(resolveAgentWorkspace(root)).rejects.toThrow(
+      /multiple agent directories named "agent-app"/,
+    );
+  });
+
+  it("rejects root-agent coexistence", async () => {
+    const root = await createWorkspace();
+    await mkdir(join(root, "agent"));
+    await expect(resolveAgentWorkspace(root)).rejects.toThrow(
+      /root agent\/ and declared eve\.agents/,
+    );
+  });
+
+  it("rejects members without a nested agent directory", async () => {
+    const root = await createWorkspace(["agents/*"]);
+    await mkdir(join(root, "agents", "not-an-agent"));
+    await expect(resolveAgentWorkspace(root)).rejects.toThrow(
+      /expected agents\/not-an-agent\/agent/,
+    );
+  });
+
+  it("rejects flat members with a migration hint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eve-workspace-flat-"));
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ eve: { agents: ["agents/support"] }, private: true }),
+    );
+    await mkdir(join(root, "agents", "support"), { recursive: true });
+    await writeFile(join(root, "agents", "support", "agent.ts"), "export default {};\n");
+    await expect(resolveAgentWorkspace(root)).rejects.toThrow(/Move flat authored files/);
+  });
+
+  it.each([
+    ["empty", []],
+    ["absolute", ["/agents/support"]],
+    ["parent traversal", ["../agents/support"]],
+    ["unsupported glob syntax", ["agents/{support,research}"]],
+  ])("rejects %s workspace declarations", async (_description, agentPatterns) => {
+    const root = await createWorkspace(agentPatterns);
+    await expect(resolveAgentWorkspace(root)).rejects.toThrow(/eve\.agents/);
+  });
+
+  it("rejects duplicate names resolved from different paths", async () => {
+    const root = await createWorkspace(["teams/a/support", "teams/b/support"]);
+    await Promise.all([
+      mkdir(join(root, "teams", "a", "support", "agent"), { recursive: true }),
+      mkdir(join(root, "teams", "b", "support", "agent"), { recursive: true }),
+    ]);
+
+    await expect(resolveAgentWorkspace(root)).rejects.toThrow(
+      /multiple agent directories named "support"/,
+    );
+  });
+
   it("does not recognize the retired collection declaration", async () => {
     const root = await mkdtemp(join(tmpdir(), "eve-retired-collection-"));
     await writeFile(join(root, "package.json"), JSON.stringify({ eve: { collection: true } }));
@@ -42,56 +116,35 @@ describe("resolveAgentWorkspace", () => {
     await expect(resolveAgentWorkspace(root)).resolves.toBeUndefined();
   });
 
-  it("rejects root-agent coexistence", async () => {
-    const root = await createWorkspace();
-    await mkdir(join(root, "agent"));
-    await expect(resolveAgentWorkspace(root)).rejects.toThrow(/both root agent\/ and agents\//);
-  });
-
-  it("rejects flat children", async () => {
-    const root = await mkdtemp(join(tmpdir(), "eve-workspace-flat-"));
-    await writeFile(
-      join(root, "package.json"),
-      JSON.stringify({ eve: { agents: ["agents/*"] }, private: true }),
-    );
-    await mkdir(join(root, "agents", "support"), { recursive: true });
-    await writeFile(join(root, "agents", "support", "agent.ts"), "export default {};\n");
-    await expect(resolveAgentWorkspace(root)).rejects.toThrow(/Move flat authored files/);
-  });
-
-  it("rejects child packages", async () => {
-    const root = await createWorkspace();
-    await writeFile(join(root, "agents", "support", "package.json"), "{}\n");
-    await expect(resolveAgentWorkspace(root)).rejects.toThrow(/package.json.*not supported/);
-  });
-
-  it("keeps nested named agents discoverable without child package files", async () => {
-    const root = await createWorkspace();
-    await expect(resolveDiscoveryProject(join(root, "agents", "support"))).resolves.toEqual({
-      agentRoot: join(root, "agents", "support", "agent"),
-      appRoot: join(root, "agents", "support"),
+  it("keeps declared nested agents discoverable", async () => {
+    const root = await createWorkspace(["products/support"]);
+    const supportRoot = join(root, "products", "support");
+    await mkdir(join(supportRoot, "agent"), { recursive: true });
+    await expect(resolveDiscoveryProject(supportRoot)).resolves.toEqual({
+      agentRoot: join(supportRoot, "agent"),
+      appRoot: supportRoot,
       layout: "nested",
     });
   });
 
-  it("does not treat an undeclared agents/<name> path as a marker-free project", async () => {
+  it("does not treat an undeclared path as a marker-free project", async () => {
     const source = createMemoryProjectSource({
       files: {
-        "/memory/project/agents/support/agent/instructions.md": "Support users.",
+        "/memory/project/products/support/agent/instructions.md": "Support users.",
       },
     });
 
     await expect(
-      resolveDiscoveryProject("/memory/project/agents/support", { source }),
+      resolveDiscoveryProject("/memory/project/products/support", { source }),
     ).rejects.toThrow(/Could not resolve an eve agent root/);
   });
 
-  it("uses the same workspace semantics through an in-memory project source", async () => {
+  it("uses custom workspace semantics through an in-memory project source", async () => {
     const root = join(process.cwd(), "memory", "project");
-    const supportRoot = join(root, "agents", "support");
+    const supportRoot = join(root, "products", "support");
     const source = createMemoryProjectSource({
       files: {
-        [join(root, "package.json")]: '{"eve":{"agents":["agents/*"]}}',
+        [join(root, "package.json")]: '{"eve":{"agents":["products/*"]}}',
         [join(supportRoot, "agent", "instructions.md")]: "Support users.",
       },
     });
@@ -103,7 +156,7 @@ describe("resolveAgentWorkspace", () => {
     });
   });
 
-  it("does not infer a workspace from an undeclared agents directory", async () => {
+  it("does not infer a workspace from undeclared directories", async () => {
     const root = await mkdtemp(join(tmpdir(), "eve-undeclared-agents-"));
     await writeFile(join(root, "package.json"), JSON.stringify({ private: true }));
     const supportRoot = join(root, "agents", "support");
@@ -121,9 +174,10 @@ describe("resolveAgentWorkspace", () => {
     });
   });
 
-  it("resolves the workspace that owns a package-less child", async () => {
-    const root = await createWorkspace();
-    const supportRoot = join(root, "agents", "support");
+  it("resolves a custom-path workspace member from its application root", async () => {
+    const root = await createWorkspace(["products/support"]);
+    const supportRoot = join(root, "products", "support");
+    await mkdir(join(supportRoot, "agent"), { recursive: true });
     await expect(resolveEveProjectContext(supportRoot)).resolves.toMatchObject({
       workspace: { root },
       environmentRoot: root,
