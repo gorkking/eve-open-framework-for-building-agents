@@ -62,9 +62,9 @@ describe("Slack Preview aliases", () => {
       {
         operation: "usergroups.create",
         body: {
-          description: `eve:preview-agent:v1:${JSON.stringify(registration)}`,
+          description: `eve:pa:1:${registration.url}`,
           handle: registration.alias,
-          name: registration.alias,
+          name: registration.branch,
           team_id: "T1",
         },
       },
@@ -92,13 +92,14 @@ describe("Slack Preview aliases", () => {
               handle: registration.alias,
               id: "S1",
               is_enabled: enabled,
+              name: registration.branch,
               updated_by: "UBOT",
             },
           ],
         };
       }
       if (operation === "usergroups.update") {
-        description = `eve:preview-agent:v1:${JSON.stringify(registration)}`;
+        description = `eve:pa:1:${registration.url}`;
         return { ok: true };
       }
       if (operation === "usergroups.enable") {
@@ -114,6 +115,7 @@ describe("Slack Preview aliases", () => {
     });
     await expect(resolveSlackPreviewAgentRoute("<!subteam^S1>", slack(request))).resolves.toEqual({
       ...registration,
+      description: "Preview Deployment for feature/preview.",
       id: "S1",
     });
     expect(calls).toEqual([
@@ -135,16 +137,18 @@ describe("Slack Preview aliases", () => {
           usergroups: [
             {
               created_by: "UBOT",
-              description: `eve:preview-agent:v1:${JSON.stringify(registration)}`,
+              description: `eve:pa:1:${registration.url}`,
               handle: registration.alias,
               id: "S1",
+              name: registration.branch,
               updated_by: "UBOT",
             },
             {
               created_by: "UBOT",
-              description: `eve:preview-agent:v1:${JSON.stringify({ ...registration, alias: "other" })}`,
+              description: `eve:pa:1:${registration.url}`,
               handle: "other",
               id: "S2",
+              name: registration.branch,
               updated_by: "UBOT",
             },
           ],
@@ -156,6 +160,7 @@ describe("Slack Preview aliases", () => {
       resolveSlackPreviewAgentRoute("<!subteam^S1> investigate", slack(request)),
     ).resolves.toEqual({
       ...registration,
+      description: "Preview Deployment for feature/preview.",
       id: "S1",
     });
     await expect(

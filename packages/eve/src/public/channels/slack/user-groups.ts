@@ -4,7 +4,7 @@ import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import type { SlackApiResponse, SlackHandle } from "#public/channels/slack/api.js";
 
 const USER_GROUP_MENTION = /<!subteam\^([A-Z0-9]+)(?:\|[^>]+)?>/gu;
-const PREVIEW_AGENT_ROUTE_PREFIX = "eve:preview-agent:v1:";
+const PREVIEW_AGENT_ROUTE_PREFIX = "eve:pa:1:";
 
 /** One Slack user-group mention found in message text. */
 export interface SlackUserGroupMention {
@@ -87,7 +87,7 @@ export async function registerSlackPreviewAgent(
     const updated = await slack.request("usergroups.update", {
       description: encodePreviewAgentRoute(route),
       handle: route.alias,
-      name: route.alias,
+      name: route.branch,
       team_id: teamId,
       usergroup: existing.id,
     });
@@ -105,7 +105,7 @@ export async function registerSlackPreviewAgent(
   const created = await slack.request("usergroups.create", {
     description: encodePreviewAgentRoute(route),
     handle: route.alias,
-    name: route.alias,
+    name: route.branch,
     team_id: teamId,
   });
   requireOk("usergroups.create", created);
@@ -167,7 +167,11 @@ export async function resolveSlackPreviewAgentRoute(
   const routes = mentions.flatMap((mention) => {
     const group = userGroups(listed).find((candidate) => candidate.id === mention.id);
     if (group === undefined || !isOwnedBy(group.record, userId)) return [];
-    const route = decodePreviewAgentRoute(group.description);
+    const route = decodePreviewAgentRoute({
+      alias: group.handle,
+      branch: group.name,
+      value: group.description,
+    });
     return route === undefined ? [] : [{ ...route, id: group.id }];
   });
   if (routes.length > 1) throw new Error("Mention exactly one registered Preview agent.");
@@ -224,15 +228,25 @@ function normalizeAlias(value: string): string {
 }
 
 function encodePreviewAgentRoute(route: Omit<SlackPreviewAgentRoute, "id">): string {
-  return `${PREVIEW_AGENT_ROUTE_PREFIX}${JSON.stringify(route)}`;
+  return `${PREVIEW_AGENT_ROUTE_PREFIX}${route.url}`;
 }
 
-function decodePreviewAgentRoute(value: unknown): Omit<SlackPreviewAgentRoute, "id"> | undefined {
-  if (typeof value !== "string" || !value.startsWith(PREVIEW_AGENT_ROUTE_PREFIX)) return undefined;
+function decodePreviewAgentRoute(input: {
+  readonly alias: string;
+  readonly branch: string | undefined;
+  readonly value: unknown;
+}): Omit<SlackPreviewAgentRoute, "id"> | undefined {
+  if (typeof input.value !== "string" || !input.value.startsWith(PREVIEW_AGENT_ROUTE_PREFIX)) {
+    return undefined;
+  }
+  if (input.branch === undefined) return undefined;
   try {
-    const parsed = JSON.parse(value.slice(PREVIEW_AGENT_ROUTE_PREFIX.length));
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    return normalizePreviewAgentRegistration(parsed as SlackPreviewAgentRegistration);
+    return normalizePreviewAgentRegistration({
+      alias: input.alias,
+      branch: input.branch,
+      description: `Preview Deployment for ${input.branch}.`,
+      url: input.value.slice(PREVIEW_AGENT_ROUTE_PREFIX.length),
+    });
   } catch {
     return undefined;
   }
@@ -243,6 +257,7 @@ function userGroups(response: SlackApiResponse): Array<{
   handle: string;
   description?: string;
   enabled: boolean;
+  name?: string;
   record: Record<string, unknown>;
 }> {
   if (!Array.isArray(response.usergroups)) return [];
@@ -259,6 +274,7 @@ function userGroups(response: SlackApiResponse): Array<{
             handle,
             description: optionalString(record.description),
             enabled: record.is_enabled !== false,
+            name: optionalString(record.name),
             record,
           },
         ];
