@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1673
 status: proposed
-last_updated: "2026-08-05"
+last_updated: "2026-08-14"
 ---
 
 # Durable hierarchical progress
@@ -9,89 +9,108 @@ last_updated: "2026-08-05"
 ## Summary
 
 eve should maintain a durable, framework-owned work graph for the active turn
-and its delegated work. The graph is derived from authoritative runtime
-lifecycle state, composes through child sessions, and remains independent of
-channel effects. A root channel may render a safe, selected view of that graph.
+and its delegated work. The graph should derive from authoritative runtime
+lifecycle state, compose through child sessions, and remain independent of
+channel effects. A root channel can render a selected view without rebuilding
+execution ownership from raw streams.
 
 ```text
-runtime lifecycle + direct child state
-                │
-                ▼
-       durable work graph
-                │
-                ▼
-    channel-specific presentation
+runtime lifecycle + child observations
+                 │
+                 ▼
+        durable work graph
+                 │
+                 ▼
+     channel-specific presentation
 ```
 
-The first implementation should prove this boundary using existing lifecycle
-facts and local subagents. It should not initially define a general progress
-platform around plans, arbitrary annotations, public client events, remote
-capability negotiation, or custom channel APIs.
+The implementation experiment has validated the main boundary:
 
-A later PR should add action-local `reportProgress()` and automatic MCP progress
-adaptation after action ownership, child propagation, and rendering semantics
-are stable.
+- ordinary turn, step, action, blocker, and local-child state can reduce into a
+  useful graph without authored progress calls;
+- local child snapshots can be read without forwarding every child event;
+- Slack can render compact status and hierarchical activity from the same graph;
+- observation polling must remain separate from the parent's terminal-result
+  control loop;
+- channel presentation state needs explicit ownership across parent and monitor
+  workflows.
+
+Since the original proposal, eve also gained child-authored `task_update`
+notifications for background tasks in [PR #2113](https://github.com/vercel/eve/pull/2113).
+Those updates provide immediate semantic milestones over the existing task
+transport. They complement rather than replace the observed work graph: a task
+update says what the child chooses to report, while the graph records what the
+runtime can verify.
+
+The next design step should combine those sources before adding a broad public
+progress API. In particular, this proposal no longer recommends introducing
+`ctx.reportProgress()` as the immediate next layer.
 
 ## Problem
 
 Channels currently infer progress independently from low-level stream events.
-Slack, for example, derives status text from turn start, reasoning, assistant
-narration, action requests, authorization completion, visible output, and
-terminal events. The resulting state is implicit and channel-local.
+Slack, for example, can derive status text from turn start, reasoning, assistant
+narration, action requests, visible output, and terminal events. That state is
+implicit and channel-local.
 
-Delegated sessions make this boundary more visible. A parent knows that it
-started a child and eventually receives its terminal result, but the child's
-ordinary step and action lifecycle does not bubble through the parent. A channel
-that wants to show parallel delegated work must attach to child streams and
-rebuild ownership, ordering, and terminal state itself.
+Delegated sessions make the gap clearer. A parent owns a child action and
+receives its terminal result, but the child's ordinary step and action lifecycle
+does not appear in the parent session stream. A channel that wants to show
+parallel delegated work must otherwise attach to child streams and reconstruct
+ownership, ordering, and terminal state itself.
 
-The missing primitive is not presentation text. It is durable work ownership:
+The missing primitive is durable work ownership:
 
-> What work is currently active, waiting, or terminal, and what direct child
+> What work is currently active, blocked, or terminal, and what direct child
 > work does it own?
+
+A free-form status message alone cannot answer that question. Conversely, an
+observed graph cannot always explain the child's semantic goal. eve needs a
+clear boundary between observed execution facts, child-authored milestones,
+and presentation.
 
 ## Design principles
 
-1. **Observed work is the core.** The graph records runtime truth: active turn,
-   model steps, actions, blockers, and delegated children.
-2. **Plans are separate intent.** A todo list may later attach to a turn, but it
-   does not define execution truth and does not imply action-to-plan-item edges.
-3. **The graph is desired state, not history.** The durable event stream remains
+1. **Observed work is the core.** The graph records runtime truth: the active
+   turn, model steps, actions, blockers, and delegated children.
+2. **Authored updates annotate observed work.** A child milestone may add useful
+   text to its owning action, but it does not redefine lifecycle phase.
+3. **Plans are separate intent.** A todo list may attach to a turn, but it does
+   not define execution truth or imply action-to-plan-item edges.
+4. **The graph is desired state, not history.** The durable event stream remains
    the complete audit trail.
-4. **Reduction is framework-owned.** Agents do not customize graph invariants,
-   retention, child revisions, or terminal precedence.
-5. **Children publish snapshots.** Parents receive versioned child state rather
-   than every raw child event.
-6. **Presentation belongs to channels.** The graph contains no Slack blocks,
-   message ids, API operations, or presentation-maintenance timers.
-7. **Blockers are first-class.** Waiting for input, authorization, or approval is
-   authoritative work state, not an absence of progress.
-8. **Terminal state wins.** Late or replayed updates cannot resurrect settled
-   actions or children.
+5. **Reduction is framework-owned.** Agents do not customize graph invariants,
+   child revisions, retention, or terminal precedence.
+6. **Children own their projections.** Parents read versioned child state rather
+   than ingesting every raw child event.
+7. **Control and observation stay separate.** Terminal results, input, and
+   authorization use immediate control paths. Routine child observations must
+   not destabilize or wake the parent turn for every step.
+8. **Presentation belongs to channels.** The graph contains no Slack blocks,
+   message IDs, API operations, or presentation timers.
+9. **Blockers are first-class.** Waiting for input, authorization, or approval is
+   authoritative state, not an absence of progress.
+10. **Terminal state wins.** Late, replayed, or polled updates cannot resurrect
+    settled actions or channel activity.
 
-## Proposed v1 semantics
+## Proposed core semantics
 
-### Work graph
+### Session-relative work graph
 
-The first graph is deliberately small and internal:
+The initial graph should remain small and internal. A session-relative shape is
+sufficient; recursive child snapshots provide hierarchy without requiring a
+public root wrapper:
 
 ```ts
 type WorkPhase = "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
-interface WorkSnapshot {
+interface WorkGraph {
   readonly revision: number;
-  readonly root: WorkScope;
-}
-
-interface WorkScope {
-  readonly sessionId: string;
-  readonly agentName: string;
-  readonly phase: WorkPhase;
   readonly turn?: WorkTurn;
 }
 
 interface WorkTurn {
-  readonly turnId: string;
+  readonly id: string;
   readonly phase: WorkPhase;
   readonly steps: readonly WorkStep[];
   readonly blockers: readonly WorkBlocker[];
@@ -105,10 +124,21 @@ interface WorkStep {
 
 interface WorkAction {
   readonly callId: string;
-  readonly kind: "tool" | "skill" | "subagent" | "remote-agent";
+  readonly kind: "tool-call" | "load-skill" | "subagent-call" | "remote-agent-call";
   readonly name: string;
   readonly phase: WorkPhase;
-  readonly child?: WorkScope;
+  readonly detail?: string;
+  readonly update?: WorkUpdate;
+  readonly child?: {
+    readonly sessionId: string;
+    readonly work?: WorkGraph;
+  };
+}
+
+interface WorkUpdate {
+  readonly message: string;
+  readonly revision: number;
+  readonly source: "task-update";
 }
 
 interface WorkBlocker {
@@ -119,8 +149,9 @@ interface WorkBlocker {
 }
 ```
 
-The public names and exact serialization are not committed by v1. The initial
-shape should remain internal until two renderers consume it successfully.
+The exact serialization and public names are not committed here. The graph
+should remain internal until its lifecycle and presentation consumers
+stabilize.
 
 ### Planless turns
 
@@ -136,13 +167,14 @@ turn [running]
     ├── run reproduction [running]
     └── researcher [running]
         └── child turn
-            └── inspect traces [running]
+            ├── discover [completed]
+            └── inspect [running]
 ```
 
-Actions observed under the same `stepIndex` are siblings. Because
-`actions.requested` may arrive incrementally, the reducer uses runtime action
-state—not one event batch—to determine which actions are concurrently active.
-A delegated action owns its child scope.
+Actions observed under the same `stepIndex` are siblings. A delegated action
+owns its child graph. Tool inputs may contribute bounded deterministic detail
+when a renderer-safe field is known, but the graph must not expose arbitrary
+arguments or infer future work.
 
 The graph does not infer a plan, user intent, or a relationship between an
 action and a hypothetical task.
@@ -153,325 +185,266 @@ A blocker belongs to the turn and may identify its owning action:
 
 ```text
 turn [blocked]
-├── step 1 [completed]
-│   └── update feature flag [blocked]
+├── update feature flag [blocked]
 └── approval [blocked]
     └── owner: update feature flag
 ```
 
 When the blocker resolves, the same blocker settles and the turn resumes. It is
-not replaced with a new unrelated status.
+not replaced with an unrelated status.
 
 ### Scope compaction
 
 The live graph is not an audit log:
 
-- retain all active and blocked actions;
-- retain completed actions while their step remains active;
-- collapse completed step internals to a step outcome when the turn advances;
-- retain failure/cancellation detail needed to explain the outcome;
-- retain active child scopes until their owning action settles;
-- remove the completed turn from the live session scope after settlement;
+- retain active and blocked actions;
+- retain completed actions while their surrounding work remains useful to the
+  active presentation;
+- collapse completed step internals as the turn advances;
+- retain failure or cancellation detail needed to explain the outcome;
+- retain active child graphs until their owning action settles;
+- remove the completed turn from live session state after settlement;
 - preserve the full sequence in the existing durable event stream.
 
-These rules are deterministic framework invariants, not authored retention
-settings.
+The implementation experiment retained more completed child actions than this
+minimal policy so Slack could show observed stage history. The final compaction
+rule should be based on bounded size and renderer needs, not on the fixture's
+three-stage shape.
 
-## Local child propagation
+## Child observation and control
 
-A delegated local session reduces its own graph and publishes a versioned
-snapshot through the existing parent turn inbox topology:
+### Local child work projections
 
-```ts
-interface ChildWorkUpdate {
-  readonly kind: "subagent-work";
-  readonly callId: string;
-  readonly childSessionId: string;
-  readonly revision: number;
-  readonly snapshot: WorkSnapshot;
-  readonly subagentName: string;
-}
-```
-
-The parent:
-
-1. binds the update to a running child handle by `callId` and session id;
-2. rejects stale revisions;
-3. replaces the child snapshot on the owning action;
-4. increments its own revision only when desired state changes;
-5. republishes its snapshot upward when it is itself delegated;
-6. rejects every child update after the action becomes terminal.
-
-Terminal result delivery and work updates may race. Both orders must converge
-to the same terminal parent graph. Child progress delivery is best-effort and
-must not delay model execution or terminal settlement indefinitely.
-
-The v1 payload is runtime-internal. Its shape should avoid assumptions that
-would prevent later remote delivery, but v1 does not define public remote
-capability negotiation.
-
-## Initial Slack consumers
-
-Slack is the proving ground, not part of the graph contract.
-
-### Deterministic status renderer
-
-The first consumer selects one compact line from the graph while preserving
-current visible behavior where practical:
+A local child writes its latest committed `WorkGraph` to a child-owned,
+namespaced workflow stream. A reader resolves the child session through the
+parent's running handle and reads the latest committed snapshot.
 
 ```text
-Running the checkout reproduction…
+child turn workflow
+  └── commit work graph → child eve.work projection
+
+parent control path
+  └── wait for terminal/input/auth inbox messages
+
+sibling work monitor
+  ├── read direct child eve.work tails
+  ├── compose newer snapshots
+  ├── render changed desired state
+  └── sleep for a bounded interval
 ```
 
-For parallel work:
+This structure follows from a failed experiment. Racing a durable timer against
+the parent turn's inbox iterator introduced competing replay paths and prevented
+the turn from reliably advancing after both child results were ready. Polling in
+a sibling workflow leaves the existing result-wait protocol unchanged.
+
+The monitor is observational:
+
+- it does not own terminal child results;
+- it does not mutate the parent's turn cursor;
+- it adopts only newer child revisions;
+- it stops when observed children are terminal;
+- polling failure must not fail the parent turn.
+
+The prototype uses a ten-second interval. That value is an operational default,
+not part of the graph contract.
+
+### Background task updates
+
+Merged background-task support gives task-owned children an immediate semantic
+path:
 
 ```text
-Researching three approaches…
+task-owned child
+  └── task_update({ message })
+        └── local task inbox or remote callback
+              └── deduplicated parent notification
 ```
 
-The renderer owns:
+A task update should annotate the matching child action or task node. It should
+not change the action's phase, append unbounded history, or replace framework-
+observed lifecycle facts.
 
-- human labels for known action kinds;
-- truncation and safe argument selection;
-- prioritizing blockers over active work;
-- summarizing parallel children;
-- clearing or superseding status after visible output;
-- all Slack API behavior and presentation maintenance.
+The two sources have different guarantees:
 
-Reasoning-derived or model-narrated status can remain a separate Slack policy
-while the graph is evaluated; raw reasoning does not need to enter the v1 work
-graph.
+| Source        | Meaning                            | Delivery                 | Coverage                             |
+| ------------- | ---------------------------------- | ------------------------ | ------------------------------------ |
+| Work snapshot | Framework-observed lifecycle state | Bounded local polling    | Local delegated sessions             |
+| `task_update` | Child-authored semantic milestone  | Immediate task transport | Task-owned local and remote children |
 
-### Hierarchical activity-message spike
+A practical next integration should use immediate task updates when available
+and retain snapshot polling as reconciliation and as a fallback for ordinary
+local subagents. The framework should coalesce repeated authored updates and
+bind them to stable task or call identity.
 
-The second consumer updates one Slack message from the same graph:
+### Terminal precedence
+
+Control and presentation can still race. The following sequence is valid:
 
 ```text
-Cold-start investigation
-
-✓ Dependency analysis
-  Found eager initialization
-
-◐ Bundle analysis
-  Running measurements
-
-! Runtime analysis
-  Waiting for access
+parent terminal renderer deletes or settles activity
+late monitor poll attempts an update
+channel rejects or ignores the stale update
 ```
 
-This renderer validates that the graph contains enough information for the
-motivating nested-work use case. It should support:
+The channel must fence terminal presentation. In the Slack experiment, the
+parent owns creation and terminal deletion of the transient activity message;
+the monitor may update an existing message but cannot recreate a missing one.
+A general channel contract needs equivalent ownership without exposing Slack
+message semantics in the graph.
 
-- parallel and nested local children;
-- active, blocked, completed, failed, and cancelled states;
-- stable in-place updates;
-- completed-scope collapse;
-- missing-message recovery;
-- terminal settlement.
+## Slack as the proving ground
 
-It may remain internal or experimental. The generic channel API should be
-extracted only after the status and activity renderers demonstrate a stable
-common input.
+Slack is a consumer of the graph, not part of its contract.
 
-## PR stack
+### Compact status
 
-### PR 1 — Pure internal work graph
+The compact renderer selects one deterministic line from active work. It owns
+human labels, truncation, blocker priority, parallel-child summarization, and
+status clearing. Reasoning-derived status may remain a separate policy; raw
+reasoning does not belong in the work graph.
 
-Add a pure reducer over existing authoritative lifecycle facts:
+### Hierarchical activity
 
-- turn and step lifecycle;
-- runtime action requests and results;
-- child dispatch and settlement;
-- input, authorization, and approval waits;
-- cancellation and failure.
+The activity renderer maintains one transient Slack message with one native
+`task_card` block per direct action or subagent. Child actions appear as
+rich-text details:
 
-Establish stable action identity, planless step grouping, replay determinism,
-terminal precedence, and scope compaction. Add no visible behavior or public
-API.
+```text
+Researcher [in progress]
+  ✓ discover
+  ◐ inspect
 
-Acceptance criteria:
-
-- planless turns reduce identically across replay;
-- incremental action request events converge on runtime action state;
-- parallel actions retain independent `callId` identity;
-- blockers attach and settle without losing their owner;
-- late events cannot rewrite terminal actions;
-- completed step detail collapses deterministically.
-
-### PR 2 — Durable local-child composition
-
-Publish versioned local-child snapshots and compose them into the parent graph.
-
-Acceptance criteria:
-
-- two parallel children remain independent;
-- a nested child update bubbles one parent at a time;
-- stale revisions are ignored;
-- terminal result/update races converge;
-- cancellation settles descendant work;
-- propagation failure does not fail an active turn;
-- no public remote wire contract is introduced.
-
-### PR 3 — Internal Slack status consumer
-
-Render the work graph through Slack's existing compact status surface. Preserve
-visible defaults where practical and keep every Slack-specific concern inside
-the Slack package.
-
-Acceptance criteria:
-
-- simple tool calls show useful deterministic status;
-- parallel children collapse to compact copy;
-- blockers outrank generic running status;
-- terminal and visible-output behavior remains correct;
-- the work graph contains no Slack fields.
-
-### PR 4 — Internal Slack activity-message renderer
-
-Add an internal or experimental replaceable message that renders hierarchical
-work.
-
-Acceptance criteria:
-
-- simple planless turns are not blank;
-- parallel and nested children update stable rows in place;
-- completed scopes collapse while failures remain legible;
-- blockers render distinctly from running work;
-- terminal state settles the message;
-- the renderer requires no child stream attachment outside framework snapshot
-  propagation.
-
-### PR 5 — `reportProgress()` and automatic MCP adaptation
-
-After the graph and propagation path are proven, add action-local authored
-reports:
-
-```ts
-interface ProgressReport {
-  readonly message?: string;
-  readonly progress?: number;
-  readonly total?: number;
-  readonly unit?: string;
-}
-
-export default defineTool({
-  async execute(input, ctx) {
-    await ctx.reportProgress({
-      message: "Indexing documents",
-      progress: 250,
-      total: 1_000,
-      unit: "documents",
-    });
-  },
-});
+Verifier [in progress]
+  ✓ prepare
+  ◐ validate
 ```
 
-`ToolContext.callId` supplies ownership. MCP `notifications/progress` enters the
-same internal action-report path by privately correlating `progressToken` to the
-active eve call.
+The experiment established several presentation constraints:
 
-This PR owns the hard durability semantics:
+- native `plan` blocks and standalone `task_card` details may collapse when a
+  whole message is replaced with `chat.update`;
+- Slack does not expose client expansion state through Block Kit;
+- standard section blocks remain the predictable always-expanded fallback;
+- Slack's `chat.startStream`, `chat.appendStream`, and `chat.stopStream` task
+  updates are a better candidate for native live agent progress than repeated
+  full-message replacement, but adopting them changes response ownership and
+  needs separate design;
+- the parent must own terminal cleanup so a stale monitor cannot leave a live
+  card after the final response.
 
-- define exactly what awaiting `reportProgress()` guarantees;
-- identify updates by call, execution attempt, and revision;
-- reject reports from stale attempts and terminal actions;
-- define whether numeric progress must be monotonic within one attempt;
-- coalesce rapid reports without losing the latest accepted snapshot;
-- prevent terminal settlement from being followed by a late resurrection;
-- bound propagation volume through nested parents;
-- remove MCP correlation state on settlement.
+The current activity renderer should remain internal while those tradeoffs are
+evaluated. A generic public channel progress hook is premature.
+
+## Revised rollout
+
+### 1. Internal work graph
+
+Reduce existing turn, step, action, blocker, delegation, cancellation, and
+failure facts. Prove deterministic identity and terminal precedence with unit
+tests.
+
+### 2. Child-owned local projections
+
+Write committed local child snapshots to a namespaced stream and support direct
+latest-snapshot reads. Keep this layer independent of channels.
+
+### 3. Isolated observation monitor
+
+Run bounded polling in a sibling workflow. Do not race observation timers
+against the parent control inbox. Prove replay, result delivery, cancellation,
+and monitor settlement independently.
+
+### 4. Slack consumers
+
+Consume the same graph for compact status and hierarchical activity. Keep
+message identity, Block Kit, API calls, fallback behavior, and terminal cleanup
+inside Slack.
+
+### 5. Task-update composition
+
+Project merged `task_update` notifications onto the owning task or child action.
+Use them for immediate semantic milestones while preserving observed graph phase
+and bounded snapshot reconciliation.
 
 Acceptance criteria:
 
-- report, crash, and retry do not regress or duplicate action state incorrectly;
-- a late report after terminal settlement is rejected;
-- rapid reports coalesce to the latest accepted report;
-- parallel tools report independently;
-- a nested child's report reaches the root renderer;
-- MCP progress reaches the same renderer without authored eve-specific code;
-- MCP servers that emit no progress retain useful lifecycle fallback.
+- duplicate task updates do not append duplicate graph state;
+- an update cannot revive a terminal task or action;
+- a fast update that races terminal settlement converges on terminal state;
+- local and remote task updates use the same annotation semantics;
+- ordinary local subagents remain useful without authored updates;
+- renderers can prefer a fresh semantic message without losing structured child
+  lifecycle state.
 
-This is the first PR likely to expose a new authored API and therefore needs
-public documentation, focused integration coverage, extension compatibility
-updates, and a changeset.
+### 6. Reassess authored tool progress
+
+Do not add `ctx.reportProgress()` until task updates and streaming tool partials
+have shown a missing authoring case. Preliminary tool results may already
+provide a natural action-owned source for authored tools. MCP
+`notifications/progress` still needs private `progressToken`-to-`callId`
+correlation, attempt identity, coalescing, and terminal rejection.
+
+If a common report shape remains necessary, design it from those proven sources
+rather than adding a parallel side channel first.
 
 ## Follow-on hypotheses
-
-The following are deliberately outside the first five PRs.
 
 ### Structured plans
 
 The framework todo is model-authored intent, not execution truth. A future
-change may add stable item ids, plan title, description, and merge-by-id, then
-attach an optional plan beside the observed step ladder:
-
-```ts
-interface ProgressPlan {
-  readonly id: string;
-  readonly title?: string;
-  readonly items: readonly ProgressPlanItem[];
-}
-```
-
-No action-to-plan-item relationship should be inferred without an explicit
-protocol field.
+change may attach a structured plan beside the observed step ladder. No
+action-to-plan-item edge should be inferred without an explicit protocol field.
 
 ### Generic channel API
 
-After two Slack consumers prove a stable input, extract the smallest generic
-channel hook from their common needs. Do not commit to a public
-`defineChannel({ progress() {} })` shape before that evidence exists.
+Extract the smallest channel-neutral hook only after multiple channel consumers
+or Slack presentation strategies prove a stable input and ownership model.
 
 ### Public observation
 
-A future `progress.updated` hook or client event may expose snapshots to authored
-observers and web clients. Publishing the graph creates a durable protocol
-commitment and should follow stabilization.
+A future client event or hook may expose snapshots to authored observers.
+Publishing the graph creates a durable protocol commitment and should follow
+internal stabilization.
 
-### Remote child capability
+### Remote child observations
 
-Remote agents eventually need capability negotiation or a coarse compatibility
-adapter. The local-child protocol should remain transportable, but v1 does not
-publish a remote wire format.
+`task_update` covers semantic milestones for task-owned remote children, not a
+complete remote work graph. Full remote observation still requires capability
+negotiation or a coarse compatibility projection.
 
-### Partial-output projection
+### Streaming Slack tasks
 
-Streaming tool output may later project into `ProgressReport`. The full
-`action.partial` stream remains independently valuable and should not be
-replaced by progress.
-
-### Model summaries
-
-A channel may eventually use a cheap model to summarize a bounded graph for its
-audience. Summarization is presentation-only, cached by graph fingerprint, and
-must fall back to deterministic copy. It never replaces canonical child state.
+Slack's streaming task updates may avoid the collapse behavior caused by
+`chat.update`. They also couple activity progress to a streaming response
+message, so the design must define who starts and stops the stream, how replayed
+updates deduplicate, and how the final response is delivered.
 
 ### Liveness
 
-Remote liveness, elapsed-time decoration, and stall policy are operational
-concerns distinct from semantic work phase. Lack of recent activity must not be
-interpreted automatically as failure.
+Elapsed time, remote liveness, and stall policy are operational concerns. Lack
+of recent activity must not automatically imply failure.
 
 ## Verification strategy
 
-Choose the narrowest test tier for each invariant:
+Use the narrowest tier for each invariant:
 
-- pure reducer and compaction tests at the unit tier;
-- in-memory child composition and race tests at the integration tier;
-- workflow retry, cancellation, and durable inbox behavior at the scenario
-  tier where necessary;
-- deterministic fixture coverage for final Slack integration behavior.
+- unit tests for pure reduction, compaction, child adoption, and Slack rendering;
+- integration tests for in-memory child composition and task-update projection;
+- scenario tests for workflow replay, monitor isolation, cancellation, and
+  terminal races;
+- deterministic fixture evals for final Slack behavior.
 
-The implementation stack is successful when:
+The design is successful when:
 
 - planless root work reduces deterministically;
-- nested local work composes without channel-side child stream readers;
-- stale or late updates cannot overwrite terminal state;
-- status and activity renderers consume the same graph;
+- nested local work composes without channel-side child stream attachment;
+- the parent control path remains unchanged by observation polling;
+- authored task updates annotate rather than replace observed state;
+- stale child or monitor updates cannot overwrite terminal state;
+- compact and hierarchical renderers consume the same graph;
 - the graph remains free of Slack state;
-- ordinary tools remain useful without authored progress reports;
-- PR 5 can add precise reports without changing graph ownership or child
-  propagation semantics.
+- ordinary tools and subagents remain useful without authored progress calls.
 
 ## Out of scope
 
@@ -480,6 +453,6 @@ The implementation stack is successful when:
 - inferred action-to-plan-item ownership;
 - raw reasoning in the work graph;
 - exactly-once external message creation;
-- public remote-agent progress negotiation in v1;
+- a public remote work-graph protocol;
 - automatic model summarization in canonical reduction;
 - replacing the durable event stream with the live work graph.
