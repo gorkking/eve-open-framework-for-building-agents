@@ -583,7 +583,7 @@ describe("dispatchDynamicToolEvent", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("restores live session tools from the process cache without rerunning the resolver", async () => {
+  it("reuses registered session callbacks without rerunning the resolver", async () => {
     let ctx = createCtx();
     const handler = vi.fn(() => ({ tool: createFrameworkTool("cached live tool") }));
     const resolver = createResolver("live", ["session.started"], handler);
@@ -688,7 +688,7 @@ describe("dispatchDynamicToolEvent", () => {
     }
   });
 
-  it("rejects cross-resolver collisions while rebuilding a live snapshot", async () => {
+  it("rejects ownership changes while hydrating session callbacks", async () => {
     const ctx = createCtx();
     const original = [
       createResolver("alpha", ["session.started"], () => ({ a: createFrameworkTool() })),

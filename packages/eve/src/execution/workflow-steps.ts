@@ -11,13 +11,22 @@ import {
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import { preserveSerializedSessionDynamicModelSelection } from "#context/serialized-dynamic-model-selection.js";
 import { dispatchDynamicSkillEvent } from "#context/dynamic-skill-lifecycle.js";
-import { dispatchDynamicSubagentEvent } from "#context/dynamic-subagent-lifecycle.js";
-import { prepareDynamicSessionCapabilities } from "#context/dynamic-session-lifecycle.js";
+import {
+  dispatchDynamicSubagentEvent,
+  refreshDynamicSessionSubagentsForRuntimeRevision,
+} from "#context/dynamic-subagent-lifecycle.js";
 import {
   dispatchDynamicToolEvent,
   hydrateDynamicSessionTools,
+  refreshDynamicSessionToolsForRuntimeRevision,
 } from "#context/dynamic-tool-lifecycle.js";
-import { AuthKey, CapabilitiesKey, ModeKey } from "#context/keys.js";
+import {
+  AuthKey,
+  CapabilitiesKey,
+  ModeKey,
+  SessionDynamicSubagentRuntimeRevisionKey,
+  SessionDynamicToolRuntimeRevisionKey,
+} from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
@@ -86,6 +95,7 @@ import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
+import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
 
@@ -93,14 +103,8 @@ const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
 
 /**
- * Result of one durable harness step, consumed by the turn workflow.
- *
- * `park` carries the pending fields needed to choose a
- * {@link import("#execution/next-driver-action.js").NextDriverAction} without re-reading state.
- *
- * `cancelled` converts the harness's cancellation throw into a *returned*
- * result so workflow-core never classifies the abort as a step failure or
- * retries it; the epilogue runs in `settleCancelledTurnStep`.
+ * Result of one durable harness step. `cancelled` is returned so workflow-core
+ * does not retry it; `park` carries the pending state needed by the next action.
  */
 export type DurableStepResult =
   | {
@@ -193,13 +197,8 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // Outside a workflow context (e.g. tests) — getHookUrl will return undefined.
   }
 
-  // Authorization callback. If the delivery carries an
-  // `authorizationCallback` and there's a pending authorization on
-  // session state, extract it, build AuthorizationResult entries, and
-  // populate PendingAuthorizationResultKey so tools can complete auth.
-  // Strip the callback from the delivery so the adapter doesn't see it.
-  // Completion event names are collected here; emission happens after
-  // the `emit` function is created below.
+  // Resolve authorization callbacks before the adapter sees the delivery.
+  // Completion events are emitted after `emit` is created below.
   const pendingAuth = getPendingAuthorization(durableSession.state);
   let completedAuths: ReturnType<typeof matchAuthorizationCallbacks>["matches"] | undefined;
   if (pendingAuth && input.input?.kind === "deliver") {
@@ -347,18 +346,42 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     turnAgent: effectiveAgent.turnAgent,
   };
   const runtimeIdentity = buildRuntimeIdentity(effectiveNode);
-  const sessionStarted = initialEmissionState.sessionStarted;
   try {
-    await prepareDynamicSessionCapabilities({
-      compiledArtifactsSource: bundle.compiledArtifactsSource,
-      ctx,
-      event: createSessionStartedEvent({ runtime: runtimeIdentity }),
-      messages: initialSession.history,
-      persistentSubagentSessions,
-      sessionStarted,
-      subagentResolvers: dynamicSubagentResolvers,
-      toolResolvers: dynamicToolResolvers,
-    });
+    const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
+    const dynamicRuntimeRevision = deploymentId
+      ? `deployment:${deploymentId}`
+      : await resolveRuntimeCompiledArtifactsVersionedCacheKey(bundle.compiledArtifactsSource);
+    const sessionStarted = initialEmissionState.sessionStarted;
+
+    if (!sessionStarted) {
+      ctx.set(SessionDynamicSubagentRuntimeRevisionKey, dynamicRuntimeRevision);
+      ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
+    } else {
+      const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
+      await Promise.all([
+        refreshDynamicSessionSubagentsForRuntimeRevision({
+          ctx,
+          resolvers: dynamicSubagentResolvers,
+          event: refreshEvent,
+          messages: initialSession.history,
+          persistentSessions: persistentSubagentSessions,
+          runtimeRevision: dynamicRuntimeRevision,
+        }),
+        refreshDynamicSessionToolsForRuntimeRevision({
+          ctx,
+          resolvers: dynamicToolResolvers,
+          event: refreshEvent,
+          messages: initialSession.history,
+          runtimeRevision: dynamicRuntimeRevision,
+        }),
+      ]);
+      await hydrateDynamicSessionTools({
+        ctx,
+        resolvers: dynamicToolResolvers,
+        event: refreshEvent,
+        messages: initialSession.history,
+      });
+    }
   } catch (error) {
     await failChannelDeliveries(error);
     throw error;
@@ -433,15 +456,6 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // or the pending batch would re-park and later re-dispatch.
     throwIfTurnAborted(input.abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
-      if (sessionStarted) {
-        await hydrateDynamicSessionTools({
-          ctx,
-          resolvers: dynamicToolResolvers,
-          event: createSessionStartedEvent({ runtime: runtimeIdentity }),
-          messages: enrichedSession.history,
-        });
-      }
-
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
         input: resolved,
