@@ -17,6 +17,7 @@ import {
 } from "#context/dynamic-subagent-lifecycle.js";
 import {
   dispatchDynamicToolEvent,
+  hydrateDynamicSessionTools,
   refreshDynamicSessionToolsForRuntimeRevision,
 } from "#context/dynamic-tool-lifecycle.js";
 import {
@@ -356,24 +357,36 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     turnAgent: effectiveAgent.turnAgent,
   };
   const runtimeIdentity = buildRuntimeIdentity(effectiveNode);
-  const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
-  const dynamicRuntimeRevision = deploymentId
-    ? `deployment:${deploymentId}`
-    : await resolveRuntimeCompiledArtifactsVersionedCacheKey(bundle.compiledArtifactsSource);
   const sessionStarted = initialEmissionState.sessionStarted;
+  let dynamicRuntimeRevision: string;
   try {
+    const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
+    dynamicRuntimeRevision = deploymentId
+      ? `deployment:${deploymentId}`
+      : await resolveRuntimeCompiledArtifactsVersionedCacheKey(bundle.compiledArtifactsSource);
+
     if (!sessionStarted) {
       ctx.set(SessionDynamicSubagentRuntimeRevisionKey, dynamicRuntimeRevision);
       ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
     } else {
-      await refreshDynamicSessionSubagentsForRuntimeRevision({
-        ctx,
-        resolvers: dynamicSubagentResolvers,
-        event: createSessionStartedEvent({ runtime: runtimeIdentity }),
-        messages: initialSession.history,
-        persistentSessions: persistentSubagentSessions,
-        runtimeRevision: dynamicRuntimeRevision,
-      });
+      const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
+      await Promise.all([
+        refreshDynamicSessionSubagentsForRuntimeRevision({
+          ctx,
+          resolvers: dynamicSubagentResolvers,
+          event: refreshEvent,
+          messages: initialSession.history,
+          persistentSessions: persistentSubagentSessions,
+          runtimeRevision: dynamicRuntimeRevision,
+        }),
+        refreshDynamicSessionToolsForRuntimeRevision({
+          ctx,
+          resolvers: dynamicToolResolvers,
+          event: refreshEvent,
+          messages: initialSession.history,
+          runtimeRevision: dynamicRuntimeRevision,
+        }),
+      ]);
     }
   } catch (error) {
     await failChannelDeliveries(error);
@@ -450,12 +463,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     throwIfTurnAborted(input.abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
       if (sessionStarted) {
-        await refreshDynamicSessionToolsForRuntimeRevision({
+        await hydrateDynamicSessionTools({
           ctx,
           resolvers: dynamicToolResolvers,
           event: createSessionStartedEvent({ runtime: runtimeIdentity }),
           messages: enrichedSession.history,
-          runtimeRevision: dynamicRuntimeRevision,
         });
       }
 

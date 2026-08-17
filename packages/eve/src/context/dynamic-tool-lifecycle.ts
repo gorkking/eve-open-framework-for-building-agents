@@ -243,37 +243,6 @@ function readCachedLiveSessionTools(
   return { missingResolverSlugs, tools };
 }
 
-function replaceResolverMetadata(
-  stored: readonly DurableDynamicToolMetadata[],
-  refreshed: readonly DurableDynamicToolMetadata[],
-  refreshedSlugs: ReadonlySet<string>,
-): DurableDynamicToolMetadata[] {
-  const refreshedBySlug = new Map<string, DurableDynamicToolMetadata[]>();
-  for (const entry of refreshed) {
-    const entries = refreshedBySlug.get(entry.resolverSlug) ?? [];
-    entries.push(entry);
-    refreshedBySlug.set(entry.resolverSlug, entries);
-  }
-
-  const emitted = new Set<string>();
-  const result: DurableDynamicToolMetadata[] = [];
-  for (const entry of stored) {
-    if (!refreshedSlugs.has(entry.resolverSlug)) {
-      result.push(entry);
-    } else if (!emitted.has(entry.resolverSlug)) {
-      result.push(...(refreshedBySlug.get(entry.resolverSlug) ?? []));
-      emitted.add(entry.resolverSlug);
-    }
-  }
-  for (const entry of refreshed) {
-    if (!emitted.has(entry.resolverSlug)) {
-      result.push(...(refreshedBySlug.get(entry.resolverSlug) ?? []));
-      emitted.add(entry.resolverSlug);
-    }
-  }
-  return result;
-}
-
 function registerStepFunction(stepId: string, fn: Function): void {
   getStepRegistry().set(stepId, fn);
 }
@@ -310,7 +279,6 @@ function durableKeyForEvent(
 interface ResolveResult {
   readonly metadata: readonly DurableDynamicToolMetadata[];
   readonly liveTools: readonly HarnessToolDefinition[];
-  readonly failedResolverSlugs: ReadonlySet<string>;
 }
 
 function readDynamicToolResult(
@@ -359,15 +327,13 @@ async function resolveToolsFromEvent(
 
   const metadata: DurableDynamicToolMetadata[] = [];
   const liveTools: HarnessToolDefinition[] = [];
-  const failedResolverSlugs = new Set<string>();
   // Tracks which resolver claimed each name so two dynamic resolvers can't
   // silently shadow each other (a dynamic tool overriding an authored one is
   // allowed and handled at merge time).
   const dynamicToolOwners = new Map<string, string>();
 
-  for (const [index, outcome] of outcomes.entries()) {
+  for (const outcome of outcomes) {
     if (outcome.status === "rejected") {
-      failedResolverSlugs.add(resolvers[index]!.slug);
       log.error(`Dynamic tool resolver (${event.type}) threw — skipping.`, {
         error: toErrorMessage(outcome.reason),
       });
@@ -466,7 +432,7 @@ async function resolveToolsFromEvent(
     }
   }
 
-  return { metadata, liveTools, failedResolverSlugs };
+  return { metadata, liveTools };
 }
 
 // ---------------------------------------------------------------------------
@@ -573,20 +539,37 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   readonly messages: readonly ModelMessage[];
   readonly runtimeRevision: string;
 }): Promise<void> {
-  const storedMetadata = input.ctx.get(SessionDynamicToolMetadataKey) ?? [];
-  const sameRevision =
-    input.ctx.get(SessionDynamicToolRuntimeRevisionKey) === input.runtimeRevision;
-  const liveResolverSlugs = new Set(
-    storedMetadata.filter(requiresLiveDynamicTool).map((entry) => entry.resolverSlug),
-  );
-  if (sameRevision && (liveResolverSlugs.size === 0 || input.ctx.get(LiveSessionToolsKey))) {
+  if (input.ctx.get(SessionDynamicToolRuntimeRevisionKey) === input.runtimeRevision) {
     return;
   }
 
-  const cached = sameRevision
-    ? readCachedLiveSessionTools(input.ctx, input.resolvers, storedMetadata)
-    : { missingResolverSlugs: new Set<string>(), tools: [] };
-  if (sameRevision && cached.missingResolverSlugs.size === 0) {
+  const matching = input.resolvers.filter((resolver) =>
+    resolver.eventNames.includes("session.started"),
+  );
+  const { metadata, liveTools } =
+    matching.length === 0
+      ? { metadata: [], liveTools: [] }
+      : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
+
+  input.ctx.set(SessionDynamicToolMetadataKey, metadata);
+  const selectedLiveTools = selectLiveSessionTools(metadata, liveTools);
+  cacheLiveSessionTools(input.ctx, matching, metadata, selectedLiveTools);
+  input.ctx.setVirtualContext(LiveSessionToolsKey, selectedLiveTools);
+  input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
+}
+
+/** Restores process-local session tool callbacks after virtual context resets. */
+export async function hydrateDynamicSessionTools(input: {
+  readonly ctx: ContextContainer;
+  readonly resolvers: readonly ResolvedDynamicToolResolver[];
+  readonly event: SessionStartedStreamEvent;
+  readonly messages: readonly ModelMessage[];
+}): Promise<void> {
+  if (input.ctx.get(LiveSessionToolsKey) !== undefined) return;
+
+  const metadata = input.ctx.get(SessionDynamicToolMetadataKey) ?? [];
+  const cached = readCachedLiveSessionTools(input.ctx, input.resolvers, metadata);
+  if (cached.missingResolverSlugs.size === 0) {
     input.ctx.setVirtualContext(LiveSessionToolsKey, [...cached.tools]);
     return;
   }
@@ -594,39 +577,13 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   const matching = input.resolvers.filter(
     (resolver) =>
       resolver.eventNames.includes("session.started") &&
-      (!sameRevision || cached.missingResolverSlugs.has(resolver.slug)),
+      cached.missingResolverSlugs.has(resolver.slug),
   );
-  const { metadata, liveTools, failedResolverSlugs } =
+  const { liveTools } =
     matching.length === 0
-      ? { metadata: [], liveTools: [], failedResolverSlugs: new Set<string>() }
+      ? { liveTools: [] }
       : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
-
-  const refreshedSlugs = new Set(
-    matching
-      .map((resolver) => resolver.slug)
-      .filter((resolverSlug) => !failedResolverSlugs.has(resolverSlug)),
-  );
-  if (sameRevision) {
-    const retainedOwners = new Map(
-      storedMetadata
-        .filter((entry) => !refreshedSlugs.has(entry.resolverSlug))
-        .map((entry) => [entry.name, entry.resolverSlug]),
-    );
-    for (const entry of metadata) {
-      const retainedOwner = retainedOwners.get(entry.name);
-      if (retainedOwner !== undefined && retainedOwner !== entry.resolverSlug) {
-        throw new Error(
-          `Dynamic tool "${entry.name}" from resolver "${entry.resolverSlug}" collides with dynamic resolver "${retainedOwner}". Namespace the map key manually, e.g. "${entry.resolverSlug}__${entry.name}".`,
-        );
-      }
-    }
-  }
-  const nextMetadata = sameRevision
-    ? replaceResolverMetadata(storedMetadata, metadata, refreshedSlugs)
-    : metadata;
-  input.ctx.set(SessionDynamicToolMetadataKey, nextMetadata);
-  const refreshedLiveTools = selectLiveSessionTools(nextMetadata, liveTools);
-  cacheLiveSessionTools(input.ctx, matching, nextMetadata, refreshedLiveTools);
+  const refreshedLiveTools = selectLiveSessionTools(metadata, liveTools);
+  cacheLiveSessionTools(input.ctx, matching, metadata, refreshedLiveTools);
   input.ctx.setVirtualContext(LiveSessionToolsKey, [...cached.tools, ...refreshedLiveTools]);
-  input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
 }

@@ -8,7 +8,10 @@ import {
   LiveStepToolsKey,
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
-import { requiresLiveDynamicTool } from "#context/dynamic-tool-metadata.js";
+import {
+  requiresLiveDynamicTool,
+  requiresLiveDynamicToolExecution,
+} from "#context/dynamic-tool-metadata.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createLogger } from "#internal/logging.js";
 import type {
@@ -74,16 +77,22 @@ function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessTo
 function buildSessionTools(ctx: ContextReader): HarnessToolDefinition[] {
   const metadata = ctx.get(SessionDynamicToolMetadataKey) ?? [];
   const liveByName = new Map((ctx.get(LiveSessionToolsKey) ?? []).map((tool) => [tool.name, tool]));
-  const replayedByName = new Map(
-    replayTools(metadata.filter((entry) => !requiresLiveDynamicTool(entry))).map((tool) => [
-      tool.name,
-      tool,
-    ]),
+  const replayMetadata = metadata.map((entry) =>
+    requiresLiveDynamicTool(entry) && !requiresLiveDynamicToolExecution(entry)
+      ? { ...entry, approvalResponseStepFnName: undefined, approvalStepFnName: undefined }
+      : entry,
   );
+  const replayedByName = new Map(replayTools(replayMetadata).map((tool) => [tool.name, tool]));
 
   return metadata.flatMap((entry) => {
-    const tool = liveByName.get(entry.name) ?? replayedByName.get(entry.name);
-    return tool === undefined ? [] : [tool];
+    const replayed = replayedByName.get(entry.name);
+    if (!requiresLiveDynamicTool(entry)) return replayed === undefined ? [] : [replayed];
+
+    const live = liveByName.get(entry.name);
+    if (live === undefined) return [];
+    if (requiresLiveDynamicToolExecution(entry)) return [live];
+    if (replayed === undefined) return [];
+    return [{ ...replayed, approval: live.approval }];
   });
 }
 

@@ -2373,7 +2373,7 @@ describe("turnStep", () => {
     });
 
     expect(handler).toHaveBeenCalledOnce();
-    expect(lifecycleOrder).toEqual(["clear", "refresh", "execute"]);
+    expect(lifecycleOrder).toEqual(["refresh", "clear", "execute"]);
     expect(result.serializedContext[SessionDynamicToolRuntimeRevisionKey.name]).toBe(
       "deployment:dpl_new",
     );

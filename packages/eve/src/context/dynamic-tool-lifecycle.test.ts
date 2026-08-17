@@ -18,6 +18,7 @@ vi.mock("#context/build-callback-context.js", () => ({
 const {
   replayDynamicSessionTools,
   dispatchDynamicToolEvent,
+  hydrateDynamicSessionTools,
   refreshDynamicSessionToolsForRuntimeRevision,
 } = await import("#context/dynamic-tool-lifecycle.js");
 const { buildDynamicTools, buildResponseAuthorizationTools } =
@@ -580,12 +581,11 @@ describe("dispatchDynamicToolEvent", () => {
     ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_current");
     ctx = await deserializeContext(serializeContext(ctx));
 
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       resolvers: [resolver],
       messages: [],
       event: createSessionStartedEvent(),
-      runtimeRevision: "deployment:dpl_current",
     });
 
     expect(handler).toHaveBeenCalledOnce();
@@ -599,9 +599,11 @@ describe("dispatchDynamicToolEvent", () => {
     testRegistry.set(stepId, () => ({ ok: true }));
     testRegistry.set(stableStepId, () => ({ ok: true }));
     let approvalStepFnName: string | undefined;
+    let resolutionCount = 0;
     const handler = vi.fn(() => {
+      resolutionCount++;
       const entry = defineTool({
-        description: "approval policy",
+        description: resolutionCount === 1 ? "approval policy" : "changed approval policy",
         inputSchema: { type: "object" },
         approval: () => "not-applicable" as const,
         execute: async (): Promise<unknown> => ({ ok: true }),
@@ -646,7 +648,7 @@ describe("dispatchDynamicToolEvent", () => {
       expect(approvalStepFnName).toBe("eve:dynamic-tool-approval:governed:governed");
       ctx.clearVirtualContext();
 
-      await refreshDynamicSessionToolsForRuntimeRevision({
+      await hydrateDynamicSessionTools({
         ctx,
         resolvers: [
           createResolver("governed", ["session.started"], handler),
@@ -654,7 +656,6 @@ describe("dispatchDynamicToolEvent", () => {
         ],
         messages: [],
         event: createSessionStartedEvent(),
-        runtimeRevision: "deployment:dpl_current",
       });
 
       expect(handler).toHaveBeenCalledTimes(2);
@@ -664,6 +665,7 @@ describe("dispatchDynamicToolEvent", () => {
         "stable",
       ]);
       const tool = buildDynamicTools(ctx)[0]!;
+      expect(tool.description).toBe("approval policy");
       expect(
         resolveApprovalPolicy(tool.approval!)(createApprovalContext({ toolName: tool.name })),
       ).toBe("not-applicable");
@@ -731,12 +733,11 @@ describe("dispatchDynamicToolEvent", () => {
 
     for (let attempt = 0; attempt < 2; attempt++) {
       ctx.clearVirtualContext();
-      await refreshDynamicSessionToolsForRuntimeRevision({
+      await hydrateDynamicSessionTools({
         ctx,
         resolvers: [createResolver("live", ["session.started"], handler)],
         messages: [],
         event: createSessionStartedEvent(),
-        runtimeRevision: "deployment:dpl_current",
       });
       expect(ctx.get(SessionDynamicToolMetadataKey)).toEqual(originalMetadata);
     }
@@ -1255,12 +1256,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     // Simulate step boundary — virtual context cleared, durable survives
     ctx.clearVirtualContext();
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       resolvers: [resolver],
       messages: [],
       event: createSessionStartedEvent(),
-      runtimeRevision: "deployment:dpl_current",
     });
 
     const replayedTools = buildDynamicTools(ctx);
@@ -1320,12 +1320,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(metadata).toHaveLength(2);
 
     ctx.clearVirtualContext();
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       resolvers: [frameworkResolver, authoredResolver],
       messages: [],
       event: createSessionStartedEvent(),
-      runtimeRevision: "deployment:dpl_current",
     });
 
     const tools = buildDynamicTools(ctx);
@@ -1347,12 +1346,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
     });
 
     ctx.clearVirtualContext();
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       resolvers: [resolver],
       messages: [],
       event: createSessionStartedEvent(),
-      runtimeRevision: "deployment:dpl_current",
     });
 
     const tools = buildDynamicTools(ctx);
@@ -1411,12 +1409,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
     });
 
     ctx.clearVirtualContext();
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       resolvers: [resolver],
       messages: [],
       event: createSessionStartedEvent(),
-      runtimeRevision: "deployment:dpl_current",
     });
 
     const tools = buildDynamicTools(ctx);
@@ -1518,12 +1515,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     // A new isolate retains durable metadata but not virtual live definitions.
     ctx.clearVirtualContext();
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
       resolvers: [createResolver("session_guard", ["session.started"], handler)],
-      runtimeRevision: "deployment:dpl_current",
     });
 
     expect(handler).toHaveBeenCalledTimes(2);
@@ -1597,12 +1593,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(metadata?.[0]?.outputSchema).toEqual(outputSchema);
 
     ctx.clearVirtualContext();
-    await refreshDynamicSessionToolsForRuntimeRevision({
+    await hydrateDynamicSessionTools({
       ctx,
       resolvers: [resolver],
       messages: [],
       event: createSessionStartedEvent(),
-      runtimeRevision: "deployment:dpl_current",
     });
 
     const tools = buildDynamicTools(ctx);
