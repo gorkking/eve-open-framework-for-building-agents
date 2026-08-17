@@ -1,14 +1,33 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  type DispatchOutcome,
+  dispatchToTaskAgentAddress,
+} from "#execution/agent-handle-dispatch.js";
+import { createAgentContinuationBundle } from "#execution/agent-continuation-bundle.js";
+import {
+  emitSubagentCalled,
   rehydrateRuntimeActionDispatch,
+  startSubagent,
   type RuntimeActionDispatchInput,
   type RuntimeActionDispatchResult,
 } from "#execution/dispatch-runtime-actions-shared.js";
 import { createDurableSessionState } from "#execution/durable-session-store.js";
-import { dispatchPreparedTaskEntry } from "#execution/tasks/parent/dispatch-task-entry.js";
+import {
+  checkTaskContinuationAvailability,
+  describeTaskDispatch,
+  persistContinuationTaskInParentSession,
+  settleTaskDispatchError,
+  type PersistedContinuationTask,
+} from "#execution/tasks/parent/continuation-dispatch.js";
+import {
+  beginDelegatedTask,
+  type DelegatedTask,
+  settleDelegatedDispatch,
+} from "#execution/tasks/parent/delegate.js";
 import type { LocalSubagentWorkflowEntry } from "#execution/tasks/parent/subagent/local.js";
 import type { RemoteSubagentWorkflowEntry } from "#execution/tasks/parent/subagent/remote.js";
+import type { RuntimeActionResult } from "#runtime/actions/types.js";
 import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 import { z } from "#compiled/zod/index.js";
 
@@ -69,22 +88,134 @@ export async function dispatchSubagentWorkflowToolStep(input: {
     );
   }
 
+  const { batch, bundle, session } = prepared;
+  let currentSession = prepared.session;
   const writer = input.runtimeInput.parentWritable.getWriter();
   try {
-    const dispatched = await dispatchPreparedTaskEntry({
-      currentSession: prepared.session,
-      entry: input.entry,
-      prepared,
-      runtimeInput: input.runtimeInput,
-      writer,
+    if (input.entry.kind === "resume") {
+      const busy = await checkTaskContinuationAvailability({
+        action: input.entry.action,
+        agentId: input.entry.agentId,
+        parentStepIndex: batch.event.stepIndex,
+        parentTurnId: batch.event.turnId,
+        session: currentSession,
+      });
+      if (busy !== undefined) {
+        return {
+          pendingTasks: [],
+          results: [busy],
+          sessionState: input.runtimeInput.sessionState,
+        };
+      }
+    }
+
+    const delegated = await beginDelegatedTask({
+      ...describeTaskDispatch({
+        action,
+        agentId: input.entry.kind === "resume" ? input.entry.agentId : undefined,
+        parentSessionId: session.sessionId,
+        parentTurnId: batch.event.turnId,
+        session: currentSession,
+      }),
+      parentSessionId: session.sessionId,
+      parentStepIndex: batch.event.stepIndex,
+      parentTurnId: batch.event.turnId,
+      session: currentSession,
     });
+
+    let persistedContinuation: PersistedContinuationTask | undefined;
+    if (input.entry.kind === "resume") {
+      persistedContinuation = await persistContinuationTaskInParentSession({
+        action: input.entry.action,
+        agentId: input.entry.agentId,
+        delegated,
+        session: currentSession,
+      });
+      currentSession = persistedContinuation?.session ?? currentSession;
+    }
+
+    let outcome: DispatchOutcome;
+    switch (input.entry.kind) {
+      case "resume":
+        outcome = await dispatchToTaskAgentAddress({
+          action: input.entry.action,
+          agentId: input.entry.agentId,
+          bundle: createAgentContinuationBundle({
+            action: input.entry.action,
+            bundle,
+            dynamicRemoteAgent:
+              "dynamicRemoteAgent" in input.entry ? input.entry.dynamicRemoteAgent : undefined,
+          }),
+          currentSession,
+          parentToken: delegated.taskInboxToken,
+        });
+        break;
+      case "start":
+        outcome = await startSubagent({
+          auth: prepared.auth,
+          batchEvent: batch.event,
+          bundle,
+          callbackBaseUrl: input.runtimeInput.callbackBaseUrl,
+          capabilities: prepared.capabilities,
+          channelMetadata: prepared.channelMetadata,
+          currentSession,
+          fanoutSize: prepared.fanoutSize,
+          initiatorAuth: prepared.initiatorAuth,
+          parentContinuationToken: delegated.taskInboxToken,
+          parentTraceContext: prepared.parentTraceContext,
+          // Task children must remain addressable after the dispatching turn ends.
+          persistentSessions: true,
+          serializedContext: prepared.serializedContext,
+          session,
+          taskOwned: true,
+          target: input.entry.target,
+        });
+        break;
+    }
+
+    currentSession = outcome.session;
+    let pendingTask: DelegatedTask | undefined;
+    let result: RuntimeActionResult;
+    if (outcome.kind === "error") {
+      pendingTask = persistedContinuation === undefined ? undefined : delegated;
+      result = await settleTaskDispatchError({
+        delegated,
+        outcome,
+        persisted: persistedContinuation,
+      });
+    } else {
+      pendingTask = delegated;
+      if (persistedContinuation !== undefined) {
+        result = persistedContinuation.receipt;
+      } else {
+        const settled = await settleDelegatedDispatch({
+          callId: outcome.callId,
+          session: currentSession,
+          subagentName: outcome.toolName,
+          task: delegated,
+        });
+        currentSession = settled.session;
+        result = settled.receipt;
+      }
+
+      await emitSubagentCalled({
+        adapter: prepared.adapter,
+        adapterCtx: prepared.adapterCtx,
+        batchEvent: batch.event,
+        entry: input.entry,
+        outcome,
+        sessionId: session.sessionId,
+        writer,
+      });
+    }
+
     return {
-      pendingTasks: dispatched.pendingTask === undefined ? [] : [dispatched.pendingTask],
-      results: [dispatched.result],
+      pendingTasks: pendingTask === undefined ? [] : [pendingTask],
+      results: [result],
       sessionState:
-        dispatched.session === prepared.session
+        currentSession === prepared.session
           ? input.runtimeInput.sessionState
-          : createDurableSessionState({ session: dispatched.session }),
+          : createDurableSessionState({ session: currentSession }),
     };
   } finally {
     writer.releaseLock();

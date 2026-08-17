@@ -17,7 +17,7 @@ import {
   type RuntimeActionDispatchResult,
 } from "#execution/dispatch-runtime-actions-shared.js";
 import { createDurableSessionState } from "#execution/durable-session-store.js";
-import { dispatchPreparedTaskEntry } from "#execution/tasks/parent/dispatch-task-entry.js";
+import { executeTaskControlAction } from "#execution/tasks/parent/dispatch.js";
 import {
   dispatchLocalSubagentWorkflow,
   dispatchRemoteSubagentWorkflow,
@@ -63,16 +63,17 @@ export async function dispatchTaskStep(
           `Task dispatch lost its pending batch before call "${entry.action.callId}".`,
         );
       }
-      const dispatched = await dispatchPreparedTaskEntry({
-        currentSession: prepared.session,
-        entry,
-        prepared,
-        runtimeInput: { ...input, sessionState },
+      const control = await executeTaskControlAction({
+        action: entry.action,
+        bundle: prepared.bundle,
+        parentStepIndex: prepared.batch.event.stepIndex,
+        parentTurnId: prepared.batch.event.turnId,
+        session: prepared.session,
       });
-      results.push(dispatched.result);
-      if (dispatched.pendingTask !== undefined) pendingTasks.push(dispatched.pendingTask);
-      if (dispatched.session !== prepared.session) {
-        sessionState = createDurableSessionState({ session: dispatched.session });
+      results.push(control.result);
+      if (control.pendingTask !== undefined) pendingTasks.push(control.pendingTask);
+      if (control.session !== prepared.session) {
+        sessionState = createDurableSessionState({ session: control.session });
       }
       continue;
     }
