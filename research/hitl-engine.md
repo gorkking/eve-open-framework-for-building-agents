@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1224
 status: proposed
-last_updated: "2026-08-13"
+last_updated: "2026-08-17"
 ---
 
 # One HITL engine
@@ -384,18 +384,30 @@ Machine-check these at the store/interpreter boundary:
 7. Every admitted input produces an observable effect or a documented no-op
    transition; nothing is silently buffered.
 8. Interpreter output is deterministic for equal state and input.
+9. No two open approval obligations share one approval intent key
+   (`approvalKey(toolInput)`, defaulting to the tool name) — the
+   store-checkable form of the lifecycle contract's
+   `owner.batch.park.dedupe-open-intent` row.
 
 ## Test strategy
+
+Each stack stage has a mandatory executable gate recorded in
+[`e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md`](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md#implementation-stage-gates).
+A stage does not start until the preceding gate passes.
 
 - **Interpreter unit matrix:** one literal case per transition anchor; inputs,
   pre-state, next-state, and ordered effects are authored expectations, never
   computed by production helpers.
 - **Store tests:** migration, round-trip serialization, terminal tombstones,
-  group closure, and invariants.
+  group closure, and invariants. Store extraction is not observable over HTTP,
+  so this focused executable suite is the stage-1 acceptance gate rather than a
+  fixture eval that would only re-test unchanged behavior.
 - **Adapter integration:** AI SDK transcript restoration, effect execution
   order, callback normalization, driver FIFO admission, and child forwarding.
-- **E2e:** the anchor-keyed suite in the lifecycle contract verifies the wire
-  events and real session behavior. Evals never import the interpreter.
+- **E2e:** every behavior-changing stage enables the narrow anchor-keyed fixture
+  evals for the transitions it cuts over. The complete lifecycle contract flag
+  is enabled only after all narrower gates pass. Evals verify wire events and
+  real session behavior and never import the interpreter.
 
 ## Stack
 

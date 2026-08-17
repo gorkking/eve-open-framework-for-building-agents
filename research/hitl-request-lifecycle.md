@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1224
 status: proposed
-last_updated: "2026-08-13"
+last_updated: "2026-08-17"
 ---
 
 # HITL requests must not wedge sessions
@@ -192,10 +192,12 @@ Receptive ──cancel / expire / session end──▶ terminal
 ```
 
 That is the whole scheduler. There is no `AwaitingApproval` and no
-`AwaitingAuthorization` — those were the two wedges. The session is **always
-receptive**: every delivery is admitted, interpreted, and answered with
+`AwaitingAuthorization` — those were the two wedges. **Admission never
+blocks**: every delivery is admitted, interpreted, and answered with
 observable events. Deliveries that arrive during `TurnActive` buffer in
-arrival order and are interpreted at the next boundary.
+arrival order and are interpreted at the next boundary. Admission guarantees
+interpretation, not a model call — which deliveries invoke the model is
+decided per transition row (invariant 2).
 
 The one licensed irregularity is an open `Limit(gen)`: it changes what a
 _message_ means (supersede-and-re-prompt instead of a model call), because its
@@ -249,30 +251,56 @@ effects = one ordered list of emit | restore-group | execute-tool |
 The executor persists `nextState` before performing the effects in order.
 Drivers schedule; they never interpret. Invariants:
 
-1. **Obligations are data.** No blocked continuation anywhere. The scheduler
-   is always receptive.
-2. **One arrival-ordered delivery stream.** Callbacks, messages, responses,
+1. **Admission never blocks.** Obligations are data, never control flow: no
+   blocked continuation anywhere, no wait source narrowed by open
+   obligations. The scheduler is always receptive; a delivery arriving during
+   `TurnActive` buffers in durable arrival order — buffering is ordering,
+   never refusal.
+2. **Admission does not necessarily invoke the model.** Admitting a delivery
+   guarantees interpretation and observable events, not a model call. A model
+   call happens in exactly two ways: a `run-model` effect — a message turn,
+   or a context turn carrying a rejected approval/question attempt (the
+   `reject-*` rows) — or a claimed continuation resuming the parked turn at
+   group closure. Everything else is absorbed without one: settling a member
+   whose siblings stay open, a deduplicated redelivery, and every `Limit`
+   transition except Continue (supersede re-prompts, Stop terminates, a stale
+   generation is dropped).
+3. **Every invoked model turn receives a safe projection of open
+   obligations.** The transcript handed to the model (a) contains the
+   withheld output of an open group zero times, (b) contains no fabricated
+   response, result, or consent for an unsettled obligation, and (c) carries
+   attempts that settled nothing as explicit synthetic context messages,
+   never as settlements. An obligation enters history only through its real
+   settlement or dismissal outcome at group closure.
+4. **A newly raised approval is checked against open approval intent before
+   append.** Approval intent is the tool's approval key —
+   `approvalKey(toolInput)`, defaulting to the tool name. A park raising an
+   approval whose intent matches an open approval must not open a second
+   obligation for that intent; one settlement adjudicates one intent once
+   (`owner.batch.park.dedupe-open-intent`).
+5. **One arrival-ordered delivery stream.** Callbacks, messages, responses,
    and controls surface in one order; interpretation order is deterministic
    by construction, including under workflow replay.
-3. **Single winner per obligation.** Later candidates are stale events.
-4. **Continuations fire at most once.** Their durable state moves from
+6. **Single winner per obligation.** Later candidates are stale events.
+7. **Continuations fire at most once.** Their durable state moves from
    `pending` exactly once, to `claimed` for ordinary closure or `suppressed`
    for forced closure.
-5. **State before effects.** The executor persists the complete next state
+8. **State before effects.** The executor persists the complete next state
    before emitting events, restoring output, running tools or models, forwarding
    a response, or terminating a turn.
-6. **No silent consumption.** Every admitted delivery yields at least one
+9. **No silent consumption.** Every admitted delivery yields at least one
    observable event: `message.received`, a settlement, a rejection, a
-   dismissal, or an authorization event. Every admitted delivery also
-   initiates a turn: when responses settle nothing, the turn input is the
-   event context — who attempted what, and why it did not settle — so the
-   agent can respond in-channel. Retries of the same delivery are
-   deduplicated at admission and do not start additional turns.
-7. **Composite states add no cases.** The transition catalog for a session
-   with approvals _and_ challenges open is the row-wise union of the
-   catalogs for each alone. If a change ever needs a case that is not such a
-   union, the encapsulation is broken. This is the standing review test for
-   any future HITL change.
+   dismissal, or an authorization event. When a rejected approval or question
+   attempt does start a turn, its input is the event context — who attempted
+   what, and why it did not settle — so the agent can respond in-channel.
+   Retries of the same delivery are deduplicated at admission and yield
+   nothing new. Whether a delivery also invokes the model is invariant 2, not
+   this one.
+10. **Composite states add no cases.** The transition catalog for a session
+    with approvals _and_ challenges open is the row-wise union of the
+    catalogs for each alone. If a change ever needs a case that is not such a
+    union, the encapsulation is broken. This is the standing review test for
+    any future HITL change.
 
 A channel that renders requests as text — SMS, a comment thread — may map an
 explicit reply to a structured response in its adapter, because it knows which
@@ -475,29 +503,67 @@ to emit the rejection and run a turn with the stale-attempt context.
 
 Normative behavior, one entry per transition row. Anchors are stable
 identifiers of the form `machine.obligation.input.outcome[-guard]`; evals and
-implementation reference anchors, never positions. `Observed` lists required
-events and their relative order; ordinary turn events may appear between them
-unless the entry says the sequence is exact.
+implementation reference anchors, never positions.
+
+Every entry uses the same fields:
+
+- **Example** — one concrete walk of the row. Examples share one cast: an
+  agent with an approval-gated `bash` tool and an `ask_question` tool, ACME
+  Inc's OAuth connection, **Dana** (the originating actor), and **Sam**
+  (another verified actor on the same channel).
+- **Given** — machine state before the input, in ledger notation:
+  `Batch B { A1: open }` is one group with one open approval; `W(B)` is that
+  group's withheld model output, held in its continuation and absent from
+  history until the group closes.
+- **When** — exactly one input from the input alphabet, with its guard axes.
+- **Then** — the transition, split into the three planes an input can touch:
+  - **ledger** — obligation, group, candidate, and route state. "unchanged"
+    means no obligation transitions; candidate bookkeeping may still record.
+  - **history** — the committed model transcript. Only three things ever
+    append here: (a) delivered user content, (b) restored withheld output
+    plus member-outcome tool-result parts and each allowed tool's real result
+    at group closure, and (c) a **synthetic context message** —
+    runtime-authored text carrying event context (a stale, rejected, or
+    pending attempt) into the next model call. Events are not history and
+    history entries imply no events.
+  - **turn** — whether a model call runs, and with what input. "none" means
+    the delivery is fully absorbed by ledger transitions and events
+    (invariant 2).
+- **Observed** — required protocol events and their relative order; ordinary
+  turn events may appear between them unless the entry says the sequence is
+  exact.
 
 ### owner.approval
 
 #### owner.approval.response.settle-allow
 
-- **Given:** an approval is open.
-- **When:** the originating actor sends an explicitly correlated Allow
-  response that the tool's response policy accepts.
-- **Then:** the approval settles as allowed and the tool becomes eligible. The
-  tool runs only when this settlement closes its group.
+- **Example:** Agent wants to run `bash rm -rf ./tmp`. Dana clicks Allow. The
+  command runs and the agent reports its output.
+- **Given:** `Batch B { A1: open }`, `W(B)` withheld. `A1` is the only open
+  member; for open siblings see `owner.batch.response.settle-partial`.
+- **When:** `Responses(originating actor, [{ A1, allow }])`, accepted by the
+  tool's response policy.
+- **Then:**
+  - **ledger:** `A1 → settled(allowed)`; `B` closes; continuation
+    `pending → claimed`.
+  - **history:** append `W(B)` once, `A1`'s allowed outcome part, then the
+    tool's real result. No synthetic messages.
+  - **turn:** one — the claimed continuation runs the tool exactly once and
+    resumes the model with the result.
 - **Observed:** `input.responded` precedes `action.result`.
 
 #### owner.approval.response.settle-allow-other-actor
 
+- **Example:** Dana's turn raised the `bash` approval; Sam clicks Allow and the
+  tool's response policy accepts Sam.
 - Same as `settle-allow` with the current actor ≠ originating actor and the
-  policy accepting them. The result is identical except the verified
-  responder.
+  policy accepting them. Every plane is identical except the verified
+  responder in `input.responded`.
 
 #### owner.approval.response.settle-allow-anonymous
 
+- **Example:** Allow arrives from a channel with no login (a bare webhook). eve
+  settles it and reports `responder: null`.
 - Same as `settle-allow` when the channel supplies no verified principal: eve
   treats the session as one actor for origin comparison and reports
   `responder: null`. The fallback never fabricates a verified principal for
@@ -505,41 +571,68 @@ unless the entry says the sequence is exact.
 
 #### owner.approval.response.settle-deny
 
-- **Given:** an approval is open.
-- **When:** an actor sends an explicitly correlated Deny response accepted by
-  the response policy.
-- **Then:** the approval settles as denied and the tool does not run. The
-  group's continuation fires only when every sibling is terminal.
+- **Example:** Agent wants to run `bash git push --force`. Dana clicks Deny.
+  The push never happens and the agent acknowledges it.
+- **Given:** `Batch B { A1: open }`, `W(B)` withheld.
+- **When:** `Responses(actor, [{ A1, deny }])`, accepted by the response
+  policy.
+- **Then:**
+  - **ledger:** `A1 → settled(denied)`; `B` closes only when every sibling is
+    terminal.
+  - **history:** at closure, append `W(B)` once plus a denied outcome part
+    for `A1`'s call. The tool never runs, so no result is fabricated.
+  - **turn:** one at closure — the model resumes seeing the denial.
 - **Observed:** `input.responded(outcome: denied)` precedes the rejected
   `action.result` for the tool call.
 
 #### owner.approval.response.settle-allow-after-turns
 
-- **Given:** an approval is the last open member of its group and unrelated
-  turns completed since it was created.
+- **Example:** The `bash terraform apply` approval sits open while Dana chats
+  about other things for three turns, then clicks Allow — apply runs now, after
+  those turns.
+- **Given:** `Batch B { A1: open }`, `W(B)` withheld; history already extended
+  by unrelated turns completed since `A1` was created.
 - **When:** an authorized actor sends an accepted response.
-- **Then:** eve restores the group's withheld output once, settles the
-  approval, and runs the approved tool once. Intervening turns are unchanged.
+- **Then:**
+  - **ledger:** `A1 → settled(allowed)`; continuation claimed.
+  - **history:** the intervening turns are untouched; `W(B)`, the outcome
+    part, and the tool result append after them — restore appends at the
+    closure position, never splices back.
+  - **turn:** one — resume with the result.
 - **Observed:** the restored assistant output follows the intervening turns in
   history; the obligation is no longer open.
 
 #### owner.approval.response.settle-cancel
 
-- **Given:** an approval is open.
-- **When:** an authenticated actor sends an explicit correlated Cancel.
-- **Then:** the approval settles as cancelled and the tool does not run.
+- **Example:** Dana clicks Cancel on the `bash` approval: the request closes as
+  cancelled and nothing runs.
+- **Given:** `Batch B { A1: open }`, `W(B)` withheld.
+- **When:** an authenticated actor sends an explicit correlated Cancel
+  (bypasses the Allow authorizer).
+- **Then:**
+  - **ledger:** `A1 → settled(cancelled)`; closure per siblings.
+  - **history:** at closure, `W(B)` plus a cancelled outcome part; no tool
+    result — the tool does not run.
+  - **turn:** one at closure.
 - **Observed:** `input.responded(outcome: cancelled)` appears once;
   `action.result` contains `{ code: "TOOL_EXECUTION_CANCELLED", approval:
 { requestId, status: "cancelled" }, tool: { result: "not_run" } }`.
 
 #### owner.approval.response.settle-cancel-pending-candidate
 
-- **Given:** an authorization-required Allow candidate is pending
-  (`response.pend-authorization`).
-- **When:** an authenticated Cancel settles the approval before the candidate's
-  callback, then the callback arrives.
-- **Then:** Cancel closes the challenge and the approval; the later callback is
-  stale; the tool does not run and the approval does not reopen.
+- **Example:** Sam's Allow is parked on an ACME sign-in. Dana clicks Cancel
+  first; Sam's OAuth callback lands later and is rejected as stale.
+- **Given:** `A1` open with an authorization-required Allow candidate pending
+  on an open challenge (`response.pend-authorization`).
+- **When:** an authenticated Cancel settles `A1` before the candidate's
+  callback; the callback then arrives.
+- **Then:**
+  - **ledger:** Cancel completes the challenge (`cancelled`) and settles
+    `A1 → settled(cancelled)`; the later callback matches a completed
+    challenge — no transition, the approval does not reopen.
+  - **history:** the closure content of `settle-cancel`; the late callback
+    appends nothing.
+  - **turn:** one at closure; none for the late callback.
 - **Observed:** `authorization.completed(outcome: cancelled)` precedes the one
   terminal `input.responded(outcome: cancelled)`; the later callback emits
   `authorization.callback.rejected(reason: stale)` with the same
@@ -547,47 +640,76 @@ unless the entry says the sequence is exact.
 
 #### owner.approval.response.settle-race
 
-- **Given:** an approval is open and two accepted candidates race — Allow vs
-  authenticated Cancel, or two allowed responders.
-- **Then:** exactly one terminal outcome wins; the loser is stale. The tool
-  runs at most once and only when Allow wins and the group closes.
+- **Example:** Dana clicks Allow in the same instant Sam clicks Cancel. One
+  click wins; the other is told it came too late.
+- **Given:** `A1` open; two accepted candidates race — Allow vs authenticated
+  Cancel, or two allowed responders.
+- **When:** both deliveries arrive; single-winner serializes them.
+- **Then:**
+  - **ledger:** exactly one candidate takes the atomic terminal transition.
+    The second candidate is interpreted against the settled tombstone and
+    reduces to `owner.approval.response.reject-stale`.
+  - **history:** the winner's closure content only; the tool runs at most
+    once, and only when Allow wins and the group closes.
+  - **turn:** the winner's closure resume; the loser follows the
+    `reject-stale` row.
 - **Observed:** exactly one `input.responded`; the loser emits
   `input.response.rejected(reason: stale)`.
 
 #### owner.approval.response.reject-stale
 
-- **Given:** an approval is no longer open but its owner session is active.
-- **When:** any actor sends a response referencing its request ID — including
-  a byte-identical duplicate of the winning response arriving as a new
-  delivery.
-- **Then:** eve changes no obligation and runs no tool. The agent initiates a
-  turn with the stale-attempt context.
+- **Example:** Dana already approved and the command ran. Sam clicks Allow on
+  the same card a minute later; the agent replies that it already ran.
+- **Given:** `A1` terminal (its tombstone is retained); the owner session is
+  active.
+- **When:** `Responses(any actor, [{ A1, … }])` — including a byte-identical
+  duplicate of the winning response arriving as a new delivery (new
+  `deliveryId`, therefore a new candidate).
+- **Then:**
+  - **ledger:** unchanged; the candidate is recorded stale.
+  - **history:** append one synthetic context message carrying the stale
+    attempt — who attempted which request, and why it did not settle. No
+    outcome part is replayed.
+  - **turn:** one — a context turn on that synthetic message, so the agent
+    can answer in-channel. No tool runs.
 - **Observed:** `input.response.rejected(reason: stale)`, then model output,
   then `session.waiting`; no second tool execution.
 
 #### owner.approval.response.reject-unauthorized
 
-- **Given:** an approval is open.
+- **Example:** Sam clicks Allow, but the tool's policy accepts only Dana. The
+  agent tells Sam who may approve.
+- **Given:** `A1` open, `W(B)` withheld.
 - **When:** a correlated response arrives and the response policy rejects the
   responder.
-- **Then:** the approval remains open and the tool does not run. The agent
-  initiates a turn with the rejection as context — for example, telling the
-  responder who may approve.
+- **Then:**
+  - **ledger:** `A1` stays open and answerable; the candidate is recorded
+    rejected.
+  - **history:** one synthetic context message with the rejection (verified
+    responder, reason); `W(B)` stays out.
+  - **turn:** one — a context turn, for example telling the responder who may
+    approve. No tool runs.
 - **Observed:** `input.response.rejected(reason: unauthorized)` with the
   verified responder, then a normal turn's model output, then
   `session.waiting`. No settlement or dismissal.
 
 #### owner.approval.response.reject-policy-failed
 
+- **Example:** Dana clicks Allow, but the response policy times out mid-outage.
+  The agent asks Dana to try again.
+- **Given:** `A1` open.
 - **When:** a correlated Allow candidate reaches a response policy that throws
   or times out — infrastructure failure, not adjudication.
-- **Then:** the approval remains open; the agent initiates a turn with the
-  failure context so it can tell the responder to retry.
+- **Then:** as `reject-unauthorized` with reason `policy-failed`: ledger open,
+  one synthetic failure-context message, one context turn so the agent can
+  tell the responder to retry.
 - **Observed:** `input.response.rejected(reason: policy-failed)`, then model
   output, then `session.waiting`; no terminal event.
 
 #### owner.approval.response.reject-invalid
 
+- **Example:** A client sends `optionId: "yes"`, which is not an option on the
+  request.
 - **When:** a correlated response carries an unknown option ID or malformed
   value.
 - **Then/Observed:** as `reject-policy-failed` with
@@ -595,13 +717,20 @@ unless the entry says the sequence is exact.
 
 #### owner.approval.response.pend-authorization
 
-- **When:** an Allow candidate requires a separate authorization flow.
-- **Then:** eve keeps a durable pending candidate bound to
-  `{ candidateId, requestId, responder }`. The approval remains open and the
-  tool does not run. The agent initiates a turn with the
-  pending-authorization context while the candidate waits. Duplicate delivery
-  of the same `candidateId` returns the existing pending candidate and never
-  opens a second challenge.
+- **Example:** Dana clicks Allow, but allowing requires Dana to first sign in
+  with ACME. The approval waits on that sign-in.
+- **Given:** `A1` open; the tool's Allow requires a separate authorization
+  flow.
+- **When:** an Allow candidate arrives.
+- **Then:**
+  - **ledger:** a durable pending candidate bound to
+    `{ candidateId, requestId, responder }`; a challenge opens, linked to that
+    candidate; `A1` stays open. Duplicate delivery of the same `candidateId`
+    returns the existing pending candidate and never opens a second
+    challenge.
+  - **history:** one synthetic context message carrying the
+    pending-authorization state.
+  - **turn:** one — a context turn while the candidate waits. No tool runs.
 - **Observed:** `input.response.pending(reason: authorization-required)` opens
   a challenge linked to that candidate. After that challenge completes:
   `authorized` re-runs the response authorizer and emits `input.responded`,
@@ -611,47 +740,76 @@ unless the entry says the sequence is exact.
 
 #### owner.approval.message.run-open
 
-- **Given:** an approval is open.
-- **When:** any actor sends a message — including a message whose text
-  resembles an option, like the plain word `approve`.
-- **Then:** the approval remains open and owned. The message runs as a normal
-  turn. The runtime never matches message text against open obligations; if
-  the text was in fact an answer, the agent handles it semantically and can
-  tell the actor how to actually respond.
+- **Example:** While the `bash` approval waits, Dana types the word `approve`
+  as plain chat. Nothing settles; the agent answers and points Dana at the
+  buttons.
+- **Given:** `Batch B { A1: open }`, `W(B)` withheld.
+- **When:** `Message(any actor, text)` — including text that resembles an
+  option, like the plain word `approve`. The runtime never matches message
+  text against open obligations.
+- **Then:**
+  - **ledger:** unchanged — `A1` stays open, owned, and answerable.
+  - **history:** append the user message. `W(B)` stays out; no synthetic
+    messages, no outcome parts.
+  - **turn:** one — a normal message turn whose transcript is the safe
+    projection (history without `W(B)`, invariant 3). If the text was in
+    fact an answer, the agent handles it semantically and can tell the actor
+    how to actually respond.
 - **Observed:** `message.received`, model output, `session.waiting`; no
   request event of any kind.
 
 #### owner.approval.message.no-retroactive-binding
 
-- **Given:** a message arrived before an approval was created.
-- **When:** the buffered message is processed after the approval exists.
-- **Then:** eve does not interpret the older message as a response to the
-  newer obligation. The message runs as a normal turn; the approval stays
-  open.
+- **Example:** Dana's "yes, go ahead" was sent before the approval card
+  existed. It is never counted as consent for it.
+- **Given:** a `Message` was admitted and buffered before `A1` existed; `A1`
+  is created before the buffer drains.
+- **When:** the buffered message is interpreted.
+- **Then:**
+  - **ledger:** unchanged — the older message never becomes a candidate for
+    the newer obligation.
+  - **history:** append the user message only.
+  - **turn:** one — a normal message turn; `A1` stays open.
 
 #### owner.approval.compound.settle-then-run
 
-- **Given:** an approval is the last open member of its group.
-- **When:** one delivery contains an accepted response plus a message.
-- **Then:** eve settles the approval and runs the message as a normal turn;
-  each part is processed exactly once.
+- **Example:** One send: Dana clicks Allow and types "then check the logs". The
+  command runs first; the log request is its own turn after.
+- **Given:** `Batch B { A1: open }` — `A1` the last open member; `W(B)`
+  withheld.
+- **When:** `Compound(actor, [{ A1, allow }], message)`; each part is
+  processed exactly once.
+- **Then:**
+  - **ledger:** `A1 → settled(allowed)`; continuation claimed.
+  - **history, in this order:** `W(B)`, member outcome parts, the allowed
+    tool's real result, resumed assistant output — then the user message.
+  - **turn:** two — the closure resume, then the message turn.
 - **Observed:** serialized: `input.responded`, restored group output, group
   `action.result` events, resumed assistant output, then `message.received`.
 
 #### owner.approval.compound.settle-then-run-siblings-open
 
-- Same delivery, but the group has other open members.
-- **Then:** the approval settles, the message runs, the group's withheld
-  output stays withheld and no group tool runs yet.
+- **Example:** Same send, but a second approval from the same turn is still
+  open — the message runs while the batch keeps waiting.
+- Same delivery, but `B` has other open members.
+- **Then:**
+  - **ledger:** `A1` settles; `B` stays pending; no continuation claim.
+  - **history:** the user message only — `W(B)` stays out, no outcome parts
+    yet.
+  - **turn:** one — the message turn; no group tool runs yet.
 - **Observed:** `input.responded` precedes `message.received`; the group's
   `action.result` is absent.
 
 #### owner.approval.compound.reject-stale-then-run
 
-- **Given:** an approval is no longer open.
-- **When:** one delivery contains a response for it plus a message.
-- **Then:** eve rejects the stale candidate and runs the message as a normal
-  turn; no obligation changes and no stale tool runs.
+- **Example:** Dana clicks Allow on yesterday's settled card and adds "did this
+  go out?". The agent answers; nothing reruns.
+- **Given:** `A1` terminal.
+- **When:** one delivery contains a response for `A1` plus a message.
+- **Then:**
+  - **ledger:** unchanged; the candidate is recorded stale.
+  - **history:** the synthetic stale-context message, then the user message.
+  - **turn:** one — a message turn carrying both; no stale tool runs.
 - **Observed:** `input.response.rejected(reason: stale)` precedes
   `message.received`.
 
@@ -659,105 +817,209 @@ unless the entry says the sequence is exact.
 
 #### owner.question.response.settle-answer
 
-- **When:** an actor sends a correlated answer accepted by the question's
-  response policy.
+- **Example:** Agent asked "Deploy to which environment?" via `ask_question`.
+  Dana picks `staging`; the agent continues with staging.
+- **Given:** `Batch B { Q1: open }`; `W(B)` — the assistant output containing
+  the `ask_question` call — withheld.
+- **When:** a correlated answer accepted by the question's response policy.
+- **Then:**
+  - **ledger:** `Q1 → settled(answered)`; closes only that question; the
+    group closes when its last member is terminal.
+  - **history:** at closure, `W(B)` plus the answer as `Q1`'s tool-result
+    part — the real answer, never a paraphrase.
+  - **turn:** one at closure — resume with the answer.
 - **Observed:** `input.responded(outcome: answered)` closes only that
   question.
 
 #### owner.question.response.reject-stale
 
-- **Given:** a question is no longer open but its owner session is active.
+- **Example:** Sam answers `production` after Dana already picked `staging`.
+  The agent explains the question was already answered.
+- **Given:** `Q1` terminal; the owner session is active.
 - **When:** an actor sends a response referencing its request ID.
-- **Then:** eve changes no obligation. The agent initiates a turn with the
-  stale-attempt context.
+- **Then:**
+  - **ledger:** unchanged; the candidate is recorded stale.
+  - **history:** one synthetic stale-context message; no question result is
+    replayed.
+  - **turn:** one — a context turn.
 - **Observed:** `input.response.rejected(reason: stale)`, then model output,
   then `session.waiting`; no question result is replayed.
 
 #### owner.question.message.dismiss-superseded
 
-- **Given:** a question is open and its tool declares that the originating
-  actor may supersede it with a follow-up.
-- **When:** the originating actor sends a message.
-- **Then:** the question is dismissed as superseded; the message runs as a
-  normal turn. If the message was in fact the answer typed as text, the agent
-  handles it semantically — the runtime does not guess.
+- **Example:** Agent asked "Deploy to which environment?"; Dana instead types
+  "actually, cancel the deploy". The question is dismissed and the new
+  instruction runs.
+- **Given:** `Batch B { Q1: open }`, `W(B)` withheld; `Q1`'s tool declares
+  that the originating actor may supersede it with a follow-up.
+- **When:** `Message(originating actor, text)`.
+- **Then:**
+  - **ledger:** `Q1 → dismissed(superseded)`; the group closes ordinarily
+    (its owner remains runnable).
+  - **history:** `W(B)` restored with a superseded outcome part for `Q1` —
+    no fabricated answer — then the user message.
+  - **turn:** one — the message turn on the restored transcript. If the
+    message was in fact the answer typed as text, the agent handles it
+    semantically — the runtime does not guess.
 - **Observed:** `input.dismissed` precedes `message.received`.
 
 #### owner.question.message.run-open-other-actor
 
+- **Example:** Sam chats while Dana's question is open. The question keeps
+  waiting for Dana.
+- **Given:** `Q1` open.
 - **When:** a non-originating actor sends a message.
-- **Then:** the question remains open; the message runs as a normal turn.
+- **Then:**
+  - **ledger:** unchanged — `Q1` remains open.
+  - **history:** the user message; `W(B)` stays out.
+  - **turn:** one — a normal message turn.
 - **Observed:** `message.received` and no closure event for the question.
 
 #### owner.question.compound.settle-then-run
 
+- **Example:** One send: Dana picks `staging` and types "and bump the version".
+- **Given:** `Q1` open.
 - **When:** one delivery contains an accepted answer plus a message.
-- **Then:** the answer settles the question; supersession does not run; the
-  message runs after any closing group work.
+- **Then:**
+  - **ledger:** the answer settles `Q1`; supersession does not run.
+  - **history:** the closure content of `settle-answer` (when the group
+    closes), then the user message.
+  - **turn:** the closure resume when the group closes, then the message
+    turn.
 - **Observed:** `input.responded` precedes `message.received`.
 
 ### owner.batch
 
 #### owner.batch.response.settle-partial
 
-- **Given:** one assistant turn created a group with multiple open members.
-- **When:** an accepted response settles one member while siblings remain
-  open.
-- **Then:** the answered member is settled; siblings remain open; the withheld
-  output is not restored and no group tool runs.
+- **Example:** One turn asked approval for both `bash npm publish` and
+  `send_email`. Dana approves the email only; nothing runs yet and publish
+  still waits.
+- **Given:** `Batch B { A1: open, A2: open }` — multiple open members from
+  one assistant turn; `W(B)` withheld.
+- **When:** an accepted response settles `A1` while `A2` remains open.
+- **Then:**
+  - **ledger:** `A1` settles; `A2` stays open; `B` stays pending; the
+    continuation is untouched.
+  - **history:** **unchanged** — `W(B)` appears zero times; no outcome part
+    for `A1` yet; no synthetic messages.
+  - **turn:** **none** — the delivery is fully absorbed by the ledger and the
+    settlement event (invariant 2). No group tool runs.
 - **Observed:** the group remains pending and the withheld output appears zero
   times in committed history.
 
 #### owner.batch.close.fire-continuation
 
-- **Given:** one member remains open in a group.
-- **When:** it settles, or is superseded while its owner remains runnable.
-- **Then:** eve restores the withheld output exactly once, appends every
-  member outcome, and runs each allowed tool exactly once.
+- **Example:** Dana then approves `bash npm publish` too. The withheld output
+  appears and both approved tools run.
+- **Given:** `Batch B` with exactly one member still open; every sibling
+  terminal; `W(B)` withheld.
+- **When:** that member settles, or is superseded while its owner remains
+  runnable.
+- **Then:**
+  - **ledger:** last member terminal; continuation `pending → claimed`.
+  - **history:** `W(B)` exactly once, every member's outcome part, and each
+    allowed tool's real result.
+  - **turn:** one — resume with all results.
 - **Observed:** each tool call, response, and tool result appears exactly
   once.
 
 #### owner.batch.message.dismiss-question-only
 
-- **Given:** one group contains an approval and a question.
-- **When:** the originating actor supersedes the question.
-- **Then:** only the question is dismissed. The withheld output stays withheld
-  until the approval also closes.
+- **Example:** One turn raised a `bash` approval and a question. Dana's follow-
+  up message dismisses only the question; the approval keeps waiting.
+- **Given:** `Batch B { A1: open, Q1: open }` — a mixed group; `W(B)`
+  withheld.
+- **When:** the originating actor supersedes `Q1` with a message.
+- **Then:**
+  - **ledger:** only `Q1 → dismissed(superseded)`; `A1` stays open; `B` stays
+    pending.
+  - **history:** the user message; `W(B)` stays withheld until `A1` also
+    closes.
+  - **turn:** one — the message turn.
 - **Observed:** `input.dismissed` names the question only; the approval
   remains open in the same group.
 
 #### owner.batch.park.append
 
-- **Given:** an earlier group still has open members.
-- **When:** a later turn parks with its own requests.
-- **Then:** both groups remain independently addressable; closing one does not
-  change or replay the other.
+- **Example:** Monday's `bash` approval is still open when Tuesday's turn
+  raises a `send_email` approval. Both cards work independently.
+- **Given:** `Batch B1` still has open members.
+- **When:** a later turn's outcome parks with its own requests (a
+  turn-outcome input, not a delivery).
+- **Then:**
+  - **ledger:** append `Batch B2` with its own withheld output `W(B2)`; both
+    groups independently addressable; closing one never changes or replays
+    the other.
+  - **history:** nothing — both outputs stay withheld.
+  - **turn:** the parking turn ends; none runs until responses arrive.
 - **Observed:** `input.requested` exposes every new request ID exactly once.
+
+#### owner.batch.park.dedupe-open-intent
+
+- **Example:** The `bash npm publish` approval is open; Dana chats; the model
+  retries `bash npm publish` inside that chat turn. No second card appears —
+  the retry is told the approval is already pending.
+- **Given:** `Batch B1 { A1: open }` where `A1` carries approval intent `K` —
+  the tool's `approvalKey(toolInput)`, defaulting to the tool name — and a
+  later model turn is running (for example via
+  `owner.approval.message.run-open`).
+- **When:** that turn's outcome raises an approval whose intent is also `K`
+  (invariant 4).
+- **Then:**
+  - **ledger:** no second open approval for `K` is appended — `A1` remains
+    the single addressable obligation for the intent; one settlement
+    adjudicates the intent once.
+  - **history:** the duplicate tool call closes with a synthetic
+    already-pending result part naming `A1`'s request ID; no new withheld
+    output is held for it.
+  - **turn:** the raising turn continues with that result — as with a denied
+    tool, the model reacts instead of parking.
+- **Observed:** no second `input.requested` for intent `K`; `A1`'s later
+  settlement runs the tool at most once.
 
 #### owner.batch.park.persist-with-runtime-action
 
+- **Example:** One turn raises a `bash` approval and starts a research
+  subagent. The card is exposed before the subagent work proceeds.
 - **Given:** one assistant turn creates HITL requests and starts a subagent or
   remote action.
-- **Then:** eve persists both the group and the runtime action, and exposes
-  every request before dispatching or waiting. No approval disappears behind
-  the runtime action.
+- **When:** the turn's outcome parks.
+- **Then:**
+  - **ledger:** both the group and the runtime action persist; every request
+    is exposed before dispatching or waiting. No approval disappears behind
+    the runtime action.
+  - **history:** nothing until closure.
+  - **turn:** the parking turn ends.
 - **Observed:** `input.requested` appears exactly once for every request.
 
 #### owner.batch.park.fail-closed-metadata
 
+- **Example:** eve cannot reconstruct the tool call behind an approval
+  (corrupted state). The turn fails loudly instead of running it or silently
+  waiting.
 - **Given:** a nonautomatic approval exists but eve cannot recover the
   matching tool-call metadata needed for `InputRequest`.
-- **Then:** eve fails the turn explicitly instead of executing the tool,
-  dispatching sibling actions, or waiting on a hidden approval.
+- **When:** the turn's outcome would park.
+- **Then:**
+  - **ledger:** no hidden approval is appended; the turn fails explicitly.
+  - **history:** nothing — no tool executes, no sibling action dispatches,
+    no synthetic result is fabricated.
+  - **turn:** none — the turn fails instead of waiting.
 - **Observed:** `step.failed(code: HITL_REQUEST_METADATA_MISSING)` precedes
   `turn.failed` and `session.failed`; `session.waiting` is absent.
 
 #### owner.batch.forced-close.no-continuation
 
-- **Given:** a group has open members.
+- **Example:** Dana cancels the turn while two approvals wait. Both are
+  dismissed and nothing ever runs.
+- **Given:** `Batch B` has open members; `W(B)` withheld.
 - **When:** cancellation or session termination dismisses them.
-- **Then:** eve does not restore the withheld output and runs no group tool or
-  model call.
+- **Then:**
+  - **ledger:** members dismissed; continuation `pending → suppressed`, never
+    claimed.
+  - **history:** unchanged — `W(B)` is never restored; no outcome parts.
+  - **turn:** none — no group tool, no model call.
 - **Observed:** `input.dismissed` events precede the cancellation or terminal
   session event.
 
@@ -765,36 +1027,63 @@ unless the entry says the sequence is exact.
 
 #### owner.limit.message.supersede
 
-- **Given:** a limit prompt is visible and the limit still applies.
-- **When:** any actor sends a message without granting continuation.
-- **Then:** eve dismisses the old prompt as superseded, opens a fresh prompt
-  with a new request ID from the monotonic generation, and does not call the
-  model. The triggering message is consumed by the limit check and is not
-  replayed later.
+- **Example:** The token-limit prompt is up; Dana types "keep going please"
+  instead of clicking Continue. A fresh prompt replaces it; no tokens are
+  spent.
+- **Given:** `Limit(gen) { open }`; the limit still applies.
+- **When:** `Message(any actor, text)` without a Continue.
+- **Then:**
+  - **ledger:** `Limit(gen) → dismissed(superseded)`; `Limit(gen+1)` opens
+    with a new request ID from the monotonic generation.
+  - **history:** unchanged — the message is consumed by the limit check: its
+    text never enters history and is not replayed later. The prompt exists
+    to stop spend.
+  - **turn:** none.
 - **Observed:** `input.dismissed(old)` precedes `input.requested(new)`; the
   message is not hidden in deferred input.
 
 #### owner.limit.response.settle-continue
 
+- **Example:** Dana clicks Continue. The paused turn resumes under a fresh
+  budget.
+- **Given:** `Limit(gen) { open }`; a turn is parked at the budget gate.
 - **When:** the actor sends the correlated Continue response.
-- **Then:** the prompt settles, a fresh budget window opens, and any
-  co-delivered message is processed.
+- **Then:**
+  - **ledger:** `Limit(gen) → settled(continued)`; continuation claimed; a
+    fresh budget window opens.
+  - **history:** any co-delivered message appends; the prompt itself leaves
+    no transcript content.
+  - **turn:** one — the gated turn resumes under the new budget and
+    processes any co-delivered message.
 - **Observed:** `input.responded` precedes `message.received` when a message
   is present.
 
 #### owner.limit.response.settle-stop
 
+- **Example:** Dana clicks Stop. The turn is cancelled; the session stays
+  usable.
+- **Given:** `Limit(gen) { open }`; a turn is parked at the budget gate.
 - **When:** the actor sends the correlated Stop response.
-- **Then:** the prompt settles and the active turn is cancelled; no model
-  call.
+- **Then:**
+  - **ledger:** `Limit(gen) → settled(stopped)`; continuation claimed.
+  - **history:** unchanged.
+  - **turn:** none — the active turn is cancelled; the session remains
+    resumable afterward.
 - **Observed:** `input.responded` precedes `turn.cancelled`; the session
   remains resumable afterward.
 
 #### owner.limit.response.reject-stale
 
-- **Given:** prompt generation `gen` was superseded by `gen+1`.
+- **Example:** Dana clicks Continue on the superseded prompt in a stale tab.
+  Nothing resumes; the fresh prompt still waits.
+- **Given:** `Limit(gen)` superseded; `Limit(gen+1) { open }`.
 - **When:** a Continue or Stop response references `gen`.
-- **Then:** no budget changes and the turn is not cancelled.
+- **Then:**
+  - **ledger:** unchanged — no budget change, no cancellation; the candidate
+    is recorded stale.
+  - **history:** unchanged — a stale limit answer is dropped outright, never
+    converted into a synthetic context message; it must not reach the model.
+  - **turn:** none.
 - **Observed:** `input.response.rejected(reason: stale)` references the old
   prompt; the fresh prompt remains open.
 
@@ -802,142 +1091,235 @@ unless the entry says the sequence is exact.
 
 #### owner.auth.message.run-open
 
-- **Given:** a challenge is open with an `authorizationId` bound to its actor
-  and blocked operation.
-- **When:** any actor sends a message.
-- **Then:** the challenge remains open; the message runs as a normal turn.
+- **Example:** The ACME sign-in link is pending; Dana asks "what is this for?".
+  The agent answers; the sign-in keeps waiting.
+- **Given:** `AuthGroup G { C1: open }` with an `authorizationId` bound to
+  its actor and blocked operation.
+- **When:** `Message(any actor, text)`.
+- **Then:**
+  - **ledger:** unchanged — `C1` remains open.
+  - **history:** the user message only.
+  - **turn:** one — a normal message turn.
 - **Observed:** `message.received` and no `authorization.completed`.
 
 #### owner.auth.callback.complete
 
-- **When:** a callback carrying an open challenge's `authorizationId`
-  resolves.
-- **Then:** eve emits `authorization.completed` with the actual outcome:
-  `authorized` resumes the blocked operation (via the AuthGroup continuation
-  when the last member completes); `declined` emits an authorization-declined
-  `action.result` and lets the model continue; `failed`/`timed-out` emit the
-  corresponding failed `action.result` and let the model continue;
-  `cancelled` follows the cancellation boundary.
+- **Example:** Agent needs ACME credentials for a lookup. Dana finishes ACME's
+  OAuth; the blocked lookup re-drives with the token.
+- **Given:** `AuthGroup G { C1: open }`.
+- **When:** `Callback` carrying `C1`'s `authorizationId` resolves.
+- **Then:**
+  - **ledger:** `C1 → completed(actual outcome)`; when `C1` is the last open
+    member, continuation `pending → claimed`.
+  - **history:** nothing synthetic on `authorized` — the re-driven turn
+    appends its own output; `declined`/`failed` surface as the blocked
+    action's corresponding error `action.result` part.
+  - **turn:** one at group closure — the blocked turn re-drives with every
+    callback result available; `authorized` resumes the blocked operation,
+    `declined`/`failed` let the model continue with the error result;
+    `cancelled` follows the cancellation boundary instead.
 - **Observed:** callback receipt alone is not completion. Required, callback,
   and completed events share one `authorizationId`.
 
 #### owner.auth.callback.reject-stale
 
-- **Given:** a challenge already completed — by callback, deadline, or
-  closure — or no matching challenge is open.
+- **Example:** Dana clicks the old sign-in link again after already
+  authorizing. The second callback is rejected.
+- **Given:** `C1` already completed — by callback, deadline, or closure — or
+  no matching challenge is open.
 - **When:** a callback arrives.
-- **Then:** eve resumes nothing and changes no state.
+- **Then:**
+  - **ledger:** unchanged; nothing resumes.
+  - **history:** unchanged.
+  - **turn:** none.
 - **Observed:** `authorization.callback.rejected(reason: stale)` with the
   challenge's `authorizationId` when one existed. A callback with no matching
   challenge is rejected the same way, never silently queued.
 
 #### owner.auth.deadline.complete-timed-out
 
-- **When:** a challenge's deadline passes before its callback.
-- **Then:** the challenge completes as timed-out; eve does not resume blocked
-  work.
+- **Example:** Agent wants to authenticate with ACME's OAuth. Dana never
+  finishes signing in before the deadline; the lookup fails as timed-out and
+  the agent says so.
+- **Given:** `C1` open with a deadline.
+- **When:** `Deadline(C1)` fires before its callback — a first-class timer
+  input.
+- **Then:**
+  - **ledger:** `C1 → completed(timed-out)`; group closure per members.
+  - **history:** the blocked action's timed-out error `action.result` part at
+    group closure.
+  - **turn:** the closure re-drive proceeds with the failure; the blocked
+    operation is never performed as authorized.
 - **Observed:** exactly one `authorization.completed(outcome: timed-out)`.
 
 #### owner.auth.close.complete
 
-- **When:** the owning turn is cancelled or the session ends while a challenge
-  is open.
-- **Then:** turn cancellation, session completion, and explicit termination
-  map to `cancelled`; session failure maps to `failed`.
+- **Example:** The session ends while the ACME sign-in is pending. The
+  challenge completes as cancelled.
+- **Given:** `C1` open.
+- **When:** the owning turn is cancelled or the session ends.
+- **Then:**
+  - **ledger:** turn cancellation, session completion, and explicit
+    termination map to `completed(cancelled)`; session failure maps to
+    `completed(failed)`; the continuation is suppressed.
+  - **history:** unchanged — no re-drive.
+  - **turn:** none.
 - **Observed:** exactly one `authorization.completed` with that outcome.
 
 ### owner cancellation
 
 #### owner.obligation.turn-cancel.dismiss
 
-- **Given:** the owner session has open obligations created by multiple turns.
-- **When:** one owning turn is cancelled.
-- **Then:** eve dismisses only obligations bound to the cancelled turn; others
-  remain open.
+- **Example:** Dana cancels Tuesday's turn. Only Tuesday's approval is
+  dismissed; Monday's keeps waiting.
+- **Given:** open obligations owned by multiple turns.
+- **When:** `CancelTurn` for one owning turn.
+- **Then:**
+  - **ledger:** only obligations bound to the cancelled turn are
+    `dismissed(cancelled)`; their groups' continuations are suppressed;
+    obligations of other turns remain open.
+  - **history:** unchanged — forced closure restores nothing.
+  - **turn:** none.
 - **Observed:** every `input.dismissed(reason: cancelled)` precedes
   `turn.cancelled`.
 
 #### owner.obligation.session-end.dismiss
 
-- **When:** the session completes, fails, times out, or is terminated with
-  open obligations.
-- **Then:** every open owned obligation is dismissed as session-ended.
+- **Example:** The session times out with an approval and a question open. Both
+  are dismissed as session-ended.
+- **Given:** open owned obligations.
+- **When:** the session completes, fails, times out, or is terminated.
+- **Then:**
+  - **ledger:** every open owned obligation is `dismissed(session-ended)`;
+    continuations are suppressed.
+  - **history:** unchanged.
+  - **turn:** none.
 - **Observed:** every `input.dismissed(reason: session-ended)` precedes the
   terminal session event.
 
 ### scheduler
 
+Scheduler rows govern admission only; what each admitted delivery does to the
+ledger, history, and turn is its own catalog row.
+
 #### scheduler.delivery.admit-arrival-order
 
-- **Given:** deliveries arrive while a turn is active.
+- **Example:** Mid-turn, Dana clicks Allow and then sends "also update the
+  docs". At the boundary the Allow is interpreted first, the message second.
+- **Given:** `TurnActive`; deliveries `D1..Dn` buffered in durable arrival
+  order.
 - **When:** the turn reaches a receptive boundary.
-- **Then:** eve admits the buffered deliveries exactly once in durable arrival
-  order. Each delivery is interpreted against the state produced by the
-  preceding one.
+- **Then:**
+  - **ledger:** each `Di` is interpreted exactly once, against the state
+    produced by `D(i-1)`.
+  - **history / turn:** whatever each `Di`'s own row dictates — admission
+    itself adds nothing.
 - **Observed:** their `message.received` and resulting transition events retain
   arrival order.
 
 #### scheduler.delivery.admit-actor-partition
 
-- **Given:** buffered deliveries arrive from actor A, then B, then A.
+- **Example:** Mid-turn messages arrive from Dana, then Sam, then Dana again.
+  They drain as three inputs, never merged into one.
+- **Given:** buffered deliveries from actor A, then B, then A.
 - **When:** eve drains them.
-- **Then:** three ordered actor-homogeneous turn inputs; no merging across
-  actor boundaries.
+- **Then:**
+  - **ledger:** three ordered actor-homogeneous turn inputs; no merging
+    across actor boundaries.
+  - **history / turn:** per partition, per each delivery's own row.
 - **Observed:** each `message.received` is evaluated with its own verified
   actor and durable arrival order.
 
 ### projector
 
+Routes live in the parent's ledger; projection is events-only traffic. In
+every projector row the parent's **history is unchanged** and the parent runs
+**no model turn** — forwarding is transport, and the child owns the
+obligation.
+
 #### projector.route.park.project
 
-- **When:** a child session creates a HITL request and the parent receives it.
-- **Then:** the child remains the owner; the parent exposes an actionable
-  copy.
+- **Example:** A child research subagent raises a `bash` approval. The parent
+  session shows Dana the same card; the child stays the owner.
+- **Given:** no route for the request.
+- **When:** a child session creates a HITL request and the parent receives it
+  (a child event, not a delivery).
+- **Then:**
+  - **ledger:** `Route(requestId): absent → active`; the child remains the
+    owner; the parent exposes an actionable copy.
+  - **history / turn:** parent unchanged; none.
 - **Observed:** the parent stream re-emits `input.requested` with the same
   request ID.
 
 #### projector.route.close.project
 
-- **When:** the child settles or dismisses a projected request.
-- **Then:** the parent re-emits the closure with `scope: projection` and drops
-  only that request's route. Sibling routes remain active.
+- **Example:** The approval settles inside the child. The parent re-announces
+  the closure and drops its copy of the card.
+- **Given:** `Route(requestId): active`.
+- **When:** the child settles or dismisses the projected request.
+- **Then:**
+  - **ledger:** only that request's route drops; sibling routes remain
+    active.
+  - **history / turn:** parent unchanged; none.
+- **Observed:** the parent re-emits the closure with `scope: projection`.
 
 #### projector.route.drop.route-lost
 
+- **Example:** The parent session ends while the child's card is still showing.
+  The parent dismisses its copy as route-lost; the child's request is
+  untouched.
+- **Given:** active routes.
 - **When:** the parent's route to a child request becomes unusable, or the
   parent session ends with active routes.
-- **Then:** the parent dismisses only its projected copies as route-lost. It
-  never claims the child requests settled.
+- **Then:**
+  - **ledger:** the parent dismisses only its projected copies as route-lost;
+    it never claims the child requests settled.
+  - **history / turn:** parent unchanged; none.
 - **Observed:** `input.dismissed(scope: projection, reason: route-lost)`
   precedes route removal or the parent terminal event.
 
 #### projector.route.response.reject-stale-after-drop
 
+- **Example:** Dana clicks Allow on the child's card, but the child already
+  finished and its hook is gone. Nothing resumes and the parent does not fail.
 - **Given:** a route still exists but the child's continuation hook has been
   disposed.
 - **When:** a response reaches that route before cleanup.
-- **Then:** eve does not resume the child, fail the parent, mutate another
-  obligation, or call the model. The route closes as route-lost.
+- **Then:**
+  - **ledger:** the route closes as route-lost; no other obligation mutates.
+  - **history / turn:** parent unchanged; none — eve does not resume the
+    child, fail the parent, or call the model.
 - **Observed:** `input.dismissed(scope: projection, reason: route-lost)`, then
   `input.response.rejected(scope: projection, reason: stale)`;
   `session.failed` is absent.
 
 #### projector.route.response.forward-responder
 
-- **When:** an actor responds through the parent channel to a child-owned
+- **Example:** Sam approves the child-owned card in the parent channel. The
+  child sees Sam as the responder, not the parent session.
+- **Given:** `Route(requestId): active`.
+- **When:** an actor responds through the parent channel to the child-owned
   request.
-- **Then:** the parent forwards the verified responder unchanged; the child
-  evaluates its own response policy. If the child emits
-  `input.response.pending`, the parent projects that event and the matching
-  authorization events with unchanged `candidateId` and `authorizationId`;
-  the callback route remains child-owned.
+- **Then:**
+  - **ledger:** the parent forwards the verified responder unchanged; the
+    child evaluates its own response policy and takes its own transitions.
+    If the child emits `input.response.pending`, the parent projects that
+    event and the matching authorization events with unchanged `candidateId`
+    and `authorizationId`; the callback route remains child-owned.
+  - **history / turn:** parent unchanged; none.
 - **Observed:** the child outcome is re-emitted by the parent without
   substituting the parent actor.
 
 #### projector.route.response.reject-unauthorized-remote
 
-- **When:** a remote child rejects the forwarded principal or responder proof.
-- **Then:** eve fails closed: the request stays open, no remote tool runs.
+- **Example:** A remote child rejects Sam's forwarded identity proof. The
+  request stays open and no remote tool runs.
+- **Given:** `Route(requestId): active` to a remote child.
+- **When:** the remote child rejects the forwarded principal or responder
+  proof.
+- **Then:**
+  - **ledger:** fail closed — the request stays open; no remote tool runs.
+  - **history / turn:** parent unchanged; none.
 - **Observed:** the parent re-emits
   `input.response.rejected(scope: projection, reason: unauthorized)`; no
   terminal request event.
