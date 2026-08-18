@@ -4,6 +4,7 @@ import { buildCallbackContext } from "#context/build-callback-context.js";
 import { replayDynamicTools } from "#context/build-dynamic-tools.js";
 import { loadContext } from "#context/container.js";
 import { resolveDynamicToolEvent } from "#context/dynamic-tool-lifecycle.js";
+import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import {
   cloneProjection,
   cloneScope,
@@ -53,6 +54,7 @@ export async function resolveMemoryTurnTools(input: {
     throw new Error("Memory tools require an active turn scope.");
   }
 
+  const descriptionByResolver = new Map<string, string>();
   const resolvers = active.slots.flatMap((lock) => {
     if (lock.scope === null) return [];
     const memory = input.memories.find((candidate) => candidate.slot === lock.slot);
@@ -60,15 +62,17 @@ export async function resolveMemoryTurnTools(input: {
       throw new Error(`Memory slot "${lock.slot}" is unavailable in the active runtime revision.`);
     }
     if (memory.provider.tools === undefined) return [];
-    return [
-      createMemoryToolResolver({
-        active,
-        memory,
-        scope: lock.scope,
-        session: input.session,
-        slot: lock.slot,
-      }),
-    ];
+    const resolver = createMemoryToolResolver({
+      active,
+      memory,
+      scope: lock.scope,
+      session: input.session,
+      slot: lock.slot,
+    });
+    if (memory.description !== undefined) {
+      descriptionByResolver.set(resolver.slug, memory.description);
+    }
+    return [resolver];
   });
 
   const event = {
@@ -78,7 +82,7 @@ export async function resolveMemoryTurnTools(input: {
     },
     type: "turn.started",
   } as UnstampedMessageStreamEvent;
-  const { metadata } =
+  const { metadata: resolvedMetadata } =
     resolvers.length === 0
       ? { metadata: [] }
       : await resolveDynamicToolEvent({
@@ -87,8 +91,21 @@ export async function resolveMemoryTurnTools(input: {
           messages: input.messages,
           resolvers,
         });
+  const metadata = prependMemoryDescriptions(resolvedMetadata, descriptionByResolver);
 
   return setActiveMemoryTurn(input.session, { ...active, toolMetadata: metadata });
+}
+
+function prependMemoryDescriptions(
+  metadata: readonly DurableDynamicToolMetadata[],
+  descriptionByResolver: ReadonlyMap<string, string>,
+): readonly DurableDynamicToolMetadata[] {
+  return metadata.map((tool) => {
+    const description = descriptionByResolver.get(tool.resolverSlug);
+    return description === undefined
+      ? tool
+      : { ...tool, description: `${description}\n\n${tool.description}` };
+  });
 }
 
 /** Reconstructs the current turn's memory tools without invoking a provider resolver. */

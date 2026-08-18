@@ -661,6 +661,59 @@ describe("memory lifecycle", () => {
     });
   });
 
+  it("prepends each slot description without exposing its address or mutating provider tools", async () => {
+    const remember = defineTool({
+      description: "Remember one value.",
+      execute: () => undefined,
+      inputSchema: { type: "object" },
+    });
+    const provider = defineMemoryProvider({
+      recall: () => undefined,
+      tools: () => ({ remember }),
+    });
+    const memories = [
+      memory(
+        "channel",
+        provider,
+        "private-channel-scope",
+        "scope",
+        "private-channel-namespace",
+        "Shared channel conventions.",
+      ),
+      memory(
+        "personal",
+        provider,
+        "private-personal-scope",
+        "scope",
+        "private-personal-namespace",
+        "Personal preferences.",
+      ),
+    ];
+
+    const session = await runInContext(createContext(), () =>
+      startMemoryTurn({
+        defaultNamespaceContext,
+        memories,
+        messages: [],
+        projectionAnchorIndex: 0,
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      }),
+    );
+    const tools = buildMemoryTools(session);
+
+    expect(tools.get("channel__remember")?.description).toBe(
+      "Shared channel conventions.\n\nRemember one value.",
+    );
+    expect(tools.get("personal__remember")?.description).toBe(
+      "Personal preferences.\n\nRemember one value.",
+    );
+    expect(JSON.stringify([...tools.values()].map(({ description }) => description))).not.toMatch(
+      /private-(channel|personal)-(namespace|scope)/u,
+    );
+    expect(remember.description).toBe("Remember one value.");
+  });
+
   it("passes async tools the dynamic resolver context after recall", async () => {
     const observed: unknown[] = [];
     const prior = [{ content: "prior", role: "user" }] as const;
@@ -789,7 +842,7 @@ describe("memory lifecycle", () => {
         };
       },
     });
-    const definition = memory("user", provider, "user-1");
+    const definition = memory("user", provider, "user-1", "scope", "test:user", "Personal memory.");
     const ctx = createContext("issuer-a");
 
     const resolved = await runInContext(ctx, async () => {
@@ -804,7 +857,10 @@ describe("memory lifecycle", () => {
       return { session, tools: buildMemoryTools(session) };
     });
     const tool = resolved.tools.get("user__remember");
-    expect(tool).toMatchObject({ description: "Remember text", name: "user__remember" });
+    expect(tool).toMatchObject({
+      description: "Personal memory.\n\nRemember text",
+      name: "user__remember",
+    });
     expect(resolutions).toHaveLength(1);
 
     const parked = recordMemoryToolOrigins({
@@ -813,6 +869,7 @@ describe("memory lifecycle", () => {
     });
     expect(getMemoryToolOriginCallIds(parked)).toEqual(["call-1"]);
     const originalOrigin = getMemoryState(parked).toolOrigins["call-1"]!;
+    expect(originalOrigin.toolMetadata.description).toBe("Personal memory.\n\nRemember text");
     const rerecorded = recordMemoryToolOrigins({
       calls: [
         {
@@ -885,7 +942,9 @@ describe("memory lifecycle", () => {
       type: "text",
       value: "fallback",
     });
-    expect(buildMemoryTools(restored).has("user__remember")).toBe(true);
+    expect(buildMemoryTools(restored).get("user__remember")?.description).toBe(
+      "Personal memory.\n\nRemember text",
+    );
     expect(resolutions).toHaveLength(1);
 
     setContextSession(ctx, "issuer-b");
@@ -1001,8 +1060,10 @@ function memory(
   scope: ResolvedMemoryDefinition["scope"],
   visibility: ResolvedMemoryDefinition["visibility"] = "scope",
   namespace: ResolvedMemoryDefinition["namespace"] = `test:${slot}`,
+  description?: string,
 ): ResolvedMemoryDefinition {
   return {
+    description,
     logicalPath: `memory/${slot}.ts`,
     namespace,
     provider,

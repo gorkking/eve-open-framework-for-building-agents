@@ -20,7 +20,7 @@ The two forms are mutually exclusive. The file path determines the slot name: `a
 
 ## Define a memory slot
 
-Each slot combines a provider with a required trusted scope and an optional namespace:
+Each slot combines a provider with a required trusted scope, an optional namespace, and an optional model-facing description:
 
 ```ts title="agent/memory/user.ts"
 import { defineMemory } from "eve/memory";
@@ -28,6 +28,7 @@ import { byPrincipal } from "eve/memory/scope";
 import { userMemory } from "../lib/user-memory";
 
 export default defineMemory({
+  description: "Personal preferences and durable facts for the authenticated user.",
   provider: userMemory,
   scope: byPrincipal,
 });
@@ -89,6 +90,7 @@ import slack from "../channels/slack";
 import { channelMemory } from "../lib/channel-memory";
 
 export default defineMemory({
+  description: "Shared conventions for this Slack channel.",
   provider: channelMemory,
   scope: (ctx) => {
     if (!isChannel(ctx.channel, slack)) return null;
@@ -105,6 +107,22 @@ export default defineMemory({
 The array resolves to `<principal>:<teamId>:<channelId>`. Add the channel's thread or conversation identifier when memory must not cross that boundary. Returning `null` disables this Slack-only slot for other channels or before Slack has supplied the required metadata.
 
 eve locks the resolved scope through the active turn, including model steps and durable approved-call continuations. A standalone manual compaction resolves and locks a scope for that operation. Provider tools close over the same scope, so the model never chooses a user, tenant, or container.
+
+## Describe provider tools
+
+Set `description` when a provider exposes tools and the model needs to distinguish the slot from other memory destinations. The description is a static string owned by the consuming definition, so the same provider can serve slots with different purposes. An empty or whitespace-only description is invalid.
+
+eve prepends the slot description and two newline characters to every tool description returned by the provider. For example, the `user__forget` tool from the first definition begins with:
+
+```text
+Personal preferences and durable facts for the authenticated user.
+
+Forget one saved memory.
+```
+
+Without `description`, eve preserves the provider's tool descriptions unchanged. The description is not added to a memory projection or inserted into the prompt separately, so it has no model-facing effect when the provider exposes no tools. eve never derives it from the slot name, namespace, scope, or request context.
+
+Descriptions help the model choose among qualified memory tools; they do not grant access. Continue to enforce the data boundary with `scope`, provider authorization, and tool approval where needed.
 
 ## Control projection visibility
 
@@ -255,6 +273,8 @@ Memory tools use the same implementation as a `turn.started` [`defineDynamic`](.
 
 eve qualifies each returned key with the slot name. The `forget` tool above becomes `user__forget` when mounted at `agent/memory/user.ts`. The model receives neither the slot nor the scope as tool input. Provider tools otherwise use the standard tool contract, including schemas, authorization, approval, and model-output projection.
 
+When the consuming `defineMemory(...)` includes `description`, eve prepends it to every returned tool description before storing the turn's durable dynamic metadata. Every model step and parked continuation therefore sees the same slot-specific description.
+
 Approval helpers keep their standard semantics. In particular, `once()` approves a qualified tool name for the entire session, so that approval also applies after the memory scope changes. Use `always()` or a custom approval policy when an operation needs participant- or scope-specific approval.
 
 A call that parks for approval or authorization retains its resolved dynamic metadata. eve reconstructs the exact originating definition, including its captured scope, even if another participant has since replaced the current turn's tools. It does not call the provider's `tools` function again or substitute the current scope.
@@ -277,4 +297,4 @@ Providers must apply `ctx.memory.scope.key` or both `ctx.memory.scope.namespace`
 
 ## Package a provider
 
-A provider package can export a `MemoryProvider` or a provider factory with its own credentials, storage, migrations, retrieval, capture, and tools. The consuming agent still declares `defineMemory(...)` with its namespace, scope, and visibility policy. Extensions cannot contribute memory slots because those audience and partition choices belong to the consuming application.
+A provider package can export a `MemoryProvider` or a provider factory with its own credentials, storage, migrations, retrieval, capture, and tools. The consuming agent still declares `defineMemory(...)` with its model-facing description, namespace, scope, and visibility policy. Extensions cannot contribute memory slots because those purpose, audience, and partition choices belong to the consuming application.

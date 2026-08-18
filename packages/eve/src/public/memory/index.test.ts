@@ -23,6 +23,7 @@ describe("memory authoring", () => {
     const scope = () => "user-1";
     const provider = defineMemoryProvider({ recall, save, tools });
     const definition = defineMemory({
+      description: "Personal memory.",
       namespace: "production",
       provider,
       scope,
@@ -31,6 +32,7 @@ describe("memory authoring", () => {
 
     expect(provider).toEqual({ recall, save, tools });
     expect(definition).toEqual({
+      description: "Personal memory.",
       namespace: "production",
       provider,
       scope,
@@ -62,6 +64,12 @@ describe("memory authoring", () => {
       provider,
       // @ts-expect-error Arrays are resolver results, not top-level scope definitions.
       scope: ["tenant-1", "user-1"],
+    });
+    defineMemory({
+      // @ts-expect-error Memory descriptions are static strings.
+      description: async () => "Personal memory.",
+      provider,
+      scope: "user-1",
     });
   });
 

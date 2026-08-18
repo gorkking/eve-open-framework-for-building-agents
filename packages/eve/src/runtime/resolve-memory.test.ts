@@ -14,7 +14,7 @@ const definition: CompiledMemoryDefinition = {
 };
 
 describe("resolveMemoryDefinition", () => {
-  it("resolves the three-method provider and defaults visibility to scope", async () => {
+  it("resolves the description and three-method provider and defaults visibility to scope", async () => {
     const provider = defineMemoryProvider({
       recall: () => ({ content: "remembered" }),
       save: async () => {},
@@ -24,15 +24,32 @@ describe("resolveMemoryDefinition", () => {
     await expect(
       resolveMemoryDefinition(
         definition,
-        buildModuleMap(defineMemory({ provider, scope: byPrincipal })),
+        buildModuleMap(
+          defineMemory({ description: "Personal memory.", provider, scope: byPrincipal }),
+        ),
         undefined,
       ),
     ).resolves.toMatchObject({
+      description: "Personal memory.",
       namespace: defaultNamespace,
       provider,
       slot: "user",
       visibility: "scope",
     });
+  });
+
+  it.each(["", "   ", 42])("rejects an invalid description", async (description) => {
+    await expect(
+      resolveMemoryDefinition(
+        definition,
+        buildModuleMap({
+          description,
+          provider: { recall: () => undefined },
+          scope: "user-1",
+        }),
+        undefined,
+      ),
+    ).rejects.toThrow(/description.*non-whitespace string/u);
   });
 
   it("preserves explicit scalar, promise, and resolver addressing", async () => {

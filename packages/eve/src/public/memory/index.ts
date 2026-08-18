@@ -165,6 +165,8 @@ export type MemoryVisibility = "scope" | "session";
 
 /** Path-authored memory slot definition. Identity is derived from its file path. */
 export interface MemoryDefinition {
+  /** Optional model-facing purpose prepended to every provider tool description. */
+  readonly description?: string;
   /** Application-owned memory domain. Defaults to {@link defaultNamespace}. */
   readonly namespace?: MemoryNamespaceDefinition;
   readonly provider: MemoryProvider;

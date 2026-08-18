@@ -33,16 +33,18 @@ export async function resolveMemoryDefinition(
     const value = expectObjectRecord(loaded, describe(definition, "to return an object"));
     expectOnlyKnownKeys(
       value,
-      ["namespace", "provider", "scope", "visibility"],
+      ["description", "namespace", "provider", "scope", "visibility"],
       describe(definition, "to use only supported definition fields."),
     );
 
+    const description = resolveDescription(definition, value.description);
     const namespace = resolveNamespace(definition, value.namespace);
     const provider = resolveProvider(definition, value.provider);
     const scope = resolveScope(definition, value.scope);
     const visibility = resolveVisibility(definition, value.visibility);
 
     return {
+      description,
       exportName: definition.exportName,
       logicalPath: definition.logicalPath,
       namespace,
@@ -60,6 +62,15 @@ export async function resolveMemoryDefinition(
       { logicalPath: definition.logicalPath, sourceId: definition.sourceId },
     );
   }
+}
+
+function resolveDescription(
+  definition: CompiledMemoryDefinition,
+  value: unknown,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  throw new Error(describe(definition, 'to set "description" to a non-whitespace string'));
 }
 
 function resolveNamespace(

@@ -139,6 +139,7 @@ const resolveScope = (ctx: MemoryScopeContext): MemoryScopeResolverResult => {
 const scope: MemoryScopeDefinition = resolveScope;
 
 export default defineMemory({
+  description: "Personal preferences for the authenticated user.",
   namespace,
   provider,
   scope,
