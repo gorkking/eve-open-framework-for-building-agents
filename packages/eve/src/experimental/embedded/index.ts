@@ -8,3 +8,10 @@ export {
   type DefinedEmbeddedAgent,
   type EmbeddedAgentDefinition,
 } from "./definition.js";
+export {
+  createEmbeddedLocalExecutor,
+  EmbeddedLocalExecutorError,
+  type CreateEmbeddedLocalExecutorInput,
+  type EmbeddedLocalExecutor,
+  type EmbeddedLocalExecutorRunResult,
+} from "./local-executor.js";
