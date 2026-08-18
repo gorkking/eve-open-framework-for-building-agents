@@ -335,6 +335,10 @@ describe("ensureChannel", () => {
       "utf8",
     );
     expect(accountSource).toContain('className="size-9 cursor-pointer');
+    expect(accountSource).toContain("Continue with Vercel");
+    expect(accountSource).toContain('viewBox="0 0 24 20"');
+    expect(accountSource).toContain('viewBox="0 0 169 53"');
+    expect(accountSource).toContain("Sign in to start a session");
     expect(accountSource).toContain("Log out");
     expect(accountSource).not.toContain("__EVE_INIT_APP_NAME__");
   });
@@ -867,7 +871,10 @@ describe("listAuthoredChannels", () => {
     await writeFile(join(projectRoot, "agent/channels/slack/connection.ts"), "", "utf8");
     await writeFile(join(projectRoot, "agent/channels/email.mts"), "", "utf8");
 
-    await expect(listAuthoredChannels(projectRoot)).resolves.toEqual(["email", "slack"]);
+    await expect(listAuthoredChannels(join(projectRoot, "agent"))).resolves.toEqual([
+      "email",
+      "slack",
+    ]);
   });
 });
 
@@ -989,6 +996,9 @@ describe("scaffoldBaseProject", () => {
     expect(agentsMd).toContain("next.command");
     expect(agentsMd).toContain("--skip-install");
     expect(agentsMd).toContain("eve link");
+    expect(agentsMd).toContain("eve link --non-interactive --project <name-or-id>");
+    expect(agentsMd).toContain("eve deploy --non-interactive --yes");
+    expect(agentsMd).toContain("instead of calling `vercel` directly");
     expect(agentsMd).toContain("external_action_resolved");
     // `vercel deploy` uploads everything a .vercelignore doesn't exclude, and
     // the platform default-ignores only the .env.local variants — eve's dev

@@ -1,5 +1,38 @@
 # eve
 
+## 0.39.0
+
+### Minor Changes
+
+- 00c0a26: Promote ChatGPT subscription models to the stable `chatgpt()` API with Codex-owned authentication, automatic token refresh, `eve dev` recovery through `codex login` or `/model`, setup/source-authoring support, and local-only deployment safeguards. The deprecated `experimental_chatgpt()` alias remains available.
+
+### Patch Changes
+
+- 267a59a: Align the Sign in with Vercel Web Chat screen with eve's default status page while keeping the generated app name primary and Vercel branding confined to the authentication button.
+- 7a140d4: Carry the one-run pnpm minimum-release-age bypass from dependency installation into the `eve init` development handoff so onboarding starts without a redundant policy failure.
+- e8da571: Allow a child to return `parent.sandbox` from a `defineSandbox` callback, reusing the dispatching parent's live sandbox across agent sessions. Parent and child see the same files, processes, workspace, and sandbox home. A child that selects `parent.sandbox` cannot also declare managed workspace or skill resources; eve rejects that configuration before execution and requires either removing those resources or giving the child its own sandbox.
+- 24f6c06: Eve now emits `workflow.stream.follow.read` spans while following newly created runs, measuring each event from its durable write timestamp to the reader without counting replayed events.
+- 7a8f43b: Treat `eve init` targets as filesystem paths and classify non-empty targets before writing. When the generated initial Git commit fails, retain the repository and staged files and print the command to retry it.
+- 4c1bd80: Remove `glob` and `grep` from the default agent tool set. Agents can opt into either sandbox search tool by exporting `defineGlobTool()` or `defineGrepTool()` from the corresponding tool file.
+- 4af3b1e: Use canonical project discovery for project-scoped CLI commands, including instructions-only agents and commands invoked from descendant directories.
+
+## 0.38.3
+
+### Patch Changes
+
+- 8b2a914: Authorize Slack HITL answers with `onInputResponse` before they resume a parked session. Omitting the hook preserves the existing submitting-user authorization behavior regardless of other Slack handlers.
+- c2b9bbf: Slack `onEvent` handlers can now pass `title` to `ctx.send()` to set the run title without changing the message sent to the model.
+
+## 0.38.2
+
+### Patch Changes
+
+- 250d67a: Bump `@workflow/*` packages to the latest 5.0.0 betas (`core` beta.42, `errors` beta.17, `world` beta.27, `world-local` beta.36, `world-vercel` beta.38, `world-postgres` beta.34). The development Workflow world now advertises spec version 6 (slot-numbered event ids), matching the updated local world.
+- f9f29d3: Surface AI Gateway model catalog request failures during compilation instead of reporting unavailable models as missing metadata. Models with eve-owned metadata continue to compile without the catalog.
+- 77de320: Let background task children send intermediate progress to their parent with `task_update`, using the existing local and remote child-to-parent transports. Remote task HITL is now presented only by the parent channel, finished agents continue through their original subagent tool with `agentId`, and the redundant `task_send` tool has been removed.
+- 88f6ca9: Configure MCP channel endpoints with `route`, default them to `/eve/v1/mcp`, and derive OAuth protected-resource metadata paths from the MCP resource identifier.
+- fe1ad3b: Search by item name when suggesting registry matches, so path typos such as `channels/slack` can still suggest `channel/slack`.
+
 ## 0.38.1
 
 ### Patch Changes

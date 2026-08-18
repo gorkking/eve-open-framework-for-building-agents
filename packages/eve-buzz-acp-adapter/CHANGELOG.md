@@ -1,5 +1,39 @@
 # @eve/buzz-acp-adapter
 
+## 0.0.10
+
+### Patch Changes
+
+- Updated dependencies [267a59a]
+- Updated dependencies [00c0a26]
+- Updated dependencies [7a140d4]
+- Updated dependencies [e8da571]
+- Updated dependencies [24f6c06]
+- Updated dependencies [7a8f43b]
+- Updated dependencies [4c1bd80]
+- Updated dependencies [4af3b1e]
+  - eve@0.39.0
+
+## 0.0.9
+
+### Patch Changes
+
+- 92c610e: Accept compatible eve patch releases without requiring a new adapter release for each eve update.
+- Updated dependencies [8b2a914]
+- Updated dependencies [c2b9bbf]
+  - eve@0.38.3
+
+## 0.0.8
+
+### Patch Changes
+
+- Updated dependencies [250d67a]
+- Updated dependencies [f9f29d3]
+- Updated dependencies [77de320]
+- Updated dependencies [88f6ca9]
+- Updated dependencies [fe1ad3b]
+  - eve@0.38.2
+
 ## 0.0.7
 
 ### Patch Changes

@@ -17,6 +17,11 @@ const modelRouting = z.discriminatedUnion("kind", [
 const modelEndpoint = z.union([
   z.object({ kind: z.literal("external"), provider: z.string() }),
   z.object({
+    kind: z.literal("chatgpt"),
+    state: z.enum(["checking", "ready", "signed-out", "reauth-required", "unavailable"]),
+    accountLabel: z.string().optional(),
+  }),
+  z.object({
     kind: z.literal("gateway"),
     connected: z.literal(true),
     credential: z.enum(["api-key", "oidc"]),
@@ -70,7 +75,7 @@ const tool = entry.extend({
 const frameworkTool = tool.extend({
   disabledByAuthor: z.boolean(),
   replacedByAuthoredTool: z.boolean(),
-  status: z.enum(["active", "disabled", "replaced"]),
+  status: z.enum(["active", "disabled", "opt-in", "replaced"]),
 });
 
 const dynamicResolver = source.extend({

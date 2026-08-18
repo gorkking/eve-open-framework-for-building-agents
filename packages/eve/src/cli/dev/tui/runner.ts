@@ -71,7 +71,7 @@ import {
   formatSetupIssuesLine,
   LOGIN_SETUP_ISSUE,
   orderedSetupIssues,
-  resolveModelProviderState,
+  normalizeLocalModelEndpoint,
   type BootDetection,
   type BootDetectionContext,
   type SetupIssue,
@@ -107,6 +107,7 @@ export { parsePromptCommand, type PromptCommand } from "./prompt-commands.js";
 
 const defaultAssistantResponseStats: AssistantResponseStatsMode = "tokensPerSecond";
 const idleRuntimeArtifactPollMs = 500;
+const idleChatGptAuthPollMs = 5_000;
 /**
  * Cooperative-cancel retry cadence: 8 × 250ms covers the turn-dispatch
  * window (locally the cancel hook is claimed well under a second after the
@@ -371,6 +372,8 @@ export interface PromptCommandHandlerContext {
   readonly title: string;
   /** Provider entry authorized by confirmed boot-time model-access evidence. */
   readonly initialModelStep?: "provider";
+  /** Live ChatGPT identity shown only inside model configuration UI. */
+  readonly chatGptAccountLabel?: string;
   /**
    * Leaves the current setup panel mounted for the next automatic onboarding
    * command. The runner closes it if no next command can proceed.
@@ -671,7 +674,7 @@ export class EveTUIRunner {
 
   #replaceAgentInfo(info: AgentInfoResult | undefined): AgentInfoResult | undefined {
     const headerInfo =
-      this.#appRoot === undefined ? info : resolveModelProviderState(info, process.env);
+      this.#appRoot === undefined ? info : normalizeLocalModelEndpoint(info, process.env);
     this.#agentInfo = headerInfo;
     const serverUrl = this.#serverUrl;
     if (serverUrl === undefined) return headerInfo;
@@ -1194,6 +1197,7 @@ export class EveTUIRunner {
     let stopped = false;
     let refreshing = false;
     let inFlightRefresh: Promise<void> | undefined;
+    let lastChatGptAuthRefresh = 0;
     const refresh = async () => {
       if (stopped || refreshing) {
         return;
@@ -1204,6 +1208,16 @@ export class EveTUIRunner {
         await runtimeArtifacts.refreshIdle({
           onRuntimeArtifactsChanged: () => this.#handleRuntimeArtifactsChanged(),
         });
+        const endpoint = this.#agentInfo?.agent.model.endpoint;
+        const shouldRefreshChatGptAuth =
+          endpoint?.kind === "chatgpt" &&
+          (endpoint.state === "signed-out" || endpoint.state === "reauth-required");
+        const now = Date.now();
+        if (shouldRefreshChatGptAuth && now - lastChatGptAuthRefresh >= idleChatGptAuthPollMs) {
+          lastChatGptAuthRefresh = now;
+          const refreshedInfo = await this.#readAgentInfo();
+          if (refreshedInfo !== undefined) this.#replaceAgentInfo(refreshedInfo);
+        }
       } finally {
         refreshing = false;
       }
@@ -1582,10 +1596,15 @@ export class EveTUIRunner {
     if (handler === undefined)
       return { message: `/${command.name} is not available in this session.` };
 
+    const endpoint = this.#agentInfo?.agent.model.endpoint;
     const baseContext: PromptCommandHandlerContext = {
       renderer: this.#renderer,
       title: input.title,
       initialModelStep: input.initialModelStep,
+      chatGptAccountLabel:
+        endpoint?.kind === "chatgpt" && endpoint.state === "ready"
+          ? endpoint.accountLabel
+          : undefined,
       remoteConnection: this.#remoteConnection,
       withExclusiveTerminal: this.#withExclusiveTerminal,
     };
@@ -1650,7 +1669,7 @@ export class EveTUIRunner {
    * Fresh `eve init` launches the TUI with `/model` prefilled. Project-backed
    * model access depends on the Vercel CLI and a Vercel session, so resolve
    * only those missing prerequisites before entering the model picker. A probe
-   * failure still opens `/model`: its own-key and external-provider paths do
+   * failure still opens `/model`: its API-key and external-provider paths do
    * not require Vercel. After model setup, open the categorized registry hub so
    * a new user has concrete next steps before reaching the chat prompt.
    */
@@ -1770,16 +1789,17 @@ export class EveTUIRunner {
   }
 
   /**
-   * Setup commands can write env files before the dev watcher reloads them.
-   * Reload first, then cache the credential-normalized `/info` snapshot shared
-   * by the status bar and setup detector. The Vercel auth probe stays off the
-   * prompt path.
+   * Setup commands can write authored source and env files. Force the local
+   * runtime snapshot to catch up, then cache the credential-normalized `/info`
+   * shared by the status bar and setup detector. The Vercel auth probe stays
+   * off the prompt path.
    */
   async #refreshModelAccess(): Promise<void> {
     const appRoot = this.#appRoot;
     if (appRoot === undefined) return;
 
     loadDevelopmentEnvironmentFiles(appRoot);
+    await this.#runtimeArtifacts?.refreshAfterSourceChange({});
     const refreshedInfo = this.#replaceAgentInfo(await this.#readAgentInfo());
     void this.#refreshSetupAttention(refreshedInfo);
   }

@@ -54,6 +54,7 @@ function fakeFlows(overrides: Partial<TuiSetupFlows> = {}): TuiSetupFlows {
     runLoginFlow: vi.fn<TuiSetupFlows["runLoginFlow"]>(async () => ({ kind: "logged-in" })),
     runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
       kind: "done",
+      accessChanged: true,
       modelMessage: "Model changed to openai/gpt-5.5. Live on your next prompt.",
     })),
     runRegistryFlow: vi.fn<TuiSetupFlows["runRegistryFlow"]>(async () => ({
@@ -76,6 +77,7 @@ function run(input: {
   renderer?: TuiSetupCommandRenderer;
   initialModelStep?: "provider";
   upgradeChoice?: "upgrade" | "later";
+  withExclusiveTerminal?: TuiSetupCommandInput["withExclusiveTerminal"];
 }) {
   const { upgradeChoice } = input;
   const fake = createFakePrompter(
@@ -90,6 +92,9 @@ function run(input: {
   };
   if (input.initialModelStep !== undefined) {
     commandInput.initialModelStep = input.initialModelStep;
+  }
+  if (input.withExclusiveTerminal !== undefined) {
+    commandInput.withExclusiveTerminal = input.withExclusiveTerminal;
   }
   return runTuiSetupCommand(commandInput);
 }
@@ -128,6 +133,7 @@ describe("runTuiSetupCommand", () => {
     await expect(run({ command: "model", flows })).resolves.toEqual({
       message: "Model changed to openai/gpt-5.5. Live on your next prompt.",
       preserveFlowDiagnostics: false,
+      effect: { kind: "model-access-changed" },
     });
     expect(flows.runModelFlow).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -135,6 +141,56 @@ describe("runTuiSetupCommand", () => {
         deps: expect.objectContaining({ runProviderFlow: expect.any(Function) }),
       }),
     );
+  });
+
+  it("does not rebuild model access after a rejected edit", async () => {
+    const flows = fakeFlows({
+      runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
+        kind: "done",
+        accessChanged: false,
+        modelMessage: "Couldn't confirm the id.",
+      })),
+    });
+
+    await expect(run({ command: "model", flows })).resolves.toEqual({
+      message: "Couldn't confirm the id.",
+      preserveFlowDiagnostics: false,
+    });
+  });
+
+  it("hands model-owned subprocesses both the terminal and suspended runtime", async () => {
+    const calls: string[] = [];
+    const renderer = fakePanelRenderer();
+    renderer.withInheritedStdio = async (task) => {
+      calls.push("terminal:release");
+      const result = await task();
+      calls.push("terminal:restore");
+      return result;
+    };
+    const withExclusiveTerminal = async <T>(task: () => Promise<T>): Promise<T> => {
+      calls.push("runtime:suspend");
+      const result = await task();
+      calls.push("runtime:resume");
+      return result;
+    };
+    const flows = fakeFlows({
+      runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async (input) => {
+        await input.withExclusiveTerminal?.(async () => {
+          calls.push("codex");
+        });
+        return { kind: "cancelled" };
+      }),
+    });
+
+    await run({ command: "model", flows, renderer, withExclusiveTerminal });
+
+    expect(calls).toEqual([
+      "terminal:release",
+      "runtime:suspend",
+      "codex",
+      "runtime:resume",
+      "terminal:restore",
+    ]);
   });
 
   it("forwards an automatic provider entry to the model flow", async () => {
@@ -147,89 +203,64 @@ describe("runTuiSetupCommand", () => {
     );
   });
 
-  it("stacks the model and provider outcome lines when both menu actions ran", async () => {
+  it("stacks the model and provider selection lines when both menu actions ran", async () => {
     const flows = fakeFlows({
       runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
         kind: "done",
+        accessChanged: true,
         modelMessage: "Model changed to openai/gpt-5.5. Live on your next prompt.",
-        providerOutcome: {
-          resolution: {
-            credential: "api-key",
-            source: { kind: "env-file", path: ".env.local" },
-          },
-          status: { kind: "gateway-project", projectName: "my-agent" },
-        },
+        providerSelection: "ai-gateway-project",
       })),
     });
     await expect(run({ command: "model", flows })).resolves.toEqual({
       message:
         "Model changed to openai/gpt-5.5. Live on your next prompt.\n" +
-        "Project linked. Connected to AI Gateway via AI_GATEWAY_API_KEY.",
+        "AI Gateway via Project selected.",
       preserveFlowDiagnostics: false,
       effect: { kind: "model-access-changed" },
     });
   });
 
-  it("reports a provider-only model session with the provider outcome", async () => {
+  it("reports a provider-only model session with the provider selection", async () => {
     const flows = fakeFlows({
       runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
         kind: "done",
-        providerOutcome: {
-          resolution: { credential: "oidc", file: ".env.local" },
-          status: { kind: "gateway-project", projectName: "my-agent", teamName: "my-team" },
-        },
+        accessChanged: true,
+        providerSelection: "ai-gateway-project",
       })),
     });
     await expect(run({ command: "model", flows })).resolves.toEqual({
-      message: "Project linked. Connected to AI Gateway via VERCEL_OIDC_TOKEN.",
+      message: "AI Gateway via Project selected.",
       preserveFlowDiagnostics: false,
       effect: { kind: "model-access-changed" },
     });
   });
 
-  it("names the shadow when a gateway key outranks the freshly linked OIDC token", async () => {
+  it("reports the selected API-key provider without claiming a connection", async () => {
     const flows = fakeFlows({
       runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
         kind: "done",
-        providerOutcome: {
-          resolution: {
-            credential: "api-key",
-            source: { kind: "shell" },
-            shadowedOidc: {},
-          },
-          status: { kind: "gateway-project", projectName: "my-agent", teamName: "my-team" },
-        },
+        accessChanged: true,
+        providerSelection: "ai-gateway-key",
       })),
     });
     await expect(run({ command: "model", flows })).resolves.toEqual({
-      message:
-        "Project linked. AI_GATEWAY_API_KEY (shell) outranks the project's " +
-        "VERCEL_OIDC_TOKEN and stays the active credential — unset it in your shell to run " +
-        "on the project.",
+      message: "AI Gateway via API key selected.",
       preserveFlowDiagnostics: false,
       effect: { kind: "model-access-changed" },
     });
   });
 
-  it("does not claim a link for a pasted key — the outcome names the env file", async () => {
+  it("reports the selected ChatGPT subscription", async () => {
     const flows = fakeFlows({
       runModelFlow: vi.fn<TuiSetupFlows["runModelFlow"]>(async () => ({
         kind: "done",
-        providerOutcome: {
-          resolution: {
-            credential: "api-key",
-            source: { kind: "env-file", path: ".env.local" },
-          },
-          status: {
-            kind: "gateway-key",
-            envKey: "AI_GATEWAY_API_KEY",
-            source: { kind: "env-file", path: ".env.local" },
-          },
-        },
+        accessChanged: true,
+        providerSelection: "chatgpt",
       })),
     });
     await expect(run({ command: "model", flows })).resolves.toEqual({
-      message: "Connected to AI Gateway via AI_GATEWAY_API_KEY in .env.local.",
+      message: "ChatGPT subscription selected.",
       preserveFlowDiagnostics: false,
       effect: { kind: "model-access-changed" },
     });
@@ -462,17 +493,8 @@ describe("runTuiSetupCommand", () => {
               () =>
                 resolve({
                   kind: "done",
-                  providerOutcome: {
-                    resolution: {
-                      credential: "api-key",
-                      source: { kind: "env-file", path: ".env.local" },
-                    },
-                    status: {
-                      kind: "gateway-key",
-                      envKey: "AI_GATEWAY_API_KEY",
-                      source: { kind: "env-file", path: ".env.local" },
-                    },
-                  },
+                  accessChanged: true,
+                  providerSelection: "ai-gateway-key",
                 }),
               { once: true },
             );

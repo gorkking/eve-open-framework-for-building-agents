@@ -1,10 +1,8 @@
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-
 import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
-import { createCodex } from "@ai-sdk/harness-codex";
+import { createOpenCode } from "@ai-sdk/harness-opencode";
 import type { Agent, AgentRunResult } from "@vercel/agent-eval";
 
 import type {
@@ -14,37 +12,36 @@ import type {
   AuthoringTurn,
 } from "./authoring-case.js";
 import { createDependencyCachedSandbox } from "./dependency-sandbox.js";
+import { loadAuthoringCase } from "./load-authoring-case.js";
 import {
   AGENT_EVAL_DIRECTORY,
   AUTHORING_EVAL_DIRECTORY,
   AUTHORING_EVAL_DIRECTORY_ENV,
-  AUTHORING_MODEL,
   EVE_PACKAGE_PATH,
   SOURCE_ARCHIVE_PATH,
   SOURCE_ROOT,
   WORKSPACE,
-  WORKSPACE_ENV,
 } from "./paths.js";
-import type { AuthoringTranscriptEntry } from "./protocol.js";
+import type { AuthoringTokenUsage, AuthoringTranscriptEntry } from "./protocol.js";
 
 const HARNESS_BRIDGE_PORT = 4172;
-const HARNESS_NAME = "codex";
+const BOOTSTRAP_VERSION = "v5";
 export function createAuthoringAgent(subject: {
-  readonly name: string;
+  readonly model: string;
   readonly archive: Uint8Array;
   readonly digest: string;
   readonly dependencyDigest: string;
 }): Agent {
   return {
-    name: subject.name,
+    name: "opencode",
     displayName: "eve authoring harness",
     getApiKeyEnvVar: () => "AI_GATEWAY_API_KEY",
-    getDefaultModel: () => AUTHORING_MODEL,
+    getDefaultModel: () => subject.model,
     definition: {
-      name: subject.name,
+      name: "opencode",
       displayName: "eve authoring harness",
-      defaultModel: AUTHORING_MODEL,
-      o11yAgentName: HARNESS_NAME,
+      defaultModel: subject.model,
+      o11yAgentName: "opencode",
       runnerPath: "",
       getApiKeyEnvVar: () => "AI_GATEWAY_API_KEY",
       install: () => [],
@@ -78,47 +75,38 @@ export function createAuthoringAgent(subject: {
       let activeSandbox: HarnessV1NetworkSandboxSession | undefined;
       let workspace: string | undefined;
 
-      const harnessOptions: Parameters<typeof createCodex>[0] = {
-        auth: { gateway: { apiKey: options.apiKey } },
-        reasoningEffort: "high",
-        port: HARNESS_BRIDGE_PORT,
-      };
-      if (options.model !== undefined) Object.assign(harnessOptions, { model: options.model });
-
       const agent = new HarnessAgent({
-        id: "eve-benchmark",
-        harness: createCodex(harnessOptions),
+        id: "eve-authoring-eval",
+        harness: createOpenCode({
+          auth: "ai-gateway",
+          model: openCodeModel(options.model ?? subject.model),
+          port: HARNESS_BRIDGE_PORT,
+        }),
         sandbox,
         sandboxConfig: {
           workDir: WORKSPACE,
           bootstrapHash: bootstrapHash(authoringCase, subject),
           onBootstrap: async ({ session: bootstrap, workDir }) => {
+            const bootstrapSandbox = bootstrap as HarnessV1NetworkSandboxSession;
+            const context = setupContext(bootstrapSandbox, workDir);
+            for (const setup of setups) await setup.onBootstrap?.(context);
             log("[setup] building the selected eve source");
-            const networkSandbox = bootstrap as HarnessV1NetworkSandboxSession;
             await bootstrapSubject(
-              networkSandbox,
+              bootstrapSandbox,
               workDir,
               authoringCase.startingPoint.workspace,
               subject.archive,
             );
-            const context = setupContext(networkSandbox, workDir);
-            for (const setup of setups) await setup.onBootstrap?.(context);
           },
           onSession: async ({ session: current, sessionWorkDir }) => {
-            log("[setup] preparing the benchmark session");
             activeSandbox = current as HarnessV1NetworkSandboxSession;
             workspace = sessionWorkDir;
             const context = setupContext(activeSandbox, workspace);
             for (const setup of setups) await setup.onSession?.(context);
-            if (options.agentOptions?.agentsMd === true) {
-              await assertAgentGuidance(context);
-            } else {
-              await context.run("rm -f AGENTS.md CLAUDE.md");
+            if (options.agentOptions?.agentsMd !== true) {
+              await installBaselineEveWrapper(context);
+              await context.run("rm -f AGENTS.md CLAUDE.md GEMINI.md");
             }
-            await context.write(
-              `${AGENT_EVAL_DIRECTORY}/results.json`,
-              JSON.stringify({ o11y: { shellCommands: [] } }),
-            );
           },
         },
         permissionMode: "allow-all",
@@ -146,9 +134,14 @@ export function createAuthoringAgent(subject: {
                   timeout: options.timeout,
                   abortSignal: options.signal,
                 });
-            transcript.push({ role: "assistant", content: result.text });
+            transcript.push({
+              role: "assistant",
+              content: result.text,
+              toolCalls: authoringToolCalls(result.toolCalls),
+              usage: normalizeUsage(result.usage),
+            });
             commands.push(...shellCommands(result.toolCalls));
-            return { text: result.text, toolCalls: result.toolCalls };
+            return { text: result.text, toolCalls: authoringToolCalls(result.toolCalls) };
           },
         });
 
@@ -183,7 +176,7 @@ export function createAuthoringAgent(subject: {
         log("[grade] running deterministic assertions");
         const test = await resultOf(
           activeSandbox,
-          `cd ${AGENT_EVAL_DIRECTORY} && ${WORKSPACE_ENV}=${shellQuote(workspace)} vitest run EVAL.test.ts`,
+          `vitest run ${workspace}/${AGENT_EVAL_DIRECTORY}/EVAL.test.ts`,
           workspace,
         );
         const scriptsResults = Object.fromEntries(
@@ -207,11 +200,11 @@ export function createAuthoringAgent(subject: {
         return {
           success: test.exitCode === 0 && scriptsPassed,
           output: transcript.at(-1)?.content ?? "",
-          transcript: JSON.stringify(transcript),
           error:
             test.exitCode === 0 && scriptsPassed ? undefined : `${test.stdout}\n${test.stderr}`,
           duration: Date.now() - startedAt,
           testResult: { success: test.exitCode === 0, output: `${test.stdout}${test.stderr}` },
+          transcript: harnessTranscript(transcript),
           scriptsResults,
           sandboxId: activeSandbox.id,
         };
@@ -224,14 +217,12 @@ export function createAuthoringAgent(subject: {
         const result: AgentRunResult = {
           success: false,
           output: transcript.at(-1)?.content ?? "",
-          transcript: JSON.stringify(transcript),
           error: error instanceof Error ? error.message : String(error),
           duration: Date.now() - startedAt,
+          transcript: harnessTranscript(transcript),
           scriptsResults: {},
         };
-        if (activeSandbox !== undefined) {
-          Object.assign(result, { sandboxId: activeSandbox.id });
-        }
+        if (activeSandbox !== undefined) result.sandboxId = activeSandbox.id;
         return result;
       } finally {
         await session?.destroy();
@@ -246,7 +237,7 @@ async function streamTurn(
   prompt: string,
   timeout: number,
   abortSignal?: AbortSignal,
-): Promise<AuthoringTurn> {
+): Promise<AuthoringTurn & { usage: AuthoringTokenUsage }> {
   const result = await agent.stream({ session, prompt, timeout, abortSignal });
   let lineOpen = false;
   for await (const part of result.fullStream) {
@@ -263,7 +254,42 @@ async function streamTurn(
     }
   }
   if (lineOpen) process.stdout.write("\n");
-  return { text: await result.text, toolCalls: await result.toolCalls };
+  return {
+    text: await result.text,
+    toolCalls: authoringToolCalls(await result.toolCalls),
+    usage: normalizeUsage(await result.usage),
+  };
+}
+
+function openCodeModel(model: string): string {
+  const gatewayModel = model.includes("/") ? model : `anthropic/${model}`;
+  // OpenCode's Moonshot provider supplies the OpenAI-compatible transport; the
+  // canonical model ID still makes AI Gateway select the requested provider.
+  return `moonshotai/${gatewayModel}`;
+}
+
+function normalizeUsage(value: unknown): AuthoringTokenUsage {
+  const usage = value as Record<string, unknown>;
+  const number = (field: string) => {
+    const value = usage[field];
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  };
+  return {
+    inputTokens: number("inputTokens"),
+    outputTokens: number("outputTokens"),
+    reasoningTokens: number("reasoningTokens"),
+    cachedInputTokens: number("cachedInputTokens"),
+    cacheWriteTokens: number("cacheWriteTokens"),
+  };
+}
+
+function authoringToolCalls(
+  toolCalls: ReadonlyArray<{ name?: string; toolName?: string; input: unknown }>,
+): ReadonlyArray<{ name: string; input: unknown }> {
+  return toolCalls.flatMap((call) => {
+    const name = call.toolName ?? call.name;
+    return name === undefined ? [] : [{ name, input: call.input }];
+  });
 }
 
 function formatToolCall(name: string, input: unknown): string {
@@ -292,9 +318,11 @@ async function bootstrapSubject(
       `pnpm --dir ${SOURCE_ROOT}/packages/eve pack --pack-destination /tmp/eve-package`,
       `mv $(find /tmp/eve-package -name '*.tgz' -print -quit) ${EVE_PACKAGE_PATH}`,
       `npm install --global --package-lock=false ${EVE_PACKAGE_PATH}`,
+      'ln -sf "$(npm prefix --global)/bin/eve" /usr/local/bin/eve',
+      "command -v eve",
     ].join(" && "),
   );
-  const artifactsRoot = AGENT_EVAL_DIRECTORY;
+  const artifactsRoot = `${workspace}/${AGENT_EVAL_DIRECTORY}`;
   const workspaceCommands: string[] = [];
   if (workspaceKind === "scaffolded") {
     workspaceCommands.push(`cd ${shellQuote(workspace)} && AI_AGENT=benchmark eve init .`);
@@ -330,8 +358,48 @@ function setupContext(
   };
 }
 
-async function assertAgentGuidance(context: AuthoringSetupContext): Promise<void> {
-  await context.run("test -s AGENTS.md && test -s CLAUDE.md && grep -Fq '@AGENTS.md' CLAUDE.md");
+async function installBaselineEveWrapper(context: AuthoringSetupContext): Promise<void> {
+  await context.run(`
+cli_path="$(npm prefix --global)/bin/eve"
+test -x "$cli_path"
+real_cli="$cli_path.guided"
+if [ ! -e "$real_cli" ]; then mv "$cli_path" "$real_cli"; fi
+cat >"$cli_path" <<'EOF'
+#!/bin/sh
+"$0.guided" "$@"
+status=$?
+rm -f AGENTS.md CLAUDE.md GEMINI.md
+exit "$status"
+EOF
+chmod +x "$cli_path"
+`);
+}
+
+function harnessTranscript(transcript: ReadonlyArray<AuthoringTranscriptEntry>): string {
+  return transcript
+    .map((entry) => {
+      const message: {
+        role: AuthoringTranscriptEntry["role"];
+        content: unknown;
+        usage?: AuthoringTokenUsage;
+      } = {
+        role: entry.role,
+        content:
+          entry.role === "assistant"
+            ? [
+                ...(entry.content ? [{ type: "text", text: entry.content }] : []),
+                ...(entry.toolCalls ?? []).map((call) => ({
+                  type: "tool_use",
+                  name: call.name,
+                  input: call.input,
+                })),
+              ]
+            : entry.content,
+      };
+      if (entry.usage !== undefined) message.usage = entry.usage;
+      return JSON.stringify({ type: entry.role, message });
+    })
+    .join("\n");
 }
 
 function shellCommands(toolCalls: ReadonlyArray<{ input: unknown }>): string[] {
@@ -347,7 +415,7 @@ function bootstrapHash(authoringCase: AuthoringCase, subject: { readonly digest:
     .filter((setup): setup is AuthoringSetup => setup !== undefined)
     .map((setup) => setup.id)
     .join("-");
-  return `eve-authoring-${subject.digest}-${authoringCase.startingPoint.id}-${setupIds}`;
+  return `eve-authoring-${BOOTSTRAP_VERSION}-${subject.digest}-${authoringCase.startingPoint.id}-${setupIds}`;
 }
 
 const bootstrapCoordination = globalThis as typeof globalThis & {
@@ -372,6 +440,11 @@ async function withBootstrapInitialization<T>(
   locks.set(key, tail);
 
   await previous;
+  if (ready.has(key)) {
+    release();
+    if (locks.get(key) === tail) locks.delete(key);
+    return operation();
+  }
   try {
     const result = await operation();
     ready.add(key);
@@ -382,32 +455,13 @@ async function withBootstrapInitialization<T>(
   }
 }
 
-async function loadAuthoringCase(fixturePath: string): Promise<AuthoringCase> {
-  let loaded: unknown = await import(pathToFileURL(`${fixturePath}/CASE.ts`).href);
-  while (!isAuthoringCase(loaded) && hasDefaultExport(loaded)) loaded = loaded.default;
-  if (!isAuthoringCase(loaded)) {
-    throw new Error(`${fixturePath}/CASE.ts must export an authoring case as default.`);
-  }
-  return loaded;
-}
-
-function isAuthoringCase(value: unknown): value is AuthoringCase {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<AuthoringCase>;
-  return candidate.startingPoint !== undefined && typeof candidate.interact === "function";
-}
-
-function hasDefaultExport(value: unknown): value is { default: unknown } {
-  return typeof value === "object" && value !== null && "default" in value;
-}
-
 async function resultOf(
   sandbox: HarnessV1NetworkSandboxSession,
   command: string,
   workingDirectory?: string,
 ) {
-  const options: Parameters<typeof sandbox.run>[0] = { command };
-  if (workingDirectory !== undefined) Object.assign(options, { workingDirectory });
+  const options: { command: string; workingDirectory?: string } = { command };
+  if (workingDirectory !== undefined) options.workingDirectory = workingDirectory;
   return sandbox.run(options);
 }
 

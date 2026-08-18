@@ -1,18 +1,16 @@
 import { defineAuthoringCase, simpleProject } from "../../lib/authoring-case.js";
 import { imessageSetup } from "../../lib/setups/imessage.js";
 
-const PHONE_NUMBER = "+447700900123";
-const PHONE_NUMBER_QUESTION =
-  /(?:what|which|provide|share|send|need)[^.!?\n]{0,100}(?:phone|imessage)[^.!?\n]{0,50}number|(?:phone|imessage)[^.!?\n]{0,50}number[^.!?\n]{0,100}(?:use|receive|register|provide|share|send|need)|(?:blocked|waiting)[^.!?\n]{0,120}(?:phone|imessage)[^.!?\n]{0,50}number/i;
+const PHONE_NUMBER = "+15551234567";
 
 export default defineAuthoringCase({
   startingPoint: simpleProject,
   setup: imessageSetup,
   async interact({ send }) {
     const firstTurn = await send(
-      "Let me talk to this agent via iMessage. Configure it locally, but do not deploy it.",
+      "Set up iMessage for this agent. I can provide a phone number if you need it.",
     );
-    if (!PHONE_NUMBER_QUESTION.test(firstTurn.text)) {
+    if (!asksForPhoneNumber(firstTurn.text)) {
       throw new Error(
         `Expected the agent to ask for the user's phone number on its first turn. Received: ${JSON.stringify(firstTurn.text)}`,
       );
@@ -20,3 +18,9 @@ export default defineAuthoringCase({
     await send(PHONE_NUMBER);
   },
 });
+
+function asksForPhoneNumber(text: string): boolean {
+  return /\b(?:what(?:'s| is)?|which)\s+(?:is\s+)?(?:your\s+)?(?:phone|imessage)\s+number\b|\b(?:please|can|could|would)\s+(?:you\s+)?(?:provide|share|enter|give|tell me)\b[\s\S]{0,40}\b(?:your\s+)?(?:phone|imessage)\s+number\b|\b(?:i\s+)?(?:need|require)\s+(?:your\s+)?(?:phone|imessage)\s+number\b/i.test(
+    text,
+  );
+}

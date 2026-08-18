@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import type { PackageManagerKind } from "../../package-manager.js";
 import { pinnedNodeEngineMajor } from "../../node-engine.js";
 import type { AgentReasoningDefinition } from "../../../shared/agent-definition.js";
+import { parseChatGptModelSelection } from "../../../shared/chatgpt-model.js";
 import { SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS } from "../update/module-files.js";
 import { pathExists, writeTextFile } from "../files.js";
 import { blockingCreateInPlaceEntries } from "../create-in-place.js";
@@ -100,13 +101,24 @@ export function agentTemplateFiles(
   reasoning?: AgentReasoningDefinition,
 ): Record<string, string> {
   return {
-    "agent/agent.ts": BASE_AGENT_TEMPLATE.replaceAll("__EVE_INIT_MODEL__", model).replaceAll(
-      "__EVE_INIT_REASONING__",
-      reasoningTemplateLine(reasoning),
-    ),
+    "agent/agent.ts": renderAgentTemplate(model, reasoning),
     "agent/channels/eve.ts": WEB_APP_TEMPLATE_FILES["agent/channels/eve.ts"],
     "agent/instructions.md": AGENT_INSTRUCTIONS_TEMPLATE,
   };
+}
+
+function renderAgentTemplate(
+  model: string,
+  reasoning: AgentReasoningDefinition | undefined,
+): string {
+  const chatGptModelId = parseChatGptModelSelection(model);
+  if (chatGptModelId !== undefined) {
+    return `import { defineAgent } from "eve";\nimport { chatgpt } from "eve/models/openai";\n\nexport default defineAgent({\n  model: chatgpt(${JSON.stringify(chatGptModelId)}),\n${reasoningTemplateLine(reasoning)}});\n`;
+  }
+  return BASE_AGENT_TEMPLATE.replaceAll("__EVE_INIT_MODEL__", model).replaceAll(
+    "__EVE_INIT_REASONING__",
+    reasoningTemplateLine(reasoning),
+  );
 }
 
 function reasoningTemplateLine(reasoning: AgentReasoningDefinition | undefined): string {
@@ -116,6 +128,9 @@ function reasoningTemplateLine(reasoning: AgentReasoningDefinition | undefined):
 }
 
 function renderTemplate(content: string, ctx: TemplateContext): string {
+  if (content === BASE_AGENT_TEMPLATE && parseChatGptModelSelection(ctx.model) !== undefined) {
+    return renderAgentTemplate(ctx.model, ctx.reasoning);
+  }
   return content
     .replaceAll("__EVE_INIT_APP_NAME__", ctx.appName)
     .replaceAll("__EVE_INIT_MODEL__", ctx.model)
@@ -316,12 +331,18 @@ eve add channel/photon-imessage --non-interactive \\
   --answer 'photon-project-name="eve · my-agent"'
 \`\`\`
 
-Add \`--yes\` to accept recommended setup values and reduce setup round trips;
-explicit \`--answer\` values take precedence. Use the reported \`--skip-install\`
-continuation after installation.
+Never pass secrets in \`--answer\`; use the documented environment variable or
+secret store. Add \`--yes\` to accept recommended setup values and reduce setup
+round trips; explicit \`--answer\` values take precedence. Use the reported
+\`--skip-install\` continuation after installation.
+
 A Vercel Connect setup may report \`eve link\` as a prerequisite; run it and
-retry the continuation. Never pass secrets in \`--answer\`; use the documented
-environment variable or secret store.
+retry the continuation. For a named Vercel project in CI or an agent run, use
+\`eve link --non-interactive --project <name-or-id> [--team <team-id-or-slug>]\`.
+To deploy non-interactively, use
+\`eve deploy --non-interactive --yes [--project <name-or-id>] [--team <team-id-or-slug>]\`.
+Use these eve commands instead of calling \`vercel\` directly; eve owns the
+link, environment pull, and deploy lifecycle.
 
 An \`external_action\` event with \`blocking: true\` means the command is still
 running while it waits for the user. Surface its URL and code, keep the process

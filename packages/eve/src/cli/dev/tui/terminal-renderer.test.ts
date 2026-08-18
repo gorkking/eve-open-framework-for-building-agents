@@ -1657,6 +1657,20 @@ describe("TerminalRenderer (inline scrollback)", () => {
     expect(screen.snapshot()).toContain("\u23bf  /model dismissed.");
   });
 
+  it("strips complete ANSI styles from command outcomes", () => {
+    const { screen, renderer } = makeRenderer();
+    renderer.renderCommandResult(
+      "Model changed to \u001b[1mchatgpt/gpt-5.6-sol\u001b[22m. Live on your next prompt.",
+    );
+    renderer.shutdown();
+
+    expect(screen.snapshot()).toContain(
+      "\u23bf  Model changed to chatgpt/gpt-5.6-sol. Live on your next prompt.",
+    );
+    expect(screen.snapshot()).not.toContain("[1m");
+    expect(screen.snapshot()).not.toContain("[22m");
+  });
+
   it("hangs a successful command outcome from an elbow into a full-intensity rail", () => {
     const { screen, renderer } = makeRenderer();
     renderer.renderCommandResult(
@@ -3810,6 +3824,29 @@ describe("TerminalRenderer setup panel", () => {
     renderer.shutdown();
   });
 
+  it("selects ChatGPT as a provider sibling", async () => {
+    const { screen, input, renderer } = makeRenderer();
+
+    const answer = renderer.setupFlow.readProviderPicker({
+      message: "Provider",
+      options: [
+        { value: "ai-gateway-project", label: "AI Gateway via Project" },
+        { value: "ai-gateway-key", label: "AI Gateway via AI_GATEWAY_API_KEY" },
+        { value: "chatgpt", label: "ChatGPT subscription" },
+        { value: "external", label: "Other providers" },
+      ],
+      initialValue: "ai-gateway-project",
+      validateInlineKey: async () => ({ kind: "valid" }),
+    });
+
+    expect(screen.snapshot()).toContain("ChatGPT subscription");
+    input.down();
+    input.down();
+    input.enter();
+    await expect(answer).resolves.toEqual({ kind: "chatgpt" });
+    renderer.shutdown();
+  });
+
   it("validates a masked key without replacing the provider frame", async () => {
     const { screen, input, renderer } = makeRenderer();
     let resolveValidation:
@@ -3824,8 +3861,8 @@ describe("TerminalRenderer setup panel", () => {
 
     const answer = renderer.setupFlow.readProviderPicker({
       message: "Provider",
-      options: [{ value: "own-key", label: "AI Gateway via AI_GATEWAY_API_KEY" }],
-      initialValue: "own-key",
+      options: [{ value: "ai-gateway-key", label: "AI Gateway via AI_GATEWAY_API_KEY" }],
+      initialValue: "ai-gateway-key",
       validateInlineKey: validate,
     });
 
@@ -3847,7 +3884,7 @@ describe("TerminalRenderer setup panel", () => {
     input.enter();
     resolveValidation?.({ kind: "valid" });
     await expect(answer).resolves.toEqual({
-      kind: "inline-key",
+      kind: "ai-gateway-key",
       key: "bad-keyx",
       validation: { kind: "valid" },
     });
@@ -3864,8 +3901,8 @@ describe("TerminalRenderer setup panel", () => {
       const { screen, input, renderer } = makeRenderer();
       const answer = renderer.setupFlow.readProviderPicker({
         message: "Provider",
-        options: [{ value: "own-key", label: "AI Gateway via AI_GATEWAY_API_KEY" }],
-        initialValue: "own-key",
+        options: [{ value: "ai-gateway-key", label: "AI Gateway via AI_GATEWAY_API_KEY" }],
+        initialValue: "ai-gateway-key",
         validateInlineKey: async () => ({ kind: "valid" }),
       });
       let settled = false;
@@ -3895,8 +3932,8 @@ describe("TerminalRenderer setup panel", () => {
     const validations: Array<{ key: string; signal: AbortSignal; finish(): void }> = [];
     const answer = renderer.setupFlow.readProviderPicker({
       message: "Provider",
-      options: [{ value: "own-key", label: "AI Gateway key" }],
-      initialValue: "own-key",
+      options: [{ value: "ai-gateway-key", label: "AI Gateway key" }],
+      initialValue: "ai-gateway-key",
       validateInlineKey: (key, signal) => {
         return new Promise<{ kind: "valid" }>((resolve) => {
           validations.push({ key, signal, finish: () => resolve({ kind: "valid" }) });
@@ -3918,7 +3955,7 @@ describe("TerminalRenderer setup panel", () => {
     await Promise.resolve();
     validations[1]?.finish();
     await expect(answer).resolves.toEqual({
-      kind: "inline-key",
+      kind: "ai-gateway-key",
       key: "sk-second",
       validation: { kind: "valid" },
     });
@@ -4055,7 +4092,7 @@ describe("TerminalRenderer setup panel", () => {
 });
 
 describe("TerminalRenderer setup flow session", () => {
-  it("restores the terminal while a child process inherits stdio", async () => {
+  it("discards inherited subprocess output when restoring the transcript", async () => {
     const { screen, input, renderer } = makeRenderer();
 
     renderer.renderNotice("anchor");
@@ -4064,11 +4101,15 @@ describe("TerminalRenderer setup flow session", () => {
     await renderer.setupFlow.withInheritedStdio(async () => {
       inherited = true;
       input.pause();
+      screen.write("temporary OAuth instructions\n");
+      expect(screen.snapshot()).toContain("temporary OAuth instructions");
     });
 
     expect(inherited).toBe(true);
     expect(input.resumeCalls).toBe(2);
+    expect(screen.snapshot()).toContain("anchor");
     expect(screen.snapshot()).toContain("Add integration");
+    expect(screen.snapshot()).not.toContain("temporary OAuth instructions");
     renderer.setupFlow.end();
     renderer.shutdown();
   });

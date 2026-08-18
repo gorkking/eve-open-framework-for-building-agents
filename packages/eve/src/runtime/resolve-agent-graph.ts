@@ -29,6 +29,7 @@ import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
 import { createRuntimeSubagentRegistry } from "#runtime/subagents/registry.js";
 import { createRuntimeToolRegistry } from "#runtime/tools/registry.js";
 import { WORKFLOW_TOOL_NAME } from "#shared/workflow-sandbox.js";
+import { createWorkspacePromptSection } from "#runtime/workspace/spec.js";
 import type {
   ResolvedChannelDefinition,
   ResolvedDynamicSubagentDefinition,
@@ -99,6 +100,10 @@ export async function resolveRuntimeAgentGraph(
     nodeId: ROOT_COMPILED_AGENT_NODE_ID,
     nodesByNodeId,
     subagentNodesById,
+  });
+  attachInheritedSandboxWorkspaceResources({
+    manifest: input.manifest,
+    nodesByNodeId,
   });
 
   return {
@@ -458,6 +463,75 @@ function resolveRemoteAgentHeaders(value: unknown): HeadersValue | undefined {
   }
 
   return headers;
+}
+
+function attachInheritedSandboxWorkspaceResources(input: {
+  readonly manifest: CompiledAgentManifest;
+  readonly nodesByNodeId: ReadonlyMap<string, ResolvedAgentGraphBundle["root"]>;
+}): void {
+  const parentNodeIdByChildNodeId = new Map(
+    input.manifest.subagentEdges.map((edge) => [edge.childNodeId, edge.parentNodeId]),
+  );
+
+  for (const [nodeId, node] of input.nodesByNodeId) {
+    if (node.sandboxRegistry.sandbox.definition.inheritsParent !== true) continue;
+    if (node.agent.dynamicSkillResolvers.length > 0) {
+      throw new ResolveRuntimeAgentGraphError(
+        `Sandbox "${node.sandboxRegistry.sandbox.definition.logicalPath}" selects parent.sandbox but agent node "${nodeId}" defines dynamic skills. Remove the child dynamic skills or give the child its own sandbox.`,
+        { nodeId },
+      );
+    }
+
+    const parentNodeId = parentNodeIdByChildNodeId.get(nodeId);
+    if (parentNodeId === undefined) {
+      throw new ResolveRuntimeAgentGraphError(
+        `Sandbox "${node.sandboxRegistry.sandbox.definition.logicalPath}" selects parent.sandbox but agent node "${nodeId}" has no parent.`,
+        { nodeId },
+      );
+    }
+    const owner = resolveSandboxOwnerNode({
+      nodeId: parentNodeId,
+      nodesByNodeId: input.nodesByNodeId,
+      parentNodeIdByChildNodeId,
+    });
+    (node.sandboxRegistry.sandbox as { inheritance?: unknown }).inheritance = {
+      definition: owner.sandboxRegistry.sandbox.definition,
+      nodeId: owner.nodeId,
+      workspaceResourceRoot: owner.sandboxRegistry.sandbox.workspaceResourceRoot,
+    };
+    const workspacePrompt = createWorkspacePromptSection(owner.agent.workspaceSpec);
+    if (workspacePrompt !== undefined) {
+      (node.turnAgent as { instructions: readonly string[] }).instructions = [
+        ...node.turnAgent.instructions,
+        workspacePrompt,
+      ];
+    }
+  }
+}
+
+function resolveSandboxOwnerNode(input: {
+  readonly nodeId: string;
+  readonly nodesByNodeId: ReadonlyMap<string, ResolvedAgentGraphBundle["root"]>;
+  readonly parentNodeIdByChildNodeId: ReadonlyMap<string, string>;
+}): ResolvedAgentGraphBundle["root"] {
+  const node = input.nodesByNodeId.get(toRuntimeNodeId(input.nodeId));
+  if (node === undefined) {
+    throw new ResolveRuntimeAgentGraphError(`Missing parent runtime node "${input.nodeId}".`, {
+      nodeId: input.nodeId,
+    });
+  }
+  if (node.sandboxRegistry.sandbox.definition.inheritsParent !== true) return node;
+
+  const parentNodeId = input.parentNodeIdByChildNodeId.get(input.nodeId);
+  if (parentNodeId === undefined) {
+    throw new ResolveRuntimeAgentGraphError(
+      `Inherited sandbox node "${input.nodeId}" has no parent.`,
+      {
+        nodeId: input.nodeId,
+      },
+    );
+  }
+  return resolveSandboxOwnerNode({ ...input, nodeId: parentNodeId });
 }
 
 function createChildNodeIdsByParentNodeId(

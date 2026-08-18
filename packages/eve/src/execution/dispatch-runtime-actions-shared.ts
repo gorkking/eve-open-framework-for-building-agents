@@ -18,7 +18,9 @@ import {
   CapabilitiesKey,
   ChannelInstrumentationKey,
   InitiatorAuthKey,
+  SandboxKey,
 } from "#context/keys.js";
+import { withContextScope } from "#context/run-step.js";
 import {
   BundleKey,
   ChannelKey,
@@ -152,6 +154,7 @@ export interface PreparedRuntimeActionDispatch {
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
+  readonly sandboxSessionId: string;
   readonly serializedContext: Record<string, unknown>;
   readonly plan: readonly DispatchPlanEntry[];
   readonly session: RuntimeSession;
@@ -168,7 +171,7 @@ export async function prepareRuntimeActionDispatch(input: {
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
   /**
-   * Classify `task_peek` / `task_cancel` / `task_send` calls as
+   * Classify task-control calls as
    * task-control plan entries. Only task mode plans them; in plain mode
    * those calls fail as unsupported batch actions.
    */
@@ -183,7 +186,7 @@ export async function prepareRuntimeActionDispatch(input: {
   const ctx = await deserializeContext(input.serializedContext);
   const bundle = ctx.require(BundleKey);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
-  const session = hydrateDurableSession({
+  let session = hydrateDurableSession({
     compactionOverrides: {
       thresholdPercent: effectiveAgent.thresholdPercent,
     },
@@ -192,9 +195,8 @@ export async function prepareRuntimeActionDispatch(input: {
   });
   const adapter = ctx.require(ChannelKey);
 
-  // A corrupt handle store throws; surface that before anything dispatches.
-  // A mid-loop throw after a sibling started would durably replay the whole
-  // batch and re-dispatch that sibling.
+  // A corrupt handle store and rejected actions must resolve before sandbox
+  // initialization, which can provision backend resources and run onSession.
   getAgentHandleStore(durableSession.state);
   const plan = planDispatch({
     actions: batch.actions,
@@ -203,6 +205,19 @@ export async function prepareRuntimeActionDispatch(input: {
     session,
     taskControls: input.taskControls,
   });
+
+  const sandboxSessionId = resolveActiveSandboxSessionId(adapter.state, session.sessionId);
+  if (planSharesSandbox({ bundle, plan })) {
+    try {
+      const scoped = await withContextScope(ctx, session, async (enrichedSession) => {
+        await ctx.require(SandboxKey).get();
+        return { result: undefined, session: enrichedSession };
+      });
+      session = scoped.session;
+    } finally {
+      ctx.clearVirtualContext();
+    }
+  }
 
   return {
     adapter,
@@ -217,9 +232,35 @@ export async function prepareRuntimeActionDispatch(input: {
     initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
     parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
     plan,
+    sandboxSessionId,
     serializedContext: input.serializedContext,
     session,
   };
+}
+
+function planSharesSandbox(input: {
+  readonly bundle: CompiledBundle;
+  readonly plan: readonly DispatchPlanEntry[];
+}): boolean {
+  const graph = (input.bundle as Partial<CompiledBundle>).graph;
+  return input.plan.some((entry) => {
+    if (entry.kind !== "start" || entry.target.kind !== "local") return false;
+    const action = entry.target.action;
+    const isSelfDelegation =
+      action.subagentName === "agent" &&
+      !input.bundle.subagentRegistry.subagentsByNodeId.has(action.nodeId);
+    return (
+      isSelfDelegation ||
+      graph?.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox.definition.inheritsParent ===
+        true
+    );
+  });
+}
+
+function resolveActiveSandboxSessionId(adapterState: unknown, sessionId: string): string {
+  if (typeof adapterState !== "object" || adapterState === null) return sessionId;
+  const value = (adapterState as Record<string, unknown>).sandboxSessionId;
+  return typeof value === "string" && value.length > 0 ? value : sessionId;
 }
 
 /**
@@ -454,6 +495,7 @@ export async function startSubagent(input: {
   readonly parentContinuationToken: string | undefined;
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
+  readonly sandboxSessionId: string;
   readonly serializedContext: Record<string, unknown>;
   readonly session: RuntimeSession;
   readonly taskOwned: boolean;
@@ -483,6 +525,7 @@ export async function startSubagent(input: {
         parentContinuationToken: input.parentContinuationToken,
         parentTraceContext,
         persistentSessions: input.persistentSessions,
+        sandboxSessionId: input.sandboxSessionId,
         session: input.session,
         source: input.target.source,
         taskOwned: input.taskOwned,
