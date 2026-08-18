@@ -6,13 +6,8 @@
 /.react-router/
 /build/
 
-# The eve service root referenced by vercel.json must exist in the repository.
-!/.eve/
-/.eve/*
-!/.eve/vercel-services/
-/.eve/vercel-services/*
-!/.eve/vercel-services/eve/
-/.eve/vercel-services/eve/*
-!/.eve/vercel-services/eve/.gitkeep
+# The eve service root referenced by vercel.json (only build output inside).
+/eve-service/*
+!/eve-service/.gitkeep
 .vercel
 .env*

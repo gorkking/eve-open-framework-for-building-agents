@@ -66,7 +66,10 @@ function createVercelServicesExample(
         web: { root: ".", framework: "react-router" },
         ...generated.services,
       },
-      rewrites: [{ source: `${EVE_ROUTE_PREFIX}/(.*)`, destination: { service: "eve" } }],
+      rewrites: [
+        { source: `${EVE_ROUTE_PREFIX}/(.*)`, destination: { service: "eve" } },
+        { source: "/(.*)", destination: { service: "web" } },
+      ],
     },
     null,
     2,

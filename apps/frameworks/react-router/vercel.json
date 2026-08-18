@@ -2,10 +2,11 @@
   "services": {
     "web": {
       "root": ".",
-      "framework": "react-router"
+      "framework": "react-router",
+      "buildCommand": "pnpm --filter eve build && pnpm run build"
     },
     "eve": {
-      "buildCommand": "cd '../../..' && export EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY='.eve/vercel-services/eve/.vercel/output' && export EVE_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node '../../../packages/eve/bin/eve.js' build",
+      "buildCommand": "cd '..' && export EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY='eve-service/.vercel/output' && export EVE_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node '../../../packages/eve/bin/eve.js' build",
       "framework": "eve",
       "routes": [
         {
@@ -19,7 +20,7 @@
           ]
         }
       ],
-      "root": ".eve/vercel-services/eve"
+      "root": "eve-service"
     }
   },
   "rewrites": [
@@ -27,6 +28,12 @@
       "source": "/eve/v1/(.*)",
       "destination": {
         "service": "eve"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
       }
     }
   ]

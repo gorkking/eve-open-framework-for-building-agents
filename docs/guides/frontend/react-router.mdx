@@ -100,7 +100,10 @@ The browser still needs a production authentication policy. See [Authenticate br
     "web": { "root": ".", "framework": "react-router" },
     "eve": { "root": "agent", "framework": "eve", "buildCommand": "eve build" }
   },
-  "rewrites": [{ "source": "/eve/v1/(.*)", "destination": { "service": "eve" } }]
+  "rewrites": [
+    { "source": "/eve/v1/(.*)", "destination": { "service": "eve" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ]
 }
 ```
 
