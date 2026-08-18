@@ -31,7 +31,7 @@ function event(key: string, value: string): EveCliTelemetryEvent {
 }
 
 function stringProperty(error: unknown, property: "code" | "status"): string | undefined {
-  if (!(error instanceof Error)) return undefined;
+  if (!error || typeof error !== "object") return undefined;
   const value = (error as ErrorWithProperties)[property];
   return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
 }
@@ -39,8 +39,11 @@ function stringProperty(error: unknown, property: "code" | "status"): string | u
 function devContext(argv: readonly string[]): Array<[string, string]> {
   if (canonicalCommand(argv) !== "dev") return [];
   const remote = argv.some(
-    (argument, index) =>
-      argument === "--url" || argument === "-u" || (index === 1 && /^https?:\/\//.test(argument)),
+    (argument) =>
+      argument === "--url" ||
+      argument.startsWith("--url=") ||
+      argument === "-u" ||
+      /^https?:\/\//.test(argument),
   );
   const headless = argv.includes("--no-ui") || !process.stdin.isTTY || !process.stdout.isTTY;
   return [
@@ -70,6 +73,7 @@ export function canonicalCommand(argv: readonly string[]): string {
     "link",
     "logs",
     "registry",
+    "set",
     "start",
     "traces",
   ]);

@@ -8,4 +8,9 @@ describe("canonicalCommand", () => {
     expect(canonicalCommand(["registry", "search", "private-query"])).toBe("registry:search");
     expect(canonicalCommand(["logs"])).toBe("logs:show");
   });
+
+  it("records supported top-level commands and buckets unknown commands", () => {
+    expect(canonicalCommand(["set", "--model", "private/model"])).toBe("set");
+    expect(canonicalCommand(["not-a-command", "private-argument"])).toBe("unknown");
+  });
 });
