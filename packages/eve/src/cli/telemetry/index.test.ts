@@ -8,16 +8,19 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 
 import { canonicalCommand, createEveCliTelemetry } from "#cli/telemetry/index.js";
-import { isVercelTelemetryDisabled } from "#cli/telemetry/vercel-preference.js";
+import { markEveTelemetryNotified, readEveTelemetryPreference } from "#cli/telemetry/preference.js";
 
-vi.mock("#cli/telemetry/vercel-preference.js", () => ({
-  isVercelTelemetryDisabled: vi.fn(async () => false),
+vi.mock("#cli/telemetry/preference.js", () => ({
+  markEveTelemetryNotified: vi.fn(),
+  readEveTelemetryPreference: vi.fn(async () => ({ enabled: true, notified: false })),
 }));
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();
-  vi.mocked(isVercelTelemetryDisabled).mockReset().mockResolvedValue(false);
+  vi.mocked(readEveTelemetryPreference)
+    .mockReset()
+    .mockResolvedValue({ enabled: true, notified: false });
 });
 
 describe("canonicalCommand", () => {
@@ -43,17 +46,33 @@ describe("createEveCliTelemetry", () => {
     await telemetry.flush();
 
     expect(spawn).not.toHaveBeenCalled();
-    expect(isVercelTelemetryDisabled).not.toHaveBeenCalled();
+    expect(readEveTelemetryPreference).not.toHaveBeenCalled();
   });
 
-  it("does not spawn a flush process when Vercel CLI telemetry is disabled", async () => {
-    vi.mocked(isVercelTelemetryDisabled).mockResolvedValue(true);
+  it("does not spawn a flush process when the durable preference disables telemetry", async () => {
+    vi.mocked(readEveTelemetryPreference).mockResolvedValue({ enabled: false, notified: true });
     const telemetry = createEveCliTelemetry("1.0.0");
     telemetry.trackCommand("info");
 
     await telemetry.flush();
 
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("prints and persists the first-run notice on an interactive terminal", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const stderr = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+    Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: true });
+    const logger = { error: vi.fn() };
+    try {
+      await createEveCliTelemetry("1.0.0").notify(logger);
+    } finally {
+      if (stderr === undefined) Reflect.deleteProperty(process.stderr, "isTTY");
+      else Object.defineProperty(process.stderr, "isTTY", stderr);
+    }
+
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("eve telemetry disable"));
+    expect(markEveTelemetryNotified).toHaveBeenCalled();
   });
 
   it("flushes an allowlisted outcome through a telemetry-disabled child process", async () => {

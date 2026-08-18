@@ -70,6 +70,7 @@ describe("CLI command registration", () => {
     expect(help).toContain("link");
     expect(help).toContain("deploy");
     expect(help).toContain("registry");
+    expect(help).toContain("telemetry");
     expect(help).not.toContain("setup [options] <item>");
   });
 

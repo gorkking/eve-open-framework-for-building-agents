@@ -49,6 +49,11 @@ import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
 import { startCliLiveRow } from "#cli/ui/live-row.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
 import { createLogger } from "#internal/logging.js";
+import {
+  disableEveTelemetry,
+  enableEveTelemetry,
+  showEveTelemetryStatus,
+} from "#cli/telemetry/command.js";
 import { flushEveCliTelemetry } from "#cli/telemetry/flush.js";
 import { canonicalCommand, createEveCliTelemetry } from "#cli/telemetry/index.js";
 import type {
@@ -181,7 +186,27 @@ function createCliProgram(
       },
     });
 
-  const telemetry = program.command("telemetry", { hidden: true });
+  const telemetry = program
+    .command("telemetry")
+    .description("Enable or disable anonymous CLI telemetry collection.");
+  telemetry
+    .command("status")
+    .description("Show whether telemetry collection is enabled.")
+    .action(async () => {
+      await showEveTelemetryStatus(logger);
+    });
+  telemetry
+    .command("enable")
+    .description("Enable telemetry collection.")
+    .action(async () => {
+      await enableEveTelemetry(logger);
+    });
+  telemetry
+    .command("disable")
+    .description("Disable telemetry collection.")
+    .action(async () => {
+      await disableEveTelemetry(logger);
+    });
   telemetry.command("flush <payload>", { hidden: true }).action(async (payload: string) => {
     await flushEveCliTelemetry(payload);
   });
@@ -676,8 +701,10 @@ export async function runCli(
     }
   }
   const telemetry = createEveCliTelemetry(resolveInstalledPackageInfo().version);
-  telemetry.trackCommand(canonicalCommand(input));
+  const command = canonicalCommand(input);
+  telemetry.trackCommand(command);
   telemetry.trackDevContext(input);
+  if (command !== "telemetry") await telemetry.notify(logger);
 
   try {
     await program.parseAsync(input, {

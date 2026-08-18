@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
-import { isVercelTelemetryDisabled } from "#cli/telemetry/vercel-preference.js";
+import { markEveTelemetryNotified, readEveTelemetryPreference } from "#cli/telemetry/preference.js";
 
 export type EveCliTelemetryEvent = {
   readonly id: string;
@@ -15,6 +15,7 @@ export type EveCliTelemetry = {
   trackCommand(command: string): void;
   trackDevContext(argv: readonly string[]): void;
   trackOutcome(outcome: "success" | "usage_error" | "error"): void;
+  notify(logger: { error(message: string): void }): Promise<void>;
   flush(): Promise<void>;
 };
 
@@ -22,7 +23,7 @@ async function isEnabled(): Promise<boolean> {
   return (
     process.env.NODE_ENV !== "test" &&
     !process.env.EVE_TELEMETRY_DISABLED &&
-    !(await isVercelTelemetryDisabled())
+    (await readEveTelemetryPreference()).enabled
   );
 }
 
@@ -69,6 +70,7 @@ export function canonicalCommand(argv: readonly string[]): string {
     "registry",
     "set",
     "start",
+    "telemetry",
     "traces",
   ]);
   if (!topLevel.has(command)) return "unknown";
@@ -107,6 +109,28 @@ export function createEveCliTelemetry(version: string): EveCliTelemetry {
     },
     trackOutcome(outcome) {
       events.push(event("outcome", outcome));
+    },
+    async notify(logger) {
+      const preference = await readEveTelemetryPreference();
+      if (
+        process.env.NODE_ENV === "test" ||
+        process.env.EVE_TELEMETRY_DISABLED ||
+        !preference.enabled ||
+        preference.notified ||
+        !process.stderr.isTTY
+      ) {
+        return;
+      }
+      logger.error(
+        "Attention: eve collects anonymous CLI telemetry to improve the command-line interface.\n" +
+          "Disable it with `eve telemetry disable`, or for one command set EVE_TELEMETRY_DISABLED=1.\n" +
+          "Learn more: https://eve.dev/docs/reference/cli#cli-telemetry",
+      );
+      try {
+        await markEveTelemetryNotified();
+      } catch {
+        // Failing to persist the notice must not affect the command.
+      }
     },
     async flush() {
       if (!(await isEnabled()) || events.length === 0) return;
