@@ -28,7 +28,7 @@ agent/
     intake.ts
 ```
 
-Install a channel from the registry with `eve add channel/photon-imessage`, `eve add channel/slack`, or `eve add channel/web`. You can also author the file by hand.
+Install a channel from the registry with `eve add channel/photon-imessage`, `eve add channel/sendblue`, `eve add channel/slack`, or `eve add channel/web`. You can also author the file by hand.
 
 ## The eve HTTP channel (default)
 
@@ -52,6 +52,7 @@ eve's first-class channels use eve-owned runtimes for webhook handling, verifica
 | Local tooling, SDK clients, `curl`          | [eve HTTP channel](./eve) (default)                        |
 | Slack mentions, DMs, buttons                | [Slack](./slack)                                           |
 | iMessage                                    | [Photon](./photon)                                         |
+| iMessage, SMS, or RCS                       | [Sendblue](./sendblue)                                     |
 | Discord slash commands, components          | [Discord](./discord)                                       |
 | Microsoft Teams messages + Adaptive Cards   | [Teams](./teams)                                           |
 | Telegram bot messages                       | [Telegram](./telegram)                                     |

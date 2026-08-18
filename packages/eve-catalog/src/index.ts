@@ -184,10 +184,10 @@ export const INTEGRATIONS: readonly IntegrationEntry[] = [
     surfaces: { scaffoldable: false, gallery: true },
   },
   {
-    slug: "chat-sdk-sendblue",
+    slug: "sendblue",
     name: "Sendblue",
     kind: "channel",
-    tagline: "Send and receive iMessage, SMS, and RCS through Sendblue.",
+    tagline: "Send and receive iMessage, SMS, and RCS through Sendblue, with guided setup.",
     surfaces: { scaffoldable: false, gallery: true },
   },
   {
