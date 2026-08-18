@@ -148,6 +148,7 @@ import { fileMemory } from "eve/memory/file";
 import { byPrincipal } from "eve/memory/scope";
 
 export default defineMemory({
+  description: "Personal preferences and durable facts for the authenticated user.",
   provider: fileMemory(),
   scope: byPrincipal,
 });
@@ -177,6 +178,7 @@ import { vercelBlob } from "eve/memory/file/vercel";
 import { byPrincipal } from "eve/memory/scope";
 
 export default defineMemory({
+  description: "Personal preferences and durable facts for the authenticated user.",
   provider: fileMemory({
     backend: vercelBlob({
       prefix: "my-agent/memory",
