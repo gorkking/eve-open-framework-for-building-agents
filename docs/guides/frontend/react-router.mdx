@@ -1,0 +1,113 @@
+---
+title: "React Router"
+description: "Run an eve agent and a React Router app as one project with the eveReactRouter Vite plugin."
+---
+
+`eve/react-router` runs a React Router framework-mode frontend and an eve agent as one project instead of two services. The `eveReactRouter()` Vite plugin puts both on one dev server and one Vercel deploy, and [`useEveAgent`](./overview#basic-chat-react) finds the mounted routes on its own. There's no CORS to configure and no URL env vars to keep in sync.
+
+## Prerequisites
+
+- The `eve` package installed in your project (`npm install eve@latest`).
+- An existing eve agent directory. If you don't have one, start from [Getting started](../../getting-started).
+- A React Router app in [framework mode](https://reactrouter.com/start/framework/installation) to mount the agent in.
+
+## Register the Vite plugin
+
+Add `eveReactRouter()` before `reactRouter()`:
+
+```ts title="vite.config.ts"
+import { reactRouter } from "@react-router/dev/vite";
+import { eveReactRouter } from "eve/react-router";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [eveReactRouter(), reactRouter()],
+});
+```
+
+The plugin looks for an `agent/` folder in the React Router project root. Pass `eveRoot` when the agent lives elsewhere:
+
+```ts
+export default defineConfig({
+  plugins: [
+    eveReactRouter({
+      eveRoot: "../my-agent",
+    }),
+    reactRouter(),
+  ],
+});
+```
+
+The plugin accepts only two options, `eveRoot` and `eveBuildCommand`.
+
+## Call the binding
+
+With the plugin in `vite.config.ts`, components call [`useEveAgent`](./overview#basic-chat-react) from `eve/react` and don't pass a host:
+
+```tsx title="app/routes/home.tsx"
+import { useState } from "react";
+import { useEveAgent } from "eve/react";
+
+export default function Home() {
+  const agent = useEveAgent();
+  const [message, setMessage] = useState("");
+  const isBusy = agent.status === "submitted" || agent.status === "streaming";
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const text = message.trim();
+        if (!text || isBusy) return;
+        setMessage("");
+        void agent.send(text);
+      }}
+    >
+      <input
+        value={message}
+        onChange={(event) => setMessage(event.target.value)}
+        disabled={isBusy}
+      />
+      <button type="submit" disabled={isBusy}>
+        Send
+      </button>
+    </form>
+  );
+}
+```
+
+The browser still needs a production authentication policy. See [Authenticate browser requests](./overview#authenticate-browser-requests) for the default fail-closed behavior and channel configuration.
+
+## Dev vs deploy topology
+
+- **Local dev.** `npm run dev` boots the eve dev server next to React Router and proxies the eve routes to it, so the browser only ever hits the React Router origin. `vite preview` behaves the same way: the preview server gets its own eve route proxy and either reuses the shared eve server or starts one. `react-router-serve` runs outside Vite, so point it at a running eve server with `EVE_BASE_URL` when you need it.
+- **Vercel.** The React Router app and the eve runtime deploy as a single project, declared as `vercel.json` [`services`](https://vercel.com/docs/services) (see below). Unlike the SvelteKit and Nuxt integrations, the plugin cannot generate the services during the build: Vercel assembles the React Router Build Output after the framework build exits, so there is no build hook left to add a service to it. The plugin validates the declaration on Vercel builds and fails with the exact `vercel.json` to add when it is missing. Register Vercel's own [`vercelPreset()`](https://vercel.com/docs/frameworks/frontend/react-router#vercel-react-router-preset) in `react-router.config.ts` as usual; the two compose without conflict.
+- **Non-Vercel hosts.** When the eve service runs on a separate origin, pass `host` directly to `useEveAgent`:
+
+  ```ts
+  const agent = useEveAgent({
+    host: "https://agent.example.com",
+  });
+  ```
+
+## Declaring the services in vercel.json
+
+`vercel.json` must declare [`services`](https://vercel.com/docs/services) — the React Router app, the eve service (`framework: "eve"`), and a rewrite that exposes the eve transport — and the project's Framework Preset must be Services. When the agent lives in its own directory with the `eve` binary on its path, the declaration is short:
+
+```json title="vercel.json"
+{
+  "services": {
+    "web": { "root": ".", "framework": "react-router" },
+    "eve": { "root": "agent", "framework": "eve", "buildCommand": "eve build" }
+  },
+  "rewrites": [{ "source": "/eve/v1/(.*)", "destination": { "service": "eve" } }]
+}
+```
+
+When the agent shares the React Router project root, the eve service needs its own root directory so the two build outputs cannot collide. Run a Vercel build without `vercel.json` once — the failed build's error message prints the exact declaration for your project, including the isolated service root and its build command.
+
+## What to read next
+
+- [`useEveAgent` (React)](./overview#basic-chat-react): the binding API
+- [Auth & route protection](../auth-and-route-protection)
+- [Deployment](../deployment/overview)

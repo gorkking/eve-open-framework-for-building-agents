@@ -9,10 +9,10 @@ The frontend helpers put a browser chat or agent UI on top of an eve agent. `use
 
 A browser UI is a client of the agent's HTTP routes (the [eve channel](../../channels/overview)). Two layers wire it up:
 
-- **The framework integration** mounts the eve routes on your app's origin, so the browser never crosses a CORS boundary or reads an env var to find the agent. Pick yours: [Next.js](./nextjs) (`withEve`), [Nuxt](./nuxt) (the `eve/nuxt` module), or [SvelteKit](./sveltekit) (the `eveSvelteKit` Vite plugin). On any other stack the hook talks to same-origin `/eve/v1/*` routes directly, or you pass an explicit `host`.
+- **The framework integration** mounts the eve routes on your app's origin, so the browser never crosses a CORS boundary or reads an env var to find the agent. Pick yours: [Next.js](./nextjs) (`withEve`), [Nuxt](./nuxt) (the `eve/nuxt` module), [SvelteKit](./sveltekit) (the `eveSvelteKit` Vite plugin), or [React Router](./react-router) (the `eveReactRouter` Vite plugin). On any other stack the hook talks to same-origin `/eve/v1/*` routes directly, or you pass an explicit `host`.
 - **The hook** (`useEveAgent`) holds the session state, streaming, errors, and composer status. It defaults to same-origin eve routes such as `/eve/v1/session`.
 
-The per-framework pages below walk through the wiring step by step: [Next.js](./nextjs), [Nuxt](./nuxt), and [SvelteKit](./sveltekit).
+The per-framework pages below walk through the wiring step by step: [Next.js](./nextjs), [Nuxt](./nuxt), [SvelteKit](./sveltekit), and [React Router](./react-router).
 
 For scripts, server-to-server calls, evals, tests, or custom clients that do not need framework UI state, use the [Client SDK](../client/overview) directly.
 
@@ -320,12 +320,13 @@ const support = useEveAgent({ agent: "support" });
 
 ## Per-framework integration
 
-| Framework | Integration                          | Hook                                             |
-| --------- | ------------------------------------ | ------------------------------------------------ |
-| Next.js   | [`withEve`](./nextjs)                | [`useEveAgent` (React)](#basic-chat-react)       |
-| Nuxt      | [`eve/nuxt` module](./nuxt)          | [`useEveAgent` (Vue)](./use-eve-agent-vue)       |
-| SvelteKit | [`eveSvelteKit` plugin](./sveltekit) | [`useEveAgent` (Svelte)](./use-eve-agent-svelte) |
-| Any React | same-origin or `host`                | [`useEveAgent` (React)](#basic-chat-react)       |
+| Framework    | Integration                               | Hook                                             |
+| ------------ | ----------------------------------------- | ------------------------------------------------ |
+| Next.js      | [`withEve`](./nextjs)                     | [`useEveAgent` (React)](#basic-chat-react)       |
+| Nuxt         | [`eve/nuxt` module](./nuxt)               | [`useEveAgent` (Vue)](./use-eve-agent-vue)       |
+| SvelteKit    | [`eveSvelteKit` plugin](./sveltekit)      | [`useEveAgent` (Svelte)](./use-eve-agent-svelte) |
+| React Router | [`eveReactRouter` plugin](./react-router) | [`useEveAgent` (React)](#basic-chat-react)       |
+| Any React    | same-origin or `host`                     | [`useEveAgent` (React)](#basic-chat-react)       |
 
 ## What to read next
 

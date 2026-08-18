@@ -1,0 +1,33 @@
+{
+  "services": {
+    "web": {
+      "root": ".",
+      "framework": "react-router"
+    },
+    "eve": {
+      "buildCommand": "cd '../../..' && export EVE_INTERNAL_BUILD_OUTPUT_DIRECTORY='.eve/vercel-services/eve/.vercel/output' && export EVE_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node '../../../packages/eve/bin/eve.js' build",
+      "framework": "eve",
+      "routes": [
+        {
+          "src": "^/eve/v1/(.*)$",
+          "transforms": [
+            {
+              "args": "/eve/v1/$1",
+              "op": "set",
+              "type": "request.path"
+            }
+          ]
+        }
+      ],
+      "root": ".eve/vercel-services/eve"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/eve/v1/(.*)",
+      "destination": {
+        "service": "eve"
+      }
+    }
+  ]
+}
