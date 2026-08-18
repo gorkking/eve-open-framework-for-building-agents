@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { registerStepFunction } from "#compiled/@workflow/core/private.js";
 import { createWorld } from "#compiled/@workflow/world-local/index.js";
 import { SCHEDULE_ADAPTER } from "#channel/schedule.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
@@ -108,14 +109,15 @@ export async function createEmbeddedLocalExecutor(
       rootDir: resolvePackageRoot(),
       watch: false,
     }).build();
+    await registerEmbeddedWorkflowSteps(workflowBuildDirectory);
 
     const runtimeSession = createRuntimeSession(`embedded-local-${crypto.randomUUID()}`);
     world = createWorld({ dataDir: dataDirectory, tag: `embedded-${crypto.randomUUID()}` });
     await world.start?.();
+    setWorld(world);
 
     await withRuntimeSession(runtimeSession, async () => {
       const bundleUrl = pathToFileURL(join(workflowBuildDirectory, "workflows.mjs"));
-      bundleUrl.searchParams.set("executor", crypto.randomUUID());
       const module = (await import(bundleUrl.href)) as {
         readonly POST?: (request: Request) => Promise<Response>;
       };
@@ -131,7 +133,6 @@ export async function createEmbeddedLocalExecutor(
           await withRuntimeSession(runtimeSession, async () => await module.POST!(request)),
       );
     });
-    setWorld(world);
 
     return {
       async run(runInput) {
@@ -152,6 +153,7 @@ export async function createEmbeddedLocalExecutor(
             mode: "task",
           });
           const projected = await projectEmbeddedRunEvents(handle.events);
+          await new Promise((resolve) => setTimeout(resolve, 250));
           return { sessionId: handle.sessionId, ...projected };
         });
       },
@@ -173,7 +175,12 @@ export async function createEmbeddedLocalExecutor(
           }
         }
         try {
-          await rm(workspace, { force: true, recursive: true });
+          await rm(workspace, {
+            force: true,
+            maxRetries: 5,
+            recursive: true,
+            retryDelay: 100,
+          });
         } catch (error) {
           cleanupError ??= error;
         } finally {
@@ -196,7 +203,12 @@ export async function createEmbeddedLocalExecutor(
       else process.env[WORKFLOW_QUEUE_NAMESPACE_ENV] = previousQueueNamespace;
     }
     try {
-      await rm(workspace, { force: true, recursive: true });
+      await rm(workspace, {
+        force: true,
+        maxRetries: 5,
+        recursive: true,
+        retryDelay: 100,
+      });
     } finally {
       embeddedExecutorGlobal[EMBEDDED_EXECUTOR_OWNER] = false;
     }
@@ -269,6 +281,28 @@ export async function projectEmbeddedRunEvents(
 
 export function canonicalizeEmbeddedInput(value: JsonValue): string {
   return JSON.stringify(sortJsonValue(parseJsonValue(value)));
+}
+
+async function registerEmbeddedWorkflowSteps(workflowBuildDirectory: string): Promise<void> {
+  const manifest = JSON.parse(
+    await readFile(join(workflowBuildDirectory, "manifest.json"), "utf8"),
+  ) as {
+    readonly steps?: Readonly<
+      Record<string, Readonly<Record<string, { readonly stepId?: string }>>>
+    >;
+  };
+
+  for (const [modulePath, exports] of Object.entries(manifest.steps ?? {})) {
+    const module = (await import(
+      pathToFileURL(join(resolvePackageRoot(), modulePath)).href
+    )) as Readonly<Record<string, unknown>>;
+    for (const [exportName, metadata] of Object.entries(exports)) {
+      const step = module[exportName];
+      if (typeof step === "function" && typeof metadata.stepId === "string") {
+        registerStepFunction(metadata.stepId, step as Parameters<typeof registerStepFunction>[1]);
+      }
+    }
+  }
 }
 
 function sortJsonValue(value: JsonValue): JsonValue {
