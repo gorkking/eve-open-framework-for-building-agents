@@ -162,6 +162,19 @@ export default eveChannel({
 
 `onMessage` must return an auth result. Return `title` alongside `auth` to set the title when the dispatch starts a run. A successful canonical eve HTTP message always dispatches and therefore always produces or continues a session.
 
+### Synthetic first-event follower
+
+Set `syntheticFollowFirstEvent: true` to measure the durable stream's writer-to-reader latency for newly created HTTP sessions. After session creation, eve schedules a background live follower, reads one event, and immediately cancels it. The session-create response does not await the read, and the follower never stays attached while a conversation is parked.
+
+```ts title="agent/channels/eve.ts"
+export default eveChannel({
+  auth: [vercelOidc(), localDev()],
+  syntheticFollowFirstEvent: true,
+});
+```
+
+This activates the framework's live-follow telemetry for the first durable event. It is a synthetic server-side reader: it measures durable write-to-read transport time, not browser rendering or downstream channel delivery. The option affects only newly created sessions on the eve HTTP channel; follow-ups and sessions created by other channels are unchanged.
+
 ## Clients
 
 The browser side of this API lives in the [Frontend](../guides/frontend/overview) docs, where `useEveAgent` drives the eve channel from React UI.

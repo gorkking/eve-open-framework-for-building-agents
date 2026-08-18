@@ -186,6 +186,13 @@ export interface EveChannelInput {
   /** Policy for follow-up messages that arrive while a turn is active. */
   readonly turnPolicy?: TurnPolicy;
   /**
+   * Starts a bounded synthetic live follower for each newly created HTTP session.
+   * The follower reads one event in background work, then immediately cancels. Use
+   * this to measure durable writer-to-reader latency without extending the response
+   * path or following a parked conversation indefinitely.
+   */
+  readonly syntheticFollowFirstEvent?: boolean;
+  /**
    * Pre-dispatch hook for inbound eve HTTP messages. Runs after route auth and body
    * parsing, before runtime dispatch.
    */
@@ -343,6 +350,10 @@ export function eveChannel(input: EveChannelInput): EveChannel {
             { error: "Failed to create the session.", errorId, ok: false },
             { status: 500 },
           );
+        }
+
+        if (input.syntheticFollowFirstEvent === true) {
+          args.waitUntil(readFirstLiveEvent(handle.events));
         }
 
         return Response.json(
@@ -1037,6 +1048,24 @@ function rejectSessionContinuationToken(payload: Record<string, unknown>): Respo
         { status: 400 },
       )
     : null;
+}
+
+async function readFirstLiveEvent(stream: ReadableStream<MessageStreamEvent>): Promise<void> {
+  const reader = stream.getReader();
+  const timeout = Symbol("synthetic-follow-timeout");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      reader.read(),
+      new Promise<typeof timeout>((resolve) => {
+        timer = setTimeout(() => resolve(timeout), 10_000);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    void reader.cancel("synthetic first-event observation complete").catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 function requireSessionId(params: Readonly<Record<string, string>>): string | Response {

@@ -100,7 +100,10 @@ function createRouteArgs(): RouteHandlerArgs {
  */
 function createEveCreateHandler(
   input: EveChannelInput,
-  options: { readonly activeSessionId?: string } = {},
+  options: {
+    readonly activeSessionId?: string;
+    readonly events?: ReadableStream;
+  } = {},
 ) {
   const channel = eveChannel(input);
   const createRoute = channel.routes.find(
@@ -131,18 +134,26 @@ function createEveCreateHandler(
       title: runInput.title,
     } satisfies MockSendOptions);
     return {
-      events: new ReadableStream(),
+      events: options.events ?? new ReadableStream(),
       sessionId: "test-session-id",
     };
   });
+  const backgroundTasks: Promise<unknown>[] = [];
 
   return {
+    backgroundTasks,
     createSession,
     resolveSession,
     send: mockSend,
     async fetch(req: Request) {
       const args = attachRouteSessionCreator(
-        { ...createRouteArgs(), resolveSession },
+        {
+          ...createRouteArgs(),
+          resolveSession,
+          waitUntil(task) {
+            backgroundTasks.push(task);
+          },
+        },
         createSession as never,
       );
       return (createRoute as any).handler(req, args);
@@ -955,6 +966,93 @@ describe("eveChannel — create session (text)", () => {
     expect(response.status).toBe(202);
     expect(handler.send).toHaveBeenCalledTimes(1);
     expect(handler.send.mock.calls[0]?.[0]).toBe("hi");
+    expect(handler.backgroundTasks).toHaveLength(0);
+  });
+
+  it("observes one live event in background work when enabled", async () => {
+    let cancelReason: unknown;
+    const events = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(
+          createMessageCompletedEvent({
+            message: "hello",
+            sequence: 0,
+            stepIndex: 0,
+            turnId: "turn-0",
+          }),
+        );
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const handler = createEveCreateHandler(
+      { auth: none(), syntheticFollowFirstEvent: true },
+      { events },
+    );
+
+    const response = await handler.fetch(createJsonMessageRequest({ message: "hi" }));
+
+    expect(response.status).toBe(202);
+    expect(handler.backgroundTasks).toHaveLength(1);
+    await expect(handler.backgroundTasks[0]).resolves.toBeUndefined();
+    expect(cancelReason).toBe("synthetic first-event observation complete");
+  });
+
+  it("returns before a synthetic follower receives its first event", async () => {
+    let source: ReadableStreamDefaultController | undefined;
+    const events = new ReadableStream({
+      start(controller) {
+        source = controller;
+      },
+    });
+    const handler = createEveCreateHandler(
+      { auth: none(), syntheticFollowFirstEvent: true },
+      { events },
+    );
+
+    const response = await Promise.race([
+      handler.fetch(createJsonMessageRequest({ message: "hi" })),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 100)),
+    ]);
+
+    expect(response).not.toBe("blocked");
+    expect((response as Response).status).toBe(202);
+    expect(handler.backgroundTasks).toHaveLength(1);
+    source?.enqueue(
+      createMessageCompletedEvent({
+        message: "hello",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-0",
+      }),
+    );
+    await expect(handler.backgroundTasks[0]).resolves.toBeUndefined();
+  });
+
+  it("cancels a synthetic follower after its deadline", async () => {
+    vi.useFakeTimers();
+    let cancelReason: unknown;
+    const events = new ReadableStream({
+      pull() {},
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const handler = createEveCreateHandler(
+      { auth: none(), syntheticFollowFirstEvent: true },
+      { events },
+    );
+
+    try {
+      const response = await handler.fetch(createJsonMessageRequest({ message: "hi" }));
+      expect(response.status).toBe(202);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(handler.backgroundTasks[0]).resolves.toBeUndefined();
+      expect(cancelReason).toBe("synthetic first-event observation complete");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("accepts task mode for callback-driven session creation", async () => {
