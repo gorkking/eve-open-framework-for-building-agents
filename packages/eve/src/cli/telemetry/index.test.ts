@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -76,7 +77,7 @@ describe("createEveCliTelemetry", () => {
   });
 
   it("flushes an allowlisted outcome through a telemetry-disabled child process", async () => {
-    const child = { unref: vi.fn() };
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     vi.mocked(spawn).mockReturnValue(child as never);
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("EVE_TELEMETRY_DISABLED", "");
@@ -103,5 +104,18 @@ describe("createEveCliTelemetry", () => {
     );
     expect(payload.events).not.toContainEqual(expect.objectContaining({ key: "error_code" }));
     expect(payload.events).not.toContainEqual(expect.objectContaining({ key: "error_status" }));
+  });
+
+  it("ignores asynchronous child-process errors", async () => {
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    vi.mocked(spawn).mockReturnValue(child as never);
+    vi.stubEnv("NODE_ENV", "production");
+    const telemetry = createEveCliTelemetry("1.0.0");
+    telemetry.trackCommand("info");
+
+    await telemetry.flush();
+
+    expect(() => child.emit("error", new Error("spawn failed"))).not.toThrow();
+    expect(child.unref).toHaveBeenCalled();
   });
 });

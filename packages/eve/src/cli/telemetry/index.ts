@@ -148,7 +148,8 @@ export function createEveCliTelemetry(version: string): EveCliTelemetry {
             stdio: "ignore",
             windowsHide: true,
           },
-        ) as ReturnType<typeof spawn>;
+        );
+        child.on("error", () => {});
         child.unref();
       } catch {
         // Telemetry must never affect command output or exit status.
