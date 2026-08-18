@@ -14,16 +14,10 @@ import { getAdapterKind } from "#channel/adapter.js";
 
 type ReadableContext = Pick<AlsContext, "get">;
 
-/**
- * Builds the {@link DynamicResolveContext} from the active ALS context.
- *
- * Shared by all three dynamic lifecycle dispatchers (tools, skills,
- * instructions) so resolver handlers receive a consistent context shape.
- */
-export function buildResolveContext(
-  ctx: ReadableContext,
-  messages: readonly ModelMessage[],
-): DynamicResolveContext {
+export type DynamicResolveRequestContext = Pick<DynamicResolveContext, "channel" | "session">;
+
+/** Builds the request identity shared by dynamic and memory scope resolvers. */
+export function buildResolveRequestContext(ctx: ReadableContext): DynamicResolveRequestContext {
   const sessionId = ctx.get(SessionIdKey) ?? "";
   const currentAuth = ctx.get(AuthKey) ?? null;
   const initiatorAuth = ctx.get(InitiatorAuthKey) ?? null;
@@ -44,6 +38,21 @@ export function buildResolveContext(
       continuationToken,
       metadata: channelInstrumentation?.metadata,
     },
+  };
+}
+
+/**
+ * Builds the {@link DynamicResolveContext} from the active ALS context.
+ *
+ * Shared by all three dynamic lifecycle dispatchers (tools, skills,
+ * instructions) so resolver handlers receive a consistent context shape.
+ */
+export function buildResolveContext(
+  ctx: ReadableContext,
+  messages: readonly ModelMessage[],
+): DynamicResolveContext {
+  return {
+    ...buildResolveRequestContext(ctx),
     messages,
   };
 }

@@ -2,7 +2,14 @@ import type { ModelMessage } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
-import { AuthKey, InitiatorAuthKey, SessionIdKey, SessionKey } from "#context/keys.js";
+import {
+  AuthKey,
+  ChannelInstrumentationKey,
+  ContinuationTokenKey,
+  InitiatorAuthKey,
+  SessionIdKey,
+  SessionKey,
+} from "#context/keys.js";
 import {
   MemoryOperationError,
   buildMemoryTools,
@@ -25,9 +32,11 @@ import {
   defaultNamespace,
   defineMemoryProvider,
   type MemoryProvider,
+  type MemoryScopeContext,
   type MemoryToolSet,
 } from "#public/memory/index.js";
 import { byPrincipal } from "#public/memory/scope.js";
+import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 
 const defaultNamespaceContext: MemoryDefaultNamespaceContext = {
@@ -115,6 +124,88 @@ describe("memory lifecycle", () => {
     );
     expect(continued).toBe(session);
     expect(calls).toHaveLength(2);
+  });
+
+  it("passes trusted request context, joins resolver components, and reuses the turn lock", async () => {
+    const controller = new AbortController();
+    const contexts: MemoryScopeContext[] = [];
+    const scope = vi.fn(async (context) => {
+      contexts.push(context);
+      const channelId = context.channel.metadata?.channelId;
+      return typeof channelId === "string" ? [context.session.id, channelId] : null;
+    });
+    const values: string[] = [];
+    const definition = memory(
+      "channel",
+      defineMemoryProvider({
+        recall(context) {
+          values.push(context.memory.scope.value);
+        },
+      }),
+      scope,
+    );
+    const context = createContext();
+    context.set(ChannelKey, { kind: "channel:slack" });
+    context.set(ContinuationTokenKey, "slack:T123:C123:thread-1");
+    context.set(ChannelInstrumentationKey, {
+      kind: "channel:slack",
+      metadata: { channelId: "C123", teamId: "T123" },
+    });
+
+    const turnSession = await runInContext(context, () =>
+      startMemoryTurn({
+        abortSignal: controller.signal,
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        projectionAnchorIndex: 0,
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      }),
+    );
+    await runInContext(context, () =>
+      startMemoryCompaction({
+        abortSignal: controller.signal,
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        modelId: "mock/compact",
+        session: turnSession,
+        standalone: false,
+        usageInputTokens: null,
+      }),
+    );
+
+    expect(scope).toHaveBeenCalledTimes(1);
+    expect(values).toEqual(["session-1:C123"]);
+    expect(contexts[0]).toMatchObject({
+      abortSignal: controller.signal,
+      channel: {
+        continuationToken: "slack:T123:C123:thread-1",
+        kind: "channel:slack",
+        metadata: { channelId: "C123", teamId: "T123" },
+      },
+      session: {
+        auth: { current: { principalId: "user-1" }, initiator: null },
+        id: "session-1",
+      },
+    });
+    expect("messages" in contexts[0]!).toBe(false);
+
+    await runInContext(context, () =>
+      startMemoryCompaction({
+        abortSignal: controller.signal,
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        modelId: "mock/compact",
+        session: createSession(),
+        standalone: true,
+        usageInputTokens: null,
+      }),
+    );
+    expect(scope).toHaveBeenCalledTimes(2);
+    expect(contexts[1]).toMatchObject(contexts[0]!);
   });
 
   it("derives keys from only the explicit namespace and scope", async () => {
@@ -235,6 +326,12 @@ describe("memory lifecycle", () => {
     );
     await expect(start(memory("user", provider, "user-1", "scope", () => ""))).rejects.toThrow(
       'Memory namespace "user" must resolve to a non-empty string.',
+    );
+    await expect(start(memory("user", provider, async () => []))).rejects.toThrow(
+      'Memory scope "user" resolver must return a non-empty array of non-empty strings.',
+    );
+    await expect(start(memory("user", provider, () => ["tenant-1", ""]))).rejects.toThrow(
+      'Memory scope "user" resolver must return a non-empty array of non-empty strings.',
     );
   });
 

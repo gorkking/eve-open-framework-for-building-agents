@@ -1,8 +1,8 @@
-import { buildCallbackContext } from "#context/build-callback-context.js";
+import type { MemoryScopeContext } from "#public/memory/index.js";
 
 /** Scopes memory to the authenticated caller; unauthenticated turns disable the slot. */
-export function byPrincipal(): string | null {
-  const principal = buildCallbackContext().session.auth.current;
+export function byPrincipal(context: MemoryScopeContext): string | null {
+  const principal = context.session.auth.current;
   if (principal === null) return null;
   return JSON.stringify([
     principal.principalType,

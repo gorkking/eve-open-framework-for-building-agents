@@ -9,7 +9,10 @@ import {
   SessionIdKey,
 } from "#context/keys.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
-import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import {
+  buildResolveContext,
+  buildResolveRequestContext,
+} from "#context/dynamic-resolve-context.js";
 
 function createCtx(): ContextContainer {
   const ctx = new ContextContainer();
@@ -29,8 +32,11 @@ describe("buildResolveContext", () => {
       metadata: { threadTs: "1234.5678", userId: "U123" },
     });
 
+    const requestCtx = buildResolveRequestContext(ctx);
     const resolveCtx = buildResolveContext(ctx, []);
 
+    expect(resolveCtx).toMatchObject(requestCtx);
+    expect("messages" in requestCtx).toBe(false);
     expect(resolveCtx.channel.continuationToken).toBe("token-1");
     expect(resolveCtx.channel.metadata).toEqual({
       threadTs: "1234.5678",

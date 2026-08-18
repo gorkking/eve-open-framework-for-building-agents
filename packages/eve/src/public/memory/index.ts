@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { ModelMessage } from "ai";
 
 import { loadDefaultMemoryNamespaceContext } from "#context/default-memory-namespace-context.js";
+import type { SessionAuth } from "#context/keys.js";
 import type { Approval } from "#public/definitions/approval.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ExactDefinition } from "#public/definitions/exact.js";
@@ -17,12 +18,33 @@ export type MemoryNamespaceDefinition =
   | Promise<string | null>
   | (() => string | null | Promise<string | null>);
 
+/** Values accepted from a trusted memory scope resolver. Arrays are joined with `":"`. */
+export type MemoryScopeResolverResult = string | readonly string[] | null;
+
+/** Trusted request context supplied when eve locks a memory scope. */
+export interface MemoryScopeContext {
+  /** Aborts when the active turn or standalone operation is cancelled. */
+  readonly abortSignal: AbortSignal;
+  readonly session: {
+    readonly id: string;
+    readonly auth: SessionAuth;
+  };
+  /** Channel metadata for the request that triggered this operation. */
+  readonly channel: {
+    readonly kind?: string;
+    readonly continuationToken?: string;
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  };
+}
+
 /** Trusted memory audience or container, resolved when eve locks a memory operation. */
 export type MemoryScopeDefinition =
   | string
   | null
   | Promise<string | null>
-  | (() => string | null | Promise<string | null>);
+  | ((
+      context: MemoryScopeContext,
+    ) => MemoryScopeResolverResult | Promise<MemoryScopeResolverResult>);
 
 /** Stable provider partition resolved and locked by eve for one memory slot. */
 export interface MemoryScope {

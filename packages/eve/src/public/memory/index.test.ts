@@ -48,11 +48,21 @@ describe("memory authoring", () => {
       Promise,
     );
     expect(
-      defineMemory({ namespace: async () => "app", provider, scope: async () => "user-1" }),
+      defineMemory({
+        namespace: async () => "app",
+        provider,
+        scope: async (ctx) => [ctx.session.id, "user-1"],
+      }),
     ).toMatchObject({ provider });
     expect(
       defineMemory({ namespace: Promise.resolve(null), provider, scope: Promise.resolve(null) }),
     ).toMatchObject({ provider });
+
+    defineMemory({
+      provider,
+      // @ts-expect-error Arrays are resolver results, not top-level scope definitions.
+      scope: ["tenant-1", "user-1"],
+    });
   });
 
   it("derives the default namespace from Vercel and slot context", async () => {

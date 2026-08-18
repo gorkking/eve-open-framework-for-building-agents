@@ -1,10 +1,12 @@
 import type { ModelMessage } from "ai";
 
 import { buildCallbackContext } from "#context/build-callback-context.js";
+import { loadContext } from "#context/container.js";
 import {
   runWithDefaultMemoryNamespaceContext,
   type DefaultMemoryNamespaceContext,
 } from "#context/default-memory-namespace-context.js";
+import { buildResolveRequestContext } from "#context/dynamic-resolve-context.js";
 import {
   captureCallbackSession,
   cloneTurn,
@@ -39,6 +41,7 @@ import type {
   MemoryRecallContext,
   MemorySaveContext,
   MemoryScope,
+  MemoryScopeContext,
   MemoryScopeDefinition,
   MemoryTurnContext,
 } from "#public/memory/index.js";
@@ -82,9 +85,11 @@ export async function startMemoryTurn(input: {
   const abortSignal = resolveAbortSignal(input.abortSignal);
   const callback = buildCallbackContext();
   const callbackSession = captureCallbackSession(callback, input.turn);
+  const scopeContext = createScopeContext(abortSignal);
   const slots = await resolveMemorySlots({
     defaultNamespaceContext: input.defaultNamespaceContext,
     memories: input.memories,
+    scopeContext,
   });
   const activeTurn: DurableMemoryTurnState = {
     principalIdentity: principalIdentity(callbackSession.auth.current),
@@ -189,6 +194,7 @@ export async function startMemoryCompaction(input: {
     ? await resolveMemorySlots({
         defaultNamespaceContext: input.defaultNamespaceContext,
         memories: input.memories,
+        scopeContext: createScopeContext(abortSignal),
       })
     : active!.slots;
   const callbackSession = input.standalone ? standaloneSession : active!.session;
@@ -391,10 +397,11 @@ export function clearMemoryAnchors(session: HarnessSession): HarnessSession {
 async function resolveMemorySlots(input: {
   readonly defaultNamespaceContext: MemoryDefaultNamespaceContext;
   readonly memories: readonly ResolvedMemoryDefinition[];
+  readonly scopeContext: MemoryScopeContext;
 }): Promise<readonly DurableMemorySlotLock[]> {
   const slots: DurableMemorySlotLock[] = [];
   for (const memory of sortMemories(input.memories)) {
-    const value = await resolveScope(memory.slot, memory.scope);
+    const value = await resolveScope(memory.slot, memory.scope, input.scopeContext);
     if (value === null) {
       slots.push({ scope: null, slot: memory.slot, visibility: memory.visibility });
       continue;
@@ -439,16 +446,40 @@ async function resolveNamespace(
 async function resolveScope(
   slot: string,
   definition: MemoryScopeDefinition,
+  context: MemoryScopeContext,
 ): Promise<string | null> {
   let scope: unknown;
+  const fromResolver = typeof definition === "function";
   try {
-    scope = await resolveDefinition(definition);
+    scope = fromResolver ? await definition(context) : await definition;
   } catch (cause) {
     throw new Error(`Memory scope "${slot}" failed to resolve.`, { cause });
   }
   if (scope === null) return null;
+  if (fromResolver && Array.isArray(scope)) {
+    validateScopeComponents(slot, scope);
+    return scope.join(":");
+  }
   validateAddressValue("scope", slot, scope);
   return scope;
+}
+
+function createScopeContext(abortSignal: AbortSignal): MemoryScopeContext {
+  return { abortSignal, ...buildResolveRequestContext(loadContext()) };
+}
+
+function validateScopeComponents(
+  slot: string,
+  components: readonly unknown[],
+): asserts components is readonly string[] {
+  if (
+    components.length === 0 ||
+    components.some((component) => typeof component !== "string" || component.length === 0)
+  ) {
+    throw new TypeError(
+      `Memory scope "${slot}" resolver must return a non-empty array of non-empty strings.`,
+    );
+  }
 }
 
 async function resolveDefinition<T>(

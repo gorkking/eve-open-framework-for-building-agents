@@ -35,19 +35,28 @@ export default defineMemory({
 
 Passing `byPrincipal` as the resolver partitions the provider by the authenticated caller. Its value includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's projections.
 
-Pass resolver helpers by reference, as shown above. Calling `byPrincipal()` or `defaultNamespace()` while the module loads fails because no memory operation is active yet.
+Pass `byPrincipal` by reference, as shown above. eve supplies its scope context when it locks the operation. Inside a custom scope resolver, call `byPrincipal(ctx)` with that same context.
 
-Both address fields accept a string, `null`, a promise, or a zero-argument resolver:
+Namespace accepts a string, `null`, a promise, or a zero-argument resolver. Scope accepts the same direct string, `null`, and promise forms, but its resolver receives trusted request context:
 
 ```ts
 type MemoryNamespaceDefinition =
   string | null | Promise<string | null> | (() => string | null | Promise<string | null>);
 
+type MemoryScopeResolverResult = string | readonly string[] | null;
+
 type MemoryScopeDefinition =
-  string | null | Promise<string | null> | (() => string | null | Promise<string | null>);
+  | string
+  | null
+  | Promise<string | null>
+  | ((ctx: MemoryScopeContext) => MemoryScopeResolverResult | Promise<MemoryScopeResolverResult>);
 ```
 
-Use a resolver for work that should begin when eve locks the operation. A promise starts eagerly when the authored module is evaluated.
+`MemoryScopeContext` contains `abortSignal`, `session.id`, `session.auth`, and the active channel's `kind`, `continuationToken`, and projected `metadata`. It deliberately excludes messages and turn input. A resolver may be synchronous or asynchronous. eve invokes it once when locking the turn or standalone operation.
+
+Returning an array is a convenience for `components.join(":")`. The array and every component must be non-empty. It is not a structured or collision-resistant tuple encoding, so return your own canonical string when components may contain `:`.
+
+Use a resolver for work that should begin when eve locks the operation. A direct promise starts eagerly when the authored module is evaluated. Calling `defaultNamespace()` during module evaluation fails because its path and deployment context are available only during namespace resolution.
 
 If either field resolves to `null`, eve disables the slot for that operation: it does not call the provider, expose its tools, or include its projections.
 
@@ -69,6 +78,31 @@ export default defineMemory({
 Custom namespaces replace the default completely. eve does not append the application root, environment, graph node, or slot. This also means two definitions with the same custom namespace and scope intentionally address the same provider partition.
 
 Do not derive scope from model input or unattested message fields. eve derives a collision-resistant `ctx.memory.scope.key` from exactly the resolved namespace and scope. Providers can also inspect the original values as `ctx.memory.scope.namespace` and `ctx.memory.scope.value`.
+
+`byPrincipal` follows the same authenticated principal across every channel. If a slot stores channel- or conversation-private data, include trusted channel coordinates in its scope. Use `isChannel` to narrow metadata from an authored channel:
+
+```ts title="agent/memory/slack.ts"
+import { isChannel } from "eve/channels";
+import { defineMemory } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
+import slack from "../channels/slack";
+import { channelMemory } from "../lib/channel-memory";
+
+export default defineMemory({
+  provider: channelMemory,
+  scope: (ctx) => {
+    if (!isChannel(ctx.channel, slack)) return null;
+
+    const principal = byPrincipal(ctx);
+    const { channelId, teamId } = ctx.channel.metadata;
+    return principal === null || channelId === null || teamId === null
+      ? null
+      : [principal, teamId, channelId];
+  },
+});
+```
+
+The array resolves to `<principal>:<teamId>:<channelId>`. Add the channel's thread or conversation identifier when memory must not cross that boundary. Returning `null` disables this Slack-only slot for other channels or before Slack has supplied the required metadata.
 
 eve locks the resolved scope through the active turn, including model steps and durable approved-call continuations. A standalone manual compaction resolves and locks a scope for that operation. Provider tools close over the same scope, so the model never chooses a user, tenant, or container.
 

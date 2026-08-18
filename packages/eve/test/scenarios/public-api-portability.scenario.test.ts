@@ -104,7 +104,9 @@ export default defineSandbox({
   type MemoryProjection,
   type MemoryRecallContext,
   type MemorySaveContext,
+  type MemoryScopeContext,
   type MemoryScopeDefinition,
+  type MemoryScopeResolverResult,
   type MemoryToolsContext,
   type MemoryVisibility,
 } from "eve/memory";
@@ -123,14 +125,18 @@ const provider = defineMemoryProvider({
     void (ctx.phase === "compaction.requested" ? ctx.compaction.modelId : ctx.turn.turnId);
   },
   tools(ctx: MemoryToolsContext) {
-    void ctx.step.stepIndex;
+    void ctx.turn.sequence;
     return null;
   },
 });
 
 const visibility: MemoryVisibility = "scope";
 const namespace: MemoryNamespaceDefinition = defaultNamespace;
-const scope: MemoryScopeDefinition = byPrincipal;
+const resolveScope = (ctx: MemoryScopeContext): MemoryScopeResolverResult => {
+  const principal = byPrincipal(ctx);
+  return principal === null ? null : [principal, ctx.session.id];
+};
+const scope: MemoryScopeDefinition = resolveScope;
 
 export default defineMemory({
   namespace,

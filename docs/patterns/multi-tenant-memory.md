@@ -32,7 +32,27 @@ export default defineMemory({
 
 `byPrincipal` includes the principal type, authenticator, optional issuer, and principal ID. The authenticator and issuer keep the same provider user ID from colliding across authentication domains or tenants. It returns `null` for an unauthenticated caller, so eve does not call the provider, expose its tools, or include its projections.
 
-If your identity system does not encode tenant ownership in those fields, pass a zero-argument scope resolver backed by your application's trusted request context. Return one canonical string that includes both tenant and user. Enforce permanent conversation ownership at the channel boundary rather than accepting either value from the model.
+If your identity system does not encode tenant ownership in those fields, compose the principal with a trusted tenant attribute in a custom resolver:
+
+```ts title="agent/memory/user.ts"
+import { defineMemory } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
+import { tenantMemory } from "../lib/tenant-memory";
+
+export default defineMemory({
+  provider: tenantMemory,
+  scope: async (ctx) => {
+    const principal = byPrincipal(ctx);
+    const tenantId = ctx.session.auth.current?.attributes.tenantId;
+
+    return principal === null || typeof tenantId !== "string"
+      ? null
+      : JSON.stringify(["tenant-user", tenantId, principal]);
+  },
+});
+```
+
+The resolver may also use trusted channel metadata, and it receives an abort signal for asynchronous lookups. It does not receive messages or turn input. Return one canonical string that includes both tenant and user. Enforce permanent conversation ownership at the channel boundary rather than accepting either value from the model.
 
 eve combines the resolved namespace and scope to produce `ctx.memory.scope.key`. The default namespace includes the application, environment, graph node, and slot. A custom namespace replaces that default rather than adding to it. Use the key, or both `ctx.memory.scope.namespace` and `ctx.memory.scope.value`, on every provider read and write. The model never receives these values as tool input.
 
