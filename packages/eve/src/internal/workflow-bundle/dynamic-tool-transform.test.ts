@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
+import { createDynamicCapabilityTransformPlugin } from "./dynamic-capability-transform-plugin.js";
 import { transformDynamicToolExecute } from "./dynamic-tool-transform.js";
 
 // ---------------------------------------------------------------------------
@@ -36,11 +37,21 @@ async function transformAndEval(
   // Strip `export const ...`
   code = code.replace(/export\s+const\s+/g, "const ");
 
-  const capturedHandler: { fn: Function | null } = { fn: null };
+  const capturedHandler: { fn: Function | null; kind: "dynamic" | "memory" | null } = {
+    fn: null,
+    kind: null,
+  };
 
   const defineDynamic = (def: { events: Record<string, Function> }) => {
     const eventName = Object.keys(def.events)[0]!;
     capturedHandler.fn = def.events[eventName]!;
+    capturedHandler.kind = "dynamic";
+    return def;
+  };
+
+  const defineMemoryProvider = (def: { tools: Function }) => {
+    capturedHandler.fn = def.tools;
+    capturedHandler.kind = "memory";
     return def;
   };
 
@@ -49,8 +60,13 @@ async function transformAndEval(
 
   // Evaluate in a function scope to provide our stubs. The transform
   // prepends its own __eveStepRegistry setup, so we don't need to add it.
-  const evalFn = new Function("defineDynamic", "defineTool", `${code}\nreturn __exported;`);
-  evalFn(defineDynamic, defineTool);
+  const evalFn = new Function(
+    "defineDynamic",
+    "defineMemoryProvider",
+    "defineTool",
+    `${code}\nreturn __exported;`,
+  );
+  evalFn(defineDynamic, defineMemoryProvider, defineTool);
 
   const registrySym = Symbol.for("@workflow/core//registeredSteps");
   const registry = (globalThis as Record<symbol, Map<string, Function>>)[registrySym] ?? new Map();
@@ -62,7 +78,9 @@ async function transformAndEval(
       if (!capturedHandler.fn) throw new Error("No handler captured");
       const event = handlerArgs.event ?? {};
       const ctx = handlerArgs.ctx ?? { session: { id: "test-123", auth: { current: null } } };
-      return capturedHandler.fn(event, ctx) as Promise<Record<string, unknown>>;
+      return (
+        capturedHandler.kind === "memory" ? capturedHandler.fn(ctx) : capturedHandler.fn(event, ctx)
+      ) as Promise<Record<string, unknown>>;
     },
   };
 }
@@ -74,11 +92,95 @@ beforeEach(() => {
   if (reg) reg.clear();
 });
 
+describe("dynamic capability transform plugin", () => {
+  it("transforms memory providers outside the tools directory", async () => {
+    const plugin = createDynamicCapabilityTransformPlugin();
+    const result = await plugin.transform(
+      `
+        export default defineMemoryProvider({
+          recall() {},
+          tools: (ctx) => ({
+            read: defineTool({
+              description: "Read",
+              inputSchema: { type: "object" },
+              execute: () => ctx.memory.scope.key,
+            }),
+          }),
+        });
+      `,
+      "/app/agent/lib/memory.ts",
+    );
+
+    expect(result?.code).toContain("__closureVars");
+  });
+});
+
 // ===========================================================================
 // Section 1: Evaluation tests — prove the generated code ACTUALLY WORKS
 // ===========================================================================
 
 describe("transformDynamicToolExecute — evaluation", () => {
+  it("captures async memory provider tool context for durable replay", async () => {
+    const source = `
+import { defineMemoryProvider } from "eve/memory";
+import { defineTool } from "eve/tools";
+
+export default defineMemoryProvider({
+  recall() {},
+  async tools(ctx) {
+    const scopeKey = await Promise.resolve(ctx.memory.scope.key);
+    return {
+      save: defineTool({
+        description: "Save",
+        inputSchema: { type: "object" },
+        execute(input) { return scopeKey + ":" + input.value; },
+      }),
+    };
+  },
+});
+`;
+
+    const { callHandler, registry } = await transformAndEval("lib/memory.ts", source, {
+      ctx: { memory: { scope: { key: "mem_user" } } },
+    });
+    const tools = await callHandler();
+    const save = tools.save as Record<string, unknown>;
+    const closureVars = save.__closureVars as Record<string, unknown>;
+    const stepFn = save.__executeStepFn as Function & { stepId: string };
+
+    expect(closureVars).toEqual({ scopeKey: "mem_user" });
+    expect(registry.get(stepFn.stepId)?.(closureVars, { value: "hello" })).toBe("mem_user:hello");
+  });
+
+  it("transforms expression-bodied memory tool resolvers", async () => {
+    const source = `
+import { defineMemoryProvider } from "eve/memory";
+import { defineTool } from "eve/tools";
+
+export default defineMemoryProvider({
+  recall() {},
+  tools: (ctx) => ({
+    read: defineTool({
+      description: "Read",
+      inputSchema: { type: "object" },
+      execute: () => ctx.memory.scope.key,
+    }),
+  }),
+});
+`;
+
+    const { callHandler } = await transformAndEval("memory/user.ts", source, {
+      ctx: { memory: { scope: { key: "mem_expression" } } },
+    });
+    const tools = await callHandler();
+    const read = tools.read as Record<string, unknown>;
+
+    expect(read.__closureVars).toEqual({
+      ctx: { memory: { scope: { key: "mem_expression" } } },
+    });
+    expect((read.execute as Function)()).toBe("mem_expression");
+  });
+
   it("wrapper calls hoisted function with correct closure vars", async () => {
     const source = `
 import { defineDynamic, defineTool } from "eve/tools";

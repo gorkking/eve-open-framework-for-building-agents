@@ -16,6 +16,7 @@ import {
   requireMemory,
   resolveAbortSignal,
 } from "#context/memory-operation.js";
+import { resolveMemoryTurnTools } from "#context/memory-tool-lifecycle.js";
 import {
   anchorUnanchoredVisibleMemoryProjections,
   clearMemoryProjectionAnchors,
@@ -25,7 +26,6 @@ import {
   projectMemoryMessages,
   reanchorVisibleMemoryProjections,
   releaseMemoryToolOrigins,
-  setActiveMemoryToolOperations,
   setActiveMemoryTurn,
   setPendingMemoryCompaction,
   updateMemoryProjection,
@@ -51,11 +51,11 @@ export type MemoryDefaultNamespaceContext = Omit<DefaultMemoryNamespaceContext, 
 
 export { MemoryOperationError };
 export {
+  buildMemoryTools,
   getMemoryToolOriginCallIds,
   recordMemoryToolOrigins,
   releaseMemoryToolOrigins,
   resolveMemoryApprovalTools,
-  resolveMemoryTools,
   restoreMemoryToolTurn,
 } from "#context/memory-tool-lifecycle.js";
 
@@ -87,10 +87,10 @@ export async function startMemoryTurn(input: {
     memories: input.memories,
   });
   const activeTurn: DurableMemoryTurnState = {
-    nextStepIndex: 0,
     principalIdentity: principalIdentity(callbackSession.auth.current),
     session: callbackSession,
     slots,
+    toolMetadata: [],
     turn: cloneTurn(input.turn),
   };
 
@@ -144,7 +144,11 @@ export async function startMemoryTurn(input: {
     }
   }
 
-  return session;
+  return await resolveMemoryTurnTools({
+    memories: input.memories,
+    messages: [...input.messages, ...input.turn.input],
+    session,
+  });
 }
 
 /** Builds the model-only prompt view without mutating ordinary history. */
@@ -370,13 +374,13 @@ export async function saveCompletedMemoryTurn(input: {
   const originCallIds = Object.values(getMemoryState(input.session).toolOrigins)
     .filter(
       (origin) =>
-        origin.session.id === active.session.id &&
-        origin.turn.turnId === active.turn.turnId &&
-        origin.turn.sequence === active.turn.sequence,
+        origin.turnState.session.id === active.session.id &&
+        origin.turnState.turn.turnId === active.turn.turnId &&
+        origin.turnState.turn.sequence === active.turn.sequence,
     )
     .map((origin) => origin.callId);
   const session = releaseMemoryToolOrigins({ callIds: originCallIds, session: input.session });
-  return setActiveMemoryTurn(setActiveMemoryToolOperations(session, []), null);
+  return setActiveMemoryTurn(session, null);
 }
 
 /** Clears prompt anchors while preserving provider projections for the next recall. */

@@ -32,7 +32,9 @@ function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) |
   }
 }
 
-function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessToolDefinition[] {
+export function replayDynamicTools(
+  metadata: readonly DurableDynamicToolMetadata[],
+): HarnessToolDefinition[] {
   const tools: HarnessToolDefinition[] = [];
 
   for (const m of metadata) {
@@ -53,6 +55,17 @@ function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessTo
       continue;
     }
 
+    const toModelOutputStepFn =
+      m.toModelOutputStepFnName === undefined
+        ? null
+        : lookupStepFunction(m.toModelOutputStepFnName);
+    if (m.toModelOutputStepFnName !== undefined && toModelOutputStepFn === null) {
+      log.warn(
+        `Dynamic tool "${m.name}" references model-output function ` +
+          `"${m.toModelOutputStepFnName}" which is not registered — using the full output.`,
+      );
+    }
+
     tools.push({
       description: m.description,
       execute: createToolExecuteWithAuth({
@@ -63,6 +76,11 @@ function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessTo
       name: m.name,
       approval: buildReplayedApproval(m),
       outputSchema: toOutputSchema(m.outputSchema),
+      ...(toModelOutputStepFn === null
+        ? {}
+        : {
+            toModelOutput: (output: unknown) => toModelOutputStepFn(m.closureVars ?? {}, output),
+          }),
     });
   }
 
@@ -134,7 +152,7 @@ export function buildResponseAuthorizationTools(input: {
 
 export function buildDynamicTools(ctx: ContextReader): readonly HarnessToolDefinition[] {
   const step = ctx.get(LiveStepToolsKey) ?? [];
-  const turn = replayTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
-  const session = replayTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
+  const turn = replayDynamicTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
+  const session = replayDynamicTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
   return [...step, ...turn, ...session];
 }

@@ -292,22 +292,23 @@ describe("first-class memory integration", () => {
     expect(tools).not.toHaveBeenCalled();
   }, 30_000);
 
-  it("qualifies and executes direct provider tools on every model step", async () => {
+  it("resolves async provider tools once and replays them across model steps", async () => {
     const toolContexts: Array<{
       readonly messages: readonly ModelMessage[];
-      readonly operationId: string;
       readonly scopeKey: string;
-      readonly stepIndex: number;
+      readonly sessionId: string;
+      readonly turnId: string;
     }> = [];
     const executions: Array<{ readonly toolName: string; readonly value: string }> = [];
     const provider = defineMemoryProvider({
       recall: () => null,
-      tools(ctx) {
+      async tools(ctx) {
+        await Promise.resolve();
         toolContexts.push({
           messages: [...ctx.messages],
-          operationId: ctx.operationId,
           scopeKey: ctx.memory.scope.key,
-          stepIndex: ctx.step.stepIndex,
+          sessionId: ctx.session.id,
+          turnId: ctx.turn.turnId,
         });
         return {
           remember: defineTool<Record<string, unknown>, unknown>({
@@ -364,23 +365,20 @@ describe("first-class memory integration", () => {
     });
 
     expect(executions).toEqual([{ toolName: "profile__remember", value: "saved-value" }]);
-    expect(toolContexts.map(({ stepIndex }) => stepIndex)).toEqual([0, 1]);
-    expect(new Set(toolContexts.map(({ scopeKey }) => scopeKey)).size).toBe(1);
-    expect(new Set(toolContexts.map(({ operationId }) => operationId)).size).toBe(2);
-    expect(JSON.stringify(toolContexts[1]?.messages)).toContain("saved-value");
+    expect(toolContexts).toHaveLength(1);
+    expect(toolContexts[0]).toMatchObject({ sessionId: expect.any(String), turnId: "turn_0" });
+    expect(toolContexts[0]?.scopeKey).toMatch(/^mem_/u);
+    expect(JSON.stringify(toolContexts[0]?.messages)).toContain("profile__remember");
   }, 30_000);
 
   it("resumes an approved memory tool with its original scope after another participant turn", async () => {
     const resolutions: Array<{
-      readonly operationId: string;
       readonly principalId: string | undefined;
       readonly scopeKey: string;
-      readonly stepIndex: number;
       readonly turnId: string;
     }> = [];
     const executions: Array<{
       readonly ambientPrincipalId: string | null;
-      readonly operationId: string;
       readonly principalId: string | undefined;
       readonly scopeKey: string;
       readonly turnId: string;
@@ -390,10 +388,8 @@ describe("first-class memory integration", () => {
       recall: () => undefined,
       tools(ctx) {
         const origin = {
-          operationId: ctx.operationId,
           principalId: principalIdFromScope(ctx.memory.scope.value),
           scopeKey: ctx.memory.scope.key,
-          stepIndex: ctx.step.stepIndex,
           turnId: ctx.turn.turnId,
         };
         resolutions.push(origin);
@@ -412,7 +408,6 @@ describe("first-class memory integration", () => {
               if (typeof value !== "string") throw new TypeError("Expected a string value.");
               executions.push({
                 ambientPrincipalId: toolContext.session.auth.current?.principalId ?? null,
-                operationId: origin.operationId,
                 principalId: origin.principalId,
                 scopeKey: origin.scopeKey,
                 turnId: origin.turnId,
@@ -483,18 +478,13 @@ describe("first-class memory integration", () => {
       }
     });
 
-    const original = resolutions.find(
-      (context) => context.principalId === "user-a" && context.stepIndex === 0,
-    );
+    const original = resolutions.find((context) => context.principalId === "user-a");
     if (original === undefined) throw new Error("Missing original memory tool resolution.");
     expect(resolutions).toContainEqual(expect.objectContaining({ principalId: "user-b" }));
-    expect(
-      resolutions.filter((context) => context.operationId === original.operationId).length,
-    ).toBeGreaterThanOrEqual(2);
+    expect(resolutions.filter((context) => context.turnId === original.turnId)).toHaveLength(1);
     expect(executions).toEqual([
       {
         ambientPrincipalId: "user-a",
-        operationId: original.operationId,
         principalId: "user-a",
         scopeKey: original.scopeKey,
         turnId: original.turnId,
@@ -505,14 +495,11 @@ describe("first-class memory integration", () => {
 
   it("matches an inline-auth callback to its parked memory tool without blocking another participant", async () => {
     const resolutions: Array<{
-      readonly operationId: string;
       readonly principalId: string | undefined;
       readonly scopeKey: string;
-      readonly stepIndex: number;
       readonly turnId: string;
     }> = [];
     const executions: Array<{
-      readonly operationId: string;
       readonly principalId: string | undefined;
       readonly scopeKey: string;
       readonly token: string;
@@ -521,7 +508,6 @@ describe("first-class memory integration", () => {
     }> = [];
     const completions: Array<{
       readonly code: string | undefined;
-      readonly operationId: string;
       readonly principal: ConnectionPrincipal;
       readonly principalId: string | undefined;
       readonly resume: { readonly nonce: string } | undefined;
@@ -532,10 +518,8 @@ describe("first-class memory integration", () => {
       recall: () => undefined,
       tools(ctx) {
         const origin = {
-          operationId: ctx.operationId,
           principalId: principalIdFromScope(ctx.memory.scope.value),
           scopeKey: ctx.memory.scope.key,
-          stepIndex: ctx.step.stepIndex,
           turnId: ctx.turn.turnId,
         };
         resolutions.push(origin);
@@ -557,7 +541,6 @@ describe("first-class memory integration", () => {
           async completeAuthorization({ callback, principal: completedPrincipal, resume }) {
             completions.push({
               code: callback.params.code,
-              operationId: origin.operationId,
               principal: completedPrincipal,
               principalId: origin.principalId,
               resume,
@@ -584,7 +567,6 @@ describe("first-class memory integration", () => {
                 displayName: "Profile memory",
               });
               executions.push({
-                operationId: origin.operationId,
                 principalId: origin.principalId,
                 scopeKey: origin.scopeKey,
                 token: token.token,
@@ -680,29 +662,22 @@ describe("first-class memory integration", () => {
       }
     });
 
-    const original = resolutions.find(
-      (context) => context.principalId === "user-a" && context.stepIndex === 0,
-    );
+    const original = resolutions.find((context) => context.principalId === "user-a");
     if (original === undefined) throw new Error("Missing original memory tool resolution.");
     expect(resolutions).toContainEqual(expect.objectContaining({ principalId: "user-b" }));
-    expect(
-      resolutions.filter((context) => context.operationId === original.operationId),
-    ).toHaveLength(1);
+    expect(resolutions.filter((context) => context.turnId === original.turnId)).toHaveLength(1);
     expect(executions).toHaveLength(1);
     const execution = executions[0]!;
     expect(resolutions).toContainEqual(
       expect.objectContaining({
-        operationId: execution.operationId,
         principalId: "user-a",
         scopeKey: original.scopeKey,
-        stepIndex: 0,
         turnId: execution.turnId,
       }),
     );
     expect(completions).toEqual([
       {
         code: "profile-memory-code",
-        operationId: execution.operationId,
         principal: expect.objectContaining({ id: "user-a", type: "user" }),
         principalId: "user-a",
         resume: { nonce: "profile-memory-nonce" },
@@ -716,7 +691,6 @@ describe("first-class memory integration", () => {
       token: "profile-memory-token",
       value: "after-auth",
     });
-    expect(execution.operationId).not.toBe(original.operationId);
     expect(execution.turnId).not.toBe(original.turnId);
   }, 30_000);
 

@@ -3,6 +3,7 @@ import type { LanguageModel } from "ai";
 import type { Runtime, SessionCapabilities } from "#channel/types.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import {
+  buildMemoryTools,
   clearMemoryAnchors,
   finishMemoryCompaction,
   getMemoryToolOriginCallIds,
@@ -10,7 +11,6 @@ import {
   recordMemoryToolOrigins,
   releaseMemoryToolOrigins,
   resolveMemoryApprovalTools,
-  resolveMemoryTools,
   restoreMemoryToolTurn,
   saveCompletedMemoryTurn,
   startMemoryCompaction,
@@ -165,6 +165,7 @@ function createHarnessMemoryLifecycle(input: {
   const abortSignal = input.abortSignal;
 
   return {
+    buildTools: ({ session }) => buildMemoryTools(session),
     clearAnchors: clearMemoryAnchors,
     finishCompaction: ({ messages, projectionAnchorIndex, session }) =>
       finishMemoryCompaction({
@@ -177,21 +178,8 @@ function createHarnessMemoryLifecycle(input: {
     projectPrompt: ({ messages, session }) => projectMemoryPrompt({ memories, messages, session }),
     recordToolOrigins: recordMemoryToolOrigins,
     releaseToolOrigins: releaseMemoryToolOrigins,
-    resolveApprovalTools: ({ callIds, session }) =>
-      resolveMemoryApprovalTools({
-        abortSignal,
-        callIds,
-        memories,
-        session,
-      }),
-    resolveTools: ({ messages, modelId, session }) =>
-      resolveMemoryTools({
-        abortSignal,
-        memories,
-        messages,
-        modelId,
-        session,
-      }),
+    resolveApprovalTools: async ({ callIds, session }) =>
+      resolveMemoryApprovalTools({ callIds, session }),
     restoreToolTurn: restoreMemoryToolTurn,
     saveCompletedTurn: ({ messages, session }) =>
       saveCompletedMemoryTurn({ abortSignal, memories, messages, session }),

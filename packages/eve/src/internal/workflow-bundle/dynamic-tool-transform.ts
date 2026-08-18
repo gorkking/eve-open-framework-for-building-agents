@@ -1,10 +1,10 @@
 /**
  * Compiler transform for dynamic tool files.
  *
- * Hoists inline `execute` functions from `defineDynamic`
- * event handler return values to module-scope named functions
- * registered in the global step registry. The workflow SDK then
- * handles serialization and replay.
+ * Hoists inline `execute` functions from `defineDynamic` event handlers and
+ * `defineMemoryProvider({ tools })` callbacks to module-scope named functions
+ * registered in the global step registry. The workflow SDK then handles
+ * serialization and replay.
  *
  * The walker enters nested functions (helpers, callbacks, IIFEs) so
  * patterns like `function buildTool(n) { return { execute() {} } }`
@@ -34,13 +34,9 @@ import {
 } from "#internal/workflow-bundle/dynamic-tool-ast-references.js";
 
 interface HandlerInfo {
-  /** The handler function AST node */
-  handlerNode: AstNode;
-  /** Start of the handler function body (the `{`) */
-  bodyStart: number;
   /** Collected variable names declared in the handler scope */
   scopeVars: readonly string[];
-  /** Handler parameter names (event, ctx) */
+  /** Resolver parameter names, including event and context when present. */
   paramNames: readonly string[];
   /** Execute functions found inside the return value */
   executes: readonly ExecuteInfo[];
@@ -50,8 +46,6 @@ interface ExecuteInfo {
   /** Full property range (execute: function(...) { ... }) */
   propStart: number;
   propEnd: number;
-  /** The function source (params + body) */
-  fnSource: string;
   /** Whether the function is async */
   isAsync: boolean;
   /** Generated name for the hoisted function */
@@ -74,11 +68,9 @@ interface ScopeEntry {
 let transformCounter = 0;
 
 /**
- * Transforms a dynamic tool file:
- * 1. Hoists execute functions to module scope with "use step"
- * 2. Captures handler-scope variables via __vars parameter
- * 3. Adds "use step" to event handlers so the workflow SDK caches
- *    the handler's return value (resolver runs once per scope)
+ * Transforms a dynamic tool or memory provider:
+ * 1. Hoists execute functions to module scope.
+ * 2. Captures resolver-scope variables through an `__vars` parameter.
  *
  * Returns null if the file doesn't contain a dynamic tool pattern.
  */
@@ -86,10 +78,9 @@ export async function transformDynamicToolExecute(
   filename: string,
   source: string,
 ): Promise<{ code: string } | null> {
-  if (!source.includes("defineDynamic")) {
-    return null;
-  }
-  if (!source.includes("events")) {
+  const hasDynamicResolver = source.includes("defineDynamic") && source.includes("events");
+  const hasMemoryResolver = source.includes("defineMemoryProvider") && source.includes("tools");
+  if (!hasDynamicResolver && !hasMemoryResolver) {
     return null;
   }
   if (!source.includes("execute")) {
@@ -136,6 +127,21 @@ function findDynamicToolHandlers(source: string, ast: AstNode): HandlerInfo[] {
       }
       return false;
     }
+    if (
+      node.type === "CallExpression" &&
+      node.callee?.type === "Identifier" &&
+      node.callee.name === "defineMemoryProvider" &&
+      node.arguments?.length === 1
+    ) {
+      const arg = node.arguments[0]!;
+      if (arg.type === "ObjectExpression") {
+        const toolsProp = findProperty(arg, "tools");
+        if (toolsProp?.value) {
+          collectHandler(source, toolsProp.value as AstNode, handlers);
+        }
+      }
+      return false;
+    }
     return true;
   });
 
@@ -148,45 +154,22 @@ function collectHandlers(source: string, eventsObj: AstNode, handlers: HandlerIn
     const handler = prop.value as AstNode | undefined;
     if (!handler) continue;
 
-    if (handler.type !== "ArrowFunctionExpression" && handler.type !== "FunctionExpression") {
-      continue;
-    }
-
-    const bodyNode = handler.body as AstNode | undefined;
-    if (!bodyNode) continue;
-
-    const bodyStart = findBlockBodyStart(bodyNode);
-    if (bodyStart === null) continue;
-
-    const paramNames = extractParamNames(handler);
-    const scopeVars = collectScopeVarDeclarations(bodyNode);
-    const executes = findExecuteFunctions(source, bodyNode);
-
-    if (executes.length > 0) {
-      handlers.push({
-        handlerNode: handler,
-        bodyStart,
-        scopeVars,
-        paramNames,
-        executes,
-      });
-    }
+    collectHandler(source, handler, handlers);
   }
 }
 
-function findBlockBodyStart(node: AstNode): number | null {
-  if (node.type === "BlockStatement" && node.start !== undefined) {
-    return node.start;
-  }
-  if (
-    typeof node.body === "object" &&
-    !Array.isArray(node.body) &&
-    node.body?.type === "BlockStatement" &&
-    node.body.start !== undefined
-  ) {
-    return node.body.start;
-  }
-  return null;
+function collectHandler(source: string, handler: AstNode, handlers: HandlerInfo[]): void {
+  if (handler.type !== "ArrowFunctionExpression" && handler.type !== "FunctionExpression") return;
+  const bodyNode = handler.body as AstNode | undefined;
+  if (!bodyNode) return;
+
+  const executes = findExecuteFunctions(source, bodyNode);
+  if (executes.length === 0) return;
+  handlers.push({
+    scopeVars: collectScopeVarDeclarations(bodyNode),
+    paramNames: extractParamNames(handler),
+    executes,
+  });
 }
 
 function extractParamNames(fn: AstNode): string[] {
@@ -371,7 +354,6 @@ function walkForExecuteProps(
             results.push({
               propStart: prop.start,
               propEnd: prop.end,
-              fnSource: source.slice(fn.start, fn.end),
               isAsync,
               params,
               body,
@@ -456,7 +438,6 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   const hoistedFunctions: string[] = [];
   const registrations: string[] = [];
-  const allExecNames: string[] = [];
 
   for (const handler of handlers) {
     for (const exec of handler.executes) {
@@ -509,8 +490,6 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
 
       registrations.push(`${exec.hoistedName}.stepId = ${JSON.stringify(stepId)};`);
       registrations.push(`__eveStepRegistry.set(${JSON.stringify(stepId)}, ${exec.hoistedName});`);
-      allExecNames.push(exec.hoistedName);
-
       const wrapperParams = originalParams || "";
       const paramNames = originalParams
         ? splitParamsTopLevel(originalParams)

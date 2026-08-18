@@ -255,7 +255,6 @@ function slot(
 function turn(turnId: string, slots: readonly DurableMemorySlotLock[]): DurableMemoryTurnState {
   const sequence = Number(turnId.split("_")[1]);
   return {
-    nextStepIndex: 0,
     principalIdentity: "principal",
     session: {
       auth: { current: null, initiator: null },
@@ -263,6 +262,7 @@ function turn(turnId: string, slots: readonly DurableMemorySlotLock[]): DurableM
       turn: { id: turnId, sequence },
     },
     slots,
+    toolMetadata: [],
     turn: { input: [], sequence, turnId },
   };
 }

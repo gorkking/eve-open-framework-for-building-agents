@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ModelMessage } from "ai";
 
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -33,6 +34,7 @@ import {
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
+import { replayDynamicTools } from "#context/build-dynamic-tools.js";
 
 const log = createLogger("dynamic-tools");
 
@@ -63,7 +65,7 @@ function qualifyDynamicToolNames(
   isSingle: boolean,
   entries: Readonly<Record<string, DynamicToolEntry>>,
 ): Array<{ name: string; entryKey: string; entry: DynamicToolEntry }> {
-  const keys = Object.keys(entries);
+  const keys = Object.keys(entries).sort(compareStrings);
   const result: Array<{ name: string; entryKey: string; entry: DynamicToolEntry }> = [];
 
   if (keys.length === 0) return result;
@@ -100,39 +102,7 @@ export function replayDynamicSessionTools(
   metadata: readonly DurableDynamicToolMetadata[],
   _resolvers: readonly ResolvedDynamicToolResolver[],
 ): readonly HarnessToolDefinition[] {
-  const tools: HarnessToolDefinition[] = [];
-
-  for (const m of metadata) {
-    if (!m.executeStepFnName || !m.closureVars) {
-      log.warn(
-        `Dynamic tool "${m.name}" has no registered step function — ` +
-          "skipping on this step. The bundler transform may not have processed this tool file.",
-      );
-      continue;
-    }
-
-    const stepFn = lookupStepFunction(m.executeStepFnName);
-    if (!stepFn) {
-      log.warn(
-        `Dynamic tool "${m.name}" references step function "${m.executeStepFnName}" ` +
-          "which is not registered — skipping on this step.",
-      );
-      continue;
-    }
-
-    tools.push({
-      description: m.description,
-      execute: createToolExecuteWithAuth({
-        scope: m.name,
-        execute: (input, ctx) => stepFn(m.closureVars, input, ctx),
-      }),
-      inputSchema: toInputSchema(m.inputSchema),
-      name: m.name,
-      outputSchema: toOutputSchema(m.outputSchema),
-    });
-  }
-
-  return tools;
+  return replayDynamicTools(metadata);
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +136,9 @@ function hasMissingProcessCallback(metadata: DurableDynamicToolMetadata): boolea
     (metadata.approvalStepFnName !== undefined &&
       lookupStepFunction(metadata.approvalStepFnName) === null) ||
     (metadata.approvalResponseStepFnName !== undefined &&
-      lookupStepFunction(metadata.approvalResponseStepFnName) === null)
+      lookupStepFunction(metadata.approvalResponseStepFnName) === null) ||
+    (metadata.toModelOutputStepFnName !== undefined &&
+      lookupStepFunction(metadata.toModelOutputStepFnName) === null)
   );
 }
 
@@ -232,7 +204,7 @@ function durableKeyForEvent(
 // Resolve: run resolver handlers, capture closures, write durable metadata
 // ---------------------------------------------------------------------------
 
-interface ResolveResult {
+export interface ResolvedDynamicToolEvent {
   readonly metadata: readonly DurableDynamicToolMetadata[];
   readonly liveTools: readonly HarnessToolDefinition[];
 }
@@ -252,6 +224,9 @@ function readDynamicToolResult(
 
   const entries: Record<string, DynamicToolEntry> = {};
   for (const [name, entry] of Object.entries(value)) {
+    if (name.length === 0) {
+      throw new Error(`Dynamic tool resolver "${resolver.logicalPath}" returned an empty name.`);
+    }
     if (!isBrandedToolEntry(entry)) {
       throw new Error(
         `Dynamic tool resolver "${resolver.logicalPath}" returned "${name}" without defineTool(). Wrap every dynamic tool entry in defineTool().`,
@@ -263,11 +238,11 @@ function readDynamicToolResult(
 }
 
 async function resolveToolsFromEvent(
-  ctx: ContextContainer,
+  ctx: Pick<ContextContainer, "get" | "require">,
   resolvers: readonly ResolvedDynamicToolResolver[],
   event: UnstampedMessageStreamEvent,
   messages: readonly ModelMessage[],
-): Promise<ResolveResult> {
+): Promise<ResolvedDynamicToolEvent> {
   const outcomes = await Promise.allSettled(
     resolvers.map(async (resolver) => {
       const handler = resolver.events[event.type];
@@ -277,7 +252,12 @@ async function resolveToolsFromEvent(
       const rawResult = await handler(event, resolveCtx);
       if (rawResult === null || rawResult === undefined) return null;
       const { entries, isSingle } = readDynamicToolResult(resolver, rawResult);
-      return { resolver, entries, isSingle };
+      return {
+        resolver,
+        entries,
+        isSingle,
+        resolutionId: dynamicResolutionId(event, resolveCtx.session.id),
+      };
     }),
   );
 
@@ -297,7 +277,7 @@ async function resolveToolsFromEvent(
     }
     if (outcome.value === null) continue;
 
-    const { resolver, entries, isSingle } = outcome.value;
+    const { resolver, entries, isSingle, resolutionId } = outcome.value;
     const named = qualifyDynamicToolNames(resolver, isSingle, entries);
     const processCallbacks = new Map<string, Function>();
     for (const { name, entryKey, entry } of named) {
@@ -327,9 +307,12 @@ async function resolveToolsFromEvent(
       let serializedClosureVars =
         closureVars !== undefined ? safeSerialize(closureVars) : undefined;
 
-      const callbackScope = event.type === "session.started" ? `${ctx.require(SessionIdKey)}:` : "";
+      const callbackId =
+        event.type === "session.started"
+          ? `${ctx.require(SessionIdKey)}:${resolver.slug}:${entryKey}`
+          : `${resolver.slug}:${entryKey}:${resolutionId}`;
       if (executeStepFnName === undefined) {
-        const syntheticId = `eve:framework-dynamic:${callbackScope}${resolver.slug}:${entryKey}`;
+        const syntheticId = `eve:framework-dynamic:${callbackId}`;
         const originalExecute = entry.execute.bind(entry);
         processCallbacks.set(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
           originalExecute(
@@ -344,7 +327,7 @@ async function resolveToolsFromEvent(
       let approvalStepFnName: string | undefined;
       let approvalResponseStepFnName: string | undefined;
       if (entry.approval !== undefined) {
-        approvalStepFnName = `eve:dynamic-tool-approval:${callbackScope}${resolver.slug}:${entryKey}`;
+        approvalStepFnName = `eve:dynamic-tool-approval:${callbackId}`;
         const originalApproval = resolveApprovalPolicy(entry.approval).bind(entry);
         processCallbacks.set(approvalStepFnName, (_closureVars: unknown, approvalCtx: unknown) =>
           originalApproval(approvalCtx as ApprovalContext),
@@ -353,13 +336,22 @@ async function resolveToolsFromEvent(
         const responsePolicy =
           typeof entry.approval === "function" ? undefined : entry.approval.response;
         if (responsePolicy !== undefined) {
-          approvalResponseStepFnName = `eve:dynamic-tool-approval-response:${callbackScope}${resolver.slug}:${entryKey}`;
+          approvalResponseStepFnName = `eve:dynamic-tool-approval-response:${callbackId}`;
           processCallbacks.set(
             approvalResponseStepFnName,
             (_closureVars: unknown, responseCtx: unknown) =>
               responsePolicy(responseCtx as ApprovalResponseContext),
           );
         }
+      }
+
+      let toModelOutputStepFnName: string | undefined;
+      if (entry.toModelOutput !== undefined) {
+        toModelOutputStepFnName = `eve:dynamic-tool-model-output:${callbackId}`;
+        const originalToModelOutput = entry.toModelOutput.bind(entry);
+        processCallbacks.set(toModelOutputStepFnName, (_closureVars: unknown, output: unknown) =>
+          originalToModelOutput(output),
+        );
       }
 
       metadata.push({
@@ -373,6 +365,7 @@ async function resolveToolsFromEvent(
         approvalStepFnName,
         approvalResponseStepFnName,
         closureVars: serializedClosureVars,
+        toModelOutputStepFnName,
       });
     }
 
@@ -386,6 +379,16 @@ async function resolveToolsFromEvent(
   }
 
   return { metadata, liveTools };
+}
+
+/** Resolves dynamic tool handlers without choosing a durable storage scope. */
+export async function resolveDynamicToolEvent(input: {
+  readonly ctx: Pick<ContextContainer, "get" | "require">;
+  readonly event: UnstampedMessageStreamEvent;
+  readonly messages: readonly ModelMessage[];
+  readonly resolvers: readonly ResolvedDynamicToolResolver[];
+}): Promise<ResolvedDynamicToolEvent> {
+  return await resolveToolsFromEvent(input.ctx, input.resolvers, input.event, input.messages);
 }
 
 // ---------------------------------------------------------------------------
@@ -537,4 +540,17 @@ export async function hydrateDynamicSessionTools(input: {
   ) {
     log.warn("Dynamic session tool callback hydration did not reproduce durable ownership.");
   }
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function dynamicResolutionId(event: UnstampedMessageStreamEvent, sessionId: string): string {
+  const data = ("data" in event ? event.data : undefined) as
+    | { readonly sequence?: unknown; readonly stepIndex?: unknown; readonly turnId?: unknown }
+    | undefined;
+  return createHash("sha256")
+    .update(JSON.stringify([event.type, sessionId, data?.turnId, data?.sequence, data?.stepIndex]))
+    .digest("base64url");
 }

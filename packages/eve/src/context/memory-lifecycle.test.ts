@@ -2,15 +2,15 @@ import type { ModelMessage } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
-import { SessionKey } from "#context/keys.js";
+import { AuthKey, InitiatorAuthKey, SessionIdKey, SessionKey } from "#context/keys.js";
 import {
   MemoryOperationError,
+  buildMemoryTools,
   getMemoryToolOriginCallIds,
   projectMemoryPrompt,
   recordMemoryToolOrigins,
   releaseMemoryToolOrigins,
   resolveMemoryApprovalTools,
-  resolveMemoryTools,
   restoreMemoryToolTurn,
   saveCompletedMemoryTurn,
   startMemoryCompaction,
@@ -18,7 +18,7 @@ import {
   finishMemoryCompaction,
   type MemoryDefaultNamespaceContext,
 } from "#context/memory-lifecycle.js";
-import { getMemoryState, setActiveMemoryToolOperations } from "#harness/memory-state.js";
+import { getMemoryState } from "#harness/memory-state.js";
 import type { HarnessSession } from "#harness/types.js";
 import { defineTool } from "#public/definitions/tool.js";
 import {
@@ -317,8 +317,9 @@ describe("memory lifecycle", () => {
     });
   });
 
-  it("reuses logical operation ids across workflow replay", async () => {
+  it("reuses recall and save operation ids across workflow replay", async () => {
     const calls: Array<{ readonly operationId: string; readonly phase: string }> = [];
+    const tools = vi.fn(() => ({}));
     const definition = memory(
       "user",
       defineMemoryProvider({
@@ -328,10 +329,7 @@ describe("memory lifecycle", () => {
         save(context) {
           calls.push({ operationId: context.operationId, phase: context.phase });
         },
-        tools(context) {
-          calls.push({ operationId: context.operationId, phase: context.phase });
-          return {};
-        },
+        tools,
       }),
       "user-1",
     );
@@ -345,14 +343,6 @@ describe("memory lifecycle", () => {
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
-      session = (
-        await resolveMemoryTools({
-          memories: [definition],
-          messages: [],
-          modelId: "mock/model",
-          session,
-        })
-      ).session;
       session = await startMemoryCompaction({
         defaultNamespaceContext,
         memories: [definition],
@@ -378,15 +368,15 @@ describe("memory lifecycle", () => {
       await runLifecycle();
     });
 
-    expect(calls.slice(0, 5).map(({ phase }) => phase)).toEqual([
+    expect(calls.slice(0, 4).map(({ phase }) => phase)).toEqual([
       "turn.started",
-      "step.started",
       "compaction.requested",
       "compaction.completed",
       "turn.completed",
     ]);
-    expect(calls.slice(5)).toEqual(calls.slice(0, 5));
-    expect(new Set(calls.slice(0, 5).map(({ operationId }) => operationId)).size).toBe(5);
+    expect(calls.slice(4)).toEqual(calls.slice(0, 4));
+    expect(new Set(calls.slice(0, 4).map(({ operationId }) => operationId)).size).toBe(4);
+    expect(tools).toHaveBeenCalledTimes(2);
   });
 
   it("returns compacted state with a content-free automatic post-recall failure", async () => {
@@ -514,7 +504,7 @@ describe("memory lifecycle", () => {
     expect((error as Error).message).not.toMatch(/projection content/u);
   });
 
-  it("replaces the prior step tool set when tools returns null or an empty record", async () => {
+  it("resolves tools once per turn and replaces the prior turn's set", async () => {
     let invocation = 0;
     const initialTools: MemoryToolSet = {
       remember: defineTool({
@@ -538,7 +528,7 @@ describe("memory lifecycle", () => {
     );
 
     await runInContext(createContext(), async () => {
-      const session = await startMemoryTurn({
+      let session = await startMemoryTurn({
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
@@ -546,42 +536,143 @@ describe("memory lifecycle", () => {
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
-      const first = await resolveMemoryTools({
+      expect([...buildMemoryTools(session)]).toHaveLength(1);
+      expect([...buildMemoryTools(session)]).toHaveLength(1);
+      expect(invocation).toBe(1);
+
+      session = await startMemoryTurn({
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        modelId: "mock/model",
+        projectionAnchorIndex: 0,
         session,
+        turn: { input: [], sequence: 1, turnId: "turn_1" },
       });
-      expect([...first.tools]).toHaveLength(1);
+      expect(buildMemoryTools(session).size).toBe(0);
+      expect(invocation).toBe(2);
 
-      const second = await resolveMemoryTools({
+      session = await startMemoryTurn({
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        modelId: "mock/model",
-        session: first.session,
+        projectionAnchorIndex: 0,
+        session,
+        turn: { input: [], sequence: 2, turnId: "turn_2" },
       });
-      expect(second.tools.size).toBe(0);
-      expect(getMemoryState(second.session).activeToolOperations).toEqual([]);
-
-      const third = await resolveMemoryTools({
-        memories: [definition],
-        messages: [],
-        modelId: "mock/model",
-        session: second.session,
-      });
-      expect(third.tools.size).toBe(0);
-      expect(getMemoryState(third.session).activeToolOperations).toEqual([]);
+      expect(buildMemoryTools(session).size).toBe(0);
+      expect(invocation).toBe(3);
     });
   });
 
-  it("qualifies direct tools and reconstructs a parked origin", async () => {
-    const operationIds: string[] = [];
+  it("passes async tools the dynamic resolver context after recall", async () => {
+    const observed: unknown[] = [];
+    const prior = [{ content: "prior", role: "user" }] as const;
+    const input = [{ content: "current", role: "user" }] as const;
+    const definition = memory(
+      "user",
+      defineMemoryProvider({
+        recall: () => ({ content: "projection" }),
+        async tools(context) {
+          await Promise.resolve();
+          observed.push({
+            current: context.memory.current,
+            issuer: context.session.auth.current?.issuer,
+            messages: context.messages,
+            sessionId: context.session.id,
+            turn: context.turn,
+          });
+          return {};
+        },
+      }),
+      "user-1",
+    );
+
+    await runInContext(createContext("issuer-dynamic"), () =>
+      startMemoryTurn({
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: prior,
+        projectionAnchorIndex: 1,
+        session: createSession(prior),
+        turn: { input, sequence: 0, turnId: "turn_0" },
+      }),
+    );
+
+    expect(observed).toEqual([
+      {
+        current: { content: "projection" },
+        issuer: "issuer-dynamic",
+        messages: [...prior, ...input],
+        sessionId: "session-1",
+        turn: { input, sequence: 0, turnId: "turn_0" },
+      },
+    ]);
+  });
+
+  it("omits a throwing tool resolver for the turn", async () => {
+    const definition = memory(
+      "user",
+      defineMemoryProvider({
+        recall: () => undefined,
+        tools: async () => {
+          throw new Error("private resolver failure");
+        },
+      }),
+      "user-1",
+    );
+
+    const session = await runInContext(createContext(), () =>
+      startMemoryTurn({
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        projectionAnchorIndex: 0,
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      }),
+    );
+
+    expect(buildMemoryTools(session)).toEqual(new Map());
+  });
+
+  it("omits a single tool returned where a provider tool map is required", async () => {
+    const singleTool = defineTool({
+      description: "Invalid single tool",
+      execute: () => null,
+      inputSchema: { type: "object" },
+    });
+    const invalidResult: unknown = singleTool;
+    const definition = memory(
+      "user",
+      defineMemoryProvider({
+        recall: () => undefined,
+        tools: () => invalidResult as MemoryToolSet,
+      }),
+      "user-1",
+    );
+
+    const session = await runInContext(createContext(), () =>
+      startMemoryTurn({
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        projectionAnchorIndex: 0,
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      }),
+    );
+
+    expect(buildMemoryTools(session)).toEqual(new Map());
+  });
+
+  it("qualifies provider tools and reconstructs a parked origin", async () => {
+    const resolutions: Array<{ readonly scopeKey: string; readonly turnId: string }> = [];
     const execute = vi.fn((input: unknown) => input);
     const provider = defineMemoryProvider({
       recall: () => undefined,
       tools(context) {
-        operationIds.push(context.operationId);
         const scopeKey = context.memory.scope.key;
+        resolutions.push({ scopeKey, turnId: context.turn.turnId });
         return {
           remember: defineTool({
             approval: () => "user-approval",
@@ -605,7 +696,7 @@ describe("memory lifecycle", () => {
     const ctx = createContext("issuer-a");
 
     const resolved = await runInContext(ctx, async () => {
-      const started = await startMemoryTurn({
+      const session = await startMemoryTurn({
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
@@ -613,16 +704,11 @@ describe("memory lifecycle", () => {
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
-      return await resolveMemoryTools({
-        memories: [definition],
-        messages: [],
-        modelId: "mock/model",
-        session: started,
-      });
+      return { session, tools: buildMemoryTools(session) };
     });
     const tool = resolved.tools.get("user__remember");
     expect(tool).toMatchObject({ description: "Remember text", name: "user__remember" });
-    expect(JSON.stringify(resolved.session.state)).not.toContain("Remember text");
+    expect(resolutions).toHaveLength(1);
 
     const parked = recordMemoryToolOrigins({
       calls: [{ callId: "call-1", toolName: "user__remember" }],
@@ -638,22 +724,15 @@ describe("memory lifecycle", () => {
           toolName: "user__remember",
         },
       ],
-      session: setActiveMemoryToolOperations(parked, [
-        {
-          ...originalOrigin,
-          operationId: "must-not-overwrite-origin",
-          turnState: { ...originalOrigin.turnState, nextStepIndex: 2 },
-        },
-      ]),
+      session: parked,
     });
-    expect(getMemoryState(rerecorded).toolOrigins["call-1"]?.operationId).toBe(
-      originalOrigin.operationId,
+    expect(getMemoryState(rerecorded).toolOrigins["call-1"]?.toolMetadata).toEqual(
+      originalOrigin.toolMetadata,
     );
     await runInContext(ctx, async () => {
       expect(getMemoryToolOriginCallIds(rerecorded, ["attempt-1"])).toEqual(["call-1"]);
       expect(getMemoryToolOriginCallIds(rerecorded, ["attempt-other"])).toEqual([]);
     });
-    expect(getMemoryState(rerecorded).toolOrigins["call-1"]?.turnState.nextStepIndex).toBe(2);
     const restored = restoreMemoryToolTurn({
       callIds: ["ordinary-call", "call-1"],
       projectionAnchorIndex: 0,
@@ -665,7 +744,6 @@ describe("memory lifecycle", () => {
     const approvalResolution = await runInContext(ctx, () =>
       resolveMemoryApprovalTools({
         callIds: ["ordinary-call", "call-1"],
-        memories: [definition],
         session: parked,
       }),
     );
@@ -684,8 +762,7 @@ describe("memory lifecycle", () => {
         ],
       ]),
     });
-    expect(operationIds).toHaveLength(2);
-    expect(operationIds[1]).toBe(operationIds[0]);
+    expect(resolutions).toHaveLength(1);
     expect(approvalTools.get("user__remember")?.description).toBe("Current scope tool");
     await runInContext(ctx, async () => {
       await approvalTools.get("user__remember")!.execute!(
@@ -711,23 +788,14 @@ describe("memory lifecycle", () => {
       type: "text",
       value: "fallback",
     });
-    await runInContext(ctx, () =>
-      resolveMemoryTools({
-        memories: [definition],
-        messages: [],
-        modelId: "mock/model",
-        session: restored,
-      }),
-    );
-    expect(operationIds).toHaveLength(3);
-    expect(operationIds[2]).not.toBe(operationIds[0]);
+    expect(buildMemoryTools(restored).has("user__remember")).toBe(true);
+    expect(resolutions).toHaveLength(1);
 
     setContextSession(ctx, "issuer-b");
     await expect(
       runInContext(ctx, () =>
         resolveMemoryApprovalTools({
           callIds: ["call-1"],
-          memories: [definition],
           session: parked,
         }),
       ),
@@ -788,8 +856,8 @@ describe("memory lifecycle", () => {
     const provider = defineMemoryProvider({ recall, tools });
     const definition = memory("user", provider, null, "session", namespace);
 
-    const result = await runInContext(createContext(), async () => {
-      const session = await startMemoryTurn({
+    const session = await runInContext(createContext(), async () => {
+      return await startMemoryTurn({
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
@@ -797,21 +865,13 @@ describe("memory lifecycle", () => {
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
-      return await resolveMemoryTools({
-        memories: [definition],
-        messages: [],
-        modelId: "mock/model",
-        session,
-      });
     });
 
     expect(recall).not.toHaveBeenCalled();
     expect(tools).not.toHaveBeenCalled();
     expect(namespace).not.toHaveBeenCalled();
-    expect(result.tools.size).toBe(0);
-    expect(
-      projectMemoryPrompt({ memories: [definition], messages: [], session: result.session }),
-    ).toEqual([]);
+    expect(buildMemoryTools(session).size).toBe(0);
+    expect(projectMemoryPrompt({ memories: [definition], messages: [], session })).toEqual([]);
   });
 
   it("suppresses every provider operation and projection when namespace is null", async () => {
@@ -820,8 +880,8 @@ describe("memory lifecycle", () => {
     const provider = defineMemoryProvider({ recall, tools });
     const definition = memory("user", provider, "user-1", "session", async () => null);
 
-    const result = await runInContext(createContext(), async () => {
-      const session = await startMemoryTurn({
+    const session = await runInContext(createContext(), async () => {
+      return await startMemoryTurn({
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
@@ -829,20 +889,12 @@ describe("memory lifecycle", () => {
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
-      return await resolveMemoryTools({
-        memories: [definition],
-        messages: [],
-        modelId: "mock/model",
-        session,
-      });
     });
 
     expect(recall).not.toHaveBeenCalled();
     expect(tools).not.toHaveBeenCalled();
-    expect(result.tools.size).toBe(0);
-    expect(
-      projectMemoryPrompt({ memories: [definition], messages: [], session: result.session }),
-    ).toEqual([]);
+    expect(buildMemoryTools(session).size).toBe(0);
+    expect(projectMemoryPrompt({ memories: [definition], messages: [], session })).toEqual([]);
   });
 });
 
@@ -891,17 +943,18 @@ function createContext(issuer = "issuer-a"): ContextContainer {
 }
 
 function setContextSession(ctx: ContextContainer, issuer: string): void {
+  const current = {
+    attributes: {},
+    authenticator: "test",
+    issuer,
+    principalId: "user-1",
+    principalType: "user" as const,
+  };
+  ctx.set(AuthKey, current);
+  ctx.set(InitiatorAuthKey, null);
+  ctx.set(SessionIdKey, "session-1");
   ctx.set(SessionKey, {
-    auth: {
-      current: {
-        attributes: {},
-        authenticator: "test",
-        issuer,
-        principalId: "user-1",
-        principalType: "user",
-      },
-      initiator: null,
-    },
+    auth: { current, initiator: null },
     sessionId: "session-1",
     turn: { id: "turn_0", sequence: 0 },
   });

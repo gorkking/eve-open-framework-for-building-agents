@@ -497,6 +497,9 @@ function simulateColdStart(ctx: ContextContainer): void {
     if (metadata.approvalResponseStepFnName !== undefined) {
       testRegistry.delete(metadata.approvalResponseStepFnName);
     }
+    if (metadata.toModelOutputStepFnName !== undefined) {
+      testRegistry.delete(metadata.toModelOutputStepFnName);
+    }
   }
   ctx.clearVirtualContext();
 }
@@ -1393,7 +1396,7 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     const metadata = ctx.get(TurnDynamicToolMetadataKey);
     expect(metadata).toHaveLength(1);
-    expect(metadata![0]!.executeStepFnName).toBe("eve:framework-dynamic:helper:assist");
+    expect(metadata![0]!.executeStepFnName).toMatch(/^eve:framework-dynamic:helper:assist:/u);
 
     ctx.clearVirtualContext();
 
@@ -1403,6 +1406,73 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     await tools[0]!.execute!({ action: "help" }, executeOptions);
     expect(executeFn).toHaveBeenCalledWith({ action: "help" });
+  });
+
+  it("replays a turn-scoped model-output projection", async () => {
+    const ctx = createCtx();
+    const resolver = createResolver("projected", ["turn.started"], () => ({
+      read: defineTool({
+        description: "read",
+        execute: () => ({ private: true }),
+        inputSchema: { type: "object" },
+        toModelOutput: () => ({ type: "text", value: "projected" }),
+      }),
+    }));
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: {
+        data: { sequence: 0, turnId: "turn_0" },
+        type: "turn.started",
+      } as UnstampedMessageStreamEvent,
+    });
+
+    const metadata = ctx.get(TurnDynamicToolMetadataKey);
+    expect(metadata?.[0]?.toModelOutputStepFnName).toMatch(
+      /^eve:dynamic-tool-model-output:projected:read:/u,
+    );
+    expect(buildDynamicTools(ctx)[0]?.toModelOutput?.({ private: true })).toEqual({
+      type: "text",
+      value: "projected",
+    });
+  });
+
+  it("keeps an earlier turn's untransformed closure isolated from later resolutions", async () => {
+    const ctx = createCtx();
+    let value = "first";
+    const resolver = createResolver("scoped", ["turn.started"], () => {
+      const captured = value;
+      return { read: createFrameworkTool("read", () => captured) };
+    });
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: {
+        data: { sequence: 0, turnId: "turn_0" },
+        type: "turn.started",
+      } as UnstampedMessageStreamEvent,
+    });
+    const firstMetadata = ctx.get(TurnDynamicToolMetadataKey)!;
+
+    value = "second";
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: {
+        data: { sequence: 1, turnId: "turn_1" },
+        type: "turn.started",
+      } as UnstampedMessageStreamEvent,
+    });
+
+    const first = replayDynamicSessionTools(firstMetadata, [resolver])[0]!;
+    const current = buildDynamicTools(ctx)[0]!;
+    await expect(first.execute!({}, executeOptions)).resolves.toBe("first");
+    await expect(current.execute!({}, executeOptions)).resolves.toBe("second");
   });
 
   it("framework and authored tools coexist in session scope", async () => {
@@ -1576,12 +1646,14 @@ describe("framework dynamic tools (no bundler transform)", () => {
     const execute = vi.fn(async () => ({ ok: true }));
     const request = vi.fn(async () => "user-approval" as const);
     const response = vi.fn(async () => ({ status: "allowed" }) as const);
+    const toModelOutput = vi.fn(() => ({ type: "text", value: "projected" }) as const);
     const handler = vi.fn(() => ({
       guarded: defineTool({
         approval: { request, response },
         description: "dependency-created destructive op",
         execute,
         inputSchema: { type: "object" },
+        toModelOutput,
       }),
     }));
     const resolver = createResolver("session_guard", ["session.started"], handler);
@@ -1606,6 +1678,8 @@ describe("framework dynamic tools (no bundler transform)", () => {
     const tool = buildDynamicTools(ctx)[0]!;
     await expect(tool.execute!({}, executeOptions)).resolves.toEqual({ ok: true });
     expect(execute).toHaveBeenCalledOnce();
+    expect(tool.toModelOutput?.({ ok: true })).toEqual({ type: "text", value: "projected" });
+    expect(toModelOutput).toHaveBeenCalledExactlyOnceWith({ ok: true });
 
     const approval = tool.approval;
     if (approval === undefined || typeof approval === "function") {

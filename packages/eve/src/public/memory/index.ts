@@ -7,6 +7,7 @@ import type { Approval } from "#public/definitions/approval.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ExactDefinition } from "#public/definitions/exact.js";
 import type { ToolDefinition } from "#public/definitions/tool.js";
+import type { DynamicResolveContext } from "#shared/dynamic-tool-definition.js";
 import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
 /** Application-owned memory domain, resolved when eve locks a memory operation. */
@@ -48,13 +49,13 @@ export interface MemoryTurnContext {
   readonly turnId: string;
 }
 
-/** Shared context supplied to every memory provider operation. */
+/** Shared context supplied to memory recall and save operations. */
 export interface MemoryOperationContext extends SessionContext {
   /** Aborts when the active turn or standalone operation is cancelled. */
   readonly abortSignal: AbortSignal;
   /** Durable model history at this boundary. Excludes memory projections. */
   readonly messages: readonly ModelMessage[];
-  /** Identifies one logical slot operation across workflow replay and approval reconstruction. */
+  /** Identifies one logical recall or save operation across workflow replay. */
   readonly operationId: string;
   readonly memory: {
     /** Current projection for this slot and active scope, if one exists. */
@@ -103,15 +104,18 @@ export type MemorySaveContext = MemoryOperationContext &
       }
   );
 
-/** Context supplied when resolving a memory slot's tools for one model step. */
-export type MemoryToolsContext = MemoryOperationContext & {
-  readonly phase: "step.started";
-  readonly step: {
-    readonly modelId: string;
-    readonly stepIndex: number;
+/** Context supplied when resolving a memory slot's tools for the active turn. */
+export interface MemoryToolsContext extends DynamicResolveContext {
+  readonly memory: {
+    /** Current projection after turn-start recall. */
+    readonly current: MemoryProjection | null;
+    /** Trusted partition locked for the active turn. */
+    readonly scope: MemoryScope;
+    /** Path-derived authored slot identity. */
+    readonly slot: string;
   };
   readonly turn: MemoryTurnContext;
-};
+}
 
 /** A recall replaces, clears, or preserves the active scope's projection. */
 export type MemoryRecallResult = MemoryProjection | null | undefined;
@@ -124,7 +128,7 @@ export type MemoryToolDefinition = Omit<ToolDefinition<any, any>, "approval"> & 
   readonly approval?: Approval<any>;
 };
 
-/** Provider-owned model tools for one memory slot and model step. */
+/** Provider-owned model tools resolved once for one memory slot and turn. */
 export type MemoryToolSet = Readonly<Record<string, MemoryToolDefinition>>;
 
 /** Provider-owned behavior attached to one or more authored memory slots. */

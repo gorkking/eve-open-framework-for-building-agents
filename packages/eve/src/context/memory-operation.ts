@@ -11,7 +11,6 @@ import type {
   MemoryOperationContext,
   MemoryProjection,
   MemoryScope,
-  MemoryToolsContext,
   MemoryTurnContext,
 } from "#public/memory/index.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
@@ -21,7 +20,6 @@ const MEMORY_OPERATION_DOMAIN = "eve-memory-operation-v1";
 export type MemoryOperationPhase =
   | "compaction.completed"
   | "compaction.requested"
-  | "step.started"
   | "turn.completed"
   | "turn.started";
 
@@ -70,27 +68,6 @@ export function createOperationContext(input: {
     },
     messages: [...input.messages],
     operationId: input.operationId,
-  };
-}
-
-export function createToolsContext(input: {
-  readonly abortSignal: AbortSignal;
-  readonly callbackSession: DurableMemoryCallbackSession;
-  readonly current?: MemoryProjection | null;
-  readonly messages: readonly ModelMessage[];
-  readonly modelId: string;
-  readonly operationId: string;
-  readonly scope: MemoryScope;
-  readonly session: HarnessSession;
-  readonly slot: string;
-  readonly stepIndex: number;
-  readonly turn: MemoryTurnContext;
-}): MemoryToolsContext {
-  return {
-    ...createOperationContext(input),
-    phase: "step.started",
-    step: { modelId: input.modelId, stepIndex: input.stepIndex },
-    turn: cloneTurn(input.turn),
   };
 }
 

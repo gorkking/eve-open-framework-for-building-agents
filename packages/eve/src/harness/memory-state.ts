@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import type { ModelMessage } from "ai";
 
-import type { SessionAuth, SessionParent, SessionTurn } from "#context/keys.js";
+import type {
+  DurableDynamicToolMetadata,
+  SessionAuth,
+  SessionParent,
+  SessionTurn,
+} from "#context/keys.js";
 import type { HarnessSession } from "#harness/types.js";
 import type {
   MemoryProjection,
@@ -27,10 +32,10 @@ export interface DurableMemorySlotLock {
 }
 
 export interface DurableMemoryTurnState {
-  readonly nextStepIndex: number;
   readonly principalIdentity: string;
   readonly session: DurableMemoryCallbackSession;
   readonly slots: readonly DurableMemorySlotLock[];
+  readonly toolMetadata: readonly DurableDynamicToolMetadata[];
   readonly turn: MemoryTurnContext;
 }
 
@@ -51,29 +56,16 @@ export interface DurableMemoryCompactionState {
   readonly usageInputTokens: number | null;
 }
 
-export interface DurableMemoryToolOperation {
-  readonly current: MemoryProjection | null;
-  readonly messages: readonly ModelMessage[];
-  readonly modelId: string;
-  readonly operationId: string;
+export interface DurableMemoryToolOrigin {
+  readonly authorizationAttemptIds?: readonly string[];
+  readonly callId: string;
   readonly principalIdentity: string;
-  readonly scope: MemoryScope;
-  readonly session: DurableMemoryCallbackSession;
-  readonly slot: string;
-  readonly stepIndex: number;
-  readonly toolNames: readonly string[];
-  readonly turn: MemoryTurnContext;
+  readonly toolMetadata: DurableDynamicToolMetadata;
+  readonly toolName: string;
   readonly turnState: DurableMemoryTurnState;
 }
 
-export interface DurableMemoryToolOrigin extends DurableMemoryToolOperation {
-  readonly authorizationAttemptIds?: readonly string[];
-  readonly callId: string;
-  readonly toolName: string;
-}
-
 export interface DurableMemoryState {
-  readonly activeToolOperations: readonly DurableMemoryToolOperation[];
   readonly activeTurn: DurableMemoryTurnState | null;
   readonly lastVisibleProjectionFingerprint?: string;
   readonly nextCompactionOrdinal: number;
@@ -333,20 +325,6 @@ export function projectMemoryMessages(input: {
   return projected;
 }
 
-export function setActiveMemoryToolOperations(
-  session: HarnessSession,
-  operations: readonly DurableMemoryToolOperation[],
-): HarnessSession {
-  const memory = getMemoryState(session);
-  return setMemoryState(session, { ...memory, activeToolOperations: operations });
-}
-
-export function getActiveMemoryToolOperations(
-  session: HarnessSession,
-): readonly DurableMemoryToolOperation[] {
-  return getMemoryState(session).activeToolOperations;
-}
-
 export function recordMemoryToolOrigins(input: {
   readonly calls: readonly {
     readonly authorizationAttemptIds?: readonly string[];
@@ -359,39 +337,34 @@ export function recordMemoryToolOrigins(input: {
   const toolOrigins: Record<string, DurableMemoryToolOrigin> = { ...memory.toolOrigins };
 
   for (const call of input.calls) {
-    const operation = memory.activeToolOperations.find((candidate) =>
-      candidate.toolNames.includes(call.toolName),
-    );
     const existing = toolOrigins[call.callId];
     if (existing !== undefined) {
-      const turnState = operation?.turnState ?? memory.activeTurn;
-      if (call.authorizationAttemptIds !== undefined || turnState !== null) {
-        let updated: DurableMemoryToolOrigin = {
+      if (call.authorizationAttemptIds !== undefined) {
+        toolOrigins[call.callId] = {
           ...existing,
-          turnState: turnState ?? existing.turnState,
+          authorizationAttemptIds: [
+            ...new Set([
+              ...(existing.authorizationAttemptIds ?? []),
+              ...call.authorizationAttemptIds,
+            ]),
+          ],
         };
-        if (call.authorizationAttemptIds !== undefined) {
-          updated = {
-            ...updated,
-            authorizationAttemptIds: [
-              ...new Set([
-                ...(existing.authorizationAttemptIds ?? []),
-                ...call.authorizationAttemptIds,
-              ]),
-            ],
-          };
-        }
-        toolOrigins[call.callId] = updated;
       }
       continue;
     }
-    if (operation === undefined) continue;
-    toolOrigins[call.callId] = { ...operation, ...call };
+    const active = memory.activeTurn;
+    const toolMetadata = active?.toolMetadata.find((candidate) => candidate.name === call.toolName);
+    if (active === null || active === undefined || toolMetadata === undefined) continue;
+    toolOrigins[call.callId] = {
+      ...call,
+      principalIdentity: active.principalIdentity,
+      toolMetadata,
+      turnState: active,
+    };
   }
 
   return setMemoryState(input.session, {
     ...memory,
-    activeToolOperations: [],
     toolOrigins,
   });
 }
@@ -442,10 +415,7 @@ export function restoreMemoryTurnFromToolOrigins(input: {
   if (origins.some((origin) => durableTurnIdentity(origin.turnState) !== expected)) {
     throw new Error("Memory tool calls from different originating turns cannot resume together.");
   }
-  return setActiveMemoryTurn(input.session, {
-    ...first,
-    nextStepIndex: Math.max(...origins.map((origin) => origin.turnState.nextStepIndex)),
-  });
+  return setActiveMemoryTurn(input.session, first);
 }
 
 function durableTurnIdentity(turn: DurableMemoryTurnState): string {
@@ -459,7 +429,6 @@ function durableTurnIdentity(turn: DurableMemoryTurnState): string {
 
 function createEmptyMemoryState(): DurableMemoryState {
   return {
-    activeToolOperations: [],
     activeTurn: null,
     lastVisibleProjectionFingerprint: EMPTY_VISIBLE_PROJECTION_FINGERPRINT,
     nextCompactionOrdinal: 0,

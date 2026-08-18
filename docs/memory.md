@@ -143,7 +143,8 @@ export const userMemory = defineMemoryProvider({
     });
   },
 
-  tools(ctx) {
+  async tools(ctx) {
+    const policy = await service.toolPolicy(ctx.session.auth.current);
     const scope = ctx.memory.scope;
 
     return {
@@ -153,6 +154,7 @@ export const userMemory = defineMemoryProvider({
         execute: ({ id }, toolCtx) =>
           service.forget({
             id,
+            policy,
             scope,
             signal: toolCtx.abortSignal,
           }),
@@ -164,16 +166,18 @@ export const userMemory = defineMemoryProvider({
 
 `defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their projections, tools, and lifecycle calls independent. Default namespaces isolate provider addresses by slot. Custom namespaces can intentionally share an address.
 
-Every provider call receives:
+Every recall and save call receives:
 
 - `ctx.memory.scope`, the active trusted partition.
 - `ctx.memory.slot`, the path-derived slot name.
 - `ctx.memory.current`, the current projection for this slot and scope, or `null`.
 - `ctx.messages`, durable model history at the boundary, excluding memory projections.
-- `ctx.operationId`, the identifier for one logical slot operation. eve reuses it across workflow replay and when reconstructing a parked approval.
+- `ctx.operationId`, the identifier for one logical recall or save operation. eve reuses it across workflow replay.
 - `ctx.abortSignal` and the read-only session context.
 
-Turn-aware calls also receive a stable turn ID, a zero-based sequence, and normalized turn input. Step calls include the step index and model ID. Compaction calls include the compaction model ID and, before compaction, input-token usage when available.
+Turn-aware calls also receive a stable turn ID, a zero-based sequence, and normalized turn input. Compaction calls include the compaction model ID and, before compaction, input-token usage when available.
+
+The `tools` function receives the standard dynamic resolver context: `ctx.session`, `ctx.channel`, and `ctx.messages`. It also receives `ctx.memory` and `ctx.turn`. It does not receive an operation ID or step coordinates because eve resolves it once per turn.
 
 ## Recall model context
 
@@ -211,26 +215,28 @@ eve awaits a completed-turn save before the next ready boundary. If it fails, ev
 
 ## Provide scope-bound tools
 
-If the provider implements `tools`, eve calls it before every model step with `ctx.phase === "step.started"`. For an ordinary step, that result replaces the slot's previous tool set instead of merging with it. Return a record of ordinary `defineTool(...)` definitions. Return `null` or an empty record to expose no new tools for that slot and step.
+If the provider implements `tools`, eve resolves it once after turn-start recall. The function may be synchronous or asynchronous. Return a record of ordinary `defineTool(...)` definitions, or return `null` or an empty record to expose no tools for the slot during that turn.
+
+Memory tools use the same implementation as a `turn.started` [`defineDynamic`](./guides/dynamic-capabilities#dynamic-tools) tool resolver. The dynamic tool engine captures schemas and executor closures, stores serializable metadata, and reconstructs the tools for every model step without calling the provider again.
 
 eve qualifies each returned key with the slot name. The `forget` tool above becomes `user__forget` when mounted at `agent/memory/user.ts`. The model receives neither the slot nor the scope as tool input. Provider tools otherwise use the standard tool contract, including schemas, authorization, approval, and model-output projection.
 
 Approval helpers keep their standard semantics. In particular, `once()` approves a qualified tool name for the entire session, so that approval also applies after the memory scope changes. Use `always()` or a custom approval policy when an operation needs participant- or scope-specific approval.
 
-A call that parks for approval is an exception to ordinary replacement. To continue it, eve calls `tools` again with the captured originating context and the same `operationId`. The reconstructed definition handles the approved call even if the ordinary result for the current step exposes no new tools; the latest ordinary result still handles unrelated new calls. The same reconstruction applies if that durable historical call later parks for authorization.
+A call that parks for approval or authorization retains its resolved dynamic metadata. eve reconstructs the exact originating definition, including its captured scope, even if another participant has since replaced the current turn's tools. It does not call the provider's `tools` function again or substitute the current scope.
 
-A direct inline-authorization park follows the standard tool behavior. Its unfinished assistant/tool exchange does not enter durable history, and the callback makes the credential available only to its matching principal. It does not replay the original execution. A later model step resolves the latest tool set under its current turn and receives a new `operationId`.
+A direct inline-authorization park follows the standard tool behavior. Its unfinished assistant/tool exchange does not enter durable history, and the callback makes the credential available only to its matching principal. It does not replay the original execution. Later model steps in the turn use the same captured tool set.
 
-Any tool key that can remain parked must stay present with compatible input and output schemas until its calls settle. Because eve may resolve the same logical tool operation more than once, `tools` must be deterministic and must not persist data as a side effect. Perform mutations in the returned tool's `execute` function. If `tools` throws or no longer returns the parked key, eve fails the continuation instead of changing its scope or definition.
+Write each `execute` as an inline function expression, arrow, or method shorthand inside `defineTool(...)`, just as you would for any durable dynamic tool. Perform provider mutations in `execute`, not while resolving the tool set. A throwing or invalid `tools` result is diagnosed and omitted for that turn, matching ordinary dynamic tool resolution.
 
 ## Lifecycle and failure behavior
 
 | Boundary               | Provider call                               | Failure behavior                                                                              |
 | ---------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | Turn start             | `recall({ phase: "turn.started" })`         | Fails the turn before the model runs.                                                         |
+| After turn recall      | `tools(ctx)`                                | Diagnoses an invalid or throwing resolver and omits its tools for the turn.                   |
 | Before compaction      | `save({ phase: "compaction.requested" })`   | Aborts compaction before history changes.                                                     |
 | After compaction       | `recall({ phase: "compaction.completed" })` | Fails an automatically compacting turn; a standalone compaction emits a diagnostic and waits. |
-| Before each model step | `tools({ phase: "step.started" })`          | Fails the model step.                                                                         |
 | After a completed turn | `save({ phase: "turn.completed" })`         | Emits a content-free diagnostic and continues to the ready boundary.                          |
 
 Providers must apply `ctx.memory.scope.key` or both `ctx.memory.scope.namespace` and `ctx.memory.scope.value` to every downstream read and write. eve supplies no unscoped provider invocation path, but it cannot prevent provider code from ignoring the supplied scope.

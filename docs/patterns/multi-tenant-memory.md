@@ -61,7 +61,8 @@ export const tenantMemory = defineMemoryProvider({
     };
   },
 
-  tools(ctx) {
+  async tools(ctx) {
+    await memoryStore.assertToolsEnabled(ctx.session.auth.current);
     const scopeKey = ctx.memory.scope.key;
 
     return {
@@ -100,7 +101,7 @@ export const tenantMemory = defineMemoryProvider({
 
 eve calls `recall` at turn start and after successful compaction. The returned content becomes a replaceable user-role projection associated with this slot and scope. It does not enter durable conversation history, compaction input, or `ctx.messages`.
 
-The provider tools are also bound to the same locked scope. Because the slot is `user`, the model sees them as `user__remember` and `user__forget`. The optional approval on `forget` is product policy; provider tools support the ordinary tool approval and authorization contracts.
+eve resolves the provider tools once per turn after recall and binds them to the same locked scope. Because the slot is `user`, the model sees them as `user__remember` and `user__forget`. The optional approval on `forget` is product policy; provider tools support the ordinary tool approval and authorization contracts.
 
 For a large corpus, retrieve semantically against `ctx.turn?.input` instead of listing every record. Keep the scope in the storage query itself rather than applying it as a filter afterward.
 

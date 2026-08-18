@@ -245,6 +245,7 @@ export interface HarnessMemoryApprovalTools {
 
 /** Execution-owned memory callbacks invoked at exact harness boundaries. */
 export interface HarnessMemoryLifecycle {
+  buildTools(input: { readonly session: HarnessSession }): HarnessToolMap;
   clearAnchors(session: HarnessSession): HarnessSession;
   finishCompaction(input: {
     readonly messages: readonly ModelMessage[];
@@ -271,11 +272,6 @@ export interface HarnessMemoryLifecycle {
     readonly callIds: readonly string[];
     readonly session: HarnessSession;
   }): Promise<HarnessMemoryApprovalTools>;
-  resolveTools(input: {
-    readonly messages: readonly ModelMessage[];
-    readonly modelId: string;
-    readonly session: HarnessSession;
-  }): Promise<{ readonly session: HarnessSession; readonly tools: HarnessToolMap }>;
   restoreToolTurn(input: {
     readonly callIds: readonly string[];
     readonly projectionAnchorIndex: number;

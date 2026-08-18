@@ -1880,17 +1880,12 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     if (config.memory !== undefined) {
       try {
-        const resolved = await config.memory.resolveTools({
-          messages,
-          modelId: requireSessionModelReference(session).id,
-          session,
-        });
-        session = resolved.session;
+        const resolved = config.memory.buildTools({ session });
         memoryTools =
           approvalMemoryResolution?.select({
             callIds: replayOriginCallIds,
-            fallbackTools: resolved.tools,
-          }) ?? resolved.tools;
+            fallbackTools: resolved,
+          }) ?? resolved;
       } catch (error) {
         return failMemoryOperation(error, emissionState);
       }

@@ -220,6 +220,7 @@ function createMemoryLifecycle(
   overrides: Partial<HarnessMemoryLifecycle> = {},
 ): HarnessMemoryLifecycle {
   return {
+    buildTools: () => new Map(),
     clearAnchors: (session) => session,
     finishCompaction: async ({ session }) => ({ session }),
     projectPrompt: ({ messages }) => [...messages],
@@ -229,7 +230,6 @@ function createMemoryLifecycle(
       select: ({ fallbackTools }) => fallbackTools,
       tools: new Map(),
     }),
-    resolveTools: async ({ session }) => ({ session, tools: new Map() }),
     restoreToolTurn: ({ session }) => session,
     saveCompletedTurn: async ({ session }) => session,
     startCompaction: async ({ session }) => session,
@@ -1840,20 +1840,17 @@ describe("createToolLoopHarness", () => {
 
   it("parks on a deterministic continuation prompt when the session reaches its token limit", async () => {
     const { emit, events } = createEventCollector();
-    const resolveTools = vi.fn(async ({ session }: { readonly session: HarnessSession }) => ({
-      session,
-      tools: new Map(),
-    }));
+    const buildTools = vi.fn(() => new Map());
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
-        memory: createMemoryLifecycle({ resolveTools }),
+        memory: createMemoryLifecycle({ buildTools }),
       }),
     );
 
     const result = await runStep(createLimitReachedSession(), { message: "Hi again" });
 
     expect(vi.mocked(ToolLoopAgent)).not.toHaveBeenCalled();
-    expect(resolveTools).not.toHaveBeenCalled();
+    expect(buildTools).not.toHaveBeenCalled();
     expect(result.next).toBeNull();
     expect(result.settledTurn).toBeUndefined();
     expect(events.map((event) => event.type)).toEqual([
@@ -5976,8 +5973,8 @@ describe("createToolLoopHarness", () => {
           session,
       );
       const memory = createMemoryLifecycle({
+        buildTools: () => memoryTools,
         recordToolOrigins,
-        resolveTools: async ({ session }) => ({ session, tools: memoryTools }),
       });
       const { emit, events } = createEventCollector();
       const runStep = createToolLoopHarness(
@@ -9131,7 +9128,7 @@ describe("createToolLoopHarness", () => {
     expect(JSON.stringify(events)).not.toContain("private completed-turn memory failure");
   });
 
-  it("runs memory compaction calls around the durable rewrite before resolving tools", async () => {
+  it("resolves memory tools at turn start and only replays them after compaction", async () => {
     vi.mocked(shouldCompact).mockReturnValue(true);
     vi.mocked(compactMessages).mockResolvedValue([
       { content: "Summary of our conversation so far:", role: "user" },
@@ -9140,13 +9137,13 @@ describe("createToolLoopHarness", () => {
     ]);
     const order: string[] = [];
     const memory = createMemoryLifecycle({
+      buildTools: () => {
+        order.push("memory.tools.replayed");
+        return new Map();
+      },
       finishCompaction: async ({ session }) => {
         order.push("memory.recall.compaction.completed");
         return { session };
-      },
-      resolveTools: async ({ session }) => {
-        order.push("memory.tools.step.started");
-        return { session, tools: new Map() };
       },
       saveCompletedTurn: async ({ session }) => {
         order.push("memory.save.turn.completed");
@@ -9154,6 +9151,10 @@ describe("createToolLoopHarness", () => {
       },
       startCompaction: async ({ session }) => {
         order.push("memory.save.compaction.requested");
+        return session;
+      },
+      startTurn: async ({ session }) => {
+        order.push("memory.tools.turn.started");
         return session;
       },
     });
@@ -9184,10 +9185,12 @@ describe("createToolLoopHarness", () => {
       expect.arrayContaining([
         "memory.save.compaction.requested",
         "memory.recall.compaction.completed",
-        "memory.tools.step.started",
+        "memory.tools.turn.started",
+        "memory.tools.replayed",
         "memory.save.turn.completed",
       ]),
     );
+    expect(order.indexOf("memory.tools.turn.started")).toBeLessThan(order.indexOf("step.started"));
     expect(order.indexOf("step.started")).toBeLessThan(order.indexOf("compaction.requested"));
     expect(order.indexOf("compaction.requested")).toBeLessThan(
       order.indexOf("memory.save.compaction.requested"),
@@ -9199,7 +9202,7 @@ describe("createToolLoopHarness", () => {
       order.indexOf("memory.recall.compaction.completed"),
     );
     expect(order.indexOf("memory.recall.compaction.completed")).toBeLessThan(
-      order.indexOf("memory.tools.step.started"),
+      order.indexOf("memory.tools.replayed"),
     );
   });
 
