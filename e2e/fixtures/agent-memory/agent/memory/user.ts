@@ -8,6 +8,7 @@ const provider = process.env.VERCEL
     });
 
 export default defineMemory({
+  description: "Personal facts and preferences for future conversations.",
   provider,
   scope: () =>
     process.env.VERCEL_DEPLOYMENT_ID?.trim() || process.env.VERCEL_URL?.trim() || "local-e2e",
