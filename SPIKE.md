@@ -10,20 +10,21 @@ transports converge on the durable task lifecycle.**
 1. `turnStep` reads `resolvedAgent.config.experimental.tasks`. The turn
    workflow selects `dispatchTaskStep` only when that value is `true`; plain
    mode continues to select `dispatchRuntimeActionsStep`.
-2. During graph resolution, that same flag lazily registers the local and
-   remote `defineTool` values in the runtime subagent registry. Flag-off
-   registries contain neither definition. The existing model-visible
-   subagent descriptors still emit `runtimeAction`, which is the parent
-   session's park/resume boundary.
+2. The local and remote framework-tool modules each own a branded `defineTool`
+   value. Graph resolution does not load or register either definition. The
+   existing model-visible subagent descriptors still emit `runtimeAction`,
+   which is the parent session's park/resume boundary.
 3. `dispatchTaskStep` leaves rejections and task-control calls in the parent
-   step. It requires the registered Workflow tools, classifies each delegation
-   once, and passes the matching definition to the local or remote launcher
-   with the model-authored input and a private, serializable invocation
-   context.
-4. `subagent/local.ts` and `subagent/remote.ts` own separate `defineTool`
-   values and Workflow executors with distinct compiler-assigned `workflowId`
-   values. Each dispatch attempt therefore starts the executor selected from
-   the registry as an addressable, transport-specific Workflow run.
+   step. It classifies each delegation once, then the local or remote launcher
+   starts the matching framework definition's executor with the model-authored
+   input and a private, serializable invocation context.
+4. `runtime/framework-tools/subagent/local.ts` and `remote.ts` own the
+   `defineTool` values. Their Workflow executors remain under `execution`, the
+   compiler-scanned domain, and receive distinct compiler-assigned `workflowId`
+   values. This split keeps definition-time Zod and tool-registration code out
+   of each compiled Workflow program while preserving the real `defineTool`
+   contract. Each dispatch attempt starts an addressable, transport-specific
+   Workflow run.
 5. Each tool workflow invokes the shared admission step only after transport
    selection. That step
    rehydrates the current parent session, verifies that the pending action and
@@ -76,9 +77,9 @@ caller.
   enabled. The turn-workflow unit test then proves that this value selects
   `dispatchTaskStep`; the existing plain-mode case continues to select
   `dispatchRuntimeActionsStep`.
-- The runtime-graph unit test proves that both branded Workflow tools are
-  registered only when `experimental.tasks` is enabled. The task-dispatch
-  integration proves that local and remote calls use those registered values.
+- The task-dispatch integration proves that task mode selects the matching
+  local or remote framework definition, while plain mode stays on
+  `dispatchRuntimeActionsStep`.
 
 ## Scope boundary
 
