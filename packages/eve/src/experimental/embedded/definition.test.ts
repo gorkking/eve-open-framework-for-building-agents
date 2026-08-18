@@ -18,9 +18,9 @@ describe("defineEmbeddedAgent", () => {
   it("requires string instructions at runtime", () => {
     expect(() =>
       defineEmbeddedAgent({
-        instructions: 42,
+        instructions: 42 as never,
         model: "openai/gpt-5.4-mini",
-      } as unknown as EmbeddedAgentDefinition),
+      } as EmbeddedAgentDefinition),
     ).toThrow('string "instructions" field');
   });
 });

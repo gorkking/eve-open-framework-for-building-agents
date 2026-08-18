@@ -15,6 +15,7 @@ import { WorkflowBundleBuilder } from "#internal/workflow-bundle/builder.js";
 import {
   deriveEveWorkflowQueuePrefix,
   installEveWorkflowQueueNamespace,
+  restoreEveWorkflowQueueNamespace,
   WORKFLOW_QUEUE_NAMESPACE_ENV,
 } from "#internal/workflow/queue-namespace.js";
 import { setWorld } from "#internal/workflow/runtime.js";
@@ -167,13 +168,9 @@ export async function createEmbeddedLocalExecutor(
         } catch (error) {
           cleanupError = error;
         }
-        if (process.env[WORKFLOW_QUEUE_NAMESPACE_ENV] === installedQueueNamespace) {
-          if (previousQueueNamespace === undefined) {
-            delete process.env[WORKFLOW_QUEUE_NAMESPACE_ENV];
-          } else {
-            process.env[WORKFLOW_QUEUE_NAMESPACE_ENV] = previousQueueNamespace;
-          }
-        }
+        restoreEveWorkflowQueueNamespace(previousQueueNamespace, {
+          ifCurrent: installedQueueNamespace,
+        });
         try {
           await rm(workspace, {
             force: true,
@@ -198,10 +195,9 @@ export async function createEmbeddedLocalExecutor(
   } catch (error) {
     setWorld(undefined);
     await world?.close?.().catch(() => {});
-    if (process.env[WORKFLOW_QUEUE_NAMESPACE_ENV] === installedQueueNamespace) {
-      if (previousQueueNamespace === undefined) delete process.env[WORKFLOW_QUEUE_NAMESPACE_ENV];
-      else process.env[WORKFLOW_QUEUE_NAMESPACE_ENV] = previousQueueNamespace;
-    }
+    restoreEveWorkflowQueueNamespace(previousQueueNamespace, {
+      ifCurrent: installedQueueNamespace,
+    });
     try {
       await rm(workspace, {
         force: true,
