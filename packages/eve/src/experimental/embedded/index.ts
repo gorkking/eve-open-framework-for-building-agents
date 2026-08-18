@@ -7,6 +7,7 @@ export {
   defineEmbeddedAgent,
   type DefinedEmbeddedAgent,
   type EmbeddedAgentDefinition,
+  type EmbeddedAgentResources,
 } from "./definition.js";
 export {
   createEmbeddedLocalExecutor,

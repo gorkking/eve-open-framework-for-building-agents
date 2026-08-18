@@ -16,18 +16,29 @@ compatibility guarantee.
 The spike supports one statically imported default export:
 
 ```ts
+import { defineAgent } from "eve";
 import { defineEmbeddedAgent } from "eve/embedded";
 
 export default defineEmbeddedAgent({
-  instructions: "Classify the support ticket.",
-  model: "openai/gpt-5.4-mini",
-  outputSchema: {
-    properties: { category: { type: "string" } },
-    required: ["category"],
-    type: "object",
+  agent: defineAgent({
+    model: "openai/gpt-5.4-mini",
+    outputSchema: {
+      properties: { category: { type: "string" } },
+      required: ["category"],
+      type: "object",
+    },
+  }),
+  resources: {
+    instructions: "Classify the support ticket.",
   },
 });
 ```
+
+`agent` is the definition that would normally be default-exported from
+`agent/agent.ts`. `resources.instructions` represents a synthetic
+`agent/instructions.md`. The prototype reserves `channels`, `schedules`,
+`sandbox`, and `tools` as resource names so their filesystem mapping is visible,
+but rejects them because they are not implemented.
 
 A host can run the definition through a local Workflow World or send it through
 the existing production builder. Compilation emits the normal manifest,
@@ -37,8 +48,8 @@ completion requires exactly one structured `result.completed` event.
 
 ## Boundaries
 
-- Only one embedded definition is supported. There is no registry or agent
-  selection contract.
+- Only one embedded definition and one static instruction string are supported.
+  There is no registry or agent selection contract.
 - Only one local executor can own the process-global Workflow World at a time.
 - Human input is rejected. Authentication, idempotency, lookup, cancellation
   ownership, sandbox ownership, and revision pinning are not defined.

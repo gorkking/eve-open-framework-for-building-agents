@@ -48,7 +48,7 @@ export async function compileEmbeddedAgent(input: {
     configModule,
     instructions: [
       {
-        definition: { content: loaded.instructions, role: "system" },
+        definition: { content: loaded.resources.instructions, role: "system" },
         logicalPath: EMBEDDED_INSTRUCTIONS_LOGICAL_PATH,
         sourceId: `embedded:instructions:${EMBEDDED_INSTRUCTIONS_LOGICAL_PATH}`,
         sourceKind: "markdown",

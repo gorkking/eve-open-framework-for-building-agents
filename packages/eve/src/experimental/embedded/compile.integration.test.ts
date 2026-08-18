@@ -104,7 +104,7 @@ function brandedModuleSource(instructions: string, definitionSource: string): st
   return `const definition = ${definitionSource};
 Object.defineProperties(definition, {
   [Symbol.for("eve.experimental.embedded-agent")]: { value: true },
-  [Symbol.for("eve.experimental.embedded-agent.instructions")]: { value: ${JSON.stringify(instructions)} },
+  [Symbol.for("eve.experimental.embedded-agent.resources")]: { value: { instructions: ${JSON.stringify(instructions)} } },
 });
 export default definition;
 `;
