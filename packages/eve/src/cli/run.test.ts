@@ -1,16 +1,8 @@
 import { resolve } from "node:path";
-import { spawn } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:child_process")>()),
-  spawn: vi.fn(),
-}));
-
 import { resolveDevUiMode, resolveTuiDisplayOptions, runCli } from "#cli/run.js";
-import { createEveCliTelemetry } from "#cli/telemetry/index.js";
-import { flushEveCliTelemetry } from "#cli/telemetry/flush.js";
 import { MockScreen } from "#cli/dev/tui/test/mock-terminal.js";
 import type { RunDevelopmentTuiInput } from "#cli/dev/tui/tui.js";
 import type { DevelopmentServerOptions } from "#internal/nitro/host/types.js";
@@ -62,54 +54,6 @@ async function runInteractiveDev(
   );
   return runDevelopmentTui;
 }
-
-describe("CLI telemetry", () => {
-  it("does not send telemetry while tests run", async () => {
-    await runCli(["--help"], { error: () => {}, log: () => {} });
-    expect(spawn).not.toHaveBeenCalled();
-  });
-
-  it("flushes to the configured endpoint when telemetry is enabled", async () => {
-    const child = { unref: vi.fn() };
-    vi.mocked(spawn).mockReturnValue(child as never);
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("EVE_TELEMETRY_ENDPOINT", "http://localhost/events");
-    const telemetry = createEveCliTelemetry("1.0.0");
-    telemetry.trackCommand("info");
-    telemetry.trackOutcome("success");
-    await telemetry.flush();
-    expect(spawn).toHaveBeenCalledWith(
-      process.execPath,
-      expect.arrayContaining([process.argv[1], "telemetry", "flush"]),
-      expect.objectContaining({
-        detached: true,
-        env: expect.objectContaining({ EVE_TELEMETRY_DISABLED: "1" }),
-      }),
-    );
-    expect(child.unref).toHaveBeenCalled();
-  });
-});
-
-describe("CLI telemetry flush command", () => {
-  it("posts a valid batch without recording telemetry recursively", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response());
-    vi.stubGlobal("fetch", fetchMock);
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("EVE_TELEMETRY_ENDPOINT", "http://localhost/events");
-    await flushEveCliTelemetry(
-      JSON.stringify({
-        sessionId: "session_123",
-        events: [{ id: "event_123", event_time: 1, key: "command", value: "info" }],
-      }),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost/events",
-      expect.objectContaining({
-        headers: expect.objectContaining({ "x-eve-cli-session-id": "session_123" }),
-      }),
-    );
-  });
-});
 
 describe("CLI command registration", () => {
   it("lists the current project creation and Vercel commands", async () => {

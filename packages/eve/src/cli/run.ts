@@ -690,8 +690,7 @@ export async function runCli(
       return;
     }
 
-    telemetry.trackOutcome("error");
-    telemetry.trackError(error);
+    telemetry.trackOutcome(error instanceof CommanderError ? "usage_error" : "error");
     if (error instanceof CommanderError) {
       // A coding agent that fumbles `eve init` can trip commander before the
       // init action runs, so the action's own agent detection never fires.

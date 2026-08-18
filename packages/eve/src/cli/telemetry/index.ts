@@ -2,10 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
-type ErrorWithProperties = Error & {
-  readonly code?: unknown;
-  readonly status?: unknown;
-};
+import { isVercelTelemetryDisabled } from "#cli/telemetry/vercel-preference.js";
 
 export type EveCliTelemetryEvent = {
   readonly id: string;
@@ -17,23 +14,20 @@ export type EveCliTelemetryEvent = {
 export type EveCliTelemetry = {
   trackCommand(command: string): void;
   trackDevContext(argv: readonly string[]): void;
-  trackOutcome(outcome: "success" | "error"): void;
-  trackError(error: unknown): void;
+  trackOutcome(outcome: "success" | "usage_error" | "error"): void;
   flush(): Promise<void>;
 };
 
-function isEnabled(): boolean {
-  return process.env.NODE_ENV !== "test" && !process.env.EVE_TELEMETRY_DISABLED;
+async function isEnabled(): Promise<boolean> {
+  return (
+    process.env.NODE_ENV !== "test" &&
+    !process.env.EVE_TELEMETRY_DISABLED &&
+    !(await isVercelTelemetryDisabled())
+  );
 }
 
 function event(key: string, value: string): EveCliTelemetryEvent {
   return { id: randomUUID(), event_time: Date.now(), key, value };
-}
-
-function stringProperty(error: unknown, property: "code" | "status"): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const value = (error as ErrorWithProperties)[property];
-  return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
 }
 
 function devContext(argv: readonly string[]): Array<[string, string]> {
@@ -114,18 +108,8 @@ export function createEveCliTelemetry(version: string): EveCliTelemetry {
     trackOutcome(outcome) {
       events.push(event("outcome", outcome));
     },
-    trackError(error) {
-      const code = stringProperty(error, "code");
-      if (code?.startsWith("commander.")) {
-        events.push(event("error_kind", "usage"));
-      } else if (code) {
-        events.push(event("error_code", code));
-      }
-      const status = stringProperty(error, "status");
-      if (status) events.push(event("error_status", status));
-    },
     async flush() {
-      if (!isEnabled() || events.length === 0) return;
+      if (!(await isEnabled()) || events.length === 0) return;
       if (process.env.EVE_TELEMETRY_DEBUG) {
         process.stderr.write(`[eve telemetry] ${JSON.stringify(events)}\n`);
         return;
