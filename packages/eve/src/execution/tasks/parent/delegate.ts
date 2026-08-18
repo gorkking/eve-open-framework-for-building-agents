@@ -145,6 +145,17 @@ export async function acknowledgeDelegatedTasksStep(input: {
 }): Promise<void> {
   "use step";
 
+  await acknowledgeDelegatedTasks(input);
+}
+
+/** Releases task events from callers already executing inside a durable step. */
+export async function acknowledgeDelegatedTasks(input: {
+  readonly tasks: readonly {
+    readonly taskInboxToken: string;
+    readonly taskId: string;
+    readonly taskRunId: string;
+  }[];
+}): Promise<void> {
   for (const task of input.tasks) {
     const owner = await sendTaskCommandToOwner({
       command: { kind: "ready" },

@@ -303,6 +303,46 @@ describe("createNodeHarnessTools", () => {
     expect(tools.get("task_sleep")?.runtimeAction).toBeUndefined();
   });
 
+  it("executes subagents through defineTool only when experimental.tasks is on", () => {
+    const preparedTools: StaticRuntimeTurnAgent["tools"] = [
+      {
+        description: "Local worker",
+        inputSchema: { type: "object" },
+        kind: "subagent",
+        logicalPath: "subagents/local-worker",
+        name: "local-worker",
+        nodeId: "local-worker-node",
+        sourceId: "subagents/local-worker",
+      },
+      {
+        description: "Remote worker",
+        inputSchema: { type: "object" },
+        kind: "remote",
+        logicalPath: "subagents/remote-worker.ts",
+        name: "remote-worker",
+        nodeId: "remote-worker-node",
+        sourceId: "subagents/remote-worker.ts",
+      },
+    ];
+    const plainNode = createTestNode(createTestTurnAgent({ tools: preparedTools }));
+    const taskNode = {
+      ...plainNode,
+      agent: {
+        ...plainNode.agent,
+        config: { experimental: { tasks: true }, model: { id: "test-model" }, name: "test" },
+      },
+    };
+
+    const plainTools = createNodeHarnessTools({ node: plainNode });
+    const taskTools = createNodeHarnessTools({ node: taskNode });
+    for (const name of ["agent", "local-worker", "remote-worker"]) {
+      expect(plainTools.get(name)?.runtimeAction).toBeDefined();
+      expect(plainTools.get(name)?.execute).toBeUndefined();
+      expect(taskTools.get(name)?.runtimeAction).toBeUndefined();
+      expect(taskTools.get(name)?.execute).toBeDefined();
+    }
+  });
+
   it("respects disableTool for individual task tools", () => {
     const node = createTestNode();
     const tools = createNodeHarnessTools({

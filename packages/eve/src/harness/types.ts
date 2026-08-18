@@ -211,6 +211,12 @@ export interface SettledTurn {
  * Result returned by one harness step invocation.
  */
 export interface StepResult {
+  /** Durable task runs started by in-loop subagent tools and awaiting parent-state commit. */
+  readonly delegatedTasks?: readonly {
+    readonly taskInboxToken: string;
+    readonly taskId: string;
+    readonly taskRunId: string;
+  }[];
   readonly next: StepNext;
   readonly session: HarnessSession;
   /**

@@ -48,6 +48,20 @@ describe("getAdvertisedTools", () => {
     expect([...advertisedTools.keys()]).toEqual(["add"]);
   });
 
+  it("removes an executable built-in agent tool from delegated sessions", () => {
+    const tools = new Map([
+      ["add", createTool("add")],
+      ["agent", { ...createTool("agent"), execute: async () => undefined, rootOnly: true }],
+    ]) satisfies HarnessToolMap;
+
+    const advertisedTools = getAdvertisedTools({
+      session: { rootSessionId: "root-session", subagentDepth: 1 },
+      tools,
+    });
+
+    expect([...advertisedTools.keys()]).toEqual(["add"]);
+  });
+
   it("keeps a declared subagent named agent in delegated sessions", () => {
     const tools = new Map([
       ["add", createTool("add")],

@@ -60,7 +60,6 @@ import { getPendingWorkflowInterrupt } from "#harness/workflow-interrupt-state.j
 import { getPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import type { HarnessSession, SettledTurn, StepInput, StepResult } from "#harness/types.js";
 import { getTurnUsageState, takeSessionUsageDelta, toUsage } from "#harness/turn-tag-state.js";
-import type { TokenUsage } from "#shared/token-usage.js";
 import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import {
   createAuthorizationCompletedEvent,
@@ -88,6 +87,10 @@ import type { TurnStepInput } from "#execution/durable-session-migrations/turn-w
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { appendTaskAgentAnnouncement } from "#execution/tasks/parent/agent-views.js";
 import {
+  readSubagentToolExecutionCause,
+  readSubagentToolExecutionEffects,
+} from "#execution/tasks/parent/subagent/tool-execution.js";
+import {
   isTaskOwnedSerializedContext,
   TASK_UPDATE_SESSION_INSTRUCTION,
 } from "#execution/tasks/child/instructions.js";
@@ -99,40 +102,28 @@ import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/s
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
+import type { TokenUsage } from "#shared/token-usage.js";
 
 const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
 
-/**
- * Result of one durable harness step. `cancelled` is returned so workflow-core
- * does not retry it; `park` carries the pending state needed by the next action.
- */
-export type DurableStepResult =
+interface DurableStepResultFields {
+  readonly delegatedTasks?: StepResult["delegatedTasks"];
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}
+
+/** Durable boundary returned by one `turnStep` invocation. */
+export type DurableStepResult = (
   | {
       readonly action: "continue" | "done";
       readonly output?: unknown;
       readonly isError?: boolean;
-      /**
-       * Optional durable pause for the turn workflow to fulfill before
-       * dispatching this result's next action.
-       */
       readonly sleepDurationMs?: number;
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-      /** Session-total token usage; set on `done` when the session spent any. */
       readonly usage?: TokenUsage;
-      /**
-       * Usage the final turn added beyond what earlier settled turns already
-       * reported; feeds the terminal `AgentTurnOutcome` for conversation
-       * children. Task sessions settle once, so their callers read `usage`.
-       */
       readonly usageDelta?: TokenUsage;
     }
-  | {
-      readonly action: "cancelled";
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-    }
+  | { readonly action: "cancelled" }
   | {
       readonly action: "park";
       readonly authorizationAttemptIds?: readonly string[];
@@ -140,24 +131,17 @@ export type DurableStepResult =
       readonly hasPendingAuthorization: boolean;
       readonly hasPendingInputBatch: boolean;
       readonly pendingRuntimeActionKeys?: readonly string[];
-      /**
-       * Selects the dispatch step for `pendingRuntimeActionKeys`:
-       * `dispatchTaskStep` when the agent runs `experimental.tasks`,
-       * `dispatchRuntimeActionsStep` otherwise (including when absent).
-       */
       readonly tasksEnabled?: boolean;
       readonly sleepDurationMs?: number;
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
       readonly settled?: SettledTurn;
     }
   | {
       readonly action: "dispatch-workflow-runtime-actions";
       readonly pendingRuntimeActionKeys: readonly string[];
       readonly sleepDurationMs?: number;
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-    };
+    }
+) &
+  DurableStepResultFields;
 
 export type { TurnStepInput };
 
@@ -549,7 +533,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       return runHarnessStep(schemaSession, resolved);
     });
   } catch (error) {
-    if (!isTurnCancellation(error)) {
+    if (!isTurnCancellation(readSubagentToolExecutionCause(error))) {
       await failChannelDeliveries(error);
       throw error;
     }
@@ -559,8 +543,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // The session model is also kept because `session.started` is not emitted
     // again after this cancellation settles.
     const interrupted = serializeContext(ctx);
+    const effects = readSubagentToolExecutionEffects(error);
     return {
       action: "cancelled",
+      delegatedTasks: effects?.delegatedTasks,
       serializedContext: preserveSerializedInstrumentationState(
         preserveSerializedAgentTraceState(
           preserveSerializedSessionDynamicModelSelection(input.serializedContext, interrupted),
@@ -568,7 +554,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
         ),
         interrupted,
       ),
-      sessionState: input.sessionState,
+      sessionState:
+        effects === undefined
+          ? input.sessionState
+          : createDurableSessionState({ session: effects.session }),
     };
   }
 
@@ -580,6 +569,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const nextState = createDurableSessionState({ session: stepResult.session });
   const sleepDurationMs = readTurnSleepDurationMs(ctx);
   const sleepTransition = sleepDurationMs === undefined ? {} : { sleepDurationMs };
+  const delegatedTasks = stepResult.delegatedTasks;
 
   if (
     stepResult.next !== null &&
@@ -594,6 +584,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     const sessionTotals = getTurnUsageState(stepResult.session.state)?.session;
     return {
       action: "done",
+      delegatedTasks,
       output: stepResult.next.output,
       isError: stepResult.next.isError,
       ...sleepTransition,
@@ -614,6 +605,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     ) {
       return {
         action: "dispatch-workflow-runtime-actions",
+        delegatedTasks,
         pendingRuntimeActionKeys: getRuntimeActionKeysFromWorkflowInterrupt(
           workflowInterrupt.interrupt,
         ),
@@ -633,6 +625,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       const { delta, session: reportedSession } = takeSessionUsageDelta(stepResult.session);
       return {
         action: "park",
+        delegatedTasks,
         ...pending,
         ...sleepTransition,
         serializedContext: nextSerializedContext,
@@ -648,6 +641,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
     return {
       action: "park",
+      delegatedTasks,
       ...pending,
       ...sleepTransition,
       serializedContext: nextSerializedContext,
@@ -659,6 +653,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   writer.releaseLock();
   return {
     action: "continue",
+    delegatedTasks,
     ...sleepTransition,
     serializedContext: nextSerializedContext,
     sessionState: nextState,

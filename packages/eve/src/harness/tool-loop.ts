@@ -53,6 +53,7 @@ import {
 } from "#context/build-dynamic-tools.js";
 import { buildDynamicSubagentTools } from "#context/dynamic-subagent-lifecycle.js";
 import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js";
+import { syncSubagentToolExecution } from "#execution/tasks/parent/subagent/tool-execution.js";
 import { toErrorMessage } from "#shared/errors.js";
 import {
   createActionResultEvent,
@@ -1402,7 +1403,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         });
         // Dynamic tools override a same-named authored tool.
         for (const [name, toolDefinition] of Object.entries(dynamicToolSet)) {
-          if (advertisedHarnessTools.get(name)?.runtimeAction !== undefined) {
+          const harnessTool = advertisedHarnessTools.get(name);
+          if (
+            harnessTool?.runtimeAction !== undefined ||
+            harnessTool?.frameworkAction === "subagent"
+          ) {
             throw new Error(`Dynamic tool "${name}" collides with a runtime-visible subagent.`);
           }
           flatTools[name] = toolDefinition;
@@ -1435,6 +1440,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         workflow: workflowConfig,
       });
       session = advertisedModelTools.session;
+      syncSubagentToolExecution({
+        batchEvent: emissionState,
+        session,
+        updateSession: (nextSession) => {
+          session = nextSession;
+        },
+      });
       const modelTools = advertisedModelTools.modelTools;
 
       const effectiveTools = marker ? applyLastToolCacheBreakpoint(modelTools, marker) : modelTools;
@@ -1518,6 +1530,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             ASK_QUESTION_TOOL_NAME,
             FINAL_OUTPUT_TOOL_NAME,
             ...hiddenRuntimeActionToolNames,
+            ...[...advertisedHarnessTools]
+              .filter(([, tool]) => tool.frameworkAction === "subagent")
+              .map(([name]) => name),
           ]);
           const streamResult = await agent.stream({
             abortSignal: config.abortSignal,

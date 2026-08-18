@@ -54,16 +54,16 @@ import { isAsyncIterable } from "#shared/async-iterable.js";
  * strategies rethrow the original error because they have no consent flow to
  * park on.
  */
-export function createToolExecuteWithAuth(input: {
+export function createToolExecuteWithAuth<TInput>(input: {
   readonly scope: string;
-  readonly execute: (toolInput: unknown, ctx: unknown) => unknown;
-}): (toolInput: unknown, options: ToolExecuteOptions) => Promise<unknown> | AsyncIterable<unknown> {
+  readonly execute: (toolInput: TInput, ctx: ToolContext) => unknown;
+}): (toolInput: TInput, options: ToolExecuteOptions) => Promise<unknown> | AsyncIterable<unknown> {
   const { scope, execute } = input;
 
   // An async wrapper would turn an async generator into Promise<AsyncIterable>,
   // which the AI SDK treats as one non-serializable terminal output.
   return (
-    toolInput: unknown,
+    toolInput: TInput,
     options: ToolExecuteOptions,
   ): Promise<unknown> | AsyncIterable<unknown> => {
     const justAuthorizedScopes = new Set<string>();

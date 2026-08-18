@@ -38,11 +38,13 @@ import { readActionTraceContext } from "#tracing/agent-trace-context-store.js";
 import {
   assertUniqueRuntimeActionCallIds,
   getPendingRuntimeActionBatch,
+  type PendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
 import {
   createSubagentCalledEvent,
   encodeMessageStreamEvent,
   stampMessageStreamEvent,
+  type UnstampedMessageStreamEvent,
 } from "#protocol/message.js";
 import type {
   RuntimeActionRequest,
@@ -168,6 +170,7 @@ export interface PreparedRuntimeActionDispatch {
  * pending.
  */
 export async function prepareRuntimeActionDispatch(input: {
+  readonly batch?: PendingRuntimeActionBatch;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
   /**
@@ -178,7 +181,7 @@ export async function prepareRuntimeActionDispatch(input: {
   readonly taskControls: boolean;
 }): Promise<PreparedRuntimeActionDispatch | undefined> {
   const durableSession = await readDurableSession(input.sessionState);
-  const batch = getPendingRuntimeActionBatch(durableSession.state);
+  const batch = input.batch ?? getPendingRuntimeActionBatch(durableSession.state);
 
   if (batch === undefined || batch.actions.length === 0) return undefined;
   assertUniqueRuntimeActionCallIds(batch.actions);
@@ -276,8 +279,10 @@ export async function emitSubagentCalled(input: {
   readonly entry: Extract<DispatchPlanEntry, { readonly kind: "resume" | "start" }>;
   readonly outcome: Extract<DispatchOutcome, { readonly kind: "called" }>;
   readonly sessionId: string;
-  readonly writer: WritableStreamDefaultWriter<Uint8Array>;
-}): Promise<void> {
+  readonly writer?: WritableStreamDefaultWriter<Uint8Array>;
+}): Promise<
+  Extract<UnstampedMessageStreamEvent, { readonly type: "subagent.called" }> | undefined
+> {
   const { entry, outcome } = input;
   try {
     const action = entry.kind === "resume" ? entry.action : entry.target.action;
@@ -287,43 +292,49 @@ export async function emitSubagentCalled(input: {
         : entry.target.kind === "remote"
           ? entry.target.dynamicRemoteAgent
           : undefined;
-    const parentEvent = await callAdapterEventHandler(
-      input.adapter,
-      createSubagentCalledEvent({
-        callId: outcome.callId,
-        childSessionId: outcome.address.sessionId,
-        name: outcome.name,
-        remote:
-          outcome.address.kind === "agent/remote"
-            ? {
-                // The proxy route re-resolves outbound auth from this key via
-                // resolveRemoteAgentStreamHeaders: a node id lands in
-                // subagentRegistry.subagentsByNodeId (static definition), a
-                // credentialsStepId lands in the step registry (dynamic
-                // definition). Both sides of this ternary must stay in sync
-                // with that lookup order.
-                resolverId:
-                  dynamicRemoteAgent === undefined
-                    ? action.nodeId
-                    : dynamicRemoteAgent.credentialsStepId,
-                url: outcome.address.url,
-              }
-            : undefined,
-        sequence: input.batchEvent.sequence,
-        sessionId: input.sessionId,
-        toolName: outcome.toolName,
-        turnId: input.batchEvent.turnId,
-        workflowId: workflowEntryReference.workflowId,
-      }),
-      input.adapterCtx,
-    );
+    const event = createSubagentCalledEvent({
+      callId: outcome.callId,
+      childSessionId: outcome.address.sessionId,
+      name: outcome.name,
+      remote:
+        outcome.address.kind === "agent/remote"
+          ? {
+              // The proxy route re-resolves outbound auth from this key via
+              // resolveRemoteAgentStreamHeaders: a node id lands in
+              // subagentRegistry.subagentsByNodeId (static definition), a
+              // credentialsStepId lands in the step registry (dynamic
+              // definition). Both sides of this ternary must stay in sync
+              // with that lookup order.
+              resolverId:
+                dynamicRemoteAgent === undefined
+                  ? action.nodeId
+                  : dynamicRemoteAgent.credentialsStepId,
+              url: outcome.address.url,
+            }
+          : undefined,
+      sequence: input.batchEvent.sequence,
+      sessionId: input.sessionId,
+      toolName: outcome.toolName,
+      turnId: input.batchEvent.turnId,
+      workflowId: workflowEntryReference.workflowId,
+    });
+    if (input.writer === undefined) return event;
+
+    const parentEvent = await callAdapterEventHandler(input.adapter, event, input.adapterCtx);
+    if (parentEvent.type !== "subagent.called") {
+      throw new Error(
+        `Subagent event handler returned unexpected event type "${parentEvent.type}".`,
+      );
+    }
     await input.writer.write(encodeMessageStreamEvent(stampMessageStreamEvent(parentEvent)));
+    return parentEvent;
   } catch (error) {
     logError(log, "subagent.called emission failed", error, {
       callId: outcome.callId,
       childSessionId: outcome.address.sessionId,
       toolName: outcome.toolName,
     });
+    return undefined;
   }
 }
 

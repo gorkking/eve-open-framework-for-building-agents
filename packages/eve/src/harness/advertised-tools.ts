@@ -192,6 +192,8 @@ function shouldHideDelegationTool(
  * the only signal that separates the root from its children.
  */
 function isRootOnlyFrameworkTool(definition: HarnessToolDefinition): boolean {
+  if (definition.rootOnly === true) return true;
+
   if (
     definition.name === AGENT_TOOL_NAME &&
     definition.runtimeAction?.kind === "subagent-call" &&

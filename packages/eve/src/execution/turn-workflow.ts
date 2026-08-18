@@ -106,6 +106,12 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         result.action === "dispatch-workflow-runtime-actions" || result.action === "park"
           ? result.pendingRuntimeActionKeys
           : undefined;
+      const hasDelegatedTasks = (result.delegatedTasks?.length ?? 0) > 0;
+
+      if (hasDelegatedTasks) {
+        await cursor.adopt(result);
+        await acknowledgeDelegatedTasksStep({ tasks: result.delegatedTasks ?? [] });
+      }
 
       // A cancel observed while the step was returning must still win: the
       // step may have missed the abort and completed normally. Pending
@@ -113,7 +119,7 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
       if (result.action === "cancelled") {
         // The cancelled step returns only the context carve-outs required by
         // the driver epilogue and later turns; adopt those before settling.
-        await cursor.adopt(result);
+        if (!hasDelegatedTasks) await cursor.adopt(result);
         await finishCancelledTurn({ bufferedDeliveries, cancellation, cursor });
         return;
       }
@@ -122,13 +128,15 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         // Some worlds cannot interrupt a running step, so it can complete
         // normally after the workflow observes cancellation. Roll that result
         // back except for a session model selected by its one-time preamble.
-        await cursor.adopt({
-          serializedContext: preserveSerializedSessionDynamicModelSelection(
-            cursor.serializedContext,
-            result.serializedContext,
-          ),
-          sessionState: cursor.sessionState,
-        });
+        if (!hasDelegatedTasks) {
+          await cursor.adopt({
+            serializedContext: preserveSerializedSessionDynamicModelSelection(
+              cursor.serializedContext,
+              result.serializedContext,
+            ),
+            sessionState: cursor.sessionState,
+          });
+        }
         // No `canPark` check here: that gate rejects model-authored waits
         // (`next: null`) in task mode, whereas every session can resume by
         // stable ID after a cancelled turn. The epilogue runs in the driver
@@ -165,10 +173,10 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
       // A pending runtime-action batch (model-driven `park` or dynamic-workflow
       // interrupt) is resolved in-line so the turn stays alive across the wait;
       // the arms differ only in their dispatch path: the workflow adapter for
-      // interrupt-sourced batches, and the task-mode sibling when the agent
-      // runs `experimental.tasks`.
+      // interrupt-sourced batches, task-control dispatch when the agent runs
+      // `experimental.tasks`, and plain runtime-action dispatch otherwise.
       if (pendingActionKeys !== undefined) {
-        await cursor.adopt(result);
+        if (!hasDelegatedTasks) await cursor.adopt(result);
         const hasPendingTasks = result.action === "park" && result.tasksEnabled;
         let dispatch;
         if (result.action === "dispatch-workflow-runtime-actions") {
@@ -432,6 +440,10 @@ async function runLegacyTurnWorkflow(input: TurnWorkflowInput): Promise<void> {
   try {
     while (true) {
       const result = await turnStep(currentStepInput);
+
+      if ((result.delegatedTasks?.length ?? 0) > 0) {
+        await acknowledgeDelegatedTasksStep({ tasks: result.delegatedTasks ?? [] });
+      }
 
       if (result.action !== "cancelled" && result.sleepDurationMs !== undefined) {
         await workflowSleep(result.sleepDurationMs);
