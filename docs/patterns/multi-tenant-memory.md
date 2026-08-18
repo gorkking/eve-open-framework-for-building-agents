@@ -15,34 +15,26 @@ agent/
   memory/user.ts
 ```
 
-## Derive the memory scope from the turn
+## Derive the memory scope from the authenticated principal
 
-Resolve tenant and user identifiers from verified session context. Never accept either identifier from model input:
+Use the active authenticated principal as the tenant-aware user identity. Never accept an identifier from model input:
 
 ```ts title="agent/memory/user.ts"
 import { defineMemory } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
 import { tenantMemory } from "../lib/tenant-memory";
 
 export default defineMemory({
   provider: tenantMemory,
-  scope(ctx) {
-    const caller = ctx.session.auth.current;
-    const tenantId = caller?.attributes.tenantId;
-
-    if (caller?.principalType !== "user" || typeof tenantId !== "string") {
-      return null;
-    }
-
-    return [tenantId, caller.principalId];
-  },
+  scope: byPrincipal,
 });
 ```
 
-`auth.current` identifies the caller of the active turn. Returning `null` disables the slot for an unauthenticated or invalid caller: eve does not call the provider, expose its tools, or include its projections.
+`byPrincipal` includes the principal type, authenticator, optional issuer, and principal ID. The authenticator and issuer keep the same provider user ID from colliding across authentication domains or tenants. It returns `null` for an unauthenticated caller, so eve does not call the provider, expose its tools, or include its projections.
 
-If a conversation is permanently owned by its creator, derive the tuple from `auth.initiator` instead and enforce that ownership at the channel boundary.
+If your identity system does not encode tenant ownership in those fields, pass a zero-argument scope resolver backed by your application's trusted request context. Return one canonical string that includes both tenant and user. Enforce permanent conversation ownership at the channel boundary rather than accepting either value from the model.
 
-eve combines the tuple with the application, environment, graph node, and slot to produce `ctx.memory.scope.key`. Use that key, or every part in `ctx.memory.scope.parts`, on every provider read and write. The model never receives either value as tool input.
+eve combines the resolved namespace and scope to produce `ctx.memory.scope.key`. The default namespace includes the application, environment, graph node, and slot. A custom namespace replaces that default rather than adding to it. Use the key, or both `ctx.memory.scope.namespace` and `ctx.memory.scope.value`, on every provider read and write. The model never receives these values as tool input.
 
 ## Project memory with `recall`
 
@@ -120,20 +112,12 @@ Set `visibility: "session"` only when every scope in the session belongs to one 
 
 ```ts title="agent/memory/user.ts"
 import { defineMemory } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
 import { tenantMemory } from "../lib/tenant-memory";
 
 export default defineMemory({
   provider: tenantMemory,
-  scope(ctx) {
-    const caller = ctx.session.auth.current;
-    const tenantId = caller?.attributes.tenantId;
-
-    if (caller?.principalType !== "user" || typeof tenantId !== "string") {
-      return null;
-    }
-
-    return [tenantId, caller.principalId];
-  },
+  scope: byPrincipal,
   visibility: "session",
 });
 ```

@@ -16,21 +16,22 @@ import {
   startMemoryCompaction,
   startMemoryTurn,
   finishMemoryCompaction,
-  type MemoryRuntimeIdentity,
+  type MemoryDefaultNamespaceContext,
 } from "#context/memory-lifecycle.js";
 import { getMemoryState, setActiveMemoryToolOperations } from "#harness/memory-state.js";
 import type { HarnessSession } from "#harness/types.js";
 import { defineTool } from "#public/definitions/tool.js";
 import {
+  defaultNamespace,
   defineMemoryProvider,
   type MemoryProvider,
   type MemoryToolSet,
 } from "#public/memory/index.js";
+import { byPrincipal } from "#public/memory/scope.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 
-const identity: MemoryRuntimeIdentity = {
-  applicationId: "local:/app",
-  environment: "test",
+const defaultNamespaceContext: MemoryDefaultNamespaceContext = {
+  appRoot: "/app",
   nodeId: "__root__",
 };
 
@@ -59,17 +60,15 @@ describe("memory lifecycle", () => {
         },
       });
     const memories = [
-      memory("workspace", makeProvider("workspace"), () => ["workspace-1"], "session"),
-      memory("user", makeProvider("user"), (context) => [
-        context.session.auth.current!.principalId,
-      ]),
+      memory("workspace", makeProvider("workspace"), "workspace-1", "session"),
+      memory("user", makeProvider("user"), byPrincipal),
     ];
     const prior = [{ content: "static and dynamic instructions", role: "user" }] as const;
     const turnInput = [{ content: "hello", role: "user" }] as const;
 
     const session = await runInContext(createContext(), () =>
       startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories,
         messages: prior,
         projectionAnchorIndex: 1,
@@ -102,7 +101,7 @@ describe("memory lifecycle", () => {
 
     const continued = await runInContext(createContext(), () =>
       startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories,
         messages: [...prior, ...turnInput],
         projectionAnchorIndex: 2,
@@ -118,26 +117,45 @@ describe("memory lifecycle", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("partitions scope keys by app, environment, node, slot, and ordered parts", async () => {
-    const observed: string[] = [];
+  it("derives keys from only the explicit namespace and scope", async () => {
+    const observed: Array<{
+      readonly key: string;
+      readonly namespace: string;
+      readonly value: string;
+    }> = [];
     const provider = defineMemoryProvider({
       recall(context) {
-        observed.push(context.memory.scope.key);
+        observed.push(context.memory.scope);
       },
     });
-    const definition = memory("user", provider, () => ["tenant", "user"]);
-    const variants: MemoryRuntimeIdentity[] = [
-      identity,
-      { ...identity, applicationId: "local:/other" },
-      { ...identity, environment: "preview" },
-      { ...identity, nodeId: "researcher" },
+    const cases = [
+      {
+        context: defaultNamespaceContext,
+        definition: memory("user", provider, "tenant:user", "scope", "app-a"),
+      },
+      {
+        context: defaultNamespaceContext,
+        definition: memory("user", provider, "tenant:other", "scope", "app-a"),
+      },
+      {
+        context: defaultNamespaceContext,
+        definition: memory("user", provider, "tenant:user", "scope", "app-b"),
+      },
+      {
+        context: defaultNamespaceContext,
+        definition: memory("other-slot", provider, "tenant:user", "scope", "app-a"),
+      },
+      {
+        context: { appRoot: "/other", nodeId: "researcher" },
+        definition: memory("user", provider, "tenant:user", "scope", "app-a"),
+      },
     ];
 
-    for (const [sequence, variant] of variants.entries()) {
+    for (const [sequence, testCase] of cases.entries()) {
       await runInContext(createContext(), () =>
         startMemoryTurn({
-          identity: variant,
-          memories: [definition],
+          defaultNamespaceContext: testCase.context,
+          memories: [testCase.definition],
           messages: [],
           projectionAnchorIndex: 0,
           session: createSession(),
@@ -146,8 +164,78 @@ describe("memory lifecycle", () => {
       );
     }
 
-    expect(new Set(observed).size).toBe(variants.length);
-    expect(observed.every((key) => /^mem_[A-Za-z0-9_-]{43}$/u.test(key))).toBe(true);
+    expect(observed.map(({ namespace, value }) => ({ namespace, value }))).toEqual([
+      { namespace: "app-a", value: "tenant:user" },
+      { namespace: "app-a", value: "tenant:other" },
+      { namespace: "app-b", value: "tenant:user" },
+      { namespace: "app-a", value: "tenant:user" },
+      { namespace: "app-a", value: "tenant:user" },
+    ]);
+    expect(observed[0]!.key).not.toBe(observed[1]!.key);
+    expect(observed[0]!.key).not.toBe(observed[2]!.key);
+    expect(observed[0]!.key).toBe(observed[3]!.key);
+    expect(observed[0]!.key).toBe(observed[4]!.key);
+    expect(observed.every(({ key }) => /^mem_[A-Za-z0-9_-]{43}$/u.test(key))).toBe(true);
+  });
+
+  it("resolves promises and preserves default namespace context across awaits", async () => {
+    let namespace: string | undefined;
+    const definition = memory(
+      "user",
+      defineMemoryProvider({
+        recall(context) {
+          namespace = context.memory.scope.namespace;
+        },
+      }),
+      Promise.resolve("user-1"),
+      "scope",
+      async () => {
+        await Promise.resolve();
+        return defaultNamespace();
+      },
+    );
+
+    await runInContext(createContext(), () =>
+      startMemoryTurn({
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        projectionAnchorIndex: 0,
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      }),
+    );
+
+    expect(JSON.parse(namespace!)).toMatchObject([
+      "eve-memory-default-namespace-v1",
+      expect.any(Array),
+      expect.any(String),
+      "__root__",
+      "user",
+    ]);
+    expect(namespace).not.toContain("/app");
+  });
+
+  it("rejects empty resolved namespace and scope values", async () => {
+    const provider = defineMemoryProvider({ recall: () => undefined });
+    const start = (definition: ResolvedMemoryDefinition) =>
+      runInContext(createContext(), () =>
+        startMemoryTurn({
+          defaultNamespaceContext,
+          memories: [definition],
+          messages: [],
+          projectionAnchorIndex: 0,
+          session: createSession(),
+          turn: { input: [], sequence: 0, turnId: "turn_0" },
+        }),
+      );
+
+    await expect(start(memory("user", provider, () => ""))).rejects.toThrow(
+      'Memory scope "user" must resolve to a non-empty string.',
+    );
+    await expect(start(memory("user", provider, "user-1", "scope", () => ""))).rejects.toThrow(
+      'Memory namespace "user" must resolve to a non-empty string.',
+    );
   });
 
   it("runs pre-save and post-recall with one compaction lock and durable ordinal", async () => {
@@ -179,7 +267,7 @@ describe("memory lifecycle", () => {
         });
       },
     });
-    const definition = memory("user", provider, () => ["user-1"]);
+    const definition = memory("user", provider, "user-1");
     const before: ModelMessage[] = [{ content: "before compaction", role: "user" }];
     const after: ModelMessage[] = [
       { content: "checkpoint", role: "user" },
@@ -189,7 +277,7 @@ describe("memory lifecycle", () => {
 
     const result = await runInContext(createContext(), async () => {
       let session = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -197,7 +285,7 @@ describe("memory lifecycle", () => {
         turn: { input: before, sequence: 0, turnId: "turn_0" },
       });
       session = await startMemoryCompaction({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: before,
         modelId: "mock/compact",
@@ -245,12 +333,12 @@ describe("memory lifecycle", () => {
           return {};
         },
       }),
-      () => ["user-1"],
+      "user-1",
     );
 
     const runLifecycle = async (): Promise<void> => {
       let session = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -266,7 +354,7 @@ describe("memory lifecycle", () => {
         })
       ).session;
       session = await startMemoryCompaction({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         modelId: "mock/compact",
@@ -310,11 +398,11 @@ describe("memory lifecycle", () => {
         return { content: "preserved" };
       },
     });
-    const definition = memory("user", provider, () => ["user-1"]);
+    const definition = memory("user", provider, "user-1");
 
     const result = await runInContext(createContext(), async () => {
       let session = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -322,7 +410,7 @@ describe("memory lifecycle", () => {
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
       session = await startMemoryCompaction({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         modelId: "mock/compact",
@@ -369,12 +457,12 @@ describe("memory lifecycle", () => {
           throw new Error("private standalone projection failure");
         },
       }),
-      () => ["user-1"],
+      "user-1",
     );
 
     const result = await runInContext(createContext(), async () => {
       const pending = await startMemoryCompaction({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [{ content: "history before compaction", role: "user" }],
         modelId: "mock/compact",
@@ -403,12 +491,12 @@ describe("memory lifecycle", () => {
     const definition = memory(
       "user",
       defineMemoryProvider({ recall: () => ({ content: "" }) }),
-      () => ["user-1"],
+      "user-1",
     );
 
     const operation = runInContext(createContext(), () =>
       startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -446,12 +534,12 @@ describe("memory lifecycle", () => {
           return initialTools;
         },
       }),
-      () => ["user-1"],
+      "user-1",
     );
 
     await runInContext(createContext(), async () => {
       const session = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -513,12 +601,12 @@ describe("memory lifecycle", () => {
         };
       },
     });
-    const definition = memory("user", provider, () => ["user-1"]);
+    const definition = memory("user", provider, "user-1");
     const ctx = createContext("issuer-a");
 
     const resolved = await runInContext(ctx, async () => {
       const started = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -661,7 +749,7 @@ describe("memory lifecycle", () => {
           throw new Error("private completed history");
         },
       }),
-      () => ["a"],
+      "a",
     );
     const succeeding = memory(
       "b",
@@ -671,12 +759,12 @@ describe("memory lifecycle", () => {
           completed.push(context.phase);
         },
       }),
-      () => ["b"],
+      "b",
     );
 
     const saved = await runInContext(createContext(), async () => {
       const session = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
         memories: [succeeding, failing],
         messages: [],
         projectionAnchorIndex: 0,
@@ -696,12 +784,45 @@ describe("memory lifecycle", () => {
   it("suppresses every provider operation and projection when scope is null", async () => {
     const recall = vi.fn();
     const tools = vi.fn();
+    const namespace = vi.fn(() => "must-not-resolve");
     const provider = defineMemoryProvider({ recall, tools });
-    const definition = memory("user", provider, () => null, "session");
+    const definition = memory("user", provider, null, "session", namespace);
 
     const result = await runInContext(createContext(), async () => {
       const session = await startMemoryTurn({
-        identity,
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        projectionAnchorIndex: 0,
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      });
+      return await resolveMemoryTools({
+        memories: [definition],
+        messages: [],
+        modelId: "mock/model",
+        session,
+      });
+    });
+
+    expect(recall).not.toHaveBeenCalled();
+    expect(tools).not.toHaveBeenCalled();
+    expect(namespace).not.toHaveBeenCalled();
+    expect(result.tools.size).toBe(0);
+    expect(
+      projectMemoryPrompt({ memories: [definition], messages: [], session: result.session }),
+    ).toEqual([]);
+  });
+
+  it("suppresses every provider operation and projection when namespace is null", async () => {
+    const recall = vi.fn();
+    const tools = vi.fn();
+    const provider = defineMemoryProvider({ recall, tools });
+    const definition = memory("user", provider, "user-1", "session", async () => null);
+
+    const result = await runInContext(createContext(), async () => {
+      const session = await startMemoryTurn({
+        defaultNamespaceContext,
         memories: [definition],
         messages: [],
         projectionAnchorIndex: 0,
@@ -730,9 +851,11 @@ function memory(
   provider: MemoryProvider,
   scope: ResolvedMemoryDefinition["scope"],
   visibility: ResolvedMemoryDefinition["visibility"] = "scope",
+  namespace: ResolvedMemoryDefinition["namespace"] = `test:${slot}`,
 ): ResolvedMemoryDefinition {
   return {
     logicalPath: `memory/${slot}.ts`,
+    namespace,
     provider,
     scope,
     slot,

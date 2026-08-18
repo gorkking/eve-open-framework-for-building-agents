@@ -78,7 +78,7 @@ describe("compileFromMemory", () => {
   it("projects memory definitions into the manifest and module map", () => {
     const definition = defineMemory({
       provider: defineMemoryProvider({ recall: () => undefined }),
-      scope: () => ["test-scope"],
+      scope: "test-scope",
     });
     const { manifest, moduleMap } = compileFromMemory({
       memories: [

@@ -1,31 +1,37 @@
+import { createHash } from "node:crypto";
+
 import type { ModelMessage } from "ai";
 
+import { loadDefaultMemoryNamespaceContext } from "#context/default-memory-namespace-context.js";
 import type { Approval } from "#public/definitions/approval.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ExactDefinition } from "#public/definitions/exact.js";
 import type { ToolDefinition } from "#public/definitions/tool.js";
+import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
-/** One opaque identifier in an authored memory partition tuple. */
-export type MemoryScopePart = string;
+/** Application-owned memory domain, resolved when eve locks a memory operation. */
+export type MemoryNamespaceDefinition =
+  | string
+  | null
+  | Promise<string | null>
+  | (() => string | null | Promise<string | null>);
+
+/** Trusted memory audience or container, resolved when eve locks a memory operation. */
+export type MemoryScopeDefinition =
+  | string
+  | null
+  | Promise<string | null>
+  | (() => string | null | Promise<string | null>);
 
 /** Stable provider partition resolved and locked by eve for one memory slot. */
 export interface MemoryScope {
-  /** Collision-resistant eve namespace for this app, environment, graph node, slot, and tuple. */
+  /** Collision-resistant key derived from exactly {@link namespace} and {@link value}. */
   readonly key: string;
-  /** Ordered authored identifiers used to derive {@link key}. */
-  readonly parts: readonly MemoryScopePart[];
+  /** Resolved application-owned memory domain. */
+  readonly namespace: string;
+  /** Resolved trusted audience or container within {@link namespace}. */
+  readonly value: string;
 }
-
-/** Trusted authored context available while resolving a memory partition. */
-export interface MemoryScopeContext extends SessionContext {
-  /** Aborts when the active turn or standalone operation is cancelled. */
-  readonly abortSignal: AbortSignal;
-}
-
-/** Resolves one trusted provider partition, or disables the slot for this operation. */
-export type MemoryScopeDefinition = (
-  context: MemoryScopeContext,
-) => readonly MemoryScopePart[] | null | Promise<readonly MemoryScopePart[] | null>;
 
 /** Provider-formatted context projected into model calls for one scope. */
 export interface MemoryProjection {
@@ -133,6 +139,8 @@ export type MemoryVisibility = "scope" | "session";
 
 /** Path-authored memory slot definition. Identity is derived from its file path. */
 export interface MemoryDefinition {
+  /** Application-owned memory domain. Defaults to {@link defaultNamespace}. */
+  readonly namespace?: MemoryNamespaceDefinition;
   readonly provider: MemoryProvider;
   readonly scope: MemoryScopeDefinition;
   /** Projection visibility across scope changes. Defaults to `"scope"`. */
@@ -153,13 +161,24 @@ export function defineMemory<const T extends MemoryDefinition>(
   return definition;
 }
 
-/** Scopes memory to the authenticated caller; unauthenticated turns disable the slot. */
-export function byPrincipal(): MemoryScopeDefinition {
-  return (context) => {
-    const principal = context.session.auth.current;
-    if (principal === null) return null;
-    return principal.issuer === undefined
-      ? [principal.principalType, principal.authenticator, principal.principalId]
-      : [principal.principalType, principal.authenticator, principal.issuer, principal.principalId];
-  };
+/** Builds eve's deployment-aware default namespace for the memory slot being resolved. */
+export function defaultNamespace(): string {
+  const context = loadDefaultMemoryNamespaceContext();
+  const projectId = resolveVercelProjectIdFromEnvironment();
+  const application =
+    projectId === undefined
+      ? ["local", createHash("sha256").update(context.appRoot).digest("base64url")]
+      : ["vercel", projectId];
+  const environment =
+    process.env.VERCEL_TARGET_ENV?.trim() ||
+    process.env.VERCEL_ENV?.trim() ||
+    process.env.NODE_ENV?.trim() ||
+    "unknown";
+  return JSON.stringify([
+    "eve-memory-default-namespace-v1",
+    application,
+    environment,
+    context.nodeId,
+    context.slot,
+  ]);
 }

@@ -11,7 +11,11 @@ import type { StreamEventHook } from "#public/definitions/hook.js";
 import type { Approval } from "#public/definitions/approval.js";
 import type { ToolModelOutput } from "#public/definitions/tool.js";
 import type { ConnectionToolCallDefinition } from "#public/definitions/connections/tool-call.js";
-import type { MemoryDefinition, MemoryVisibility } from "#public/memory/index.js";
+import type {
+  MemoryDefinition,
+  MemoryNamespaceDefinition,
+  MemoryVisibility,
+} from "#public/memory/index.js";
 import type {
   AuthorizationDefinition,
   ConnectionAuthResolver,
@@ -220,7 +224,9 @@ export interface ResolvedHookDefinition extends ResolvedModuleSourceRef {
 }
 
 /** Runtime-owned authored memory slot with live provider callbacks attached. */
-export interface ResolvedMemoryDefinition extends ResolvedModuleSourceRef, MemoryDefinition {
+export interface ResolvedMemoryDefinition
+  extends ResolvedModuleSourceRef, Omit<MemoryDefinition, "namespace"> {
+  readonly namespace: MemoryNamespaceDefinition;
   readonly slot: string;
   readonly visibility: MemoryVisibility;
 }

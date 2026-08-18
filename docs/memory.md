@@ -3,7 +3,7 @@ title: "Memory"
 description: "Define scoped memory providers and control which recalled context enters model calls."
 ---
 
-Memory is a path-authored capability for scoped context that outlives one session. Your provider owns storage, retrieval, formatting, retention, and model-facing operations. eve owns when the provider runs, which trusted scope it receives, where recalled context enters the prompt, and which provider tools the model can call.
+Memory is a path-authored capability for scoped context that outlives one session. Your provider owns storage, retrieval, formatting, retention, and model-facing operations. eve owns when the provider runs, how its namespace and trusted scope resolve, where recalled context enters the prompt, and which provider tools the model can call.
 
 Create one flat slot or a directory of named slots:
 
@@ -20,36 +20,55 @@ The two forms are mutually exclusive. The file path determines the slot name: `a
 
 ## Define a memory slot
 
-Each slot combines a provider with a required trusted scope:
+Each slot combines a provider with a required trusted scope and an optional namespace:
 
 ```ts title="agent/memory/user.ts"
-import { byPrincipal, defineMemory } from "eve/memory";
+import { defineMemory } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
 import { userMemory } from "../lib/user-memory";
 
 export default defineMemory({
   provider: userMemory,
-  scope: byPrincipal(),
+  scope: byPrincipal,
 });
 ```
 
-`byPrincipal()` partitions the provider by the authenticated caller. It includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's projections.
+Passing `byPrincipal` as the resolver partitions the provider by the authenticated caller. Its value includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's projections.
 
-For another partition, return an ordered tuple of non-empty strings from authenticated session context, application data, or trusted channel state:
+Pass resolver helpers by reference, as shown above. Calling `byPrincipal()` or `defaultNamespace()` while the module loads fails because no memory operation is active yet.
+
+Both address fields accept a string, `null`, a promise, or a zero-argument resolver:
+
+```ts
+type MemoryNamespaceDefinition =
+  string | null | Promise<string | null> | (() => string | null | Promise<string | null>);
+
+type MemoryScopeDefinition =
+  string | null | Promise<string | null> | (() => string | null | Promise<string | null>);
+```
+
+Use a resolver for work that should begin when eve locks the operation. A promise starts eagerly when the authored module is evaluated.
+
+If either field resolves to `null`, eve disables the slot for that operation: it does not call the provider, expose its tools, or include its projections.
+
+If you omit `namespace`, eve uses the exported `defaultNamespace` function. It resolves a deployment-aware value from the Vercel project when available, otherwise the local application root, plus the environment, graph node, and path-derived slot.
+
+Set `namespace` when you need complete control over the provider's application domain:
 
 ```ts title="agent/memory/workspace.ts"
 import { defineMemory } from "eve/memory";
 import { workspaceMemory } from "../lib/workspace-memory";
 
 export default defineMemory({
+  namespace: "acme:production:workspace-memory",
   provider: workspaceMemory,
-  scope(ctx) {
-    const workspaceId = ctx.session.auth.current?.attributes.workspace_id;
-    return typeof workspaceId === "string" ? [workspaceId] : null;
-  },
+  scope: "workspace:product-docs",
 });
 ```
 
-Do not derive scope parts from model input or unattested message fields. eve derives a collision-resistant `ctx.memory.scope.key` from the application, environment, graph node, slot, and tuple. The original tuple remains available as `ctx.memory.scope.parts`.
+Custom namespaces replace the default completely. eve does not append the application root, environment, graph node, or slot. This also means two definitions with the same custom namespace and scope intentionally address the same provider partition.
+
+Do not derive scope from model input or unattested message fields. eve derives a collision-resistant `ctx.memory.scope.key` from exactly the resolved namespace and scope. Providers can also inspect the original values as `ctx.memory.scope.namespace` and `ctx.memory.scope.value`.
 
 eve locks the resolved scope through the active turn, including model steps and durable approved-call continuations. A standalone manual compaction resolves and locks a scope for that operation. Provider tools close over the same scope, so the model never chooses a user, tenant, or container.
 
@@ -58,12 +77,13 @@ eve locks the resolved scope through the active turn, including model steps and 
 A recall produces a scope-bound projection that eve keeps separate from ordinary conversation history. The optional `visibility` field controls what happens to prior projections when the slot resolves a different scope:
 
 ```ts title="agent/memory/user.ts"
-import { byPrincipal, defineMemory } from "eve/memory";
+import { defineMemory } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
 import { userMemory } from "../lib/user-memory";
 
 export default defineMemory({
   provider: userMemory,
-  scope: byPrincipal(),
+  scope: byPrincipal,
   visibility: "session",
 });
 ```
@@ -142,7 +162,7 @@ export const userMemory = defineMemoryProvider({
 });
 ```
 
-`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their scopes, projections, tools, and lifecycle calls independent.
+`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their projections, tools, and lifecycle calls independent. Default namespaces isolate provider addresses by slot. Custom namespaces can intentionally share an address.
 
 Every provider call receives:
 
@@ -213,8 +233,8 @@ Any tool key that can remain parked must stay present with compatible input and 
 | Before each model step | `tools({ phase: "step.started" })`          | Fails the model step.                                                                         |
 | After a completed turn | `save({ phase: "turn.completed" })`         | Emits a content-free diagnostic and continues to the ready boundary.                          |
 
-Providers must apply `ctx.memory.scope.key` or `ctx.memory.scope.parts` to every downstream read and write. eve supplies no unscoped provider invocation path, but it cannot prevent provider code from ignoring the supplied scope.
+Providers must apply `ctx.memory.scope.key` or both `ctx.memory.scope.namespace` and `ctx.memory.scope.value` to every downstream read and write. eve supplies no unscoped provider invocation path, but it cannot prevent provider code from ignoring the supplied scope.
 
 ## Package a provider
 
-A provider package can export a `MemoryProvider` or a provider factory with its own credentials, storage, migrations, retrieval, capture, and tools. The consuming agent still declares `defineMemory(...)` with its scope and visibility policy. Extensions cannot contribute memory slots because those audience and partition choices belong to the consuming application.
+A provider package can export a `MemoryProvider` or a provider factory with its own credentials, storage, migrations, retrieval, capture, and tools. The consuming agent still declares `defineMemory(...)` with its namespace, scope, and visibility policy. Extensions cannot contribute memory slots because those audience and partition choices belong to the consuming application.

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { ROOT_COMPILED_AGENT_NODE_ID, type CompiledMemoryDefinition } from "#compiler/manifest.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
-import { byPrincipal, defineMemory, defineMemoryProvider } from "#public/memory/index.js";
+import { defaultNamespace, defineMemory, defineMemoryProvider } from "#public/memory/index.js";
+import { byPrincipal } from "#public/memory/scope.js";
 import { resolveMemoryDefinition } from "#runtime/resolve-memory.js";
 
 const definition: CompiledMemoryDefinition = {
@@ -23,14 +24,53 @@ describe("resolveMemoryDefinition", () => {
     await expect(
       resolveMemoryDefinition(
         definition,
-        buildModuleMap(defineMemory({ provider, scope: byPrincipal() })),
+        buildModuleMap(defineMemory({ provider, scope: byPrincipal })),
         undefined,
       ),
     ).resolves.toMatchObject({
+      namespace: defaultNamespace,
       provider,
       slot: "user",
       visibility: "scope",
     });
+  });
+
+  it("preserves explicit scalar, promise, and resolver addressing", async () => {
+    const provider = defineMemoryProvider({ recall: () => undefined });
+    const namespace = Promise.resolve("app");
+    const scope = Promise.resolve("user-1");
+
+    await expect(
+      resolveMemoryDefinition(
+        definition,
+        buildModuleMap(defineMemory({ namespace, provider, scope })),
+        undefined,
+      ),
+    ).resolves.toMatchObject({ namespace, scope });
+
+    await expect(
+      resolveMemoryDefinition(
+        definition,
+        buildModuleMap(defineMemory({ namespace: null, provider, scope: null })),
+        undefined,
+      ),
+    ).resolves.toMatchObject({ namespace: null, scope: null });
+  });
+
+  it.each([
+    { field: "scope", memory: { namespace: "app" } },
+    { field: "namespace", memory: { namespace: "", scope: "user-1" } },
+    { field: "scope", memory: { namespace: "app", scope: "" } },
+    { field: "namespace", memory: { namespace: ["app"], scope: "user-1" } },
+    { field: "scope", memory: { namespace: "app", scope: ["user-1"] } },
+  ])("rejects an unsupported $field definition", async ({ field, memory }) => {
+    await expect(
+      resolveMemoryDefinition(
+        definition,
+        buildModuleMap({ provider: { recall: () => undefined }, ...memory }),
+        undefined,
+      ),
+    ).rejects.toThrow(new RegExp(field, "u"));
   });
 
   it("preserves explicit session visibility", async () => {
@@ -39,7 +79,7 @@ describe("resolveMemoryDefinition", () => {
     await expect(
       resolveMemoryDefinition(
         definition,
-        buildModuleMap(defineMemory({ provider, scope: byPrincipal(), visibility: "session" })),
+        buildModuleMap(defineMemory({ provider, scope: byPrincipal, visibility: "session" })),
         undefined,
       ),
     ).resolves.toMatchObject({ visibility: "session" });
@@ -49,7 +89,7 @@ describe("resolveMemoryDefinition", () => {
     await expect(
       resolveMemoryDefinition(
         definition,
-        buildModuleMap({ provider: {}, scope: byPrincipal() }),
+        buildModuleMap({ provider: {}, scope: byPrincipal }),
         undefined,
       ),
     ).rejects.toThrow(/provider\.recall/u);
@@ -64,7 +104,7 @@ describe("resolveMemoryDefinition", () => {
       await expect(
         resolveMemoryDefinition(
           definition,
-          buildModuleMap({ provider, scope: byPrincipal() }),
+          buildModuleMap({ provider, scope: byPrincipal }),
           undefined,
         ),
       ).rejects.toThrow(new RegExp(`provider\\.${method}`, "u"));
@@ -77,7 +117,7 @@ describe("resolveMemoryDefinition", () => {
         definition,
         buildModuleMap({
           provider: { events: {}, recall: () => undefined },
-          scope: byPrincipal(),
+          scope: byPrincipal,
         }),
         undefined,
       ),
@@ -90,7 +130,7 @@ describe("resolveMemoryDefinition", () => {
         definition,
         buildModuleMap({
           provider: { recall: () => undefined },
-          scope: byPrincipal(),
+          scope: byPrincipal,
           visibility: "provider",
         }),
         undefined,

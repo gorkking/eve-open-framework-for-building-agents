@@ -111,7 +111,7 @@ export function cloneTurn(turn: MemoryTurnContext): MemoryTurnContext {
 }
 
 export function cloneScope(scope: MemoryScope): MemoryScope {
-  return { key: scope.key, parts: [...scope.parts] };
+  return { key: scope.key, namespace: scope.namespace, value: scope.value };
 }
 
 export function cloneProjection(projection: MemoryProjection | null): MemoryProjection | null {

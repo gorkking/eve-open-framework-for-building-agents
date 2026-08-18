@@ -249,7 +249,7 @@ function slot(
   key: string,
   visibility: DurableMemorySlotLock["visibility"],
 ): DurableMemorySlotLock {
-  return { scope: { key, parts: [key] }, slot: name, visibility };
+  return { scope: { key, namespace: "test", value: key }, slot: name, visibility };
 }
 
 function turn(turnId: string, slots: readonly DurableMemorySlotLock[]): DurableMemoryTurnState {

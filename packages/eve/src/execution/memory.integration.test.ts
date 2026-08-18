@@ -12,12 +12,8 @@ import {
 import { resumeHook, start } from "#internal/workflow/runtime.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import { defineTool } from "#public/definitions/tool.js";
-import {
-  byPrincipal,
-  defineMemory,
-  defineMemoryProvider,
-  type MemoryProjection,
-} from "#public/memory/index.js";
+import { defineMemory, defineMemoryProvider, type MemoryProjection } from "#public/memory/index.js";
+import { byPrincipal } from "#public/memory/scope.js";
 import { always } from "#public/tools/approval/approval-helpers.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import type {
@@ -90,7 +86,7 @@ describe("first-class memory integration", () => {
       agent: { model: modelId, name: "memory-projection-contract" },
       memories: [
         {
-          definition: defineMemory({ provider, scope: byPrincipal() }),
+          definition: defineMemory({ provider, scope: byPrincipal }),
           slot: "profile",
         },
       ],
@@ -196,14 +192,14 @@ describe("first-class memory integration", () => {
       const provider = defineMemoryProvider({
         recall(ctx) {
           if (ctx.phase !== "turn.started") return;
-          const principalId = ctx.memory.scope.parts.at(-1);
+          const principalId = principalIdFromScope(ctx.memory.scope.value);
           return principalId === "user-a" ? { content: projectionA } : undefined;
         },
       });
       const definition =
         visibility === undefined
-          ? defineMemory({ provider, scope: byPrincipal() })
-          : defineMemory({ provider, scope: byPrincipal(), visibility });
+          ? defineMemory({ provider, scope: byPrincipal })
+          : defineMemory({ provider, scope: byPrincipal, visibility });
       const runtime = createTestRuntime({
         agent: { model: modelId, name: `memory-visibility-${visibility ?? "default"}` },
         memories: [{ definition, slot: "profile" }],
@@ -336,7 +332,7 @@ describe("first-class memory integration", () => {
       agent: { model: "openai/memory-direct-tools", name: "memory-direct-tools" },
       memories: [
         {
-          definition: defineMemory({ provider, scope: byPrincipal() }),
+          definition: defineMemory({ provider, scope: byPrincipal }),
           slot: "profile",
         },
       ],
@@ -395,7 +391,7 @@ describe("first-class memory integration", () => {
       tools(ctx) {
         const origin = {
           operationId: ctx.operationId,
-          principalId: ctx.memory.scope.parts.at(-1),
+          principalId: principalIdFromScope(ctx.memory.scope.value),
           scopeKey: ctx.memory.scope.key,
           stepIndex: ctx.step.stepIndex,
           turnId: ctx.turn.turnId,
@@ -432,7 +428,7 @@ describe("first-class memory integration", () => {
       agent: { model: "openai/memory-approval-scope", name: "memory-approval-scope" },
       memories: [
         {
-          definition: defineMemory({ provider, scope: byPrincipal() }),
+          definition: defineMemory({ provider, scope: byPrincipal }),
           slot: "profile",
         },
       ],
@@ -537,7 +533,7 @@ describe("first-class memory integration", () => {
       tools(ctx) {
         const origin = {
           operationId: ctx.operationId,
-          principalId: ctx.memory.scope.parts.at(-1),
+          principalId: principalIdFromScope(ctx.memory.scope.value),
           scopeKey: ctx.memory.scope.key,
           stepIndex: ctx.step.stepIndex,
           turnId: ctx.turn.turnId,
@@ -605,7 +601,7 @@ describe("first-class memory integration", () => {
       agent: { model: "openai/memory-inline-auth", name: "memory-inline-auth" },
       memories: [
         {
-          definition: defineMemory({ provider, scope: byPrincipal() }),
+          definition: defineMemory({ provider, scope: byPrincipal }),
           slot: "profile",
         },
       ],
@@ -753,7 +749,7 @@ describe("first-class memory integration", () => {
       agent: { model: modelId, name: "memory-compaction-lifecycle" },
       memories: [
         {
-          definition: defineMemory({ provider, scope: byPrincipal() }),
+          definition: defineMemory({ provider, scope: byPrincipal }),
           slot: "profile",
         },
       ],
@@ -862,6 +858,13 @@ function principal(principalId: string): SessionAuthContext {
     principalId,
     principalType: "user",
   };
+}
+
+function principalIdFromScope(value: string): string | undefined {
+  const identity: unknown = JSON.parse(value);
+  if (!Array.isArray(identity)) return undefined;
+  const principalId = identity[3];
+  return typeof principalId === "string" ? principalId : undefined;
 }
 
 async function deliver(

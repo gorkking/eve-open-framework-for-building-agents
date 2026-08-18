@@ -97,15 +97,18 @@ export default defineSandbox({
     descriptor: {
       files: {
         "agent/memory/user.ts": `import {
-  byPrincipal,
+  defaultNamespace,
   defineMemory,
   defineMemoryProvider,
+  type MemoryNamespaceDefinition,
   type MemoryProjection,
   type MemoryRecallContext,
   type MemorySaveContext,
+  type MemoryScopeDefinition,
   type MemoryToolsContext,
   type MemoryVisibility,
 } from "eve/memory";
+import { byPrincipal } from "eve/memory/scope";
 
 const provider = defineMemoryProvider({
   async recall(ctx: MemoryRecallContext): Promise<MemoryProjection | undefined> {
@@ -126,21 +129,27 @@ const provider = defineMemoryProvider({
 });
 
 const visibility: MemoryVisibility = "scope";
+const namespace: MemoryNamespaceDefinition = defaultNamespace;
+const scope: MemoryScopeDefinition = byPrincipal;
 
 export default defineMemory({
+  namespace,
   provider,
-  scope: byPrincipal(),
+  scope,
   visibility,
 });
 `,
       },
       name: "memory-public-api-portability",
     },
-    include: ["src/public/memory/index.ts"],
-    name: "lets tsc typecheck memory providers and slots from the public subpath",
+    include: ["src/public/memory/index.ts", "src/public/memory/scope.ts"],
+    name: "lets tsc typecheck memory providers and slots from public subpaths",
     packageExports: {
       "./memory": {
         types: "./dist/src/public/memory/index.d.ts",
+      },
+      "./memory/scope": {
+        types: "./dist/src/public/memory/scope.d.ts",
       },
     },
   },

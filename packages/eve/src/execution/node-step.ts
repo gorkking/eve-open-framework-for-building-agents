@@ -15,7 +15,7 @@ import {
   saveCompletedMemoryTurn,
   startMemoryCompaction,
   startMemoryTurn,
-  type MemoryRuntimeIdentity,
+  type MemoryDefaultNamespaceContext,
 } from "#context/memory-lifecycle.js";
 import { createHarnessDelegationToolDefinition } from "#execution/delegation-tool.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -58,7 +58,6 @@ import { findRegisteredRuntimeTool } from "#runtime/tools/registry.js";
 import type { ResolvedToolDefinition } from "#runtime/types.js";
 import { preserveFrameworkStateOnCompaction } from "#execution/compaction.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
-import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
 const log = createLogger("execution.node-step");
 
@@ -162,7 +161,7 @@ function createHarnessMemoryLifecycle(input: {
 }): HarnessMemoryLifecycle | undefined {
   const memories = input.node.agent.memories ?? [];
   if (memories.length === 0) return undefined;
-  const identity = createMemoryRuntimeIdentity(input.node);
+  const defaultNamespaceContext = createMemoryDefaultNamespaceContext(input.node);
   const abortSignal = input.abortSignal;
 
   return {
@@ -199,7 +198,7 @@ function createHarnessMemoryLifecycle(input: {
     startCompaction: ({ messages, modelId, session, standalone, usageInputTokens }) =>
       startMemoryCompaction({
         abortSignal,
-        identity,
+        defaultNamespaceContext,
         memories,
         messages,
         modelId,
@@ -210,7 +209,7 @@ function createHarnessMemoryLifecycle(input: {
     startTurn: ({ messages, projectionAnchorIndex, session, turn }) =>
       startMemoryTurn({
         abortSignal,
-        identity,
+        defaultNamespaceContext,
         memories,
         messages,
         projectionAnchorIndex,
@@ -221,17 +220,11 @@ function createHarnessMemoryLifecycle(input: {
   };
 }
 
-function createMemoryRuntimeIdentity(node: ResolvedRuntimeAgentNode): MemoryRuntimeIdentity {
-  const projectId = resolveVercelProjectIdFromEnvironment();
-  const appRoot = node.agent.metadata.appRoot;
-  const environment =
-    process.env.VERCEL_TARGET_ENV?.trim() ||
-    process.env.VERCEL_ENV?.trim() ||
-    process.env.NODE_ENV?.trim() ||
-    "unknown";
+function createMemoryDefaultNamespaceContext(
+  node: ResolvedRuntimeAgentNode,
+): MemoryDefaultNamespaceContext {
   return {
-    applicationId: projectId === undefined ? `local:${appRoot}` : `vercel:${projectId}`,
-    environment,
+    appRoot: node.agent.metadata.appRoot,
     nodeId: node.nodeId,
   };
 }

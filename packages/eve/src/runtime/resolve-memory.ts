@@ -6,13 +6,16 @@ import {
   expectOnlyKnownKeys,
 } from "#internal/authored-module.js";
 import type {
+  MemoryNamespaceDefinition,
   MemoryProvider,
   MemoryScopeDefinition,
   MemoryVisibility,
 } from "#public/memory/index.js";
+import { defaultNamespace } from "#public/memory/index.js";
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { isThenable } from "#shared/guards.js";
 
 /** Resolves and validates one compiled authored memory slot. */
 export async function resolveMemoryDefinition(
@@ -30,20 +33,19 @@ export async function resolveMemoryDefinition(
     const value = expectObjectRecord(loaded, describe(definition, "to return an object"));
     expectOnlyKnownKeys(
       value,
-      ["provider", "scope", "visibility"],
+      ["namespace", "provider", "scope", "visibility"],
       describe(definition, "to use only supported definition fields."),
     );
 
+    const namespace = resolveNamespace(definition, value.namespace);
     const provider = resolveProvider(definition, value.provider);
-    const scope = expectFunction<MemoryScopeDefinition>(
-      value.scope,
-      describe(definition, "to provide a scope resolver"),
-    );
+    const scope = resolveScope(definition, value.scope);
     const visibility = resolveVisibility(definition, value.visibility);
 
     return {
       exportName: definition.exportName,
       logicalPath: definition.logicalPath,
+      namespace,
       provider,
       scope,
       slot: definition.slot,
@@ -58,6 +60,42 @@ export async function resolveMemoryDefinition(
       { logicalPath: definition.logicalPath, sourceId: definition.sourceId },
     );
   }
+}
+
+function resolveNamespace(
+  definition: CompiledMemoryDefinition,
+  value: unknown,
+): MemoryNamespaceDefinition {
+  if (value === undefined) return defaultNamespace;
+  if (value === null) return null;
+  if (typeof value === "string") {
+    if (value.length === 0) {
+      throw new Error(describe(definition, 'to set "namespace" to a non-empty string'));
+    }
+    return value;
+  }
+  if (typeof value === "function" || isThenable(value)) {
+    return value as MemoryNamespaceDefinition;
+  }
+  throw new Error(
+    describe(definition, 'to set "namespace" to a string, null, promise, or resolver function'),
+  );
+}
+
+function resolveScope(definition: CompiledMemoryDefinition, value: unknown): MemoryScopeDefinition {
+  if (value === null) return null;
+  if (typeof value === "string") {
+    if (value.length === 0) {
+      throw new Error(describe(definition, 'to set "scope" to a non-empty string or null'));
+    }
+    return value;
+  }
+  if (typeof value === "function" || isThenable(value)) {
+    return value as MemoryScopeDefinition;
+  }
+  throw new Error(
+    describe(definition, 'to set "scope" to a string, null, promise, or resolver function'),
+  );
 }
 
 function resolveProvider(definition: CompiledMemoryDefinition, value: unknown): MemoryProvider {

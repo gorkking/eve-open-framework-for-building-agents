@@ -2,6 +2,10 @@ import type { ModelMessage } from "ai";
 
 import { buildCallbackContext } from "#context/build-callback-context.js";
 import {
+  runWithDefaultMemoryNamespaceContext,
+  type DefaultMemoryNamespaceContext,
+} from "#context/default-memory-namespace-context.js";
+import {
   captureCallbackSession,
   cloneTurn,
   createMemoryDigest,
@@ -30,12 +34,12 @@ import {
 } from "#harness/memory-state.js";
 import type { HarnessSession } from "#harness/types.js";
 import { createLogger } from "#internal/logging.js";
-import type { SessionContext } from "#public/definitions/callback-context.js";
 import type {
+  MemoryNamespaceDefinition,
   MemoryRecallContext,
   MemorySaveContext,
   MemoryScope,
-  MemoryScopeContext,
+  MemoryScopeDefinition,
   MemoryTurnContext,
 } from "#public/memory/index.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
@@ -43,11 +47,7 @@ import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 const log = createLogger("memory");
 const MEMORY_SCOPE_DOMAIN = "eve-memory-scope-v1";
 
-export interface MemoryRuntimeIdentity {
-  readonly applicationId: string;
-  readonly environment: string;
-  readonly nodeId: string;
-}
+export type MemoryDefaultNamespaceContext = Omit<DefaultMemoryNamespaceContext, "slot">;
 
 export { MemoryOperationError };
 export {
@@ -62,7 +62,7 @@ export {
 /** Resolves and locks every scope, anchors visible projections, then recalls the turn. */
 export async function startMemoryTurn(input: {
   readonly abortSignal?: AbortSignal;
-  readonly identity: MemoryRuntimeIdentity;
+  readonly defaultNamespaceContext: MemoryDefaultNamespaceContext;
   readonly memories: readonly ResolvedMemoryDefinition[];
   /** Prior durable history. The normalized turn input is carried separately in `turn.input`. */
   readonly messages: readonly ModelMessage[];
@@ -83,9 +83,7 @@ export async function startMemoryTurn(input: {
   const callback = buildCallbackContext();
   const callbackSession = captureCallbackSession(callback, input.turn);
   const slots = await resolveMemorySlots({
-    abortSignal,
-    callback,
-    identity: input.identity,
+    defaultNamespaceContext: input.defaultNamespaceContext,
     memories: input.memories,
   });
   const activeTurn: DurableMemoryTurnState = {
@@ -162,7 +160,7 @@ export function projectMemoryPrompt(input: {
 /** Locks a standalone compaction or reuses the active turn lock, then runs pre-save. */
 export async function startMemoryCompaction(input: {
   readonly abortSignal?: AbortSignal;
-  readonly identity: MemoryRuntimeIdentity;
+  readonly defaultNamespaceContext: MemoryDefaultNamespaceContext;
   readonly memories: readonly ResolvedMemoryDefinition[];
   readonly messages: readonly ModelMessage[];
   readonly modelId: string;
@@ -185,9 +183,7 @@ export async function startMemoryCompaction(input: {
   const standaloneSession = captureCallbackSession(callback, null);
   const slots = input.standalone
     ? await resolveMemorySlots({
-        abortSignal,
-        callback,
-        identity: input.identity,
+        defaultNamespaceContext: input.defaultNamespaceContext,
         memories: input.memories,
       })
     : active!.slots;
@@ -389,26 +385,27 @@ export function clearMemoryAnchors(session: HarnessSession): HarnessSession {
 }
 
 async function resolveMemorySlots(input: {
-  readonly abortSignal: AbortSignal;
-  readonly callback: SessionContext;
-  readonly identity: MemoryRuntimeIdentity;
+  readonly defaultNamespaceContext: MemoryDefaultNamespaceContext;
   readonly memories: readonly ResolvedMemoryDefinition[];
 }): Promise<readonly DurableMemorySlotLock[]> {
   const slots: DurableMemorySlotLock[] = [];
   for (const memory of sortMemories(input.memories)) {
-    let parts: readonly string[] | null;
-    try {
-      const scopeContext: MemoryScopeContext = {
-        ...input.callback,
-        abortSignal: input.abortSignal,
-      };
-      parts = await memory.scope(scopeContext);
-      if (parts !== null) validateScopeParts(memory.slot, parts);
-    } catch (cause) {
-      throw new Error(`Memory scope resolver "${memory.slot}" failed.`, { cause });
+    const value = await resolveScope(memory.slot, memory.scope);
+    if (value === null) {
+      slots.push({ scope: null, slot: memory.slot, visibility: memory.visibility });
+      continue;
+    }
+    const namespace = await resolveNamespace(
+      memory.slot,
+      memory.namespace,
+      input.defaultNamespaceContext,
+    );
+    if (namespace === null) {
+      slots.push({ scope: null, slot: memory.slot, visibility: memory.visibility });
+      continue;
     }
     slots.push({
-      scope: parts === null ? null : createScope(input.identity, memory.slot, parts),
+      scope: createScope(namespace, value),
       slot: memory.slot,
       visibility: memory.visibility,
     });
@@ -416,20 +413,61 @@ async function resolveMemorySlots(input: {
   return slots;
 }
 
-function createScope(
-  identity: MemoryRuntimeIdentity,
+async function resolveNamespace(
   slot: string,
-  parts: readonly string[],
-): MemoryScope {
-  const digest = createMemoryDigest([
-    MEMORY_SCOPE_DOMAIN,
-    identity.applicationId,
-    identity.environment,
-    identity.nodeId,
-    slot,
-    parts,
-  ]);
-  return { key: `mem_${digest}`, parts: [...parts] };
+  definition: MemoryNamespaceDefinition,
+  context: MemoryDefaultNamespaceContext,
+): Promise<string | null> {
+  let namespace: unknown;
+  try {
+    namespace = await runWithDefaultMemoryNamespaceContext(
+      { ...context, slot } satisfies DefaultMemoryNamespaceContext,
+      async () => await resolveDefinition(definition),
+    );
+  } catch (cause) {
+    throw new Error(`Memory namespace "${slot}" failed to resolve.`, { cause });
+  }
+  if (namespace === null) return null;
+  validateAddressValue("namespace", slot, namespace);
+  return namespace;
+}
+
+async function resolveScope(
+  slot: string,
+  definition: MemoryScopeDefinition,
+): Promise<string | null> {
+  let scope: unknown;
+  try {
+    scope = await resolveDefinition(definition);
+  } catch (cause) {
+    throw new Error(`Memory scope "${slot}" failed to resolve.`, { cause });
+  }
+  if (scope === null) return null;
+  validateAddressValue("scope", slot, scope);
+  return scope;
+}
+
+async function resolveDefinition<T>(
+  definition: T | Promise<T> | (() => T | Promise<T>),
+): Promise<T> {
+  return typeof definition === "function"
+    ? await (definition as () => T | Promise<T>)()
+    : await definition;
+}
+
+function validateAddressValue(
+  kind: "namespace" | "scope",
+  slot: string,
+  value: unknown,
+): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`Memory ${kind} "${slot}" must resolve to a non-empty string.`);
+  }
+}
+
+function createScope(namespace: string, value: string): MemoryScope {
+  const digest = createMemoryDigest([MEMORY_SCOPE_DOMAIN, namespace, value]);
+  return { key: `mem_${digest}`, namespace, value };
 }
 
 function createTurnOperationId(input: {
@@ -462,17 +500,6 @@ function createCompactionOperationId(input: {
     input.phase,
     input.ordinal,
   ]);
-}
-
-function validateScopeParts(slot: string, parts: readonly string[]): void {
-  if (!Array.isArray(parts)) {
-    throw new TypeError(`Memory scope "${slot}" must return an array of strings or null.`);
-  }
-  for (const part of parts) {
-    if (typeof part !== "string" || part.length === 0) {
-      throw new TypeError(`Memory scope "${slot}" returned an empty or non-string scope part.`);
-    }
-  }
 }
 
 function sortMemories(
