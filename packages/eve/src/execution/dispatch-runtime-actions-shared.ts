@@ -177,6 +177,86 @@ export async function prepareRuntimeActionDispatch(input: {
    */
   readonly taskControls: boolean;
 }): Promise<PreparedRuntimeActionDispatch | undefined> {
+  const preflight = await prepareRuntimeActionDispatchPreflight(input);
+  if (preflight === undefined) return undefined;
+
+  const plan = planDispatch({
+    actions: preflight.prepared.batch.actions,
+    bundle: preflight.prepared.bundle,
+    ctx: preflight.ctx,
+    session: preflight.prepared.session,
+    taskControls: input.taskControls,
+  });
+
+  const session = await provisionSharedSandbox({
+    bundle: preflight.prepared.bundle,
+    ctx: preflight.ctx,
+    plan,
+    session: preflight.prepared.session,
+  });
+
+  return {
+    ...preflight.prepared,
+    fanoutSize: plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local")
+      .length,
+    plan,
+    session,
+  };
+}
+
+/**
+ * Rehydrates current dispatch state while retaining the batch's original plan.
+ * Workflow-backed entries use this after a sibling mutates the session so a
+ * continuation cannot be reclassified as an unrelated fresh start.
+ */
+export async function rehydrateRuntimeActionDispatch(input: {
+  readonly fanoutSize: number;
+  readonly plan: readonly DispatchPlanEntry[];
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<PreparedRuntimeActionDispatch | undefined> {
+  const preflight = await prepareRuntimeActionDispatchPreflight(input);
+  if (preflight === undefined) return undefined;
+  // No sandbox provisioning here: initial preparation already did it once for
+  // this batch, and re-running it per entry would create a second sandbox.
+  return { ...preflight.prepared, fanoutSize: input.fanoutSize, plan: input.plan };
+}
+
+/**
+ * Provisions the shared sandbox when the plan needs one. Split out of
+ * preflight because the plan decides it and the plan is built by the
+ * caller; both entry points — initial preparation and per-entry
+ * rehydration — must observe the enriched session it produces.
+ */
+async function provisionSharedSandbox(input: {
+  readonly bundle: CompiledBundle;
+  readonly ctx: Awaited<ReturnType<typeof deserializeContext>>;
+  readonly plan: readonly DispatchPlanEntry[];
+  readonly session: RuntimeSession;
+}): Promise<RuntimeSession> {
+  if (!planSharesSandbox({ bundle: input.bundle, plan: input.plan })) {
+    return input.session;
+  }
+  try {
+    const scoped = await withContextScope(input.ctx, input.session, async (enrichedSession) => {
+      await input.ctx.require(SandboxKey).get();
+      return { result: undefined, session: enrichedSession };
+    });
+    return scoped.session;
+  } finally {
+    input.ctx.clearVirtualContext();
+  }
+}
+
+type RuntimeActionDispatchPreflight = {
+  readonly ctx: Awaited<ReturnType<typeof deserializeContext>>;
+  readonly prepared: Omit<PreparedRuntimeActionDispatch, "fanoutSize" | "plan">;
+};
+
+async function prepareRuntimeActionDispatchPreflight(input: {
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<RuntimeActionDispatchPreflight | undefined> {
   const durableSession = await readDurableSession(input.sessionState);
   const batch = getPendingRuntimeActionBatch(durableSession.state);
 
@@ -197,44 +277,28 @@ export async function prepareRuntimeActionDispatch(input: {
 
   // A corrupt handle store and rejected actions must resolve before sandbox
   // initialization, which can provision backend resources and run onSession.
+  // Initial preparation runs before any sibling; workflow rehydration repeats
+  // the validation against the session state the previous entry returned.
   getAgentHandleStore(durableSession.state);
-  const plan = planDispatch({
-    actions: batch.actions,
-    bundle,
-    ctx,
-    session,
-    taskControls: input.taskControls,
-  });
 
   const sandboxSessionId = resolveActiveSandboxSessionId(adapter.state, session.sessionId);
-  if (planSharesSandbox({ bundle, plan })) {
-    try {
-      const scoped = await withContextScope(ctx, session, async (enrichedSession) => {
-        await ctx.require(SandboxKey).get();
-        return { result: undefined, session: enrichedSession };
-      });
-      session = scoped.session;
-    } finally {
-      ctx.clearVirtualContext();
-    }
-  }
 
   return {
-    adapter,
-    adapterCtx: buildAdapterContext(adapter, ctx),
-    auth: ctx.get(AuthKey) ?? null,
-    batch,
-    bundle,
-    capabilities: ctx.get(CapabilitiesKey),
-    channelMetadata: ctx.get(ChannelInstrumentationKey),
-    fanoutSize: plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local")
-      .length,
-    initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
-    parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
-    plan,
-    sandboxSessionId,
-    serializedContext: input.serializedContext,
-    session,
+    ctx,
+    prepared: {
+      adapter,
+      adapterCtx: buildAdapterContext(adapter, ctx),
+      auth: ctx.get(AuthKey) ?? null,
+      batch,
+      bundle,
+      capabilities: ctx.get(CapabilitiesKey),
+      channelMetadata: ctx.get(ChannelInstrumentationKey),
+      initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
+      parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
+      sandboxSessionId,
+      serializedContext: input.serializedContext,
+      session,
+    },
   };
 }
 

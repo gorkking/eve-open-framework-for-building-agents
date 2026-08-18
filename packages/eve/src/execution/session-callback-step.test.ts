@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   fireSessionCallbackStep,
+  fireTaskEventCallbackStep,
   fireTaskUpdateCallbackStep,
 } from "#execution/session-callback-step.js";
 
@@ -351,3 +352,79 @@ function createSerializedContext(): Record<string, unknown> {
     "eve.sessionId": "remote-session",
   };
 }
+
+describe("fireTaskEventCallbackStep", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts a remote child's input request to its task callback", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fireTaskEventCallbackStep({
+      callback: {
+        callId: "call-task",
+        subagentName: "research",
+        taskId: "task_1",
+        token: "task:task_1:0123456789abcdef0123456789abcdef",
+        url: "https://caller.example.com/eve/v1/callback/task%3Atask_1%3A0123456789abcdef0123456789abcdef",
+      },
+      childContinuationToken: "child-command-token",
+      childSessionId: "remote-child-session",
+      event: {
+        data: {
+          requests: [
+            {
+              action: {
+                callId: "ask-region",
+                input: {},
+                kind: "tool-call",
+                toolName: "ask_question",
+              },
+              kind: "question",
+              prompt: "Which region?",
+              requestId: "request-region",
+            },
+          ],
+          sequence: 4,
+          stepIndex: 2,
+          turnId: "turn-child",
+        },
+        type: "input.requested",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://caller.example.com/eve/v1/callback/task%3Atask_1%3A0123456789abcdef0123456789abcdef",
+      expect.objectContaining({
+        body: JSON.stringify({
+          callId: "call-task",
+          childContinuationToken: "child-command-token",
+          childSessionId: "remote-child-session",
+          event: {
+            requests: [
+              {
+                action: {
+                  callId: "ask-region",
+                  input: {},
+                  kind: "tool-call",
+                  toolName: "ask_question",
+                },
+                kind: "question",
+                prompt: "Which region?",
+                requestId: "request-region",
+              },
+            ],
+            sequence: 4,
+            stepIndex: 2,
+            turnId: "turn-child",
+          },
+          kind: "task.input-requested",
+          subagentName: "research",
+          taskId: "task_1",
+        }),
+      }),
+    );
+  });
+});

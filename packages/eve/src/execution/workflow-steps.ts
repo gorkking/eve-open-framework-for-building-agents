@@ -337,7 +337,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
     return {
       action: "park",
-      ...derivePendingState(rekeyed),
+      ...derivePendingState(rekeyed, tasksEnabled),
       serializedContext: nextSerializedContext,
       sessionState: nextState,
       tasksEnabled,
@@ -627,7 +627,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       };
     }
 
-    const pending = derivePendingState(stepResult.session);
+    const pending = derivePendingState(stepResult.session, tasksEnabled);
 
     // `settledTurn` is the harness's explicit settlement verdict. Pending
     // state may predate this turn, while newly created parks omit the verdict.
@@ -673,13 +673,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
  * Derives the pending-state fields the turn workflow needs to choose
  * the right `NextDriverAction` arm at the park boundary.
  */
-function derivePendingState(session: HarnessSession): {
-  readonly authorizationAttemptIds?: readonly string[];
-  readonly authorizationNames?: readonly string[];
-  readonly hasPendingAuthorization: boolean;
-  readonly hasPendingInputBatch: boolean;
-  readonly pendingRuntimeActionKeys?: readonly string[];
-} {
+function derivePendingState(session: HarnessSession, tasksEnabled: boolean) {
   const batch = getPendingRuntimeActionBatch(session.state);
   const pendingAuth = getPendingAuthorization(session.state);
   const base = {
@@ -694,6 +688,7 @@ function derivePendingState(session: HarnessSession): {
     return {
       ...base,
       pendingRuntimeActionKeys: batch.actions.map((action) => getRuntimeActionRequestKey(action)),
+      tasksEnabled: tasksEnabled ? (true as const) : undefined,
     };
   }
   return base;

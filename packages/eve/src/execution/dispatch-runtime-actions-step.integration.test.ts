@@ -8,6 +8,10 @@ import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import {
+  dispatchLocalSubagentWorkflow,
+  dispatchRemoteSubagentWorkflow,
+} from "#execution/tasks/parent/subagent/dispatch.js";
+import {
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
@@ -71,6 +75,67 @@ vi.mock("#execution/session.js", () => ({
   hydrateDurableSession: mocks.hydrateDurableSession,
   mintSubagentContinuationToken: (seed: string) => `subagent:${seed}`,
 }));
+
+// This suite owns the local/remote transport boundary through mocks below.
+// Execute each Workflow tool's shared admission step in-process so those mocks
+// remain visible; the dedicated local integration test owns the real Workflow
+// run boundary and verifies the two definitions compile independently.
+vi.mock("#execution/tasks/parent/subagent/local.js", async () => {
+  return {
+    isLocalSubagentWorkflowEntry: vi.fn((entry) =>
+      entry.kind === "start"
+        ? entry.target.kind === "local"
+        : entry.action.kind === "subagent-call",
+    ),
+  };
+});
+
+vi.mock("#execution/tasks/parent/subagent/remote.js", async () => {
+  return {
+    isRemoteSubagentWorkflowEntry: vi.fn((entry) =>
+      entry.kind === "start"
+        ? entry.target.kind === "remote"
+        : entry.action.kind === "remote-agent-call",
+    ),
+  };
+});
+
+vi.mock("#execution/tasks/parent/subagent/dispatch.js", async () => {
+  const [{ dispatchSubagentWorkflowToolStep }, { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA }] =
+    await Promise.all([
+      import("#execution/tasks/parent/subagent/dispatch-step.js"),
+      import("#runtime/subagents/registry.js"),
+    ]);
+
+  return {
+    dispatchLocalSubagentWorkflow: vi.fn(async ({ entry, fanoutSize, runtimeInput }) => {
+      const action = entry.kind === "resume" ? entry.action : entry.target.action;
+      return {
+        result: await dispatchSubagentWorkflowToolStep({
+          entry,
+          fanoutSize,
+          runtimeInput,
+          toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+          transport: "local",
+        }),
+        workflowRunId: "local-workflow-tool-test-run",
+      };
+    }),
+    dispatchRemoteSubagentWorkflow: vi.fn(async ({ entry, fanoutSize, runtimeInput }) => {
+      const action = entry.kind === "resume" ? entry.action : entry.target.action;
+      return {
+        result: await dispatchSubagentWorkflowToolStep({
+          entry,
+          fanoutSize,
+          runtimeInput,
+          toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+          transport: "remote",
+        }),
+        workflowRunId: "remote-workflow-tool-test-run",
+      };
+    }),
+  };
+});
 
 vi.mock("#execution/workflow-runtime.js", () => ({
   createWorkflowRuntime: () => ({
@@ -412,6 +477,54 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         taskRunId: "task-run-1",
       }),
     ]);
+    expect(dispatchLocalSubagentWorkflow).toHaveBeenCalledWith(
+      expect.not.objectContaining({ tool: expect.anything() }),
+    );
+  });
+
+  it("routes a tasks-mode remote child through the remote Workflow definition", async () => {
+    const session = createStartSession({ kind: "remote" });
+    installContext(
+      session,
+      { definition: REMOTE_REGISTRY_DEFINITION, nodeId: "remote/research" },
+      true,
+    );
+    vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({
+      runId: "task-run-1",
+    });
+
+    const result = await dispatchTaskStep({
+      callbackBaseUrl: "https://caller.example.com",
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const state = readResultSessionState(result, session);
+
+    expect(mocks.startRemoteAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callbackBaseUrl: "https://caller.example.com",
+        callbackToken: expect.stringMatching(/^task:task_[^:]+:[a-f0-9]{32}$/),
+      }),
+    );
+    expect(result.results[0]).toMatchObject({
+      backgroundTask: { status: "working" },
+      kind: "subagent-result",
+      output: { status: "working" },
+    });
+    expect(getAgentHandleStore(state)?.handles[0]).toMatchObject({
+      address: {
+        callbackBaseUrl: "https://caller.example.com",
+        kind: "agent/remote",
+        sessionId: "remote-session-123456789012",
+        url: "https://registry.example.com",
+      },
+      phase: "addressed",
+    });
+    expect(dispatchRemoteSubagentWorkflow).toHaveBeenCalledWith(
+      expect.not.objectContaining({ tool: expect.anything() }),
+    );
   });
 
   it("silently rejects a tasks-mode start that failed before index admission", async () => {
@@ -908,51 +1021,77 @@ describe("dispatchRuntimeActionsStep agent delivery", () => {
     });
   });
 
-  it("reports AGENT_UNREACHABLE when the handle disappears mid-batch instead of starting a fresh agent", async () => {
-    // Two continuations to one agentId in a single batch: the first delivery
-    // fails permanently and deletes the handle, so the second — planned as a
-    // resume while the handle still existed — must fail rather than fall
-    // back to an unplanned fresh start.
-    const session = setPendingRuntimeActionBatch({
-      actions: [1, 2].map((n) => ({
-        callId: `call-${n}`,
-        description: "Research",
-        input: { agentId: LOCAL_PARKED_HANDLE.identity.id, message: `continue ${n}` },
-        kind: "subagent-call" as const,
-        name: "research",
-        nodeId: "subagents/research",
-        subagentName: "research",
-      })),
-      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
-      responseMessages: [],
-      session: createBaseSession(LOCAL_PARKED_HANDLE),
-    });
-    installContext(session);
-    mocks.dispatchSession.mockResolvedValue({ status: "session_not_active" });
+  it.each([
+    {
+      dispatch: dispatchRuntimeActionsStep,
+      secondCode: "AGENT_UNREACHABLE",
+      tasks: false,
+      title: "plain dispatch",
+    },
+    {
+      dispatch: dispatchTaskStep,
+      secondCode: "AGENT_BUSY",
+      tasks: true,
+      title: "workflow-tool task dispatch",
+    },
+  ])(
+    "does not start a fresh agent through $title when the handle disappears mid-batch",
+    async ({ dispatch, secondCode, tasks }) => {
+      // Two continuations to one agentId in a single batch: the first delivery
+      // fails permanently and deletes the handle, so the second — planned as a
+      // resume while the handle still existed — must fail rather than fall
+      // back to an unplanned fresh start.
+      const handle: AgentHandle = tasks
+        ? {
+            address: LOCAL_PARKED_HANDLE.address,
+            identity: LOCAL_PARKED_HANDLE.identity,
+            phase: "addressed",
+          }
+        : LOCAL_PARKED_HANDLE;
+      const session = setPendingRuntimeActionBatch({
+        actions: [1, 2].map((n) => ({
+          callId: `call-${n}`,
+          description: "Research",
+          input: { agentId: LOCAL_PARKED_HANDLE.identity.id, message: `continue ${n}` },
+          kind: "subagent-call" as const,
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        })),
+        event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+        responseMessages: [],
+        session: createBaseSession(handle),
+      });
+      installContext(session, undefined, tasks);
+      mocks.readDurableSession.mockImplementation(
+        async (state) => state.snapshot?.session ?? session,
+      );
+      mocks.dispatchSession.mockResolvedValue({ status: "session_not_active" });
 
-    const result = await dispatchRuntimeActionsStep({
-      parentContinuationToken: "turn-inbox",
-      parentWritable: createWritable(),
-      serializedContext: {},
-      sessionState: BASE_STATE,
-    });
+      const result = await dispatch({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      });
 
-    expect(mocks.dispatchSession).toHaveBeenCalledTimes(1);
-    expect(mocks.createSession).not.toHaveBeenCalled();
-    expect(result.results).toEqual([
-      expect.objectContaining({
-        isError: true,
-        output: expect.objectContaining({ code: "AGENT_UNREACHABLE" }),
-      }),
-      expect.objectContaining({
-        isError: true,
-        output: expect.objectContaining({ code: "AGENT_UNREACHABLE" }),
-      }),
-    ]);
-    expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({
-      handles: [],
-    });
-  });
+      expect(result.results).toEqual([
+        expect.objectContaining({
+          isError: true,
+          output: expect.objectContaining({ code: "AGENT_UNREACHABLE" }),
+        }),
+        expect.objectContaining({
+          isError: true,
+          output: expect.objectContaining({ code: secondCode }),
+        }),
+      ]);
+      expect(mocks.dispatchSession).toHaveBeenCalledTimes(1);
+      expect(mocks.createSession).not.toHaveBeenCalled();
+      expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({
+        handles: [],
+      });
+    },
+  );
 
   it("continues a stored remote handle and maps a permanent failure to AGENT_UNREACHABLE", async () => {
     const session = createPendingSession({
@@ -1179,7 +1318,9 @@ function installContext(
   const bundle = {
     compiledArtifactsSource: {},
     resolvedAgent: { config: tasks ? { experimental: { tasks: true } } : {} },
-    subagentRegistry: { subagentsByNodeId },
+    subagentRegistry: {
+      subagentsByNodeId,
+    },
     turnAgent: {
       id: "test-agent",
       instructions: [],

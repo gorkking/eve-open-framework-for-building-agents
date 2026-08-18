@@ -145,6 +145,58 @@ describe("session callback route", () => {
   });
 
   it.each([
+    {
+      data: {
+        candidateId: "candidate-1",
+        outcome: "pending",
+        requestId: "approval-1",
+        responderPrincipalId: "slack:T1:U1",
+        sequence: 4,
+        stepIndex: 2,
+        turnId: "turn-child",
+      },
+      type: "approval.candidate",
+    },
+    {
+      data: {
+        outcome: "approved",
+        requestId: "approval-1",
+        responderPrincipalId: "slack:T1:U1",
+        sequence: 5,
+        stepIndex: 2,
+        turnId: "turn-child",
+      },
+      type: "approval.settled",
+    },
+  ] as const)("forwards remote task $type events to the owning task hook", async (event) => {
+    resumeHookMock.mockResolvedValue(undefined);
+    const response = await handleSessionCallbackRequest(
+      new Request(`https://app.example.com/eve/v1/callback/${TASK_TOKEN}`, {
+        body: JSON.stringify({
+          callId: "call-task",
+          childContinuationToken: "remote-child-token",
+          childSessionId: "child-session",
+          event,
+          kind: "task.authorization",
+          subagentName: "research",
+          taskId: TASK_ID,
+        }),
+        method: "POST",
+      }),
+      createRouteContext({ token: TASK_TOKEN }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(resumeHookMock).toHaveBeenCalledWith(TASK_TOKEN, {
+      callId: "call-task",
+      childSessionId: "child-session",
+      event,
+      kind: "authorization-event",
+      subagentName: "research",
+    });
+  });
+
+  it.each([
     ["parent turn token", "turn-inbox", TASK_ID],
     ["different task token", TASK_TOKEN, "task_other"],
   ])("rejects task events carried by a %s", async (_label, token, taskId) => {
