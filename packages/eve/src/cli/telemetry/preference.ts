@@ -2,6 +2,8 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { z } from "zod";
+
 export type EveTelemetryPreference = {
   readonly enabled: boolean;
   readonly notified: boolean;
@@ -18,17 +20,20 @@ function eveConfigPath(): string {
   return join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "eve", "config.json");
 }
 
+const EveConfigSchema = z.looseObject({
+  telemetry: z
+    .looseObject({
+      enabled: z.boolean().optional(),
+      notifiedAt: z.string().optional(),
+    })
+    .optional(),
+});
+
 function parsePreference(value: unknown): EveTelemetryPreference {
-  if (typeof value !== "object" || value === null || !("telemetry" in value)) {
-    return { enabled: true, notified: false };
-  }
-  const telemetry = value.telemetry;
-  if (typeof telemetry !== "object" || telemetry === null) {
-    return { enabled: true, notified: false };
-  }
+  const telemetry = EveConfigSchema.safeParse(value).data?.telemetry;
   return {
-    enabled: !("enabled" in telemetry && telemetry.enabled === false),
-    notified: "notifiedAt" in telemetry && typeof telemetry.notifiedAt === "string",
+    enabled: telemetry?.enabled !== false,
+    notified: typeof telemetry?.notifiedAt === "string",
   };
 }
 

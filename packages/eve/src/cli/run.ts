@@ -1,7 +1,5 @@
-import { Command, CommanderError, InvalidArgumentError } from "#compiled/commander/index.js";
+import { Command, CommanderError } from "#compiled/commander/index.js";
 import { registerBuildCommand, type BuildHost } from "#cli/commands/build.js";
-import { devBootPhase, type DevBootProgressReporter } from "#internal/dev-boot-progress.js";
-import { createDevBootProgressReporter } from "#cli/dev/boot-progress.js";
 import { resolveApplicationRoot } from "#internal/application/paths.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { isCodingAgentLaunch } from "#cli/agent-detection.js";
@@ -11,43 +9,22 @@ import { eveCliBanner } from "#cli/banner.js";
 import { registerIntegrationCommands } from "#cli/commands/register-integration-commands.js";
 import { registerProjectCommands } from "#cli/commands/register-project-commands.js";
 import { registerRegistryCommands } from "#cli/commands/register-registry-commands.js";
-import { resolveDevUiMode, resolveTuiDisplayOptions } from "#cli/dev/ui-options.js";
+import { registerDevCommand, type DevCommandRuntime } from "#cli/dev/command.js";
 import {
   registerAcpCommand,
   type ResolveVerifiedRemoteDevelopmentClient,
   type RunAcpServer,
 } from "#cli/acp/command.js";
-import {
-  FORCED_EXIT_BACKSTOP_MS,
-  installShutdownSignal,
-  type CommandLifecycle,
-  waitForShutdownSignal,
-} from "#cli/shutdown.js";
-import { waitForServerOrStop, waitForUiOrServer } from "#cli/dev/wait-for-ui.js";
-import { parseDevelopmentHeaderOption, resolveDevelopmentUrlTarget } from "#cli/dev/url-target.js";
-import type { DevelopmentCliOptions, ProductionCliOptions } from "#cli/dev/command-options.js";
-import type { RunDevelopmentTuiInput } from "#cli/dev/tui/tui.js";
+import { waitForShutdownSignal } from "#cli/shutdown.js";
+import type { ProductionCliOptions } from "#cli/dev/command-options.js";
 import type { EvalCliOptions } from "#evals/cli/eval.js";
 import {
   registerRuntimeInvokeCommand,
   type InvokeCliRuntimeDependencies,
 } from "#cli/invoke/command.js";
-import {
-  parseContextSizeOption,
-  parseDisplayMode,
-  parseLogsMode,
-  parsePortOption,
-  parseReasoningOption,
-  parseStatsMode,
-} from "#cli/option-parsers.js";
+import { parsePortOption, parseReasoningOption } from "#cli/option-parsers.js";
 import type { AgentReasoningDefinition } from "#shared/agent-definition.js";
-import { resolveTuiTitle, type DevelopmentTuiTarget } from "#cli/dev/tui/target.js";
-import {
-  resumeDevelopmentRuntimeArtifacts,
-  suspendDevelopmentRuntimeArtifacts,
-} from "#services/dev-client/runtime-artifacts.js";
 import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
-import { startCliLiveRow } from "#cli/ui/live-row.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
 import { registerEveTelemetryCommands } from "#cli/telemetry/command.js";
 import {
@@ -55,26 +32,18 @@ import {
   createEveCliTelemetry,
   type EveCliTelemetry,
 } from "#cli/telemetry/index.js";
-import type {
-  DevelopmentServer,
-  DevelopmentServerOptions,
-  ProductionServerHandle,
-} from "#internal/nitro/host/types.js";
+import type { ProductionServerHandle } from "#internal/nitro/host/types.js";
 
-export { resolveDevUiMode, resolveTuiDisplayOptions };
+export { resolveDevUiMode, resolveTuiDisplayOptions } from "#cli/dev/ui-options.js";
 
 interface CliLogger {
   error(message: string): void;
   log(message: string): void;
 }
 
-interface CliRuntimeDependencies {
+interface CliRuntimeDependencies extends DevCommandRuntime {
   isCodingAgentLaunch(): Promise<boolean>;
   findApplicationRoot(cwd: string): Promise<string | undefined>;
-  isActiveDevelopmentServerForApp(input: {
-    readonly appRoot: string;
-    readonly serverUrl: string;
-  }): Promise<boolean>;
   buildHost: BuildHost;
   resolveVerifiedRemoteDevelopmentClient: ResolveVerifiedRemoteDevelopmentClient;
   runAcpServer: RunAcpServer;
@@ -83,7 +52,6 @@ interface CliRuntimeDependencies {
     appRoot: string,
     options?: { json?: boolean },
   ): Promise<void>;
-  runDevelopmentTui(input: RunDevelopmentTuiInput): Promise<void>;
   runInvoke: InvokeCliRuntimeDependencies["runInvoke"];
   runEvalCommand(
     evalIds: readonly string[],
@@ -91,7 +59,6 @@ interface CliRuntimeDependencies {
     logger: CliLogger,
     appRoot: string,
   ): Promise<void>;
-  startHost(appRoot: string, options?: DevelopmentServerOptions): DevelopmentServer;
   resolveApplicationProject: typeof resolveCliApplicationProject;
   startProductionHost(
     appRoot: string,
@@ -108,27 +75,12 @@ async function loadPrintApplicationInfo(): Promise<CliRuntimeDependencies["print
   return (await import("#cli/commands/info.js")).printApplicationInfo;
 }
 
-async function loadRunDevelopmentTui(): Promise<CliRuntimeDependencies["runDevelopmentTui"]> {
-  return (await import("#cli/dev/tui/tui.js")).runDevelopmentTui;
-}
-
 async function loadRunEvalCommand(): Promise<CliRuntimeDependencies["runEvalCommand"]> {
   return (await import("#evals/cli/eval.js")).runEvalCommand;
 }
 
-async function loadStartHost(): Promise<CliRuntimeDependencies["startHost"]> {
-  return (await import("#cli/dev/local-server-process.js")).createDevelopmentServer;
-}
-
-const loadIsActiveDevelopmentServerForApp = async () =>
-  (await import("#internal/nitro/host.js")).isActiveDevelopmentServerForApp;
-
 async function loadStartProductionHost(): Promise<CliRuntimeDependencies["startProductionHost"]> {
   return (await import("#internal/nitro/host.js")).startProductionServer;
-}
-
-function hasInteractiveTerminal(): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
 function createCliProgram(
@@ -306,248 +258,7 @@ function createCliProgram(
     startHost: runtime.startHost,
   });
 
-  applicationCommand(program.command("dev"), applicationContext, (command) => {
-    const options = command.opts<DevelopmentCliOptions>();
-    return (
-      resolveDevelopmentUrlTarget(options, command.processedArgs[0] as string | undefined) ===
-      undefined
-    );
-  })
-    .description("Start the eve development server or connect to an existing URL.")
-    .argument("[url]", "Connect to an existing server URL", parseDevelopmentServerUrl)
-    .option("--host <host>", "Host interface to bind")
-    .option("--port <port>", "Port to listen on (defaults to $PORT, then 2000)", parsePortOption)
-    .option("-u, --url <url>", "Connect to an existing server URL", parseDevelopmentServerUrl)
-    .option(
-      "-H, --header <header>",
-      'Request header for a URL target, in "Name: value" form (repeatable)',
-      parseDevelopmentHeaderOption,
-    )
-    .option("--no-ui", "Start the server without an interactive UI")
-    .option("--name <name>", "Title shown in the terminal UI (defaults to the app folder name)")
-    .option("--input <text>", "Pre-fill the prompt input, or start onboarding with /model")
-    .option(
-      "--tools <mode>",
-      "How tool calls render: full | collapsed | auto-collapsed | hidden",
-      parseDisplayMode,
-    )
-    .option(
-      "--reasoning <mode>",
-      "How reasoning renders: full | collapsed | auto-collapsed | hidden",
-      parseDisplayMode,
-    )
-    .option(
-      "--subagents <mode>",
-      "How subagent sections render: full | collapsed | auto-collapsed | hidden",
-      parseDisplayMode,
-    )
-    .option(
-      "--connection-auth <mode>",
-      "How connection authorization renders: full | collapsed | auto-collapsed | hidden",
-      parseDisplayMode,
-    )
-    .option(
-      "--assistant-response-stats <mode>",
-      "Assistant header statistic: tokens | tokensPerSecond",
-      parseStatsMode,
-    )
-    .option(
-      "--context-size <tokens>",
-      "Model context window size, shown as a usage percentage",
-      parseContextSizeOption,
-    )
-    .option(
-      "--logs <mode>",
-      "Which server/agent logs to show: all | stderr | sandbox | none",
-      parseLogsMode,
-    )
-    .addHelpText(
-      "after",
-      "\nYou can also pass a bare URL, for example: eve dev https://example.com\n",
-    )
-    .action(async (positionalUrl: string | undefined, options: DevelopmentCliOptions) => {
-      const remoteTarget = resolveDevelopmentUrlTarget(options, positionalUrl);
-      const remoteServerUrl = remoteTarget?.serverUrl;
-      const interactive = hasInteractiveTerminal();
-      const mode = resolveDevUiMode({ options, interactive });
-      telemetry.trackDevContext({ target: remoteTarget ? "remote" : "local", ui: mode });
-      if (options.input !== undefined && mode === "headless") {
-        throw new InvalidArgumentError("--input requires the interactive UI.");
-      }
-      let existingLocalDevelopmentServer = false;
-      if (remoteServerUrl !== undefined) {
-        const isActive =
-          runtime.isActiveDevelopmentServerForApp ?? (await loadIsActiveDevelopmentServerForApp());
-        existingLocalDevelopmentServer = await isActive({
-          appRoot: applicationContext.root,
-          serverUrl: remoteServerUrl,
-        });
-      }
-      const runInteractiveUi = async (
-        input: {
-          readonly appRoot?: string;
-          readonly serverUrl: string;
-        },
-        report?: DevBootProgressReporter,
-        lifecycle?: CommandLifecycle,
-      ): Promise<void> => {
-        const runDevelopmentTui = await devBootPhase(
-          "loading interactive UI",
-          async () => runtime.runDevelopmentTui ?? (await loadRunDevelopmentTui()),
-          report,
-        );
-        const display = resolveTuiDisplayOptions(options);
-        const target: DevelopmentTuiTarget =
-          remoteServerUrl === undefined || existingLocalDevelopmentServer
-            ? {
-                kind: "local",
-                serverUrl: input.serverUrl,
-                workspaceRoot: input.appRoot ?? applicationContext.root,
-              }
-            : {
-                kind: "remote",
-                serverUrl: input.serverUrl,
-                workspaceRoot: applicationContext.root,
-              };
-        const title = resolveTuiTitle({ name: options.name, target });
-        if (title !== undefined) display.name = title;
-        const tuiInput: RunDevelopmentTuiInput = {
-          target,
-          initialInput: options.input,
-          onBootProgress: report,
-          lifecycle,
-          ...display,
-        };
-        if (target.kind === "local") {
-          tuiInput.withExclusiveTerminal = async <T>(task: () => Promise<T>): Promise<T> => {
-            const run = async (): Promise<T> => {
-              if (!(await suspendDevelopmentRuntimeArtifacts({ serverUrl: input.serverUrl }))) {
-                throw new Error("Could not pause the development server for integration setup.");
-              }
-              try {
-                return await task();
-              } finally {
-                await resumeDevelopmentRuntimeArtifacts({
-                  serverUrl: input.serverUrl,
-                  silent: true,
-                });
-              }
-            };
-            return await run();
-          };
-        }
-        if (remoteTarget?.headers !== undefined) {
-          await runDevelopmentTui({ ...tuiInput, headers: remoteTarget.headers });
-        } else {
-          await runDevelopmentTui(tuiInput);
-        }
-      };
-
-      if (remoteServerUrl) {
-        const { loadDevelopmentEnvironmentFiles } = await import("#cli/dev/environment.js");
-        loadDevelopmentEnvironmentFiles(applicationContext.root);
-        logger.log(
-          `↗ ${existingLocalDevelopmentServer ? "local" : "remote"} mode targeting ${theme.info(new URL(remoteServerUrl).host)}`,
-        );
-
-        if (mode === "headless") {
-          logger.log(
-            renderCliTaggedLine(theme, {
-              message: "Interactive UI disabled because the current terminal is not a TTY.",
-              tag: "dev",
-              tone: "warning",
-            }),
-          );
-          return;
-        }
-
-        logger.log("");
-        const lifecycle = installShutdownSignal({ exitAfterMs: FORCED_EXIT_BACKSTOP_MS });
-        try {
-          await runInteractiveUi({ serverUrl: remoteServerUrl }, undefined, lifecycle);
-        } finally {
-          lifecycle.dispose();
-        }
-        return;
-      }
-
-      if (mode === "tui") logger.log("");
-      const buildProgress = mode === "tui" ? startCliLiveRow(logger) : undefined;
-      const onBootProgress = createDevBootProgressReporter(buildProgress);
-      buildProgress?.update("Building your agent");
-
-      let server: DevelopmentServer | undefined;
-      let closePromise: Promise<void> | undefined;
-      const closeServer = () => {
-        if (server === undefined) return Promise.resolve();
-        closePromise ??= server.close();
-        void closePromise.catch(() => undefined);
-        return closePromise;
-      };
-      const lifecycle = installShutdownSignal({
-        exitAfterMs: FORCED_EXIT_BACKSTOP_MS,
-        onStop: () => {
-          void closeServer();
-        },
-      });
-
-      try {
-        const startHost = runtime.startHost ?? (await loadStartHost());
-        server = startHost(applicationContext.root, {
-          existing: mode === "tui" ? "attach-if-unconfigured" : "reject",
-          host: options.host,
-          onBootProgress,
-          port: options.port,
-        });
-        const outcome = await Promise.race([
-          server.start().then((handle) => ({ handle })),
-          lifecycle.stopped.then(() => ({ handle: undefined })),
-        ]);
-        const handle = outcome.handle;
-        if (handle === undefined) return;
-
-        if (mode !== "tui") {
-          logger.log(
-            renderCliTaggedLine(theme, {
-              message: `server listening at ${handle.url}`,
-              tag: "dev",
-              tone: "success",
-            }),
-          );
-        }
-
-        if (mode === "headless") {
-          if (options.ui !== false && !interactive) {
-            logger.log(
-              renderCliTaggedLine(theme, {
-                message: "Interactive UI disabled because the current terminal is not a TTY.",
-                tag: "dev",
-                tone: "warning",
-              }),
-            );
-          }
-
-          await waitForServerOrStop(server, lifecycle);
-          return;
-        }
-
-        await waitForUiOrServer({
-          handle,
-          lifecycle,
-          server,
-          runUi: async () =>
-            await runInteractiveUi(
-              { appRoot: handle.appRoot, serverUrl: handle.url },
-              onBootProgress,
-              lifecycle,
-            ),
-        });
-      } finally {
-        buildProgress?.stop();
-        await closeServer();
-        lifecycle.dispose();
-      }
-    });
+  registerDevCommand({ applicationContext, logger, program, runtime, telemetry });
 
   const logs = program
     .command("logs")
