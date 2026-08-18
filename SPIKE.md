@@ -21,7 +21,7 @@ transports converge on the durable task lifecycle.**
 4. `runtime/framework-tools/subagent/local.ts` and `remote.ts` own the
    `defineTool` values. Their Workflow executors remain under `execution`, the
    compiler-scanned domain, and receive distinct compiler-assigned `workflowId`
-   values. This split keeps definition-time Zod and tool-registration code out
+   values. This split keeps definition-time Zod and branding code out
    of each compiled Workflow program while preserving the real `defineTool`
    contract. Each dispatch attempt starts an addressable, transport-specific
    Workflow run.
@@ -87,7 +87,8 @@ This is an internal architecture prototype, not a new public authoring API.
 The harness still records subagent calls as `runtimeAction` requests, because
 that is how model tool calls park and resume today. The prototype changes the
 task-mode execution substrate behind that request: the production dispatcher
-now starts an ordinary branded `defineTool` Workflow for each delegation.
+now starts the Workflow executor owned by an ordinary branded `defineTool`
+definition for each delegation.
 
 Task-control tools are intentionally not Workflow-backed subagent tools: they
 operate on the parent session's task index and do not invoke an agent. Plain
