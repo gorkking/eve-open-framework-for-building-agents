@@ -10,7 +10,6 @@ import { defineAgent } from "../src/public/definitions/agent.js";
 import { defineDynamic } from "../src/public/definitions/tool.js";
 import { createNodeHarnessTools } from "../src/execution/node-step.js";
 import { TEST_DEFAULT_MODEL_ID } from "../src/internal/testing/app-harness.js";
-import { isBrandedToolEntry } from "../src/shared/dynamic-tool-definition.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "../src/runtime/graph.js";
 import { resolveRuntimeAgentGraph } from "../src/runtime/resolve-agent-graph.js";
 
@@ -117,38 +116,6 @@ describe("resolveRuntimeAgentGraph", () => {
       graph.nodesByNodeId.get("subagents/researcher")?.sandboxRegistry.sandbox?.definition.backend
         .name,
     ).toBe("vercel");
-    expect(graph.root.subagentRegistry.taskTools).toBeUndefined();
-  });
-
-  it("registers the subagent Workflow tools only for experimental.tasks", async () => {
-    const manifest = createCompiledAgentManifest({
-      agentRoot: "/app/agent",
-      appRoot: "/app",
-      config: {
-        experimental: { tasks: true },
-        model: {
-          id: TEST_DEFAULT_MODEL_ID,
-          routing: { kind: "gateway", target: "openai" },
-        },
-        name: "tasks-agent",
-      },
-    });
-
-    const graph = await resolveRuntimeAgentGraph({
-      manifest,
-      moduleMap: { nodes: { [ROOT_COMPILED_AGENT_NODE_ID]: { modules: {} } } },
-    });
-    const [{ localSubagentWorkflowTool }, { remoteSubagentWorkflowTool }] = await Promise.all([
-      import("../src/execution/tasks/parent/subagent/local.js"),
-      import("../src/execution/tasks/parent/subagent/remote.js"),
-    ]);
-
-    expect(graph.root.subagentRegistry.taskTools).toEqual({
-      local: localSubagentWorkflowTool,
-      remote: remoteSubagentWorkflowTool,
-    });
-    expect(isBrandedToolEntry(graph.root.subagentRegistry.taskTools?.local)).toBe(true);
-    expect(isBrandedToolEntry(graph.root.subagentRegistry.taskTools?.remote)).toBe(true);
   });
 
   it("keeps dynamic subagents out of the static toolset and resolves their handlers", async () => {

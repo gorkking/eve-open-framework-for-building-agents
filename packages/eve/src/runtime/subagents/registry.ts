@@ -2,8 +2,6 @@ import { z } from "#compiled/zod/index.js";
 
 import { RuntimeRegistry, RuntimeRegistryError } from "#internal/runtime-registry.js";
 import type { PreparedRuntimeDelegationTool } from "#runtime/sessions/turn.js";
-import type { LocalSubagentWorkflowTool } from "#execution/tasks/parent/subagent/local.js";
-import type { RemoteSubagentWorkflowTool } from "#execution/tasks/parent/subagent/remote.js";
 import type {
   ResolvedDynamicSubagentDefinition,
   ResolvedRuntimeDelegationNode,
@@ -34,13 +32,6 @@ export interface RuntimeSubagentRegistry {
   readonly preparedTools: readonly PreparedRuntimeDelegationTool[];
   readonly subagentsByName: ReadonlyMap<string, RuntimeRegisteredSubagent>;
   readonly subagentsByNodeId: ReadonlyMap<string, RuntimeRegisteredSubagent>;
-  /** Internal execution definitions registered only for `experimental.tasks`. */
-  readonly taskTools?: RuntimeSubagentTaskTools;
-}
-
-export interface RuntimeSubagentTaskTools {
-  readonly local: LocalSubagentWorkflowTool;
-  readonly remote: RemoteSubagentWorkflowTool;
 }
 
 /**
@@ -102,7 +93,6 @@ export function createRuntimeSubagentRegistry(input: {
   readonly persistentSessions?: boolean;
   readonly reservedToolNames?: readonly string[];
   readonly subagents: readonly ResolvedRuntimeDelegationNode[];
-  readonly taskTools?: RuntimeSubagentTaskTools;
 }): RuntimeSubagentRegistry {
   const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions === true);
   const preparedTools: PreparedRuntimeDelegationTool[] = [];
@@ -166,7 +156,6 @@ export function createRuntimeSubagentRegistry(input: {
     preparedTools,
     subagentsByName: registry.asMap(),
     subagentsByNodeId,
-    taskTools: input.taskTools,
   };
 }
 

@@ -6,15 +6,15 @@ import {
   type LocalSubagentWorkflowContext,
   type LocalSubagentWorkflowEntry,
   type LocalSubagentWorkflowInput,
-  type LocalSubagentWorkflowTool,
 } from "#execution/tasks/parent/subagent/local.js";
 import {
   type RemoteSubagentWorkflowContext,
   type RemoteSubagentWorkflowEntry,
   type RemoteSubagentWorkflowInput,
-  type RemoteSubagentWorkflowTool,
 } from "#execution/tasks/parent/subagent/remote.js";
 import { start, type WorkflowMetadata } from "#internal/workflow/runtime.js";
+import { localSubagentWorkflowTool } from "#runtime/framework-tools/subagent/local.js";
+import { remoteSubagentWorkflowTool } from "#runtime/framework-tools/subagent/remote.js";
 import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 
 export interface SubagentWorkflowDispatch {
@@ -27,13 +27,12 @@ export async function dispatchLocalSubagentWorkflow(input: {
   readonly entry: LocalSubagentWorkflowEntry;
   readonly fanoutSize: number;
   readonly runtimeInput: RuntimeActionDispatchInput;
-  readonly tool: LocalSubagentWorkflowTool;
 }): Promise<SubagentWorkflowDispatch> {
   const action = input.entry.kind === "resume" ? input.entry.action : input.entry.target.action;
   const run = await start<
     [LocalSubagentWorkflowInput, LocalSubagentWorkflowContext],
     RuntimeActionDispatchResult
-  >(readWorkflowMetadata(input.tool.execute, "Local"), [
+  >(readWorkflowMetadata(localSubagentWorkflowTool.execute, "Local"), [
     PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
     {
       entry: input.entry,
@@ -50,13 +49,12 @@ export async function dispatchRemoteSubagentWorkflow(input: {
   readonly entry: RemoteSubagentWorkflowEntry;
   readonly fanoutSize: number;
   readonly runtimeInput: RuntimeActionDispatchInput;
-  readonly tool: RemoteSubagentWorkflowTool;
 }): Promise<SubagentWorkflowDispatch> {
   const action = input.entry.kind === "resume" ? input.entry.action : input.entry.target.action;
   const run = await start<
     [RemoteSubagentWorkflowInput, RemoteSubagentWorkflowContext],
     RuntimeActionDispatchResult
-  >(readWorkflowMetadata(input.tool.execute, "Remote"), [
+  >(readWorkflowMetadata(remoteSubagentWorkflowTool.execute, "Remote"), [
     PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
     {
       entry: input.entry,

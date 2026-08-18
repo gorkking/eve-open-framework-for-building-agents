@@ -4,17 +4,20 @@ import { getRun } from "#internal/workflow/runtime.js";
 
 import { createDurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchLocalSubagentWorkflow } from "#execution/tasks/parent/subagent/dispatch.js";
-import { localSubagentWorkflowTool } from "#execution/tasks/parent/subagent/local.js";
-import { remoteSubagentWorkflowTool } from "#execution/tasks/parent/subagent/remote.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import { setPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import type { HarnessSession } from "#harness/types.js";
 import { createTestRuntime } from "#internal/testing/app-harness.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
+import { localSubagentWorkflowTool } from "#runtime/framework-tools/subagent/local.js";
+import { remoteSubagentWorkflowTool } from "#runtime/framework-tools/subagent/remote.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
+import { isBrandedToolEntry } from "#shared/dynamic-tool-definition.js";
 
 describe("local subagent workflow tool", () => {
   it("is compiled independently from the remote subagent workflow", () => {
+    expect(isBrandedToolEntry(localSubagentWorkflowTool)).toBe(true);
+    expect(isBrandedToolEntry(remoteSubagentWorkflowTool)).toBe(true);
     expect(readWorkflowId(localSubagentWorkflowTool.execute)).not.toBe(
       readWorkflowId(remoteSubagentWorkflowTool.execute),
     );
@@ -65,7 +68,6 @@ describe("local subagent workflow tool", () => {
           },
           sessionState: createDurableSessionState({ session }),
         },
-        tool: localSubagentWorkflowTool,
       });
       const result = dispatched.result.results[0];
       const pendingTask = dispatched.result.pendingTasks[0];

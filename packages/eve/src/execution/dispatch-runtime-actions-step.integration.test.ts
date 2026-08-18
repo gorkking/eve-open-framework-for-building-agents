@@ -147,8 +147,6 @@ vi.mock("#execution/remote-agent-dispatch.js", async (importOriginal) => ({
 }));
 
 const ADAPTER: ChannelAdapter = { kind: "channel:test" };
-const LOCAL_WORKFLOW_TOOL = {};
-const REMOTE_WORKFLOW_TOOL = {};
 const BASE_STATE: DurableSessionState = {
   continuationToken: "parent-token",
   emissionState: { sequence: 0, sessionStarted: false, stepIndex: 0, turnId: "" },
@@ -350,7 +348,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
       }),
     ]);
     expect(dispatchLocalSubagentWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: LOCAL_WORKFLOW_TOOL }),
+      expect.not.objectContaining({ tool: expect.anything() }),
     );
   });
 
@@ -395,7 +393,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
       phase: "addressed",
     });
     expect(dispatchRemoteSubagentWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: REMOTE_WORKFLOW_TOOL }),
+      expect.not.objectContaining({ tool: expect.anything() }),
     );
   });
 
@@ -1169,7 +1167,6 @@ function installContext(
     resolvedAgent: { config: tasks ? { experimental: { tasks: true } } : {} },
     subagentRegistry: {
       subagentsByNodeId,
-      taskTools: tasks ? { local: LOCAL_WORKFLOW_TOOL, remote: REMOTE_WORKFLOW_TOOL } : undefined,
     },
     turnAgent: {
       id: "test-agent",
