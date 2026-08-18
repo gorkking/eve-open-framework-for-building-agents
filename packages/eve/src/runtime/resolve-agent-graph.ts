@@ -222,9 +222,8 @@ async function resolveRuntimeAgentNode(
     workspaceResourceRoot: agent.workspaceResourceRoot,
   });
   const subagentRegistry = createRuntimeSubagentRegistry({
-    persistentSessions:
-      agent.config?.experimental?.tasks === true ||
-      agent.config?.experimental?.subagentPersistentSessions === true,
+    persistentSessions: agent.config?.experimental?.subagentPersistentSessions === true,
+    tasks: agent.config?.experimental?.tasks === true,
     reservedToolNames: [
       LOAD_SKILL_TOOL_NAME,
       ...toolRegistry.preparedTools.map((tool) => tool.name),

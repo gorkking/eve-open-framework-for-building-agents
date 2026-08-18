@@ -38,7 +38,7 @@ export interface SessionTaskIndexEntry {
 
 const taskMetadataSchema: z.ZodType<TaskMetadata> = z.strictObject({
   agentId: z.string().min(1),
-  kind: z.literal("subagent"),
+  kind: z.enum(["subagent", "tool"]),
   mode: z.enum(["local", "remote"]),
   name: z.string().min(1),
 });

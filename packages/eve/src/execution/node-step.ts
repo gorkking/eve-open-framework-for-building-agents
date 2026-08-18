@@ -33,6 +33,7 @@ import type { PreparedRuntimeTool } from "#runtime/sessions/turn.js";
 import {
   PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA,
   SUBAGENT_TOOL_INPUT_SCHEMA,
+  TASK_SUBAGENT_TOOL_INPUT_SCHEMA,
 } from "#runtime/subagents/registry.js";
 import { findRegisteredRuntimeTool } from "#runtime/tools/registry.js";
 import type { ResolvedToolDefinition } from "#runtime/types.js";
@@ -215,10 +216,11 @@ export function createNodeHarnessTools(input: {
     tools.set(AGENT_TOOL_NAME, {
       description: AGENT_TOOL_DESCRIPTION,
       inputSchema:
-        input.node.agent.config?.experimental?.tasks === true ||
-        input.node.agent.config?.experimental?.subagentPersistentSessions === true
-          ? PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA
-          : SUBAGENT_TOOL_INPUT_SCHEMA,
+        input.node.agent.config?.experimental?.tasks === true
+          ? TASK_SUBAGENT_TOOL_INPUT_SCHEMA
+          : input.node.agent.config?.experimental?.subagentPersistentSessions === true
+            ? PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA
+            : SUBAGENT_TOOL_INPUT_SCHEMA,
       name: AGENT_TOOL_NAME,
       runtimeAction: {
         kind: "subagent-call",

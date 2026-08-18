@@ -67,17 +67,51 @@ export const PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA = SUBAGENT_TOOL_INPUT_SCHEMA.
     .optional(),
 });
 
+/**
+ * Extended subagent tool input schema for agents that opt into
+ * `experimental.tasks`: adds the per-call `background` launch mode on top of
+ * the persistent-session continuation field.
+ */
+export const TASK_SUBAGENT_TOOL_INPUT_SCHEMA = PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.extend({
+  background: z
+    .boolean()
+    .describe(
+      "Pass true to launch this delegation as a background task: the call returns a {taskId, status} receipt immediately instead of waiting for the result. Omit (or pass false) to wait for the subagent's result — the common case.",
+    )
+    .optional(),
+});
+
 const SUBAGENT_TOOL_INPUT_JSON_SCHEMA = serializeInputSchema(SUBAGENT_TOOL_INPUT_SCHEMA);
 
 const PERSISTENT_SUBAGENT_TOOL_INPUT_JSON_SCHEMA = serializeInputSchema(
   PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA,
 );
 
+const TASK_SUBAGENT_TOOL_INPUT_JSON_SCHEMA = serializeInputSchema(TASK_SUBAGENT_TOOL_INPUT_SCHEMA);
+
+/** Which subagent tool input schema an agent's opt-in state selects. */
+export type SubagentToolSchemaVariant = "plain" | "persistent" | "tasks";
+
+export function resolveSubagentToolSchemaVariant(input: {
+  readonly persistentSessions?: boolean;
+  readonly tasks?: boolean;
+}): SubagentToolSchemaVariant {
+  if (input.tasks === true) {
+    return "tasks";
+  }
+  return input.persistentSessions === true ? "persistent" : "plain";
+}
+
 /** Selects the serialized subagent tool input schema for one agent's opt-in state. */
-export function getSubagentToolInputJsonSchema(persistentSessions: boolean): JsonObject {
-  return persistentSessions
-    ? PERSISTENT_SUBAGENT_TOOL_INPUT_JSON_SCHEMA
-    : SUBAGENT_TOOL_INPUT_JSON_SCHEMA;
+export function getSubagentToolInputJsonSchema(variant: SubagentToolSchemaVariant): JsonObject {
+  switch (variant) {
+    case "tasks":
+      return TASK_SUBAGENT_TOOL_INPUT_JSON_SCHEMA;
+    case "persistent":
+      return PERSISTENT_SUBAGENT_TOOL_INPUT_JSON_SCHEMA;
+    case "plain":
+      return SUBAGENT_TOOL_INPUT_JSON_SCHEMA;
+  }
 }
 
 /**
@@ -93,8 +127,14 @@ export function createRuntimeSubagentRegistry(input: {
   readonly persistentSessions?: boolean;
   readonly reservedToolNames?: readonly string[];
   readonly subagents: readonly ResolvedRuntimeDelegationNode[];
+  /**
+   * Whether the owning agent opted into `experimental.tasks`. Adds the
+   * model-visible per-call `background` launch mode (and implies the
+   * persistent `agentId` field) on every lowered subagent tool schema.
+   */
+  readonly tasks?: boolean;
 }): RuntimeSubagentRegistry {
-  const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions === true);
+  const inputSchema = getSubagentToolInputJsonSchema(resolveSubagentToolSchemaVariant(input));
   const preparedTools: PreparedRuntimeDelegationTool[] = [];
   const dynamicNodeIds = new Set<string>();
   const dynamicResolvers: ResolvedDynamicSubagentResolver[] = [];

@@ -4,7 +4,7 @@ import {
 } from "#execution/tasks/parent/subagent/local.js";
 import type { ToolDefinition } from "#public/definitions/tool.js";
 import { defineTool } from "#public/definitions/tool.js";
-import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
+import { TASK_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 
 export type LocalSubagentWorkflowTool = ToolDefinition<
   LocalSubagentWorkflowInput,
@@ -17,5 +17,5 @@ export const localSubagentWorkflowTool: LocalSubagentWorkflowTool = defineTool({
   description: "Dispatch a local subagent as a durable background task.",
   execute: executeLocalSubagentWorkflow as LocalSubagentWorkflowTool["execute"] &
     typeof executeLocalSubagentWorkflow,
-  inputSchema: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA,
+  inputSchema: TASK_SUBAGENT_TOOL_INPUT_SCHEMA,
 });

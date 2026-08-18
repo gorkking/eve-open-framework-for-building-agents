@@ -28,11 +28,11 @@ import {
 import type { LocalSubagentWorkflowEntry } from "#execution/tasks/parent/subagent/local.js";
 import type { RemoteSubagentWorkflowEntry } from "#execution/tasks/parent/subagent/remote.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
-import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
+import { TASK_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 import { z } from "#compiled/zod/index.js";
 
 type SubagentWorkflowEntry = LocalSubagentWorkflowEntry | RemoteSubagentWorkflowEntry;
-type SubagentWorkflowInput = z.infer<typeof PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA>;
+type SubagentWorkflowInput = z.infer<typeof TASK_SUBAGENT_TOOL_INPUT_SCHEMA>;
 
 /**
  * Re-enters the shared task lifecycle after a local or remote Workflow

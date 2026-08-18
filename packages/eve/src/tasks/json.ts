@@ -6,7 +6,7 @@ import type { TaskView } from "#tasks/types.js";
 
 const taskMetadataJsonSchema = z.object({
   agentId: z.string(),
-  kind: z.literal("subagent"),
+  kind: z.enum(["subagent", "tool"]),
   mode: z.enum(["local", "remote"]),
   name: z.string(),
 });

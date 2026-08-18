@@ -101,7 +101,7 @@ vi.mock("#execution/tasks/parent/subagent/remote.js", async () => {
 });
 
 vi.mock("#execution/tasks/parent/subagent/dispatch.js", async () => {
-  const [{ dispatchSubagentWorkflowToolStep }, { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA }] =
+  const [{ dispatchSubagentWorkflowToolStep }, { TASK_SUBAGENT_TOOL_INPUT_SCHEMA }] =
     await Promise.all([
       import("#execution/tasks/parent/subagent/dispatch-step.js"),
       import("#runtime/subagents/registry.js"),
@@ -115,7 +115,7 @@ vi.mock("#execution/tasks/parent/subagent/dispatch.js", async () => {
           entry,
           fanoutSize,
           runtimeInput,
-          toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+          toolInput: TASK_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
           transport: "local",
         }),
         workflowRunId: "local-workflow-tool-test-run",
@@ -128,7 +128,7 @@ vi.mock("#execution/tasks/parent/subagent/dispatch.js", async () => {
           entry,
           fanoutSize,
           runtimeInput,
-          toolInput: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+          toolInput: TASK_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
           transport: "remote",
         }),
         workflowRunId: "remote-workflow-tool-test-run",
@@ -429,7 +429,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("records a tasks-mode child as an address and derives task identity separately", async () => {
-    const session = createStartSession({ kind: "local" });
+    const session = createStartSession({ background: true, kind: "local" });
     installContext(
       session,
       { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
@@ -483,7 +483,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("routes a tasks-mode remote child through the remote Workflow definition", async () => {
-    const session = createStartSession({ kind: "remote" });
+    const session = createStartSession({ background: true, kind: "remote" });
     installContext(
       session,
       { definition: REMOTE_REGISTRY_DEFINITION, nodeId: "remote/research" },
@@ -527,8 +527,98 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     );
   });
 
-  it("silently rejects a tasks-mode start that failed before index admission", async () => {
+  it("dispatches a tasks-mode start without background on the foreground wire", async () => {
     const session = createStartSession({ kind: "local" });
+    installContext(
+      session,
+      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
+      true,
+    );
+
+    const result = await dispatchTaskStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const state = readResultSessionState(result, session);
+
+    // Foreground: no receipt, no task record; the child reports back to the
+    // turn inbox and the pending key resolves from the parent's wait loop.
+    expect(result.results).toEqual([]);
+    expect(result.pendingTasks).toEqual([]);
+    expect(getSessionTaskIndex(state)).toEqual([]);
+    expect(dispatchLocalSubagentWorkflow).not.toHaveBeenCalled();
+    expect(mocks.createSession).toHaveBeenCalledTimes(1);
+    expect(getAgentHandleStore(state)?.handles[0]).toMatchObject({ phase: "running" });
+  });
+
+  it("splits a mixed batch: foreground start parks while background start settles", async () => {
+    const session = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-1",
+          description: "Research",
+          input: { message: "research this now" },
+          kind: "subagent-call",
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+        {
+          callId: "call-2",
+          description: "Research",
+          input: { background: true, message: "research this later" },
+          kind: "subagent-call",
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+      ],
+      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+      responseMessages: [],
+      session: createBaseSession(),
+    });
+    installContext(
+      session,
+      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
+      true,
+    );
+    // The foreground entry commits its handle into the threaded snapshot the
+    // background entry must observe.
+    mocks.readDurableSession.mockImplementation(
+      async (state: DurableSessionState) => state.snapshot?.session ?? session,
+    );
+    mocks.createSession
+      .mockResolvedValueOnce({ sessionId: CHILD_SESSION_ID })
+      .mockResolvedValueOnce({ sessionId: "child-session-234567890123" });
+    vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({
+      runId: "task-run-1",
+    });
+
+    const result = await dispatchTaskStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const state = readResultSessionState(result, session);
+
+    // Exactly the background call settles at dispatch: its receipt seeds the
+    // wait loop's initial results while the foreground key stays pending.
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      backgroundTask: { status: "working" },
+      output: { status: "working" },
+    });
+    expect(result.pendingTasks).toHaveLength(1);
+    expect(getSessionTaskIndex(state)).toHaveLength(1);
+    const phases = (getAgentHandleStore(state)?.handles ?? []).map((handle) => handle.phase);
+    expect(phases.toSorted()).toEqual(["addressed", "running"]);
+  });
+
+  it("silently rejects a tasks-mode start that failed before index admission", async () => {
+    const session = createStartSession({ background: true, kind: "local" });
     installContext(
       session,
       { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
@@ -1226,6 +1316,7 @@ function createBaseSession(handle?: AgentHandle): HarnessSession {
 }
 
 function createStartSession(input: {
+  readonly background?: boolean;
   readonly event?: {
     readonly sequence: number;
     readonly stepIndex: number;
@@ -1233,13 +1324,17 @@ function createStartSession(input: {
   };
   readonly kind: "local" | "remote";
 }): HarnessSession {
+  const actionInput: Record<string, string | boolean> = { message: "research this" };
+  if (input.background !== undefined) {
+    actionInput.background = input.background;
+  }
   return setPendingRuntimeActionBatch({
     actions: [
       input.kind === "local"
         ? {
             callId: "call-1",
             description: "Research",
-            input: { message: "research this" },
+            input: actionInput,
             kind: "subagent-call",
             name: "research",
             nodeId: "subagents/research",
@@ -1248,7 +1343,7 @@ function createStartSession(input: {
         : {
             callId: "call-1",
             description: "Research",
-            input: { message: "research this" },
+            input: actionInput,
             kind: "remote-agent-call",
             name: "research",
             nodeId: "remote/research",

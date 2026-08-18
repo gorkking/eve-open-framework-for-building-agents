@@ -15,6 +15,8 @@ export async function readTaskAgentViews(session: HarnessSession): Promise<reado
   const views = await readTaskViews(entries);
   const byAgent = new Map<string, typeof views>();
   for (const view of views) {
+    // Tool tasks have no agent session and never masquerade as agents.
+    if (view.metadata.kind !== "subagent") continue;
     const current = byAgent.get(view.metadata.agentId) ?? [];
     byAgent.set(view.metadata.agentId, [...current, view]);
   }

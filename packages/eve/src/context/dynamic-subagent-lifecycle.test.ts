@@ -22,7 +22,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
 
@@ -42,7 +42,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
 
@@ -77,7 +77,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
     expect(buildDynamicSubagentTools(ctx)).toHaveLength(1);
@@ -86,7 +86,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
     expect(buildDynamicSubagentTools(ctx)).toEqual([]);
@@ -120,7 +120,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
     const sessionSelection = getDynamicSubagentSelection(ctx, resolver.nodeId);
@@ -133,7 +133,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
     const turnSelection = getDynamicSubagentSelection(ctx, resolver.nodeId);
@@ -175,7 +175,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: true,
+      schemaVariant: "persistent",
       resolvers: [resolver],
     });
 
@@ -221,7 +221,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
     });
 
@@ -241,7 +241,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
       runtimeRevision: "deployment:one",
     });
@@ -249,7 +249,7 @@ describe("dynamic subagent lifecycle", () => {
       ctx,
       event: createSessionStartedEvent(),
       messages: [],
-      persistentSessions: false,
+      schemaVariant: "plain",
       resolvers: [resolver],
       runtimeRevision: "deployment:one",
     });

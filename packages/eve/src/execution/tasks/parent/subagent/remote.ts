@@ -7,7 +7,7 @@ import type {
 } from "#execution/dispatch-runtime-actions-shared.js";
 import { dispatchSubagentWorkflowToolStep } from "#execution/tasks/parent/subagent/dispatch-step.js";
 import type { RuntimeRemoteAgentCallActionRequest } from "#runtime/actions/types.js";
-import type { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
+import type { TASK_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 
 type ResumeEntry = Extract<DispatchPlanEntry, { readonly kind: "resume" }>;
 type StartEntry = Extract<DispatchPlanEntry, { readonly kind: "start" }>;
@@ -20,7 +20,7 @@ export type RemoteSubagentWorkflowEntry =
       readonly target: Extract<DispatchStartTarget, { readonly kind: "remote" }>;
     });
 
-export type RemoteSubagentWorkflowInput = z.infer<typeof PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA>;
+export type RemoteSubagentWorkflowInput = z.infer<typeof TASK_SUBAGENT_TOOL_INPUT_SCHEMA>;
 
 export interface RemoteSubagentWorkflowContext {
   readonly entry: RemoteSubagentWorkflowEntry;

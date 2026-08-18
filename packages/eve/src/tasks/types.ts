@@ -29,9 +29,13 @@ export type TaskStatus = "working" | "input_required" | "completed" | "failed" |
  * the dispatch side effect runs.
  */
 export interface TaskMetadata {
-  /** Stable model-visible identity of the persistent child session. */
+  /**
+   * Stable model-visible identity of the persistent child session. Tool
+   * tasks have no child session; they carry their operation id so index
+   * grouping stays collision-free.
+   */
   readonly agentId: string;
-  readonly kind: "subagent";
+  readonly kind: "subagent" | "tool";
   readonly mode: "local" | "remote";
   /** Authored subagent name the parent dispatched. */
   readonly name: string;

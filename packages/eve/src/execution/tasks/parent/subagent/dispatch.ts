@@ -15,7 +15,7 @@ import {
 import { start, type WorkflowMetadata } from "#internal/workflow/runtime.js";
 import { localSubagentWorkflowTool } from "#runtime/framework-tools/subagent/local.js";
 import { remoteSubagentWorkflowTool } from "#runtime/framework-tools/subagent/remote.js";
-import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
+import { TASK_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 
 export interface SubagentWorkflowDispatch {
   readonly result: RuntimeActionDispatchResult;
@@ -33,7 +33,7 @@ export async function dispatchLocalSubagentWorkflow(input: {
     [LocalSubagentWorkflowInput, LocalSubagentWorkflowContext],
     RuntimeActionDispatchResult
   >(readWorkflowMetadata(localSubagentWorkflowTool.execute, "Local"), [
-    PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+    TASK_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
     {
       entry: input.entry,
       fanoutSize: input.fanoutSize,
@@ -55,7 +55,7 @@ export async function dispatchRemoteSubagentWorkflow(input: {
     [RemoteSubagentWorkflowInput, RemoteSubagentWorkflowContext],
     RuntimeActionDispatchResult
   >(readWorkflowMetadata(remoteSubagentWorkflowTool.execute, "Remote"), [
-    PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
+    TASK_SUBAGENT_TOOL_INPUT_SCHEMA.parse(action.input),
     {
       entry: input.entry,
       fanoutSize: input.fanoutSize,

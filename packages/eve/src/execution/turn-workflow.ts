@@ -12,6 +12,8 @@ import { sendTurnControlStep, type TurnInboxPayload } from "#execution/turn-cont
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
+import type { PendingTaskJoin } from "#execution/tasks/parent/dispatch.js";
+import { pollJoinedTasksStep } from "#execution/tasks/parent/join-poll-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import {
   migrateTurnWorkflowInput,
@@ -199,6 +201,7 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
           iterator,
           nextDeliveryRequestId,
           pendingActionKeys,
+          pendingJoins: dispatchResult.pendingJoins,
         });
         if (results === "cancelled") {
           // The next turnStep observes the aborted signal and settles
@@ -279,6 +282,25 @@ async function waitForTurnSleep(
   return cancellation === undefined ? slept : Promise.race([slept, cancellation.requested]);
 }
 
+/** Poll cadence for pending `task_join` calls; each tick is a durable step. */
+const JOIN_POLL_INTERVAL_MS = 2_000;
+
+/**
+ * Every answer to a pending call enters the wait through here, whether a
+ * child reported it over the inbox or the framework wrote it itself
+ * (today: `task_join` results built from task views; a future mid-flight
+ * detach would write a working-task receipt for a pending call the same
+ * way).
+ */
+function acceptResult(
+  results: RuntimeActionResult[],
+  acceptedAtMsByKey: Map<string, number>,
+  result: RuntimeActionResult,
+): void {
+  results.push(result);
+  acceptedAtMsByKey.set(getRuntimeActionResultKey(result), Date.now());
+}
+
 // These sentinels stay outside `RuntimeActionResult`. That union is the
 // schema-validated wire type projected into harness resume calls; these are
 // turn-workflow control outcomes that never leave the workflow.
@@ -297,8 +319,11 @@ async function waitForRuntimeActionResults(input: {
   readonly iterator: AsyncIterator<TurnInboxPayload>;
   readonly nextDeliveryRequestId: () => string;
   readonly pendingActionKeys: readonly string[];
+  readonly pendingJoins?: readonly PendingTaskJoin[];
 }): Promise<AcceptedRuntimeActionBatch | "cancelled" | "cancel-turn"> {
   let pendingDeliveryRequest: string | undefined;
+  let pendingInboxRead: Promise<IteratorResult<TurnInboxPayload>> | undefined;
+  const pendingJoins = input.pendingJoins ?? [];
   const results: RuntimeActionResult[] = [...input.initialResults];
   const acceptedAtMsByKey = new Map<string, number>();
   if (input.initialAcceptedAtMs !== undefined) {
@@ -342,14 +367,34 @@ async function waitForRuntimeActionResults(input: {
       });
     }
 
-    const nextPromise = input.iterator.next();
+    // Reused across poll ticks so at most one inbox read is outstanding.
+    const nextPromise = pendingInboxRead ?? input.iterator.next();
+    pendingInboxRead = nextPromise;
     // When a cancel wins the race, the dangling inbox `next()` is dropped
     // by disposal in teardown; pre-attach a handler so a late rejection
     // never surfaces as unhandled.
     nextPromise.catch(() => {});
-    const next = await (input.cancellation === undefined
-      ? nextPromise
-      : Promise.race([nextPromise, input.cancellation.requested]));
+    const settledKeys = new Set(results.map(getRuntimeActionResultKey));
+    const unresolvedJoins = pendingJoins.filter((join) => !settledKeys.has(join.resultKey));
+    const races: Promise<IteratorResult<TurnInboxPayload> | "cancel" | "join-poll">[] = [
+      nextPromise,
+    ];
+    if (input.cancellation !== undefined) races.push(input.cancellation.requested);
+    if (unresolvedJoins.length > 0) {
+      races.push(workflowSleep(JOIN_POLL_INTERVAL_MS).then(() => "join-poll" as const));
+    }
+    const next = races.length === 1 ? await nextPromise : await Promise.race(races);
+    if (next === "join-poll") {
+      const settled = await pollJoinedTasksStep({
+        joins: unresolvedJoins,
+        sessionState: input.cursor.sessionState,
+      });
+      for (const result of settled) {
+        acceptResult(results, acceptedAtMsByKey, result);
+      }
+      continue;
+    }
+    pendingInboxRead = undefined;
     if (next === "cancel") {
       if (pendingDeliveryRequest !== undefined) {
         // Release the raced public input back to the driver so it stays
@@ -377,12 +422,8 @@ async function waitForRuntimeActionResults(input: {
       const accepted = value.results.filter((result) =>
         isInboxSubagentResultFromRunningHandle(sessionSnapshotState, result),
       );
-      if (accepted.length > 0) {
-        const acceptedAtMs = Date.now();
-        results.push(...accepted);
-        for (const result of accepted) {
-          acceptedAtMsByKey.set(getRuntimeActionResultKey(result), acceptedAtMs);
-        }
+      for (const result of accepted) {
+        acceptResult(results, acceptedAtMsByKey, result);
       }
       continue;
     }

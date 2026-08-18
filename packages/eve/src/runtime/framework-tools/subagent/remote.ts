@@ -4,7 +4,7 @@ import {
 } from "#execution/tasks/parent/subagent/remote.js";
 import type { ToolDefinition } from "#public/definitions/tool.js";
 import { defineTool } from "#public/definitions/tool.js";
-import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
+import { TASK_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/registry.js";
 
 export type RemoteSubagentWorkflowTool = ToolDefinition<
   RemoteSubagentWorkflowInput,
@@ -17,5 +17,5 @@ export const remoteSubagentWorkflowTool: RemoteSubagentWorkflowTool = defineTool
   description: "Dispatch a remote subagent as a durable background task.",
   execute: executeRemoteSubagentWorkflow as RemoteSubagentWorkflowTool["execute"] &
     typeof executeRemoteSubagentWorkflow,
-  inputSchema: PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA,
+  inputSchema: TASK_SUBAGENT_TOOL_INPUT_SCHEMA,
 });

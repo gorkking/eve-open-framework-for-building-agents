@@ -18,6 +18,7 @@ import type { DelegatedTask } from "#execution/tasks/parent/delegate.js";
 import { sendTaskCommand } from "#execution/tasks/parent/run-parent.js";
 import { requestWorkflowTurnCancellation } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
+import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import type {
   RuntimeActionRequest,
   RuntimeActionResult,
@@ -27,16 +28,33 @@ import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import {
   TASK_CANCEL_TOOL_NAME,
   TASK_CONTROL_TOOL_NAMES,
+  TASK_JOIN_TOOL_NAME,
   TASK_PEEK_TOOL_NAME,
   TASK_UPDATE_TOOL_NAME,
 } from "#runtime/framework-tools/tasks.js";
 import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
-import { isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
+import { isReadyTaskStatus, isTerminalTaskStatus, type TaskView } from "#tasks/types.js";
 
 const log = createLogger("execution.tasks.dispatch");
 
 const CANCEL_COMMIT_POLL_ATTEMPTS = 10;
 const CANCEL_COMMIT_POLL_DELAY_MS = 250;
+
+/**
+ * One `task_join` call whose task was not ready at dispatch. The
+ * originating call's key stays unresolved; the turn workflow's wait loop
+ * polls the task and settles the key with a synthesized result once the
+ * task becomes ready.
+ */
+export interface PendingTaskJoin {
+  readonly callId: string;
+  /** The pending call's runtime-action key, precomputed so the turn
+   * workflow can match synthesized results without importing tool names
+   * (framework-tool modules must stay out of the workflow body bundle). */
+  readonly resultKey: string;
+  readonly taskId: string;
+  readonly taskRunId: string;
+}
 
 /** True for task-control calls dispatched outside the model loop. */
 export function isTaskControlAction(
@@ -61,9 +79,10 @@ export async function executeTaskControlAction(input: {
   readonly serializedContext?: Record<string, unknown>;
   readonly session: RuntimeSession;
 }): Promise<{
-  readonly result: RuntimeActionResult;
+  readonly result?: RuntimeActionResult;
   readonly session: RuntimeSession;
   readonly pendingTask?: DelegatedTask;
+  readonly pendingJoin?: PendingTaskJoin;
 }> {
   const { action, session } = input;
 
@@ -78,6 +97,10 @@ export async function executeTaskControlAction(input: {
       }),
       session,
     };
+  }
+
+  if (action.toolName === TASK_JOIN_TOOL_NAME) {
+    return executeTaskJoin({ action, session });
   }
 
   const taskIds = readTaskIds(action.input);
@@ -219,6 +242,51 @@ async function propagateTaskCancel(input: {
       taskId: input.view.taskId,
     });
   }
+}
+
+/**
+ * The `task_join` front half: settle immediately when the task is already
+ * ready (terminal or input_required — a terminal-only join would deadlock
+ * against a task parked on human input), otherwise leave the call pending
+ * for the turn workflow's poll loop.
+ */
+async function executeTaskJoin(input: {
+  readonly action: RuntimeToolCallActionRequest;
+  readonly session: RuntimeSession;
+}): Promise<{
+  readonly result?: RuntimeActionResult;
+  readonly session: RuntimeSession;
+  readonly pendingJoin?: PendingTaskJoin;
+}> {
+  const { action, session } = input;
+  const rawTaskId = action.input.taskId;
+  const taskId = typeof rawTaskId === "string" && rawTaskId.trim() !== "" ? rawTaskId : undefined;
+  if (taskId === undefined) {
+    return { result: createTaskControlError(action, "Provide a non-empty `taskId`."), session };
+  }
+
+  const lookup = lookupTaskEntries(session, [taskId]);
+  if (lookup.kind === "unknown") {
+    return { result: createUnknownTasksError(action, lookup.unknown), session };
+  }
+  const entry = lookup.entries[0];
+  if (entry === undefined) {
+    return { result: createUnknownTasksError(action, [taskId]), session };
+  }
+
+  const view = await readTaskView(entry);
+  if (isReadyTaskStatus(view.status)) {
+    return { result: createTaskViewsResult(action, [view]), session };
+  }
+  return {
+    pendingJoin: {
+      callId: action.callId,
+      resultKey: getRuntimeActionRequestKey(action),
+      taskId: entry.taskId,
+      taskRunId: entry.taskRunId,
+    },
+    session,
+  };
 }
 
 function readTaskIds(input: Record<string, unknown>): readonly string[] | undefined {
