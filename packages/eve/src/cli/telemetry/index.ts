@@ -13,7 +13,7 @@ export type EveCliTelemetryEvent = {
 
 export type EveCliTelemetry = {
   trackCommand(command: string): void;
-  trackDevContext(argv: readonly string[]): void;
+  trackDevContext(context: { target: "local" | "remote"; ui: "tui" | "headless" }): void;
   trackOutcome(outcome: "success" | "usage_error" | "error"): void;
   notify(logger: { error(message: string): void }): Promise<void>;
   flush(): Promise<void>;
@@ -29,22 +29,6 @@ async function isEnabled(): Promise<boolean> {
 
 function event(key: string, value: string): EveCliTelemetryEvent {
   return { id: randomUUID(), event_time: Date.now(), key, value };
-}
-
-function devContext(argv: readonly string[]): Array<[string, string]> {
-  if (canonicalCommand(argv) !== "dev") return [];
-  const remote = argv.some(
-    (argument) =>
-      argument === "--url" ||
-      argument.startsWith("--url=") ||
-      argument === "-u" ||
-      /^https?:\/\//.test(argument),
-  );
-  const headless = argv.includes("--no-ui") || !process.stdin.isTTY || !process.stdout.isTTY;
-  return [
-    ["target", remote ? "remote" : "local"],
-    ["ui", headless ? "headless" : "tui"],
-  ];
 }
 
 /** Returns only an allowlisted command path; it never includes user input. */
@@ -104,8 +88,8 @@ export function createEveCliTelemetry(version: string): EveCliTelemetry {
     trackCommand(command) {
       events.push(event("command", command));
     },
-    trackDevContext(argv) {
-      for (const [key, value] of devContext(argv)) events.push(event(key, value));
+    trackDevContext(context) {
+      events.push(event("target", context.target), event("ui", context.ui));
     },
     trackOutcome(outcome) {
       events.push(event("outcome", outcome));

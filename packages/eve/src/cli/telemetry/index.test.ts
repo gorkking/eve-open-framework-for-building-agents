@@ -76,6 +76,26 @@ describe("createEveCliTelemetry", () => {
     expect(markEveTelemetryNotified).toHaveBeenCalled();
   });
 
+  it("records resolved dev context without inspecting command arguments", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("EVE_TELEMETRY_DEBUG", "1");
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const telemetry = createEveCliTelemetry("1.0.0");
+    telemetry.trackCommand("dev");
+    telemetry.trackDevContext({ target: "remote", ui: "headless" });
+
+    await telemetry.flush();
+
+    const events = JSON.parse(
+      String(write.mock.calls[0]?.[0]).replace("[eve telemetry] ", ""),
+    ) as Array<{
+      key: string;
+      value: string;
+    }>;
+    expect(events).toContainEqual(expect.objectContaining({ key: "target", value: "remote" }));
+    expect(events).toContainEqual(expect.objectContaining({ key: "ui", value: "headless" }));
+  });
+
   it("flushes an allowlisted outcome through a telemetry-disabled child process", async () => {
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     vi.mocked(spawn).mockReturnValue(child as never);

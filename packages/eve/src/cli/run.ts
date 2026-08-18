@@ -1,6 +1,7 @@
 import { Command, CommanderError, InvalidArgumentError } from "#compiled/commander/index.js";
 import { registerBuildCommand, type BuildHost } from "#cli/commands/build.js";
 import { devBootPhase, type DevBootProgressReporter } from "#internal/dev-boot-progress.js";
+import { createDevBootProgressReporter } from "#cli/dev/boot-progress.js";
 import { resolveApplicationRoot } from "#internal/application/paths.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { isCodingAgentLaunch } from "#cli/agent-detection.js";
@@ -48,14 +49,12 @@ import {
 import { parseDevelopmentServerUrl } from "#cli/dev/url.js";
 import { startCliLiveRow } from "#cli/ui/live-row.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
-import { createLogger } from "#internal/logging.js";
+import { registerEveTelemetryCommands } from "#cli/telemetry/command.js";
 import {
-  disableEveTelemetry,
-  enableEveTelemetry,
-  showEveTelemetryStatus,
-} from "#cli/telemetry/command.js";
-import { flushEveCliTelemetry } from "#cli/telemetry/flush.js";
-import { canonicalCommand, createEveCliTelemetry } from "#cli/telemetry/index.js";
+  canonicalCommand,
+  createEveCliTelemetry,
+  type EveCliTelemetry,
+} from "#cli/telemetry/index.js";
 import type {
   DevelopmentServer,
   DevelopmentServerOptions,
@@ -105,31 +104,6 @@ interface CliRuntimeDependencies {
 
 type CliRuntimeOverrides = Partial<CliRuntimeDependencies>;
 
-const devBootLog = createLogger("dev.boot");
-
-function createDevBootProgressReporter(
-  row: ReturnType<typeof startCliLiveRow> | undefined,
-): DevBootProgressReporter {
-  return (event) => {
-    switch (event.type) {
-      case "phase-started":
-        row?.update("Building your agent", event.phase);
-        devBootLog.debug(event.phase);
-        return;
-      case "phase-finished":
-        devBootLog.debug(`${event.phase} finished`, { ms: event.elapsedMs });
-        return;
-      case "before-first-paint":
-        row?.stop();
-        return;
-      default: {
-        const exhaustive: never = event;
-        return exhaustive;
-      }
-    }
-  };
-}
-
 async function loadPrintApplicationInfo(): Promise<CliRuntimeDependencies["printApplicationInfo"]> {
   return (await import("#cli/commands/info.js")).printApplicationInfo;
 }
@@ -161,6 +135,7 @@ function createCliProgram(
   logger: CliLogger,
   runtime: CliRuntimeOverrides,
   applicationContext: CliApplicationContext,
+  telemetry: Pick<EveCliTelemetry, "trackDevContext">,
 ): Command {
   const packageVersion = resolveInstalledPackageInfo().version;
   const program = new Command();
@@ -186,30 +161,7 @@ function createCliProgram(
       },
     });
 
-  const telemetry = program
-    .command("telemetry")
-    .description("Enable or disable anonymous CLI telemetry collection.");
-  telemetry
-    .command("status")
-    .description("Show whether telemetry collection is enabled.")
-    .action(async () => {
-      await showEveTelemetryStatus(logger);
-    });
-  telemetry
-    .command("enable")
-    .description("Enable telemetry collection.")
-    .action(async () => {
-      await enableEveTelemetry(logger);
-    });
-  telemetry
-    .command("disable")
-    .description("Disable telemetry collection.")
-    .action(async () => {
-      await disableEveTelemetry(logger);
-    });
-  telemetry.command("flush <payload>", { hidden: true }).action(async (payload: string) => {
-    await flushEveCliTelemetry(payload);
-  });
+  registerEveTelemetryCommands(program, logger);
 
   applicationCommand(
     program
@@ -418,6 +370,7 @@ function createCliProgram(
       const remoteServerUrl = remoteTarget?.serverUrl;
       const interactive = hasInteractiveTerminal();
       const mode = resolveDevUiMode({ options, interactive });
+      telemetry.trackDevContext({ target: remoteTarget ? "remote" : "local", ui: mode });
       if (options.input !== undefined && mode === "headless") {
         throw new InvalidArgumentError("--input requires the interactive UI.");
       }
@@ -688,7 +641,8 @@ export async function runCli(
       applicationContext.root = project.appRoot;
     },
   };
-  const program = createCliProgram(logger, runtime, applicationContext);
+  const telemetry = createEveCliTelemetry(resolveInstalledPackageInfo().version);
+  const program = createCliProgram(logger, runtime, applicationContext, telemetry);
   let input = argv;
   if (input.length === 0) {
     const findApplicationRoot = runtime.findApplicationRoot ?? findCliApplicationRoot;
@@ -700,10 +654,8 @@ export async function runCli(
       input = ["dev"];
     }
   }
-  const telemetry = createEveCliTelemetry(resolveInstalledPackageInfo().version);
   const command = canonicalCommand(input);
   telemetry.trackCommand(command);
-  telemetry.trackDevContext(input);
   if (command !== "telemetry") await telemetry.notify(logger);
 
   try {
