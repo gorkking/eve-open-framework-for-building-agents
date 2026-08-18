@@ -15,14 +15,11 @@
  * each dispatch in the delegated-task lifecycle.
  */
 
-import { type DispatchOutcome, dispatchToAgentHandle } from "#execution/agent-handle-dispatch.js";
-import { createAgentContinuationBundle } from "#execution/agent-continuation-bundle.js";
+import { dispatchForegroundEntry } from "#execution/dispatch-foreground-entry.js";
 import {
-  emitSubagentCalled,
   prepareRuntimeActionDispatch,
   type RuntimeActionDispatchInput,
   type RuntimeActionDispatchResult,
-  startSubagent,
 } from "#execution/dispatch-runtime-actions-shared.js";
 import { createDurableSessionState } from "#execution/durable-session-store.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
@@ -41,7 +38,7 @@ export async function dispatchRuntimeActionsStep(
     return { results: [], sessionState: input.sessionState, pendingTasks: [] };
   }
 
-  const { batch, bundle, session } = prepared;
+  const { bundle, session } = prepared;
   const persistentSessions =
     bundle.resolvedAgent.config?.experimental?.subagentPersistentSessions === true;
   // Acquired only once preflight can no longer throw, so a planning failure
@@ -62,60 +59,19 @@ export async function dispatchRuntimeActionsStep(
         throw new Error("Task-control actions require the task dispatch step.");
       }
 
-      let outcome: DispatchOutcome;
-      switch (entry.kind) {
-        case "resume":
-          outcome = await dispatchToAgentHandle({
-            action: entry.action,
-            agentId: entry.agentId,
-            bundle: createAgentContinuationBundle({
-              action: entry.action,
-              bundle,
-              dynamicRemoteAgent: entry.dynamicRemoteAgent,
-            }),
-            currentSession: nextSession,
-            parentToken: input.parentContinuationToken ?? session.continuationToken,
-            parentTurnId: batch.event.turnId,
-          });
-          break;
-        case "start":
-          outcome = await startSubagent({
-            auth: prepared.auth,
-            batchEvent: batch.event,
-            bundle,
-            callbackBaseUrl: input.callbackBaseUrl,
-            capabilities: prepared.capabilities,
-            channelMetadata: prepared.channelMetadata,
-            currentSession: nextSession,
-            fanoutSize: prepared.fanoutSize,
-            initiatorAuth: prepared.initiatorAuth,
-            parentContinuationToken: input.parentContinuationToken,
-            parentTraceContext: prepared.parentTraceContext,
-            persistentSessions,
-            sandboxSessionId: prepared.sandboxSessionId,
-            serializedContext: prepared.serializedContext,
-            session,
-            taskOwned: false,
-            target: entry.target,
-          });
-          break;
-      }
-
-      nextSession = outcome.session;
-      if (outcome.kind === "error") {
-        results.push(outcome.result);
-        continue;
-      }
-
-      await emitSubagentCalled({
-        adapter: prepared.adapter,
-        adapterCtx: prepared.adapterCtx,
-        batchEvent: batch.event,
+      const foreground = await dispatchForegroundEntry({
+        callbackBaseUrl: input.callbackBaseUrl,
+        currentSession: nextSession,
         entry,
-        outcome,
-        sessionId: session.sessionId,
+        parentContinuationToken: input.parentContinuationToken,
+        persistentSessions,
+        prepared,
         writer,
       });
+      nextSession = foreground.session;
+      if (foreground.result !== undefined) {
+        results.push(foreground.result);
+      }
     }
   } finally {
     writer.releaseLock();

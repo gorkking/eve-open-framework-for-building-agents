@@ -13,7 +13,10 @@ import { createHarnessDelegationToolDefinition } from "#execution/delegation-too
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { createLogger } from "#internal/logging.js";
 import type { SessionStartedStreamEvent, UnstampedMessageStreamEvent } from "#protocol/message.js";
-import type { ResolvedDynamicSubagentResolver } from "#runtime/subagents/registry.js";
+import type {
+  ResolvedDynamicSubagentResolver,
+  SubagentToolSchemaVariant,
+} from "#runtime/subagents/registry.js";
 import {
   createPreparedRuntimeSubagentTool,
   getSubagentToolInputJsonSchema,
@@ -31,10 +34,10 @@ async function resolveSelections(input: {
   readonly ctx: ContextContainer;
   readonly event: UnstampedMessageStreamEvent;
   readonly messages: readonly ModelMessage[];
-  readonly persistentSessions: boolean;
   readonly resolvers: readonly ResolvedDynamicSubagentResolver[];
+  readonly schemaVariant: SubagentToolSchemaVariant;
 }): Promise<DynamicSubagentSelections> {
-  const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions);
+  const inputSchema = getSubagentToolInputJsonSchema(input.schemaVariant);
   const outcomes = await Promise.allSettled(
     input.resolvers.map(async (resolver) => {
       const handler = resolver.events[input.event.type];
@@ -126,8 +129,8 @@ export async function dispatchDynamicSubagentEvent(input: {
   readonly ctx: ContextContainer;
   readonly event: UnstampedMessageStreamEvent;
   readonly messages: readonly ModelMessage[];
-  readonly persistentSessions: boolean;
   readonly resolvers: readonly ResolvedDynamicSubagentResolver[];
+  readonly schemaVariant: SubagentToolSchemaVariant;
 }): Promise<void> {
   if (!ALLOWED_DYNAMIC_SUBAGENT_EVENTS.has(input.event.type)) {
     return;
@@ -149,9 +152,9 @@ export async function refreshDynamicSessionSubagentsForRuntimeRevision(input: {
   readonly ctx: ContextContainer;
   readonly event: SessionStartedStreamEvent;
   readonly messages: readonly ModelMessage[];
-  readonly persistentSessions: boolean;
   readonly resolvers: readonly ResolvedDynamicSubagentResolver[];
   readonly runtimeRevision: string;
+  readonly schemaVariant: SubagentToolSchemaVariant;
 }): Promise<void> {
   if (input.ctx.get(SessionDynamicSubagentRuntimeRevisionKey) === input.runtimeRevision) {
     return;

@@ -28,6 +28,7 @@ import {
   TurnTaskDeliveryKey,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
+import { resolveSubagentToolSchemaVariant } from "#runtime/subagents/registry.js";
 import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
@@ -349,8 +350,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const dynamicInstructionsResolvers = bundle.resolvedAgent.dynamicInstructionsResolvers ?? [];
   const dynamicSkillResolvers = bundle.resolvedAgent.dynamicSkillResolvers ?? [];
   const dynamicSubagentResolvers = bundle.subagentRegistry.dynamicResolvers ?? [];
-  const persistentSubagentSessions =
-    tasksEnabled || bundle.resolvedAgent.config?.experimental?.subagentPersistentSessions === true;
+  const schemaVariant = resolveSubagentToolSchemaVariant(bundle.resolvedAgent.config?.experimental);
   const dynamicToolResolvers = bundle.resolvedAgent.dynamicToolResolvers ?? [];
   const effectiveNode = {
     ...bundle.graph.root,
@@ -375,8 +375,8 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           resolvers: dynamicSubagentResolvers,
           event: refreshEvent,
           messages: initialSession.history,
-          persistentSessions: persistentSubagentSessions,
           runtimeRevision: dynamicRuntimeRevision,
+          schemaVariant,
         }),
         refreshDynamicSessionToolsForRuntimeRevision({
           ctx,
@@ -430,7 +430,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       resolvers: dynamicSubagentResolvers,
       event: emitted,
       messages: messages ?? [],
-      persistentSessions: persistentSubagentSessions,
+      schemaVariant,
     });
     await dispatchDynamicToolEvent({
       ctx,

@@ -19,6 +19,7 @@ export const TASK_PEEK_TOOL_NAME = "task_peek";
 export const TASK_CANCEL_TOOL_NAME = "task_cancel";
 export const TASK_SLEEP_TOOL_NAME = "task_sleep";
 export const TASK_UPDATE_TOOL_NAME = "task_update";
+export const TASK_JOIN_TOOL_NAME = "task_join";
 
 /** Every model-visible task tool name, for gating and dispatch matching. */
 export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -26,6 +27,7 @@ export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set([
   TASK_CANCEL_TOOL_NAME,
   TASK_SLEEP_TOOL_NAME,
   TASK_UPDATE_TOOL_NAME,
+  TASK_JOIN_TOOL_NAME,
 ]);
 
 /** Task-control tools executed by the runtime-action dispatch step. */
@@ -33,6 +35,7 @@ export const TASK_CONTROL_TOOL_NAMES: ReadonlySet<string> = new Set([
   TASK_PEEK_TOOL_NAME,
   TASK_CANCEL_TOOL_NAME,
   TASK_UPDATE_TOOL_NAME,
+  TASK_JOIN_TOOL_NAME,
 ]);
 
 const TASK_IDS_SCHEMA = z
@@ -45,6 +48,10 @@ export const TASK_CANCEL_INPUT_SCHEMA = z.strictObject({ taskIds: TASK_IDS_SCHEM
 
 export const TASK_UPDATE_INPUT_SCHEMA = z.strictObject({
   message: z.string().min(1).describe("Brief description of what this task is currently doing."),
+});
+
+export const TASK_JOIN_INPUT_SCHEMA = z.strictObject({
+  taskId: z.string().min(1).describe("Task id from an earlier task receipt."),
 });
 
 const MAX_SLEEP_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
@@ -94,6 +101,10 @@ const TASK_SLEEP_DESCRIPTION =
 const TASK_UPDATE_DESCRIPTION =
   "Briefly tell the parent agent what this background task is currently doing. " +
   "Report activity, not preliminary findings or results.";
+const TASK_JOIN_DESCRIPTION =
+  "Wait for one background task to become ready: finished (completed, failed, or cancelled) " +
+  "or waiting on human input (input_required). Returns the task's view once ready — immediately " +
+  "if it already is. To wait on several tasks, call task_join for each in the same response.";
 
 /**
  * Builds the harness definitions injected when the root agent enables
@@ -114,6 +125,13 @@ export function createTaskToolHarnessDefinitions(): readonly HarnessToolDefiniti
       description: TASK_CANCEL_DESCRIPTION,
       inputSchema: TASK_CANCEL_INPUT_SCHEMA,
       name: TASK_CANCEL_TOOL_NAME,
+      outputSchema: TASK_VIEWS_OUTPUT_SCHEMA,
+      runtimeAction: { kind: "task-control" },
+    },
+    {
+      description: TASK_JOIN_DESCRIPTION,
+      inputSchema: TASK_JOIN_INPUT_SCHEMA,
+      name: TASK_JOIN_TOOL_NAME,
       outputSchema: TASK_VIEWS_OUTPUT_SCHEMA,
       runtimeAction: { kind: "task-control" },
     },
@@ -183,4 +201,5 @@ export const TASK_TOOL_DEFINITIONS: readonly ResolvedToolDefinition[] = [
   createResolvedTaskToolStub({ description: TASK_CANCEL_DESCRIPTION, name: TASK_CANCEL_TOOL_NAME }),
   createResolvedTaskToolStub({ description: TASK_SLEEP_DESCRIPTION, name: TASK_SLEEP_TOOL_NAME }),
   createResolvedTaskToolStub({ description: TASK_UPDATE_DESCRIPTION, name: TASK_UPDATE_TOOL_NAME }),
+  createResolvedTaskToolStub({ description: TASK_JOIN_DESCRIPTION, name: TASK_JOIN_TOOL_NAME }),
 ];

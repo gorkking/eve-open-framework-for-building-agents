@@ -30,7 +30,7 @@ describe("composeRuntimeBasePrompt", () => {
     });
 
     expect(prompt).toContainEqual(
-      expect.stringContaining("return immediately with a task receipt"),
+      expect.stringContaining("returns a `{taskId, status}` receipt immediately"),
     );
     expect(prompt).toContainEqual(expect.stringContaining("do not poll with task_peek"));
     expect(prompt).toContainEqual(expect.stringContaining("notify you"));

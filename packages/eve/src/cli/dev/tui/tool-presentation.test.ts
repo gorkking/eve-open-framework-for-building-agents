@@ -179,6 +179,7 @@ describe("presentTool", () => {
       load_skill: { skill: "commit" },
       read_file: { filePath: "/workspace/a.ts" },
       task_cancel: { taskIds: ["task_abc"] },
+      task_join: { taskId: "task_abc" },
       task_peek: { taskIds: ["task_abc"] },
       task_update: { message: "Finished the next region." },
       task_sleep: { seconds: 30 },

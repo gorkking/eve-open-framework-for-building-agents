@@ -16,6 +16,7 @@ interface StatePattern {
 
 type SemanticInput =
   | "delegate"
+  | "subagent-call"
   | "dispatch-start"
   | "dispatch-batch"
   | "complete"
@@ -28,6 +29,7 @@ type SemanticInput =
   | "start-turn"
   | "agent-continuation"
   | "task-peek"
+  | "task-join"
   | "task-notification"
   | "task-update"
   | "parent-message";
@@ -271,6 +273,20 @@ export const TASK_TRANSITIONS = {
       sideEffects: { executed: ["child-dispatch", "task-index-write"] },
     },
   }),
+  "task.subagent.invoke.observed-foreground": transition({
+    preState: { lifecycle: "absent", ownership: "unowned" },
+    input: "subagent-call",
+    guards: ["agent-id-is-absent", "background-is-not-true"],
+    expected: {
+      outcome: "observed",
+      postState: { lifecycle: "absent", ownership: "unowned" },
+      events: { suppressed: ["background-receipt"] },
+      sideEffects: {
+        executed: ["child-dispatch", "parent-model-step"],
+        suppressed: ["task-index-write"],
+      },
+    },
+  }),
   "task.dispatch.start.rejected-unreachable": transition({
     preState: { lifecycle: "absent", dispatch: "absent", ownership: "unowned" },
     input: "dispatch-start",
@@ -388,6 +404,20 @@ export const TASK_TRANSITIONS = {
     expected: {
       outcome: "observed",
       postState: { lifecycle: "completed" },
+      events: {},
+      sideEffects: { executed: ["task-view-read", "parent-model-step"] },
+    },
+  }),
+  "task.join.wait.observed-ready": transition({
+    preState: { lifecycle: "working", ownership: "owned" },
+    input: "task-join",
+    guards: ["parent-owns-task", "wait-until-ready"],
+    expected: {
+      outcome: "observed",
+      postState: {
+        lifecycle: ["input_required", "completed", "failed", "cancelled"],
+        ownership: "owned",
+      },
       events: {},
       sideEffects: { executed: ["task-view-read", "parent-model-step"] },
     },

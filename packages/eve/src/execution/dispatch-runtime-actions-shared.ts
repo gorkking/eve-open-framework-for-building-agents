@@ -68,7 +68,7 @@ import { readSessionTraceContext } from "#tracing/agent-trace-context-store.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { getDynamicSubagentSelection } from "#context/dynamic-subagent-lifecycle.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
-import { isTaskControlAction } from "#execution/tasks/parent/dispatch.js";
+import { isTaskControlAction, type PendingTaskJoin } from "#execution/tasks/parent/dispatch.js";
 
 const log = createLogger("execution.dispatch-runtime-actions");
 
@@ -133,6 +133,12 @@ export interface RuntimeActionDispatchResult {
     readonly taskId: string;
     readonly taskRunId: string;
   }[];
+  /**
+   * `task_join` calls whose task was not ready at dispatch. Only task mode
+   * produces them; the turn workflow's wait loop polls each task and
+   * settles the call's key with a synthesized result once it is ready.
+   */
+  readonly pendingJoins?: readonly PendingTaskJoin[];
 }
 
 /** Everything preflight produces before either step's dispatch loop runs. */

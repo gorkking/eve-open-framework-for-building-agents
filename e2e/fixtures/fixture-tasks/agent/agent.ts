@@ -66,6 +66,8 @@ function respond(request: MockModelRequest): MockModelResponse | string {
   if (message === "TASK-PARENT-WAKE-UPDATES") return fanoutTasks(request, 3);
   if (message === "TASK-WAKE-CONDITIONAL-DELIVERY") return startConditionalWakeWorker(request);
   if (message === "TASK-FAN-IN") return fanInTasks(request);
+  if (message === "TASK-FOREGROUND-DEFAULT") return runForegroundDefault(request);
+  if (message === "TASK-JOIN-WAIT") return joinBackgroundTask(request);
   if (message === "TASK-UPDATE-SETUP") return startTaskUpdateChild(request);
   if (message === "TASK-CANCEL-SETUP") return setupCancelWorker(request);
   if (message.startsWith("TASK-CANCEL-VERIFY ")) {
@@ -120,7 +122,7 @@ function startTaskUpdateChild(request: MockModelRequest): MockModelResponse | st
       toolCalls: [
         {
           id: "task-update-child",
-          input: { message: "TASK-UPDATE-CHILD" },
+          input: { background: true, message: "TASK-UPDATE-CHILD" },
           name: "agent",
         },
       ],
@@ -135,7 +137,7 @@ function startConditionalWakeWorker(request: MockModelRequest): MockModelRespons
       toolCalls: [
         {
           id: "task-conditional-wake-worker",
-          input: { message: "TASK-WAKE-CONDITIONAL-CHILD" },
+          input: { background: true, message: "TASK-WAKE-CONDITIONAL-CHILD" },
           name: "busy-worker",
         },
       ],
@@ -175,7 +177,7 @@ function fanoutTasks(request: MockModelRequest, size: number): MockModelResponse
     return {
       toolCalls: pending.map((index) => ({
         id: `task-fanout-${index}`,
-        input: { message: `FANOUT-WORKER-${index}` },
+        input: { background: true, message: `FANOUT-WORKER-${index}` },
         name: "fanout-worker",
       })),
     };
@@ -191,12 +193,64 @@ function fanInTasks(request: MockModelRequest): MockModelResponse | string {
     return {
       toolCalls: pending.map((id) => ({
         id,
-        input: { message: `Run the release gate, then return ${id.toUpperCase()}.` },
+        input: {
+          background: true,
+          message: `Run the release gate, then return ${id.toUpperCase()}.`,
+        },
         name: "fanout-worker",
       })),
     };
   }
   return "TASK-FAN-IN-STARTED";
+}
+
+function runForegroundDefault(request: MockModelRequest): MockModelResponse | string {
+  const callId = "task-foreground-default";
+  const result = resultById(request, callId);
+  if (result === undefined) {
+    return {
+      toolCalls: [
+        {
+          id: callId,
+          input: { message: "TASK-FOREGROUND-CHILD" },
+          name: "busy-worker",
+        },
+      ],
+    };
+  }
+  const output = findString(result.output, "BUSY-WORKER:");
+  if (output === undefined || !output.includes("TASK-FOREGROUND-CHILD")) {
+    throw new Error("Foreground subagent call returned no child result.");
+  }
+  return `TASK-FOREGROUND-COMPLETE ${output}`;
+}
+
+function joinBackgroundTask(request: MockModelRequest): MockModelResponse | string {
+  const childCallId = "task-join-child";
+  const child = resultById(request, childCallId);
+  if (child === undefined) {
+    return {
+      toolCalls: [
+        {
+          id: childCallId,
+          input: { background: true, message: "Return BUSY-WORKER-A." },
+          name: "busy-worker",
+        },
+      ],
+    };
+  }
+
+  const taskId = findTaskId(child.output);
+  if (taskId === undefined) throw new Error("Background subagent call returned no task id.");
+  const joinCallId = "task-join-wait";
+  const joined = resultById(request, joinCallId);
+  if (joined === undefined) {
+    return { toolCalls: [{ id: joinCallId, input: { taskId }, name: "task_join" }] };
+  }
+  if (!allTasksCompleted(joined.output, [taskId])) {
+    throw new Error("task_join returned before the background task completed.");
+  }
+  return "TASK-JOIN-COMPLETE";
 }
 
 /**
@@ -242,7 +296,10 @@ function setupCancelWorker(request: MockModelRequest): MockModelResponse | strin
       toolCalls: [
         {
           id: "task-cancel-worker",
-          input: { message: "Run the release gate, then return CANCEL-WORKER-DONE." },
+          input: {
+            background: true,
+            message: "Run the release gate, then return CANCEL-WORKER-DONE.",
+          },
           name: "fanout-worker",
         },
       ],
@@ -272,6 +329,7 @@ function startApprovalWorker(
         {
           id: callId,
           input: {
+            background: true,
             message:
               callId === "task-c7-authorization-worker"
                 ? "Run the C7 authorization mode, then return C7-AUTHORIZATION-COMPLETE."
@@ -295,6 +353,7 @@ function startRemoteWorker(request: MockModelRequest): MockModelResponse | strin
         {
           id: callId,
           input: {
+            background: true,
             message:
               "TASK-C8-REMOTE-CHILD Run the remote gate, then return its principal marker verbatim.",
           },
@@ -355,7 +414,7 @@ function setupBusyWorker(request: MockModelRequest): MockModelResponse | string 
       toolCalls: [
         {
           id: "child-task-exclusivity-initial-worker",
-          input: { message: "Return BUSY-WORKER-INITIAL." },
+          input: { background: true, message: "Return BUSY-WORKER-INITIAL." },
           name: "busy-worker",
         },
       ],
@@ -372,7 +431,7 @@ function startFailingBusyWorker(request: MockModelRequest): MockModelResponse | 
       toolCalls: [
         {
           id: callId,
-          input: { message: "TASK-A2-BUSY-WORKER-FAILURE" },
+          input: { background: true, message: "TASK-A2-BUSY-WORKER-FAILURE" },
           name: "busy-worker",
         },
       ],
@@ -388,7 +447,7 @@ function startUnstartableWorker(request: MockModelRequest): MockModelResponse | 
       toolCalls: [
         {
           id: callId,
-          input: { message: "TASK-A3-INTENTIONAL-START-FAILURE" },
+          input: { background: true, message: "TASK-A3-INTENTIONAL-START-FAILURE" },
           name: "unstartable-worker",
         },
       ],
@@ -421,7 +480,7 @@ function partialFailureFanout(request: MockModelRequest): MockModelResponse | st
     return {
       toolCalls: pending.map(({ id, message, name }) => ({
         id,
-        input: { message },
+        input: { background: true, message },
         name,
       })),
     };

@@ -2,20 +2,19 @@
  * Task-mode sibling of `dispatchRuntimeActionsStep`, selected by the turn
  * workflow when the agent enables `experimental.tasks`.
  *
- * Same plan → dispatch → emit skeleton, but every delegation is wrapped in
- * the durable task lifecycle: the task record and its inbox token
- * exist *before* the child dispatch side effect (`beginDelegatedTask`),
- * continuations pass the availability check and enter the parent session's
- * task index first, and the task settles against the dispatch outcome.
- * Children report through their task's inbox token rather than the
- * parent turn inbox, and every start dispatches a conversation-mode
- * (persistent) child so the background task stays resumable.
+ * Fresh starts select their launch mode per call. Calls with
+ * `background: true` are wrapped in the durable task lifecycle; calls
+ * without it use the foreground wire and report to the parent turn.
+ * Continuations always remain on the task path so the parent can enforce
+ * one active task per addressed child session.
  *
- * Task-control calls (`task_peek` / `task_cancel` / `task_update`) execute
+ * Task-control calls (`task_peek` / `task_cancel` / `task_update` /
+ * `task_join`) execute
  * inline in this step, which holds the session ownership index and world
  * access they need.
  */
 
+import { dispatchForegroundEntry } from "#execution/dispatch-foreground-entry.js";
 import {
   type DispatchOutcome,
   dispatchToTaskAgentAddress,
@@ -34,7 +33,10 @@ import {
   type DelegatedTask,
   settleDelegatedDispatch,
 } from "#execution/tasks/parent/delegate.js";
-import { executeTaskControlAction } from "#execution/tasks/parent/dispatch.js";
+import {
+  executeTaskControlAction,
+  type PendingTaskJoin,
+} from "#execution/tasks/parent/dispatch.js";
 import {
   checkTaskContinuationAvailability,
   describeTaskDispatch,
@@ -66,6 +68,7 @@ export async function dispatchTaskStep(
   let nextSession = session;
   const results: RuntimeActionResult[] = [];
   const pendingTasks: DelegatedTask[] = [];
+  const pendingJoins: PendingTaskJoin[] = [];
 
   try {
     for (const entry of prepared.plan) {
@@ -86,7 +89,23 @@ export async function dispatchTaskStep(
         });
         nextSession = control.session;
         if (control.pendingTask !== undefined) pendingTasks.push(control.pendingTask);
-        results.push(control.result);
+        if (control.pendingJoin !== undefined) pendingJoins.push(control.pendingJoin);
+        if (control.result !== undefined) results.push(control.result);
+        continue;
+      }
+
+      if (entry.kind === "start" && entry.target.action.input.background !== true) {
+        const foreground = await dispatchForegroundEntry({
+          callbackBaseUrl: input.callbackBaseUrl,
+          currentSession: nextSession,
+          entry,
+          parentContinuationToken: input.parentContinuationToken,
+          persistentSessions: true,
+          prepared,
+          writer,
+        });
+        nextSession = foreground.session;
+        if (foreground.result !== undefined) results.push(foreground.result);
         continue;
       }
 
@@ -212,6 +231,7 @@ export async function dispatchTaskStep(
   }
 
   return {
+    pendingJoins,
     results,
     sessionState:
       nextSession === session

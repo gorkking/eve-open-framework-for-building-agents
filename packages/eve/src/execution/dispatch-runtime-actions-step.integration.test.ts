@@ -287,7 +287,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("opens a shared parent sandbox for a background-task child", async () => {
-    const session = createStartSession({ kind: "local" });
+    const session = createStartSession({ background: true, kind: "local" });
     const { backend, create } = createSandboxBackend();
     installSandboxContext({
       child: { inheritsParent: true, name: "research", nodeId: "subagents/research" },
@@ -364,7 +364,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("records a tasks-mode child as an address and derives task identity separately", async () => {
-    const session = createStartSession({ kind: "local" });
+    const session = createStartSession({ background: true, kind: "local" });
     installContext(
       session,
       { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
@@ -414,8 +414,88 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     ]);
   });
 
-  it("silently rejects a tasks-mode start that failed before index admission", async () => {
+  it("dispatches a tasks-mode start without background on the foreground wire", async () => {
     const session = createStartSession({ kind: "local" });
+    installContext(
+      session,
+      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
+      true,
+    );
+
+    const result = await dispatchTaskStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const state = readResultSessionState(result, session);
+
+    expect(result.results).toEqual([]);
+    expect(result.pendingTasks).toEqual([]);
+    expect(getSessionTaskIndex(state)).toEqual([]);
+    expect(mocks.createSession).toHaveBeenCalledTimes(1);
+    expect(getAgentHandleStore(state)?.handles[0]).toMatchObject({ phase: "running" });
+  });
+
+  it("splits a mixed batch into foreground and background starts", async () => {
+    const session = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-1",
+          description: "Research now",
+          input: { message: "research this now" },
+          kind: "subagent-call",
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+        {
+          callId: "call-2",
+          description: "Research later",
+          input: { background: true, message: "research this later" },
+          kind: "subagent-call",
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+      ],
+      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+      responseMessages: [],
+      session: createBaseSession(),
+    });
+    installContext(
+      session,
+      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
+      true,
+    );
+    mocks.createSession
+      .mockResolvedValueOnce({ sessionId: CHILD_SESSION_ID })
+      .mockResolvedValueOnce({ sessionId: "child-session-234567890123" });
+    vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({
+      runId: "task-run-1",
+    });
+
+    const result = await dispatchTaskStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const state = readResultSessionState(result, session);
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      backgroundTask: { status: "working" },
+      output: { status: "working" },
+    });
+    expect(result.pendingTasks).toHaveLength(1);
+    expect(getSessionTaskIndex(state)).toHaveLength(1);
+    const phases = (getAgentHandleStore(state)?.handles ?? []).map((handle) => handle.phase);
+    expect(phases.toSorted()).toEqual(["addressed", "running"]);
+  });
+
+  it("silently rejects a tasks-mode start that failed before index admission", async () => {
+    const session = createStartSession({ background: true, kind: "local" });
     installContext(
       session,
       { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
@@ -1087,6 +1167,7 @@ function createBaseSession(handle?: AgentHandle): HarnessSession {
 }
 
 function createStartSession(input: {
+  readonly background?: boolean;
   readonly event?: {
     readonly sequence: number;
     readonly stepIndex: number;
@@ -1094,13 +1175,16 @@ function createStartSession(input: {
   };
   readonly kind: "local" | "remote";
 }): HarnessSession {
+  const actionInput: Record<string, string | boolean> = { message: "research this" };
+  if (input.background !== undefined) actionInput.background = input.background;
+
   return setPendingRuntimeActionBatch({
     actions: [
       input.kind === "local"
         ? {
             callId: "call-1",
             description: "Research",
-            input: { message: "research this" },
+            input: actionInput,
             kind: "subagent-call",
             name: "research",
             nodeId: "subagents/research",
@@ -1109,7 +1193,7 @@ function createStartSession(input: {
         : {
             callId: "call-1",
             description: "Research",
-            input: { message: "research this" },
+            input: actionInput,
             kind: "remote-agent-call",
             name: "research",
             nodeId: "remote/research",

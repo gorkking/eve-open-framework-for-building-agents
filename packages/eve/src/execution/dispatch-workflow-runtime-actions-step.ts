@@ -1,4 +1,5 @@
 import { deserializeContext } from "#context/serialize.js";
+import type { RuntimeActionDispatchResult } from "#execution/dispatch-runtime-actions-shared.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import {
@@ -41,6 +42,8 @@ export async function dispatchWorkflowRuntimeActionsStep(input: {
     readonly taskId: string;
     readonly taskRunId: string;
   }[];
+  /** Interrupt-sourced batches never contain `task_join` calls. */
+  readonly pendingJoins?: RuntimeActionDispatchResult["pendingJoins"];
 }> {
   "use step";
 

@@ -199,3 +199,103 @@ describe("task cancellation identity", () => {
     }
   });
 });
+
+describe("task_join front half", () => {
+  const joinAction: RuntimeToolCallActionRequest = {
+    callId: "call-join",
+    input: { taskId: "task-1" },
+    kind: "tool-call",
+    toolName: "task_join",
+  };
+
+  function joinView(status: "working" | "input_required" | "completed") {
+    const base = {
+      metadata: {
+        agentId: "agent-1",
+        kind: "subagent" as const,
+        mode: "local" as const,
+        name: "research",
+      },
+      taskId: "task-1",
+    };
+    if (status === "completed") {
+      return { ...base, lastOutput: { data: "done", type: "result" as const }, status };
+    }
+    if (status === "input_required") {
+      return { ...base, inputRequests: [], status };
+    }
+    return { ...base, status };
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("rejects a join for a task this session does not own", async () => {
+    const result = await executeTaskControlAction({
+      action: { ...joinAction, input: { taskId: "task-unknown" } },
+      bundle: { subagentRegistry: { subagentsByNodeId: new Map() } } as never,
+      parentTurnId: "turn-parent",
+      session: createSession("local"),
+    });
+
+    expect(result.pendingJoin).toBeUndefined();
+    expect(result.result).toMatchObject({
+      isError: true,
+      output: { message: expect.stringContaining("task-unknown") },
+    });
+  });
+
+  it.each(["completed", "input_required"] as const)(
+    "settles immediately when the task is already %s",
+    async (status) => {
+      vi.mocked(readLatestTaskView).mockResolvedValue(joinView(status));
+
+      // The joined task was created by turn-1; joining from a later turn
+      // works because the session index has no turn scoping.
+      const result = await executeTaskControlAction({
+        action: joinAction,
+        bundle: { subagentRegistry: { subagentsByNodeId: new Map() } } as never,
+        parentTurnId: "turn-later",
+        session: createSession("local"),
+      });
+
+      expect(result.pendingJoin).toBeUndefined();
+      expect(result.result).toMatchObject({
+        output: { tasks: [{ status, taskId: "task-1" }] },
+      });
+    },
+  );
+
+  it("leaves the call pending while the task is still working", async () => {
+    vi.mocked(readLatestTaskView).mockResolvedValue(joinView("working"));
+
+    const result = await executeTaskControlAction({
+      action: joinAction,
+      bundle: { subagentRegistry: { subagentsByNodeId: new Map() } } as never,
+      parentTurnId: "turn-parent",
+      session: createSession("local"),
+    });
+
+    expect(result.result).toBeUndefined();
+    expect(result.pendingJoin).toEqual({
+      callId: "call-join",
+      resultKey: "tool-call:task_join:call-join",
+      taskId: "task-1",
+      taskRunId: "run-1",
+    });
+  });
+
+  it("rejects an empty taskId before touching the index", async () => {
+    const result = await executeTaskControlAction({
+      action: { ...joinAction, input: { taskId: "  " } },
+      bundle: { subagentRegistry: { subagentsByNodeId: new Map() } } as never,
+      parentTurnId: "turn-parent",
+      session: createSession("local"),
+    });
+
+    expect(result.pendingJoin).toBeUndefined();
+    expect(result.result).toMatchObject({ isError: true });
+    expect(readLatestTaskView).not.toHaveBeenCalled();
+  });
+});
