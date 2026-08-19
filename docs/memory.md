@@ -34,7 +34,7 @@ export default defineMemory({
 });
 ```
 
-Passing `byPrincipal` as the resolver partitions the provider by the authenticated caller. Its value includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's projections.
+Passing `byPrincipal` as the resolver partitions the provider by the authenticated caller. Its value includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's recalled messages.
 
 Pass `byPrincipal` by reference, as shown above. eve supplies its scope context when it locks the operation. Inside a custom scope resolver, call `byPrincipal(ctx)` with that same context.
 
@@ -59,7 +59,7 @@ Returning an array is a convenience for `components.join(":")`. The array and ev
 
 Use a resolver for work that should begin when eve locks the operation. A direct promise starts eagerly when the authored module is evaluated. Calling `defaultNamespace()` during module evaluation fails because its path and deployment context are available only during namespace resolution.
 
-If either field resolves to `null`, eve disables the slot for that operation: it does not call the provider, expose its tools, or include its projections.
+If either field resolves to `null`, eve disables the slot for that operation: it does not call the provider, expose its tools, or include its recalled messages.
 
 If you omit `namespace`, eve uses the exported `defaultNamespace` function. It resolves a deployment-aware value from the Vercel project when available, otherwise the local application root, plus the environment, graph node, and path-derived slot.
 
@@ -120,13 +120,13 @@ Personal preferences and durable facts for the authenticated user.
 Forget one saved memory.
 ```
 
-Without `description`, eve preserves the provider's tool descriptions unchanged. The description is not added to a memory projection or inserted into the prompt separately, so it has no model-facing effect when the provider exposes no tools. eve never derives it from the slot name, namespace, scope, or request context.
+Without `description`, eve preserves the provider's tool descriptions unchanged. The description is not added to recalled messages or inserted into the prompt separately, so it has no model-facing effect when the provider exposes no tools. eve never derives it from the slot name, namespace, scope, or request context.
 
 Descriptions help the model choose among qualified memory tools; they do not grant access. Continue to enforce the data boundary with `scope`, provider authorization, and tool approval where needed.
 
-## Control projection visibility
+## Control recall visibility
 
-A recall produces a scope-bound projection that eve keeps separate from ordinary conversation history. The optional `visibility` field controls what happens to prior projections when the slot resolves a different scope:
+A non-empty recall result appends a scope-attributed user message to durable history. The optional `visibility` field controls which earlier recalled messages enter a model request when the slot resolves a different scope:
 
 ```ts title="agent/memory/user.ts"
 import { defineMemory } from "eve/memory";
@@ -140,31 +140,27 @@ export default defineMemory({
 });
 ```
 
-| Value               | Context included after a scope change                                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"scope"` (default) | Only the projection whose scope key matches the active turn. Projections recalled for earlier participants are filtered from the request.       |
-| `"session"`         | Every projection recalled for the slot remains visible in anchor order. Use this only when all scopes in the session form one trusted audience. |
+| Value               | Context included after a scope change                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"scope"` (default) | Only recalled messages whose slot and scope key match the active turn. Earlier participants' recalled messages are filtered from the model request. |
+| `"session"`         | Every recalled message for the slot stays visible in durable-history order. Use this only when all scopes in the session form one trusted audience. |
 
-Filtering an earlier projection changes the existing prompt prefix and may invalidate the affected prompt cache. A scope change by itself preserves that prefix under `"session"` visibility, but replacing or clearing a projection may still invalidate it. This mode intentionally shares recalled content across scopes.
+Filtering an earlier recalled message changes the existing prompt prefix and may invalidate the affected prompt cache. Under `"session"` visibility, earlier messages stay in place and later recall results only extend history. This mode intentionally shares recalled content across scopes.
 
-Visibility changes only memory projections. It does not remove ordinary user, assistant, or tool messages, and it cannot undo information already reflected in an assistant response. Use separate sessions when participants require hard isolation.
+Visibility changes only attributed recall messages in model requests. It does not remove ordinary user, assistant, or tool messages from durable history, and it cannot undo information already reflected in an assistant response. Use separate sessions when participants require hard isolation.
 
 ## Define a provider
 
 A provider implements required `recall` behavior and may add `save` and `tools`:
 
 ```ts title="agent/lib/user-memory.ts"
-import { defineMemoryProvider } from "eve/memory";
+import { defineMemoryProvider, getMemoryMessageAttribution } from "eve/memory";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { service } from "./service";
 
 export const userMemory = defineMemoryProvider({
   async recall(ctx) {
-    if (ctx.phase === "turn.started" && ctx.turn.sequence > 0 && ctx.memory.current !== null) {
-      return;
-    }
-
     const content = await service.recall({
       history: ctx.messages,
       input: ctx.turn?.input ?? [],
@@ -172,7 +168,16 @@ export const userMemory = defineMemoryProvider({
       signal: ctx.abortSignal,
     });
 
-    return content === null || content.length === 0 ? null : { content };
+    if (content === null) return;
+
+    const latest = ctx.messages.findLast((message) => {
+      const attribution = getMemoryMessageAttribution(message);
+      return (
+        attribution?.slot === ctx.memory.slot && attribution.scope.key === ctx.memory.scope.key
+      );
+    });
+
+    return latest?.content === content ? undefined : { content, role: "user" };
   },
 
   async save(ctx) {
@@ -216,14 +221,13 @@ export const userMemory = defineMemoryProvider({
 });
 ```
 
-`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their projections, tools, and lifecycle calls independent. Default namespaces isolate provider addresses by slot. Custom namespaces can intentionally share an address.
+`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their recalled messages, tools, and lifecycle calls independent. Default namespaces isolate provider addresses by slot. Custom namespaces can intentionally share an address.
 
 Every recall and save call receives:
 
 - `ctx.memory.scope`, the active trusted partition.
 - `ctx.memory.slot`, the path-derived slot name.
-- `ctx.memory.current`, the current projection for this slot and scope, or `null`.
-- `ctx.messages`, durable model history at the boundary, excluding memory projections.
+- `ctx.messages`, durable model history at the boundary, including prior recalled messages.
 - `ctx.operationId`, the identifier for one logical recall or save operation. eve reuses it across workflow replay.
 - `ctx.abortSignal` and the read-only session context.
 
@@ -238,21 +242,23 @@ eve calls `recall` when a turn starts and after a successful compaction. Inspect
 - `"turn.started"` includes the current `ctx.turn.input`. The first durable turn has `ctx.turn.sequence === 0`.
 - `"compaction.completed"` includes the settled post-compaction history. `ctx.turn` is `null` for standalone manual compaction.
 
-The recall result updates only the active scope's projection:
+The recall result is append-only:
 
-| Result                          | Effect                                                  |
-| ------------------------------- | ------------------------------------------------------- |
-| `{ content: non-empty string }` | Replace the current projection for this slot and scope. |
-| `null`                          | Clear the current projection for this slot and scope.   |
-| `undefined` / no return         | Preserve the current projection without changing it.    |
+| Result                                         | Effect                                         |
+| ---------------------------------------------- | ---------------------------------------------- |
+| `{ content: string, role: "user" }`            | Append one scope-attributed user-role message. |
+| `null`, `undefined`, or no return              | Append nothing at this boundary.               |
+| A result whose content is empty after trimming | Append nothing at this boundary.               |
 
-Projection content must contain at least one character. An empty string is invalid and fails the recall at that lifecycle boundary; it does not mean clear or skip. Return `null` to clear the projection or `undefined` to preserve it.
+eve trims recall content using the same normalization as user-role instructions. A recall result never replaces, clears, or mutates an earlier message. Providers own repetition and correction policy: returning the same snapshot again appends a duplicate, while returning `null` leaves existing history unchanged.
 
-A provider can recall on every turn, only when `ctx.turn.sequence === 0`, or whenever `ctx.memory.current === null`. eve still calls the method at each fixed boundary so the provider owns that choice.
+A provider can recall on every turn, only when `ctx.turn.sequence === 0`, or only when its latest stored context is absent from history. Use `getMemoryMessageAttribution(message)` to identify recalled messages by slot and scope without relying on eve's internal metadata representation.
 
-The first valid projection for a scope anchors a synthetic user-role message immediately before that scope's current turn input. Later recall results replace or clear the projection at the same anchor. Projections are not emitted as ordinary messages, included in compaction input, or returned through `ctx.messages`. After compaction, eve reanchors the visible projections around the new checkpoint before applying the post-compaction recall result.
+Turn-start recall messages are appended immediately before the admitted turn input. Post-compaction recall messages are appended after the rewritten checkpoint and retained tail. Multiple slots append in stable slot order. Recall messages are not emitted as `message.received`, but they otherwise follow the ordinary durable-history lifecycle: they appear in `ctx.messages` and completed-turn saves, and compaction may summarize or discard them.
 
-This differs from [user-role instructions](./instructions). Instructions append application context to durable conversation history. A memory projection is replaceable provider context that remains attributed to its slot and scope.
+Before compaction, eve applies the active visibility policy. Scope-hidden recall cannot enter the checkpoint and is removed with the rewritten history. After compaction, eve invokes `recall({ phase: "compaction.completed" })`, allowing the provider to append fresh context when the rewritten history no longer contains it.
+
+Like [user-role instructions](./instructions), recalled context uses ordinary durable user messages and preserves the normal prompt prefix when appended. Memory adds provider lifecycle boundaries, slot-and-scope attribution, and cross-scope visibility filtering.
 
 ## Save durable history
 

@@ -4,9 +4,9 @@ import type { Runtime, SessionCapabilities } from "#channel/types.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import {
   buildMemoryTools,
-  clearMemoryAnchors,
   finishMemoryCompaction,
   getMemoryToolOriginCallIds,
+  prepareMemoryCompaction,
   projectMemoryPrompt,
   recordMemoryToolOrigins,
   releaseMemoryToolOrigins,
@@ -166,14 +166,21 @@ function createHarnessMemoryLifecycle(input: {
 
   return {
     buildTools: ({ session }) => buildMemoryTools(session),
-    clearAnchors: clearMemoryAnchors,
-    finishCompaction: ({ messages, projectionAnchorIndex, session }) =>
+    finishCompaction: ({ messages, session }) =>
       finishMemoryCompaction({
         abortSignal,
         memories,
         messages,
-        projectionAnchorIndex,
         session,
+      }),
+    prepareCompaction: ({ modelId, session, standalone }) =>
+      prepareMemoryCompaction({
+        abortSignal,
+        defaultNamespaceContext,
+        memories,
+        modelId,
+        session,
+        standalone,
       }),
     projectPrompt: ({ messages, session }) => projectMemoryPrompt({ memories, messages, session }),
     recordToolOrigins: recordMemoryToolOrigins,
@@ -183,24 +190,20 @@ function createHarnessMemoryLifecycle(input: {
     restoreToolTurn: restoreMemoryToolTurn,
     saveCompletedTurn: ({ messages, session }) =>
       saveCompletedMemoryTurn({ abortSignal, memories, messages, session }),
-    startCompaction: ({ messages, modelId, session, standalone, usageInputTokens }) =>
+    startCompaction: ({ messages, session, usageInputTokens }) =>
       startMemoryCompaction({
         abortSignal,
-        defaultNamespaceContext,
         memories,
         messages,
-        modelId,
         session,
-        standalone,
         usageInputTokens,
       }),
-    startTurn: ({ messages, projectionAnchorIndex, session, turn }) =>
+    startTurn: ({ messages, session, turn }) =>
       startMemoryTurn({
         abortSignal,
         defaultNamespaceContext,
         memories,
         messages,
-        projectionAnchorIndex,
         session,
         turn,
       }),

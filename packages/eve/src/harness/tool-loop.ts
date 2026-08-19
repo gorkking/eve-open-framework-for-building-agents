@@ -54,6 +54,7 @@ import {
 import { buildDynamicSubagentTools } from "#context/dynamic-subagent-lifecycle.js";
 import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { stripMemoryMessageAttribution } from "#shared/memory-message.js";
 import {
   createActionResultEvent,
   createApprovalCandidateEvent,
@@ -95,7 +96,7 @@ import {
   setPendingWorkflowInterrupt,
 } from "#harness/workflow-interrupt-state.js";
 import {
-  compactMessagesWithProjectionAnchor,
+  compactMessages,
   getInputTokenCount,
   resolveCompactionModel,
   shouldCompact,
@@ -799,7 +800,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     };
 
     if (config.clearOnly === true) {
-      session = config.memory?.clearAnchors(session) ?? session;
       session = {
         ...session,
         compaction: {
@@ -1311,7 +1311,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       ...instructionMessages,
       ...pending.messages.slice(historyLength),
     ];
-    const projectionAnchorIndex = historyLength + instructionMessages.length;
+    const turnInputIndex = historyLength + instructionMessages.length;
 
     // A resolved session-limit continuation prompt grants a fresh token
     // budget or ends the session; see session-limit-enforcement.
@@ -1369,20 +1369,19 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         if (resumedToolCallIds.length > 0) {
           session = config.memory.restoreToolTurn({
             callIds: resumedToolCallIds,
-            projectionAnchorIndex,
             session,
           });
         } else {
           session = await config.memory.startTurn({
-            messages: messages.slice(0, projectionAnchorIndex),
-            projectionAnchorIndex,
+            messages: messages.slice(0, turnInputIndex),
             session,
             turn: {
-              input: messages.slice(projectionAnchorIndex),
+              input: messages.slice(turnInputIndex),
               sequence: emissionState.sequence,
               turnId: activeTurnId(emissionState),
             },
           });
+          messages = [...session.history, ...messages.slice(turnInputIndex)];
         }
       } catch (error) {
         return failMemoryOperation(error, {
@@ -1487,7 +1486,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // remains ref-only so it can flow into `session.history` without
     // bloating every future step boundary.
     const projectedMessages = config.memory?.projectPrompt({ messages, session }) ?? [...messages];
-    const hydratedMessages = await hydrateSandboxAttachments(projectedMessages);
+    const hydratedMessages = await hydrateSandboxAttachments(
+      projectedMessages.map(stripMemoryMessageAttribution),
+    );
 
     // AI SDK rejects role:"system" in `messages` — route system entries
     // from durable history to `instructions` instead.
@@ -3542,7 +3543,7 @@ async function maybeCompact(input: {
   const { emit, emissionState } = input;
   let messages = input.messages;
   let session = input.session;
-  const projectedMessages = input.memory?.projectPrompt({ messages, session }) ?? messages;
+  let projectedMessages = input.memory?.projectPrompt({ messages, session }) ?? messages;
 
   if (input.force !== true && !shouldCompact(projectedMessages, session.compaction)) {
     return { messages, session };
@@ -3562,6 +3563,21 @@ async function maybeCompact(input: {
     // Minimal test/custom models may omit provider metadata; the authored
     // reference remains the stable fallback identity.
   }
+
+  const sessionBeforeMemory = session;
+  if (input.memory !== undefined) {
+    try {
+      session = await input.memory.prepareCompaction({
+        modelId,
+        session,
+        standalone: input.force === true,
+      });
+      projectedMessages = input.memory.projectPrompt({ messages, session });
+    } catch (error) {
+      if (input.force === true) throw error;
+      return { failure: error, messages, session: sessionBeforeMemory };
+    }
+  }
   const usageInputTokens = getInputTokenCount(projectedMessages, session.compaction);
 
   if (emit) {
@@ -3580,19 +3596,17 @@ async function maybeCompact(input: {
     try {
       session = await input.memory.startCompaction({
         messages,
-        modelId,
         session,
-        standalone: input.force === true,
         usageInputTokens,
       });
     } catch (error) {
       if (input.force === true) throw error;
-      return { failure: error, messages, session };
+      return { failure: error, messages, session: sessionBeforeMemory };
     }
   }
 
-  const compacted = await compactMessagesWithProjectionAnchor(
-    messages,
+  messages = await compactMessages(
+    projectedMessages,
     compaction.model,
     session.compaction,
     compaction.providerOptions,
@@ -3601,7 +3615,6 @@ async function maybeCompact(input: {
     input.abortSignal,
     input.force === true,
   );
-  messages = compacted.messages;
 
   if (input.onCompaction) {
     for (const msg of input.onCompaction()) {
@@ -3624,10 +3637,10 @@ async function maybeCompact(input: {
   if (input.memory !== undefined) {
     const finished = await input.memory.finishCompaction({
       messages,
-      projectionAnchorIndex: compacted.projectionAnchorIndex,
       session,
     });
     session = finished.session;
+    messages = [...session.history];
     if (finished.failure !== undefined) {
       return { failure: finished.failure, messages, session };
     }

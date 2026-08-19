@@ -2,247 +2,112 @@ import type { ModelMessage } from "ai";
 import { describe, expect, it } from "vitest";
 
 import {
-  anchorUnanchoredVisibleMemoryProjections,
-  clearMemoryProjectionAnchors,
-  getMemoryState,
   projectMemoryMessages,
-  reanchorVisibleMemoryProjections,
   setActiveMemoryTurn,
-  updateMemoryProjection,
+  setPendingMemoryCompaction,
   type DurableMemorySlotLock,
   type DurableMemoryTurnState,
 } from "#harness/memory-state.js";
 import type { HarnessSession } from "#harness/types.js";
+import { attributeMemoryMessage } from "#shared/memory-message.js";
 
 describe("memory state", () => {
-  it("rejects an empty projection before it can establish a prompt anchor", () => {
-    const user = slot("user", "scope-a", "scope");
-    const session = setActiveMemoryTurn(createSession(), turn("turn_0", [user]));
-
-    expect(() =>
-      updateMemoryProjection({
-        anchorIndex: 0,
-        result: { content: "" },
-        scope: user.scope!,
-        session,
-        slot: "user",
-      }),
-    ).toThrow(/empty projection/u);
-    expect(getMemoryState(session).projections).toEqual([]);
-  });
-
-  it("reanchors a scope-hidden projection when that scope becomes active again", () => {
+  it("filters recalled messages by slot and scope without rewriting durable history", () => {
     const userA = slot("user", "scope-a", "scope");
     const userB = slot("user", "scope-b", "scope");
-    let session = setActiveMemoryTurn(createSession(), turn("turn_0", [userA]));
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user A" },
-      scope: userA.scope!,
-      session,
-      slot: "user",
-    });
-
-    session = setActiveMemoryTurn(session, turn("turn_1", [userB]));
-    session = anchorUnanchoredVisibleMemoryProjections({
-      anchorIndex: 1,
-      session,
-      slots: [userB],
-    });
-    session = updateMemoryProjection({
-      anchorIndex: 1,
-      result: { content: "user B" },
-      scope: userB.scope!,
-      session,
-      slot: "user",
-    });
-    expect(getMemoryState(session).projections).toMatchObject([
-      { anchorIndex: null, content: "user A" },
-      { anchorIndex: 1, content: "user B" },
-    ]);
-
-    session = setActiveMemoryTurn(session, turn("turn_2", [userA]));
-    session = anchorUnanchoredVisibleMemoryProjections({
-      anchorIndex: 2,
-      session,
-      slots: [userA],
-    });
-    expect(getMemoryState(session).projections).toMatchObject([
-      { anchorIndex: 2, content: "user A" },
-      { anchorIndex: null, content: "user B" },
-    ]);
-  });
-
-  it("filters projections by scope, retains session-visible anchors, and suppresses null slots", () => {
-    const ordinary: ModelMessage[] = [
-      { content: "turn A", role: "user" },
-      { content: "turn B", role: "user" },
+    const workspace = slot("workspace", "workspace-1", "session");
+    const ordinary = { content: "ordinary", role: "user" } as const;
+    const history: ModelMessage[] = [
+      recalled("user A", userA),
+      recalled("workspace", workspace),
+      ordinary,
+      recalled("user B", userB),
     ];
-    const userA = slot("user", "scope-a", "scope");
-    const workspace = slot("workspace", "workspace-1", "session");
-    let session = setActiveMemoryTurn(createSession(), turn("turn_0", [userA, workspace]));
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user A" },
-      scope: userA.scope!,
-      session,
-      slot: "user",
-    });
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "workspace" },
-      scope: workspace.scope!,
-      session,
-      slot: "workspace",
-    });
+    const original = createSession(history);
+    const session = setActiveMemoryTurn(original, turn("turn_1", [userB, workspace]));
 
-    const userB = slot("user", "scope-b", "scope");
-    session = setActiveMemoryTurn(session, turn("turn_1", [userB, workspace]));
-    session = updateMemoryProjection({
-      anchorIndex: 1,
-      result: { content: "user B" },
-      scope: userB.scope!,
-      session,
-      slot: "user",
-    });
-    expect(projectMemoryMessages({ messages: ordinary, session })).toEqual([
-      { content: "workspace", role: "user" },
-      ordinary[0],
-      { content: "user B", role: "user" },
-      ordinary[1],
+    expect(projectMemoryMessages({ messages: history, session })).toEqual([
+      history[1],
+      ordinary,
+      history[3],
     ]);
-
-    session = setActiveMemoryTurn(
-      session,
-      turn("turn_2", [{ ...userB, visibility: "session" }, workspace]),
-    );
-    expect(projectMemoryMessages({ messages: ordinary, session })).toEqual([
-      { content: "user A", role: "user" },
-      { content: "workspace", role: "user" },
-      ordinary[0],
-      { content: "user B", role: "user" },
-      ordinary[1],
-    ]);
-
-    session = setActiveMemoryTurn(
-      session,
-      turn("turn_3", [{ scope: null, slot: "user", visibility: "session" }, workspace]),
-    );
-    expect(projectMemoryMessages({ messages: ordinary, session })).toEqual([
-      { content: "workspace", role: "user" },
-      ...ordinary,
-    ]);
+    expect(session.history).toEqual(history);
+    expect(original.history).toEqual(history);
   });
 
-  it("reanchors only visible projections and clears prompt accounting", () => {
+  it("keeps every recalled message for a session-visible slot", () => {
     const userA = slot("user", "scope-a", "scope");
-    const workspace = slot("workspace", "workspace-1", "session");
-    let session = setActiveMemoryTurn(createSession(), turn("turn_0", [userA, workspace]));
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user A" },
-      scope: userA.scope!,
-      session,
-      slot: "user",
-    });
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "workspace" },
-      scope: workspace.scope!,
-      session,
-      slot: "workspace",
-    });
-    const userB = slot("user", "scope-b", "scope");
-    session = setActiveMemoryTurn(session, turn("turn_1", [userB, workspace]));
-    session = updateMemoryProjection({
-      anchorIndex: 1,
-      result: { content: "user B" },
-      scope: userB.scope!,
-      session,
-      slot: "user",
-    });
-    session = recordPromptAccounting(session);
+    const userB = slot("user", "scope-b", "session");
+    const history = [recalled("user A", userA), recalled("user B", userB)];
+    const session = setActiveMemoryTurn(createSession(history), turn("turn_1", [userB]));
 
-    session = reanchorVisibleMemoryProjections({
-      anchorIndex: 2,
-      session,
-      slots: [userB, workspace],
-    });
-    expect(getMemoryState(session).projections).toMatchObject([
-      { anchorIndex: null, content: "user A" },
-      { anchorIndex: 2, content: "workspace" },
-      { anchorIndex: 2, content: "user B" },
-    ]);
-    expect(session.compaction).toEqual({ recentWindowSize: 8, threshold: 10_000 });
-
-    const cleared = clearMemoryProjectionAnchors(session);
-    expect(getMemoryState(cleared).projections).toMatchObject([
-      { anchorIndex: null, content: "user A" },
-      { anchorIndex: null, content: "workspace" },
-      { anchorIndex: null, content: "user B" },
-    ]);
+    expect(projectMemoryMessages({ messages: history, session })).toEqual(history);
   });
 
-  it("preserves prompt accounting across turns with the same visible projections", () => {
+  it("hides recalled messages for disabled and unavailable slots", () => {
     const user = slot("user", "scope-a", "scope");
-    let session = setActiveMemoryTurn(createSession(), turn("turn_0", [user]));
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user A" },
-      scope: user.scope!,
-      session,
-      slot: "user",
+    const history = [
+      recalled("disabled", user),
+      recalled("removed slot", slot("removed", "scope-a", "session")),
+      { content: "ordinary", role: "user" } as const,
+    ];
+    const session = setActiveMemoryTurn(
+      createSession(history),
+      turn("turn_1", [{ scope: null, slot: "user", visibility: "session" }]),
+    );
+
+    expect(projectMemoryMessages({ messages: history, session })).toEqual([history[2]]);
+  });
+
+  it("uses prepared compaction locks ahead of an active turn", () => {
+    const active = slot("user", "scope-a", "scope");
+    const compacted = slot("user", "scope-b", "scope");
+    const history = [recalled("scope A", active), recalled("scope B", compacted)];
+    let session = setActiveMemoryTurn(createSession(history), turn("turn_0", [active]));
+    session = setPendingMemoryCompaction(session, {
+      modelId: "mock/compact",
+      ordinal: 0,
+      session: turn("turn_0", [active]).session,
+      slots: [compacted],
+      standalone: true,
+      turn: null,
+      usageInputTokens: null,
     });
+
+    expect(projectMemoryMessages({ messages: history, session })).toEqual([history[1]]);
+  });
+
+  it("preserves prompt accounting when the visible recalled-message set is unchanged", () => {
+    const user = slot("user", "scope-a", "scope");
+    const history = [recalled("user A", user)];
+    let session = setActiveMemoryTurn(createSession(history), turn("turn_0", [user]));
     session = recordPromptAccounting(session);
-
     session = setActiveMemoryTurn(session, null);
-    expect(session.compaction).toMatchObject({
-      lastKnownInputTokens: 25,
-      lastKnownPromptMessageCount: 2,
-    });
-
     session = setActiveMemoryTurn(session, turn("turn_1", [user]));
+
     expect(session.compaction).toMatchObject({
       lastKnownInputTokens: 25,
       lastKnownPromptMessageCount: 2,
     });
   });
 
-  it("invalidates retained prompt accounting when projection visibility or content changes", () => {
+  it("invalidates prompt accounting when a scope change filters earlier recall", () => {
     const userA = slot("user", "scope-a", "scope");
-    let session = setActiveMemoryTurn(createSession(), turn("turn_0", [userA]));
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user A" },
-      scope: userA.scope!,
-      session,
-      slot: "user",
-    });
+    const userB = slot("user", "scope-b", "scope");
+    const history = [recalled("user A", userA), recalled("user B", userB)];
+    let session = setActiveMemoryTurn(createSession(history), turn("turn_0", [userA]));
     session = recordPromptAccounting(session);
     session = setActiveMemoryTurn(session, null);
-
-    const userB = slot("user", "scope-b", "scope");
     session = setActiveMemoryTurn(session, turn("turn_1", [userB]));
-    expect(session.compaction).toEqual({ recentWindowSize: 8, threshold: 10_000 });
 
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user B" },
-      scope: userB.scope!,
-      session,
-      slot: "user",
-    });
-    session = recordPromptAccounting(session);
-    session = updateMemoryProjection({
-      anchorIndex: 0,
-      result: { content: "user B changed" },
-      scope: userB.scope!,
-      session,
-      slot: "user",
-    });
     expect(session.compaction).toEqual({ recentWindowSize: 8, threshold: 10_000 });
   });
 });
+
+function recalled(content: string, lock: DurableMemorySlotLock): ModelMessage {
+  if (lock.scope === null) throw new Error("Test recall requires a scope.");
+  return attributeMemoryMessage({ content, role: "user" }, { scope: lock.scope, slot: lock.slot });
+}
 
 function slot(
   name: string,
@@ -267,17 +132,12 @@ function turn(turnId: string, slots: readonly DurableMemorySlotLock[]): DurableM
   };
 }
 
-function createSession(): HarnessSession {
+function createSession(history: readonly ModelMessage[] = []): HarnessSession {
   return {
     agent: { modelReference: { id: "mock/model" }, system: "", tools: [] },
-    compaction: {
-      lastKnownInputTokens: 25,
-      lastKnownPromptMessageCount: 2,
-      recentWindowSize: 8,
-      threshold: 10_000,
-    },
+    compaction: { recentWindowSize: 8, threshold: 10_000 },
     continuationToken: "http:session-1",
-    history: [],
+    history: [...history],
     sessionId: "session-1",
   };
 }

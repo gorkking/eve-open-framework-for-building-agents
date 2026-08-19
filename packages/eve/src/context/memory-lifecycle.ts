@@ -20,25 +20,23 @@ import {
 } from "#context/memory-operation.js";
 import { resolveMemoryTurnTools } from "#context/memory-tool-lifecycle.js";
 import {
-  anchorUnanchoredVisibleMemoryProjections,
-  clearMemoryProjectionAnchors,
   getActiveMemoryTurn,
   getMemoryState,
   getPendingMemoryCompaction,
   projectMemoryMessages,
-  reanchorVisibleMemoryProjections,
   releaseMemoryToolOrigins,
   setActiveMemoryTurn,
   setPendingMemoryCompaction,
-  updateMemoryProjection,
   type DurableMemorySlotLock,
   type DurableMemoryTurnState,
 } from "#harness/memory-state.js";
 import type { HarnessSession } from "#harness/types.js";
+import { normalizeInstructionsDefinition } from "#internal/authored-definition/core.js";
 import { createLogger } from "#internal/logging.js";
 import type {
   MemoryNamespaceDefinition,
   MemoryRecallContext,
+  MemoryRecallResult,
   MemorySaveContext,
   MemoryScope,
   MemoryScopeContext,
@@ -46,6 +44,7 @@ import type {
   MemoryTurnContext,
 } from "#public/memory/index.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
+import { attributeMemoryMessage } from "#shared/memory-message.js";
 
 const log = createLogger("memory");
 const MEMORY_SCOPE_DOMAIN = "eve-memory-scope-v1";
@@ -62,14 +61,13 @@ export {
   restoreMemoryToolTurn,
 } from "#context/memory-tool-lifecycle.js";
 
-/** Resolves and locks every scope, anchors visible projections, then recalls the turn. */
+/** Resolves and locks every scope, then appends turn-start recall messages. */
 export async function startMemoryTurn(input: {
   readonly abortSignal?: AbortSignal;
   readonly defaultNamespaceContext: MemoryDefaultNamespaceContext;
   readonly memories: readonly ResolvedMemoryDefinition[];
   /** Prior durable history. The normalized turn input is carried separately in `turn.input`. */
   readonly messages: readonly ModelMessage[];
-  readonly projectionAnchorIndex: number;
   readonly session: HarnessSession;
   readonly turn: MemoryTurnContext;
 }): Promise<HarnessSession> {
@@ -99,12 +97,7 @@ export async function startMemoryTurn(input: {
     turn: cloneTurn(input.turn),
   };
 
-  let session = setActiveMemoryTurn(input.session, activeTurn);
-  session = anchorUnanchoredVisibleMemoryProjections({
-    anchorIndex: input.projectionAnchorIndex,
-    session,
-    slots,
-  });
+  let session = setActiveMemoryTurn({ ...input.session, history: [...input.messages] }, activeTurn);
 
   for (const lock of slots) {
     if (lock.scope === null) continue;
@@ -123,7 +116,6 @@ export async function startMemoryTurn(input: {
         messages: input.messages,
         operationId,
         scope: lock.scope,
-        session,
         slot: lock.slot,
       }),
       phase: "turn.started",
@@ -132,8 +124,7 @@ export async function startMemoryTurn(input: {
 
     try {
       const result = await memory.provider.recall(context);
-      session = updateMemoryProjection({
-        anchorIndex: input.projectionAnchorIndex,
+      session = appendRecallResult({
         result,
         scope: lock.scope,
         session,
@@ -151,7 +142,7 @@ export async function startMemoryTurn(input: {
 
   return await resolveMemoryTurnTools({
     memories: input.memories,
-    messages: [...input.messages, ...input.turn.input],
+    messages: [...session.history, ...input.turn.input],
     session,
   });
 }
@@ -166,16 +157,14 @@ export function projectMemoryPrompt(input: {
   return projectMemoryMessages({ messages: input.messages, session: input.session });
 }
 
-/** Locks a standalone compaction or reuses the active turn lock, then runs pre-save. */
-export async function startMemoryCompaction(input: {
+/** Locks the scopes used to filter and process one compaction operation. */
+export async function prepareMemoryCompaction(input: {
   readonly abortSignal?: AbortSignal;
   readonly defaultNamespaceContext: MemoryDefaultNamespaceContext;
   readonly memories: readonly ResolvedMemoryDefinition[];
-  readonly messages: readonly ModelMessage[];
   readonly modelId: string;
   readonly session: HarnessSession;
   readonly standalone: boolean;
-  readonly usageInputTokens: number | null;
 }): Promise<HarnessSession> {
   if (input.memories.length === 0) return input.session;
   if (getPendingMemoryCompaction(input.session) !== null) {
@@ -207,37 +196,57 @@ export async function startMemoryCompaction(input: {
     slots,
     standalone: input.standalone,
     turn,
-    usageInputTokens: input.usageInputTokens,
+    usageInputTokens: null,
   } as const;
-  let session = setPendingMemoryCompaction(input.session, pending, ordinal + 1);
+  return setPendingMemoryCompaction(input.session, pending, ordinal + 1);
+}
 
-  for (const lock of slots) {
+/** Runs pre-compaction saves after visibility and usage have been resolved. */
+export async function startMemoryCompaction(input: {
+  readonly abortSignal?: AbortSignal;
+  readonly memories: readonly ResolvedMemoryDefinition[];
+  readonly messages: readonly ModelMessage[];
+  readonly session: HarnessSession;
+  readonly usageInputTokens: number | null;
+}): Promise<HarnessSession> {
+  if (input.memories.length === 0) return input.session;
+  const pending = getPendingMemoryCompaction(input.session);
+  if (pending === null) {
+    throw new Error("Memory compaction start has no prepared lifecycle.");
+  }
+
+  const abortSignal = resolveAbortSignal(input.abortSignal);
+  const session = setPendingMemoryCompaction(input.session, {
+    ...pending,
+    usageInputTokens: input.usageInputTokens,
+  });
+
+  for (const lock of pending.slots) {
     if (lock.scope === null) continue;
     const memory = requireMemory(input.memories, lock.slot);
     if (memory.provider.save === undefined) continue;
     const operationId = createCompactionOperationId({
-      ordinal,
+      ordinal: pending.ordinal,
       phase: "compaction.requested",
       scope: lock.scope,
-      sessionId: callbackSession.id,
+      sessionId: pending.session.id,
       slot: lock.slot,
     });
     const context: MemorySaveContext = {
       ...createOperationContext({
         abortSignal,
-        callbackSession,
+        callbackSession: pending.session,
         messages: input.messages,
         operationId,
         scope: lock.scope,
-        session,
         slot: lock.slot,
       }),
       compaction: {
-        modelId: input.modelId,
+        modelId: pending.modelId,
         usageInputTokens: input.usageInputTokens,
       },
       phase: "compaction.requested",
-      turn,
+      turn: pending.turn,
     };
 
     try {
@@ -255,12 +264,11 @@ export async function startMemoryCompaction(input: {
   return session;
 }
 
-/** Reanchors projections against compacted history, then runs post-compaction recall. */
+/** Appends post-compaction recall messages to the rewritten durable history. */
 export async function finishMemoryCompaction(input: {
   readonly abortSignal?: AbortSignal;
   readonly memories: readonly ResolvedMemoryDefinition[];
   readonly messages: readonly ModelMessage[];
-  readonly projectionAnchorIndex: number;
   readonly session: HarnessSession;
 }): Promise<{ readonly failure?: MemoryOperationError; readonly session: HarnessSession }> {
   if (input.memories.length === 0) return { session: input.session };
@@ -270,11 +278,7 @@ export async function finishMemoryCompaction(input: {
   }
 
   const abortSignal = resolveAbortSignal(input.abortSignal);
-  let session = reanchorVisibleMemoryProjections({
-    anchorIndex: input.projectionAnchorIndex,
-    session: input.session,
-    slots: pending.slots,
-  });
+  let session = { ...input.session, history: [...input.messages] };
 
   for (const lock of pending.slots) {
     if (lock.scope === null) continue;
@@ -295,7 +299,6 @@ export async function finishMemoryCompaction(input: {
           messages: input.messages,
           operationId,
           scope: lock.scope,
-          session,
           slot: lock.slot,
         }),
         compaction: { modelId: pending.modelId },
@@ -303,8 +306,7 @@ export async function finishMemoryCompaction(input: {
         turn: pending.turn,
       };
       const result = await memory.provider.recall(context);
-      session = updateMemoryProjection({
-        anchorIndex: input.projectionAnchorIndex,
+      session = appendRecallResult({
         result,
         scope: lock.scope,
         session,
@@ -358,7 +360,6 @@ export async function saveCompletedMemoryTurn(input: {
           messages: input.messages,
           operationId,
           scope: lock.scope,
-          session: input.session,
           slot: lock.slot,
         }),
         phase: "turn.completed",
@@ -389,9 +390,27 @@ export async function saveCompletedMemoryTurn(input: {
   return setActiveMemoryTurn(session, null);
 }
 
-/** Clears prompt anchors while preserving provider projections for the next recall. */
-export function clearMemoryAnchors(session: HarnessSession): HarnessSession {
-  return clearMemoryProjectionAnchors(session);
+function appendRecallResult(input: {
+  readonly result: MemoryRecallResult;
+  readonly scope: MemoryScope;
+  readonly session: HarnessSession;
+  readonly slot: string;
+}): HarnessSession {
+  if (input.result === null || input.result === undefined) return input.session;
+  const normalized = normalizeInstructionsDefinition(
+    input.result,
+    `Memory provider "${input.slot}" returned an invalid recall message.`,
+  );
+  if (normalized.role !== "user") {
+    throw new TypeError(`Memory provider "${input.slot}" recall messages must use role "user".`);
+  }
+  const content = normalized.content.trim();
+  if (content.length === 0) return input.session;
+  const message = attributeMemoryMessage(
+    { content, role: "user" },
+    { scope: { ...input.scope }, slot: input.slot },
+  );
+  return { ...input.session, history: [...input.session.history, message] };
 }
 
 async function resolveMemorySlots(input: {

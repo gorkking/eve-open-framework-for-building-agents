@@ -3,13 +3,10 @@ import type { ModelMessage } from "ai";
 
 import type { SessionAuthContext } from "#channel/types.js";
 import { buildCallbackContext } from "#context/build-callback-context.js";
-import { getMemoryProjection } from "#harness/memory-state.js";
 import type { DurableMemoryCallbackSession } from "#harness/memory-state.js";
-import type { HarnessSession } from "#harness/types.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type {
   MemoryOperationContext,
-  MemoryProjection,
   MemoryScope,
   MemoryTurnContext,
 } from "#public/memory/index.js";
@@ -51,18 +48,12 @@ export function createOperationContext(input: {
   readonly messages: readonly ModelMessage[];
   readonly operationId: string;
   readonly scope: MemoryScope;
-  readonly session: HarnessSession;
   readonly slot: string;
-  readonly current?: MemoryProjection | null;
 }): MemoryOperationContext {
   return {
     ...restoreCallbackContext(input.callbackSession),
     abortSignal: input.abortSignal,
     memory: {
-      current:
-        input.current === undefined
-          ? getMemoryProjection({ scope: input.scope, session: input.session, slot: input.slot })
-          : cloneProjection(input.current),
       scope: cloneScope(input.scope),
       slot: input.slot,
     },
@@ -89,10 +80,6 @@ export function cloneTurn(turn: MemoryTurnContext): MemoryTurnContext {
 
 export function cloneScope(scope: MemoryScope): MemoryScope {
   return { key: scope.key, namespace: scope.namespace, value: scope.value };
-}
-
-export function cloneProjection(projection: MemoryProjection | null): MemoryProjection | null {
-  return projection === null ? null : { content: projection.content };
 }
 
 export function principalIdentity(principal: SessionAuthContext | null): string {

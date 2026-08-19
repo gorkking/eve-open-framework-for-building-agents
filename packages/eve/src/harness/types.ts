@@ -246,12 +246,15 @@ export interface HarnessMemoryApprovalTools {
 /** Execution-owned memory callbacks invoked at exact harness boundaries. */
 export interface HarnessMemoryLifecycle {
   buildTools(input: { readonly session: HarnessSession }): HarnessToolMap;
-  clearAnchors(session: HarnessSession): HarnessSession;
   finishCompaction(input: {
     readonly messages: readonly ModelMessage[];
-    readonly projectionAnchorIndex: number;
     readonly session: HarnessSession;
   }): Promise<{ readonly failure?: unknown; readonly session: HarnessSession }>;
+  prepareCompaction(input: {
+    readonly modelId: string;
+    readonly session: HarnessSession;
+    readonly standalone: boolean;
+  }): Promise<HarnessSession>;
   projectPrompt(input: {
     readonly messages: readonly ModelMessage[];
     readonly session: HarnessSession;
@@ -274,7 +277,6 @@ export interface HarnessMemoryLifecycle {
   }): Promise<HarnessMemoryApprovalTools>;
   restoreToolTurn(input: {
     readonly callIds: readonly string[];
-    readonly projectionAnchorIndex: number;
     readonly session: HarnessSession;
   }): HarnessSession;
   saveCompletedTurn(input: {
@@ -283,14 +285,11 @@ export interface HarnessMemoryLifecycle {
   }): Promise<HarnessSession>;
   startCompaction(input: {
     readonly messages: readonly ModelMessage[];
-    readonly modelId: string;
     readonly session: HarnessSession;
-    readonly standalone: boolean;
     readonly usageInputTokens: number | null;
   }): Promise<HarnessSession>;
   startTurn(input: {
     readonly messages: readonly ModelMessage[];
-    readonly projectionAnchorIndex: number;
     readonly session: HarnessSession;
     readonly turn: {
       readonly input: readonly ModelMessage[];

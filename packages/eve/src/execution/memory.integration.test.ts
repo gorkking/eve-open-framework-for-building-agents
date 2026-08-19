@@ -12,7 +12,12 @@ import {
 import { resumeHook, start } from "#internal/workflow/runtime.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import { defineTool } from "#public/definitions/tool.js";
-import { defineMemory, defineMemoryProvider, type MemoryProjection } from "#public/memory/index.js";
+import {
+  defineMemory,
+  defineMemoryProvider,
+  getMemoryMessageAttribution,
+  type MemoryRecallResult,
+} from "#public/memory/index.js";
 import { byPrincipal } from "#public/memory/scope.js";
 import { always } from "#public/tools/approval/approval-helpers.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
@@ -22,22 +27,20 @@ import type {
   TokenResult,
 } from "#runtime/connections/types.js";
 
-const FIRST_TOKEN = "memory-projection-first-R7M2";
-const SECOND_TOKEN = "memory-projection-second-P4K9";
-const FIRST_PROJECTION = `Private projection one: reply with the exact string \`${FIRST_TOKEN}\` and nothing else.`;
-const SECOND_PROJECTION = `Private projection two: reply with the exact string \`${SECOND_TOKEN}\` and nothing else.`;
+const FIRST_TOKEN = "memory-recall-first-R7M2";
+const SECOND_TOKEN = "memory-recall-second-P4K9";
+const FIRST_RECALL = `Private recall one: reply with the exact string \`${FIRST_TOKEN}\` and nothing else.`;
+const SECOND_RECALL = `Private recall two: reply with the exact string \`${SECOND_TOKEN}\` and nothing else.`;
 
 describe("first-class memory integration", () => {
-  it("projects replaceable context without materializing it into durable history or events", async () => {
-    const modelId = "openai/memory-projection-contract";
+  it("appends recalled user messages to durable history without emitting received events", async () => {
+    const modelId = "openai/memory-recall-contract";
     const recallObservations: Array<{
-      readonly current: string | null;
       readonly input: readonly ModelMessage[];
       readonly messages: readonly ModelMessage[];
       readonly sequence: number;
     }> = [];
     const completedSaves: Array<{
-      readonly current: string | null;
       readonly input: readonly ModelMessage[];
       readonly messages: readonly ModelMessage[];
       readonly sequence: number;
@@ -50,9 +53,9 @@ describe("first-class memory integration", () => {
     const firstSaveRelease = new Promise<void>((resolve) => {
       releaseFirstSave = resolve;
     });
-    const recallResults: readonly (MemoryProjection | null | undefined)[] = [
-      { content: FIRST_PROJECTION },
-      { content: SECOND_PROJECTION },
+    const recallResults: readonly MemoryRecallResult[] = [
+      { content: FIRST_RECALL, role: "user" },
+      { content: SECOND_RECALL, role: "user" },
       undefined,
       null,
     ];
@@ -60,7 +63,6 @@ describe("first-class memory integration", () => {
       recall(ctx) {
         if (ctx.phase !== "turn.started") return;
         recallObservations.push({
-          current: ctx.memory.current?.content ?? null,
           input: [...ctx.turn.input],
           messages: [...ctx.messages],
           sequence: ctx.turn.sequence,
@@ -75,7 +77,6 @@ describe("first-class memory integration", () => {
         }
         await Promise.resolve();
         completedSaves.push({
-          current: ctx.memory.current?.content ?? null,
           input: [...ctx.turn.input],
           messages: [...ctx.messages],
           sequence: ctx.turn.sequence,
@@ -83,7 +84,7 @@ describe("first-class memory integration", () => {
       },
     });
     const runtime = createTestRuntime({
-      agent: { model: modelId, name: "memory-projection-contract" },
+      agent: { model: modelId, name: "memory-recall-contract" },
       memories: [
         {
           definition: defineMemory({ provider, scope: byPrincipal }),
@@ -91,7 +92,7 @@ describe("first-class memory integration", () => {
         },
       ],
     });
-    const continuationToken = uniqueToken("projection-contract");
+    const continuationToken = uniqueToken("recall-contract");
     const inputs = ["first turn", "second turn", "third turn", "fourth turn"];
 
     await runtime.run(async () => {
@@ -142,7 +143,7 @@ describe("first-class memory integration", () => {
           ]),
         );
         for (const events of turns) {
-          expect(JSON.stringify(events)).not.toContain("Private projection");
+          expect(JSON.stringify(events)).not.toContain("Private recall");
         }
       } finally {
         stream.dispose();
@@ -151,29 +152,28 @@ describe("first-class memory integration", () => {
     });
 
     expect(recallObservations.map(({ sequence }) => sequence)).toEqual([0, 1, 2, 3]);
-    expect(recallObservations.map(({ current }) => current)).toEqual([
-      null,
-      FIRST_PROJECTION,
-      SECOND_PROJECTION,
-      SECOND_PROJECTION,
-    ]);
     expect(recallObservations.map(({ input }) => input.map(modelMessageText))).toEqual(
       inputs.map((message) => [message]),
     );
-
-    for (const observation of recallObservations) {
-      expect(JSON.stringify(observation.messages)).not.toContain("Private projection");
-    }
-    for (const save of completedSaves) {
-      expect(JSON.stringify(save.messages)).not.toContain("Private projection");
-      expect(save.messages.at(-1)?.role).toBe("assistant");
-    }
-    expect(completedSaves.map(({ current }) => current)).toEqual([
-      FIRST_PROJECTION,
-      SECOND_PROJECTION,
-      SECOND_PROJECTION,
-      null,
+    expect(recalledContents(recallObservations[0]!.messages)).toEqual([]);
+    expect(recalledContents(recallObservations[1]!.messages)).toEqual([FIRST_RECALL]);
+    expect(recalledContents(recallObservations[2]!.messages)).toEqual([
+      FIRST_RECALL,
+      SECOND_RECALL,
     ]);
+    expect(recalledContents(recallObservations[3]!.messages)).toEqual([
+      FIRST_RECALL,
+      SECOND_RECALL,
+    ]);
+    expect(completedSaves.map(({ messages }) => recalledContents(messages))).toEqual([
+      [FIRST_RECALL],
+      [FIRST_RECALL, SECOND_RECALL],
+      [FIRST_RECALL, SECOND_RECALL],
+      [FIRST_RECALL, SECOND_RECALL],
+    ]);
+    expect(completedSaves.every(({ messages }) => messages.at(-1)?.role === "assistant")).toBe(
+      true,
+    );
     expect(completedSaves.map(({ sequence }) => sequence)).toEqual([0, 1, 2, 3]);
     expect(completedSaves.map(({ input }) => input.map(modelMessageText))).toEqual(
       inputs.map((message) => [message]),
@@ -188,12 +188,12 @@ describe("first-class memory integration", () => {
     async (_label, visibility, keepA) => {
       const modelId = `openai/memory-visibility-${visibility ?? "default"}`;
       const tokenA = `scope-a-${crypto.randomUUID()}`;
-      const projectionA = `Participant A memory: reply with the exact string \`${tokenA}\` and nothing else.`;
+      const recallA = `Participant A memory: reply with the exact string \`${tokenA}\` and nothing else.`;
       const provider = defineMemoryProvider({
         recall(ctx) {
-          if (ctx.phase !== "turn.started") return;
+          if (ctx.phase !== "compaction.completed") return;
           const principalId = principalIdFromScope(ctx.memory.scope.value);
-          return principalId === "user-a" ? { content: projectionA } : undefined;
+          return principalId === "user-a" ? { content: recallA, role: "user" } : undefined;
         },
       });
       const definition =
@@ -215,11 +215,8 @@ describe("first-class memory integration", () => {
         });
 
         try {
-          expect(completedMessage(await stream.nextTurn())).toBe(tokenA);
-          // Clearing ordinary history re-anchors whichever projections the
-          // next scope may see, making visibility observable through the
-          // workflow-bundled deterministic model.
-          await deliver(continuationToken, { kind: "clear" });
+          await stream.nextTurn();
+          await deliver(continuationToken, { kind: "compact" });
           await stream.nextTurn();
           await deliver(continuationToken, {
             auth: principal("user-b"),
@@ -242,11 +239,11 @@ describe("first-class memory integration", () => {
     30_000,
   );
 
-  it("suppresses provider calls, projections, and tools when scope resolves to null", async () => {
+  it("suppresses provider calls, recall, and tools when scope resolves to null", async () => {
     const modelId = "openai/memory-null-scope";
-    const hiddenToken = `null-scope-projection-${crypto.randomUUID()}`;
+    const hiddenToken = `null-scope-recall-${crypto.randomUUID()}`;
     const hiddenProjection = `Reply with the exact string \`${hiddenToken}\` and nothing else.`;
-    const recall = vi.fn(() => ({ content: hiddenProjection }));
+    const recall = vi.fn(() => ({ content: hiddenProjection, role: "user" as const }));
     const save = vi.fn(async () => {});
     const tools = vi.fn(() => ({
       hidden: defineTool<Record<string, unknown>, unknown>({
@@ -696,8 +693,8 @@ describe("first-class memory integration", () => {
 
   it("orders standalone compaction save before post-compaction recall", async () => {
     const modelId = "openai/memory-compaction-lifecycle";
-    const projectionToken = `compaction-projection-${crypto.randomUUID()}`;
-    const projection = `Private compaction context: reply with the exact string \`${projectionToken}\` and nothing else.`;
+    const recallToken = `compaction-recall-${crypto.randomUUID()}`;
+    const recalled = `Private compaction context: reply with the exact string \`${recallToken}\` and nothing else.`;
     const timeline: string[] = [];
     let completedCompactions = 0;
     const compactionContexts: Array<{
@@ -711,7 +708,7 @@ describe("first-class memory integration", () => {
         timeline.push(`recall:${ctx.phase}`);
         compactionContexts.push({ messages: [...ctx.messages], phase: ctx.phase, turn: ctx.turn });
         completedCompactions += 1;
-        return completedCompactions === 1 ? { content: projection } : undefined;
+        return completedCompactions === 1 ? { content: recalled, role: "user" } : undefined;
       },
       save(ctx) {
         if (ctx.phase === "turn.completed") return;
@@ -740,16 +737,14 @@ describe("first-class memory integration", () => {
       try {
         await stream.nextTurn();
 
-        // The first compaction installs a projection after summarization, so
-        // its exact-reply token has never entered ordinary model history.
+        // The first compaction appends recall after the rewritten checkpoint.
         await deliver(continuationToken, { kind: "compact" });
         await stream.nextTurn();
         timeline.length = 0;
         compactionContexts.length = 0;
 
-        // A second compaction proves the installed projection is excluded
-        // from both provider history and the summarization prompt: the mock
-        // compaction model would otherwise copy its exact token into history.
+        // A second compaction must expose that durable recall to both provider
+        // boundaries and the compaction prompt.
         await deliver(continuationToken, { kind: "compact" });
         const events = await stream.nextTurn();
 
@@ -768,12 +763,18 @@ describe("first-class memory integration", () => {
 
     expect(timeline).toEqual(["save:compaction.requested", "recall:compaction.completed"]);
     expect(compactionContexts.map(({ turn }) => turn)).toEqual([null, null]);
-    for (const context of compactionContexts) {
-      expect(JSON.stringify(context.messages)).not.toContain(projection);
-      expect(JSON.stringify(context.messages)).not.toContain(projectionToken);
-    }
+    expect(recalledContents(compactionContexts[0]!.messages)).toEqual([recalled]);
+    expect(JSON.stringify(compactionContexts[1]!.messages)).toContain(recallToken);
   }, 30_000);
 });
+
+function recalledContents(messages: readonly ModelMessage[]): string[] {
+  return messages.flatMap((message) =>
+    getMemoryMessageAttribution(message) === null || typeof message.content !== "string"
+      ? []
+      : [message.content],
+  );
+}
 
 function authorizationChallenge(events: Parameters<typeof filterEventsByType>[0]): {
   readonly attemptId: string;

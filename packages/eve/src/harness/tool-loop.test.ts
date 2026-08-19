@@ -36,6 +36,7 @@ import type { InstrumentationStepStartedEventInput } from "#public/instrumentati
 import { defineInstructions } from "#public/definitions/instructions.js";
 import type { ResolvedDynamicInstructionsResolver } from "#runtime/types.js";
 import type { DynamicResolveContext } from "#shared/dynamic-tool-definition.js";
+import { attributeMemoryMessage } from "#shared/memory-message.js";
 import type { RunMode } from "#shared/run-mode.js";
 import { compactMessages, shouldCompact } from "#harness/compaction.js";
 import { getHarnessEmissionState, isHarnessBetweenTurns } from "#harness/emission.js";
@@ -148,13 +149,6 @@ function declareTelemetry(config: Readonly<Record<string, unknown>> | undefined)
 const mockCompactMessages = vi.hoisted(() => vi.fn());
 vi.mock("./compaction.js", () => ({
   compactMessages: mockCompactMessages,
-  compactMessagesWithProjectionAnchor: async (...args: unknown[]) => {
-    const messages = (await mockCompactMessages(...args)) as ModelMessage[];
-    return {
-      messages,
-      projectionAnchorIndex: Math.min(2, messages.length),
-    };
-  },
   estimateTokens: vi.fn().mockReturnValue(5000),
   getInputTokenCount: vi.fn().mockReturnValue(5000),
   resolveCompactionModel: vi.fn(
@@ -221,8 +215,8 @@ function createMemoryLifecycle(
 ): HarnessMemoryLifecycle {
   return {
     buildTools: () => new Map(),
-    clearAnchors: (session) => session,
     finishCompaction: async ({ session }) => ({ session }),
+    prepareCompaction: async ({ session }) => session,
     projectPrompt: ({ messages }) => [...messages],
     recordToolOrigins: ({ session }) => session,
     releaseToolOrigins: ({ session }) => session,
@@ -9029,7 +9023,7 @@ describe("createToolLoopHarness", () => {
     });
   });
 
-  it("projects memory into the model call without persisting it in history", async () => {
+  it("uses the memory-filtered prompt without rewriting durable history", async () => {
     const order: string[] = [];
     const events: UnstampedMessageStreamEvent[] = [];
     const startTurn = vi.fn(async ({ session }: { session: HarnessSession }) => session);
@@ -9040,7 +9034,13 @@ describe("createToolLoopHarness", () => {
     const memory = createMemoryLifecycle({
       projectPrompt: ({ messages }) => [
         ...messages.slice(0, 1),
-        { content: "recalled context", role: "user" },
+        attributeMemoryMessage(
+          { content: "recalled context", role: "user" },
+          {
+            scope: { key: "mem_key", namespace: "app", value: "user-1" },
+            slot: "user",
+          },
+        ),
         ...messages.slice(1),
       ],
       saveCompletedTurn,
@@ -9069,7 +9069,6 @@ describe("createToolLoopHarness", () => {
     expect(startTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         messages: [{ content: "Earlier", role: "user" }],
-        projectionAnchorIndex: 1,
         turn: {
           input: [{ content: "Current", role: "user" }],
           sequence: 0,
@@ -9145,6 +9144,10 @@ describe("createToolLoopHarness", () => {
         order.push("memory.recall.compaction.completed");
         return { session };
       },
+      prepareCompaction: async ({ session }) => {
+        order.push("memory.prepare.compaction");
+        return session;
+      },
       saveCompletedTurn: async ({ session }) => {
         order.push("memory.save.turn.completed");
         return session;
@@ -9184,6 +9187,7 @@ describe("createToolLoopHarness", () => {
     expect(order).toEqual(
       expect.arrayContaining([
         "memory.save.compaction.requested",
+        "memory.prepare.compaction",
         "memory.recall.compaction.completed",
         "memory.tools.turn.started",
         "memory.tools.replayed",
@@ -9192,6 +9196,9 @@ describe("createToolLoopHarness", () => {
     );
     expect(order.indexOf("memory.tools.turn.started")).toBeLessThan(order.indexOf("step.started"));
     expect(order.indexOf("step.started")).toBeLessThan(order.indexOf("compaction.requested"));
+    expect(order.indexOf("memory.prepare.compaction")).toBeLessThan(
+      order.indexOf("compaction.requested"),
+    );
     expect(order.indexOf("compaction.requested")).toBeLessThan(
       order.indexOf("memory.save.compaction.requested"),
     );
@@ -9233,7 +9240,6 @@ describe("createToolLoopHarness", () => {
           { content: "Earlier", role: "user" },
           { content: "Current", role: "user" },
         ],
-        standalone: false,
       }),
     );
     expect(result.session.history).toEqual(session.history);
@@ -9470,6 +9476,45 @@ describe("createToolLoopHarness", () => {
     ]);
   });
 
+  it("applies prepared memory visibility before standalone compaction", async () => {
+    const visible = { content: "visible", role: "user" } as const;
+    const hidden = { content: "hidden recall", role: "user" } as const;
+    const compactedHistory: ModelMessage[] = [
+      { content: "Summary of our conversation so far:", role: "user" },
+      { content: "summary", role: "assistant" },
+    ];
+    vi.mocked(compactMessages).mockResolvedValue(compactedHistory);
+    let prepared = false;
+    const startCompaction = vi.fn(async ({ session }: { session: HarnessSession }) => session);
+    const memory = createMemoryLifecycle({
+      prepareCompaction: async ({ session }) => {
+        prepared = true;
+        return session;
+      },
+      projectPrompt: ({ messages }) =>
+        prepared ? messages.filter((message) => message !== hidden) : [...messages],
+      startCompaction,
+    });
+    const runStep = createToolLoopHarness(
+      createTestConfig("conversation", undefined, {
+        compactOnly: true,
+        memory,
+        resolveModel: vi
+          .fn()
+          .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
+      }),
+    );
+    const session = createTestSession({ history: [hidden, visible] });
+
+    const result = await runStep(session);
+
+    expect(vi.mocked(compactMessages).mock.calls[0]?.[0]).toEqual([visible]);
+    expect(startCompaction).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [hidden, visible] }),
+    );
+    expect(result.session.history).toEqual(compactedHistory);
+  });
+
   it("returns an empty session to its waiting boundary after manual compaction", async () => {
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
@@ -9513,6 +9558,7 @@ describe("createToolLoopHarness", () => {
   });
 
   it("keeps history unchanged when standalone memory pre-save fails", async () => {
+    const prepareCompaction = vi.fn(async ({ session }: { session: HarnessSession }) => session);
     const startCompaction = vi.fn(async () => {
       throw new Error("private standalone pre-save failure");
     });
@@ -9520,7 +9566,7 @@ describe("createToolLoopHarness", () => {
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
         compactOnly: true,
-        memory: createMemoryLifecycle({ startCompaction }),
+        memory: createMemoryLifecycle({ prepareCompaction, startCompaction }),
         resolveModel: vi
           .fn()
           .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
@@ -9532,8 +9578,9 @@ describe("createToolLoopHarness", () => {
 
     const result = await runStep(session);
 
+    expect(prepareCompaction).toHaveBeenCalledWith(expect.objectContaining({ standalone: true }));
     expect(startCompaction).toHaveBeenCalledWith(
-      expect.objectContaining({ messages: session.history, standalone: true }),
+      expect.objectContaining({ messages: session.history }),
     );
     expect(result.next).toBeNull();
     expect(result.session).toBe(session);

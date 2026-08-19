@@ -5,7 +5,13 @@ import { ContextContainer, contextStorage } from "#context/container.js";
 import { runWithDefaultMemoryNamespaceContext } from "#context/default-memory-namespace-context.js";
 import { defineTool } from "#public/definitions/tool.js";
 import type { MemoryToolSet } from "#public/memory/index.js";
-import { defaultNamespace, defineMemory, defineMemoryProvider } from "#public/memory/index.js";
+import {
+  defaultNamespace,
+  defineMemory,
+  defineMemoryProvider,
+  getMemoryMessageAttribution,
+} from "#public/memory/index.js";
+import { attributeMemoryMessage } from "#shared/memory-message.js";
 
 function createContext(): ContextContainer {
   return new ContextContainer();
@@ -17,7 +23,7 @@ describe("memory authoring", () => {
   });
 
   it("defines the three-method provider contract without rewriting it", () => {
-    const recall = () => ({ content: "remembered" });
+    const recall = () => ({ content: "remembered", role: "user" as const });
     const save = async () => {};
     const tools = () => null;
     const scope = () => "user-1";
@@ -150,6 +156,28 @@ describe("memory authoring", () => {
       events: {},
       recall: () => undefined,
     });
+    defineMemoryProvider({
+      // @ts-expect-error Recall messages require the same explicit user role as instructions.
+      recall: () => ({ content: "missing role" }),
+    });
+  });
+
+  it("reads cloned memory attribution without exposing internal metadata", () => {
+    const message = attributeMemoryMessage(
+      { content: "remembered", role: "user" },
+      {
+        scope: { key: "mem_key", namespace: "app", value: "user-1" },
+        slot: "user",
+      },
+    );
+
+    const attribution = getMemoryMessageAttribution(message);
+    expect(attribution).toEqual({
+      scope: { key: "mem_key", namespace: "app", value: "user-1" },
+      slot: "user",
+    });
+    expect(attribution?.scope).not.toBe(getMemoryMessageAttribution(message)?.scope);
+    expect(getMemoryMessageAttribution({ content: "ordinary", role: "user" })).toBeNull();
   });
 
   it("accepts inferred tool definitions in the heterogeneous provider tool set", () => {

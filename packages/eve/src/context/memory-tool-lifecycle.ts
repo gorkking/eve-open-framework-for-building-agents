@@ -5,16 +5,9 @@ import { replayDynamicTools } from "#context/build-dynamic-tools.js";
 import { loadContext } from "#context/container.js";
 import { resolveDynamicToolEvent } from "#context/dynamic-tool-lifecycle.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
+import { cloneScope, cloneTurn, principalIdentity } from "#context/memory-operation.js";
 import {
-  cloneProjection,
-  cloneScope,
-  cloneTurn,
-  principalIdentity,
-} from "#context/memory-operation.js";
-import {
-  anchorUnanchoredVisibleMemoryProjections,
   getActiveMemoryTurn,
-  getMemoryProjection,
   getMemoryToolOriginCallIds as getStoredMemoryToolOriginCallIds,
   getMemoryToolOrigins,
   recordMemoryToolOrigins,
@@ -66,7 +59,6 @@ export async function resolveMemoryTurnTools(input: {
       active,
       memory,
       scope: lock.scope,
-      session: input.session,
       slot: lock.slot,
     });
     if (memory.description !== undefined) {
@@ -136,17 +128,9 @@ export { recordMemoryToolOrigins, releaseMemoryToolOrigins };
 /** Restores the full originating turn lock before an approved tool continuation. */
 export function restoreMemoryToolTurn(input: {
   readonly callIds: readonly string[];
-  readonly projectionAnchorIndex: number;
   readonly session: HarnessSession;
 }): HarnessSession {
-  const session = restoreMemoryTurnFromToolOrigins(input);
-  const active = getActiveMemoryTurn(session);
-  if (active === null) return session;
-  return anchorUnanchoredVisibleMemoryProjections({
-    anchorIndex: input.projectionAnchorIndex,
-    session,
-    slots: active.slots,
-  });
+  return restoreMemoryTurnFromToolOrigins(input);
 }
 
 /** Replays parked tools from their captured dynamic metadata. */
@@ -179,7 +163,6 @@ function createMemoryToolResolver(input: {
   readonly active: ActiveMemoryTurn;
   readonly memory: ResolvedMemoryDefinition;
   readonly scope: MemoryScope;
-  readonly session: HarnessSession;
   readonly slot: string;
 }): ResolvedDynamicToolResolver {
   const resolveTools = input.memory.provider.tools;
@@ -192,13 +175,6 @@ function createMemoryToolResolver(input: {
         const context: MemoryToolsContext = {
           ...resolveContext,
           memory: {
-            current: cloneProjection(
-              getMemoryProjection({
-                scope: input.scope,
-                session: input.session,
-                slot: input.slot,
-              }),
-            ),
             scope: cloneScope(input.scope),
             slot: input.slot,
           },

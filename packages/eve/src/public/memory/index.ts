@@ -9,6 +9,7 @@ import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ExactDefinition } from "#public/definitions/exact.js";
 import type { ToolDefinition } from "#public/definitions/tool.js";
 import type { DynamicResolveContext } from "#shared/dynamic-tool-definition.js";
+import { readMemoryMessageAttribution } from "#shared/memory-message.js";
 import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
 /** Application-owned memory domain, resolved when eve locks a memory operation. */
@@ -56,10 +57,16 @@ export interface MemoryScope {
   readonly value: string;
 }
 
-/** Provider-formatted context projected into model calls for one scope. */
-export interface MemoryProjection {
-  /** Non-empty provider context projected as one synthetic user-role message. */
+/** Provider context appended to durable history by one recall operation. */
+export interface MemoryRecallMessage {
   readonly content: string;
+  readonly role: "user";
+}
+
+/** Origin attached by eve to a recalled message in durable history. */
+export interface MemoryMessageAttribution {
+  readonly scope: MemoryScope;
+  readonly slot: string;
 }
 
 /** Normalized input and durable coordinates for the active turn. */
@@ -75,13 +82,11 @@ export interface MemoryTurnContext {
 export interface MemoryOperationContext extends SessionContext {
   /** Aborts when the active turn or standalone operation is cancelled. */
   readonly abortSignal: AbortSignal;
-  /** Durable model history at this boundary. Excludes memory projections. */
+  /** Durable model history at this boundary, including prior recalls. */
   readonly messages: readonly ModelMessage[];
   /** Identifies one logical recall or save operation across workflow replay. */
   readonly operationId: string;
   readonly memory: {
-    /** Current projection for this slot and active scope, if one exists. */
-    readonly current: MemoryProjection | null;
     /** Trusted partition locked for the active turn or standalone operation. */
     readonly scope: MemoryScope;
     /** Path-derived authored slot identity. */
@@ -129,8 +134,6 @@ export type MemorySaveContext = MemoryOperationContext &
 /** Context supplied when resolving a memory slot's tools for the active turn. */
 export interface MemoryToolsContext extends DynamicResolveContext {
   readonly memory: {
-    /** Current projection after turn-start recall. */
-    readonly current: MemoryProjection | null;
     /** Trusted partition locked for the active turn. */
     readonly scope: MemoryScope;
     /** Path-derived authored slot identity. */
@@ -139,8 +142,8 @@ export interface MemoryToolsContext extends DynamicResolveContext {
   readonly turn: MemoryTurnContext;
 }
 
-/** A recall replaces, clears, or preserves the active scope's projection. */
-export type MemoryRecallResult = MemoryProjection | null | undefined;
+/** One append-only user-role message, or no message for this recall boundary. */
+export type MemoryRecallResult = MemoryRecallMessage | null | undefined;
 
 /** One provider-owned model tool with its authoring-time input and output types erased. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -160,7 +163,7 @@ export interface MemoryProvider {
   tools?(context: MemoryToolsContext): MemoryToolSet | null | Promise<MemoryToolSet | null>;
 }
 
-/** Controls which recalled projections remain model-visible after a scope change. */
+/** Controls which recalled messages remain model-visible after a scope change. */
 export type MemoryVisibility = "scope" | "session";
 
 /** Path-authored memory slot definition. Identity is derived from its file path. */
@@ -171,8 +174,21 @@ export interface MemoryDefinition {
   readonly namespace?: MemoryNamespaceDefinition;
   readonly provider: MemoryProvider;
   readonly scope: MemoryScopeDefinition;
-  /** Projection visibility across scope changes. Defaults to `"scope"`. */
+  /** Recall-message visibility across scope changes. Defaults to `"scope"`. */
   readonly visibility?: MemoryVisibility;
+}
+
+/** Returns the memory origin attached to a recalled history message, if present. */
+export function getMemoryMessageAttribution(
+  message: ModelMessage,
+): MemoryMessageAttribution | null {
+  const attribution = readMemoryMessageAttribution(message);
+  return attribution === null
+    ? null
+    : {
+        scope: { ...attribution.scope },
+        slot: attribution.slot,
+      };
 }
 
 /** Defines provider-owned memory behavior without imposing a storage model. */

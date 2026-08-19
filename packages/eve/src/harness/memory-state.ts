@@ -8,15 +8,15 @@ import type {
   SessionTurn,
 } from "#context/keys.js";
 import type { HarnessSession } from "#harness/types.js";
-import type {
-  MemoryProjection,
-  MemoryScope,
-  MemoryTurnContext,
-  MemoryVisibility,
-} from "#public/memory/index.js";
+import type { MemoryScope, MemoryTurnContext, MemoryVisibility } from "#public/memory/index.js";
+import {
+  readMemoryMessageAttribution,
+  type InternalMemoryMessageAttribution,
+} from "#shared/memory-message.js";
 
 const MEMORY_SESSION_STATE_KEY = "eve.memory";
 const MEMORY_STATE_VERSION = 1;
+const EMPTY_VISIBLE_RECALL_FINGERPRINT = fingerprint([]);
 
 export interface DurableMemoryCallbackSession {
   readonly auth: SessionAuth;
@@ -37,13 +37,6 @@ export interface DurableMemoryTurnState {
   readonly slots: readonly DurableMemorySlotLock[];
   readonly toolMetadata: readonly DurableDynamicToolMetadata[];
   readonly turn: MemoryTurnContext;
-}
-
-export interface DurableMemoryProjectionState extends MemoryProjection {
-  readonly anchorIndex: number | null;
-  readonly order: number;
-  readonly scopeKey: string;
-  readonly slot: string;
 }
 
 export interface DurableMemoryCompactionState {
@@ -67,19 +60,16 @@ export interface DurableMemoryToolOrigin {
 
 export interface DurableMemoryState {
   readonly activeTurn: DurableMemoryTurnState | null;
-  readonly lastVisibleProjectionFingerprint?: string;
+  readonly lastVisibleRecallFingerprint?: string;
   readonly nextCompactionOrdinal: number;
-  readonly nextProjectionOrder: number;
   readonly pendingCompaction: DurableMemoryCompactionState | null;
-  readonly projections: readonly DurableMemoryProjectionState[];
   readonly toolOrigins: Readonly<Record<string, DurableMemoryToolOrigin>>;
   readonly version: typeof MEMORY_STATE_VERSION;
 }
 
 export function getMemoryState(session: HarnessSession): DurableMemoryState {
   const candidate = session.state?.[MEMORY_SESSION_STATE_KEY];
-  if (!isDurableMemoryState(candidate)) return createEmptyMemoryState();
-  return candidate;
+  return isDurableMemoryState(candidate) ? candidate : createEmptyMemoryState();
 }
 
 export function setMemoryState(
@@ -100,21 +90,26 @@ export function setActiveMemoryTurn(
   activeTurn: DurableMemoryTurnState | null,
 ): HarnessSession {
   const memory = getMemoryState(session);
-  const before =
+  const previousFingerprint =
     memory.activeTurn === null
-      ? (memory.lastVisibleProjectionFingerprint ?? EMPTY_VISIBLE_PROJECTION_FINGERPRINT)
-      : visibleProjectionFingerprint(memory);
+      ? (memory.lastVisibleRecallFingerprint ?? EMPTY_VISIBLE_RECALL_FINGERPRINT)
+      : visibleRecallFingerprint(session.history, memory.activeTurn.slots);
 
   if (activeTurn === null) {
     return setMemoryState(session, {
       ...memory,
       activeTurn,
-      lastVisibleProjectionFingerprint: before,
+      lastVisibleRecallFingerprint: previousFingerprint,
     });
   }
 
-  const next = { ...memory, activeTurn };
-  return setMemoryStateWithProjectionAccounting(session, next, before);
+  const nextFingerprint = visibleRecallFingerprint(session.history, activeTurn.slots);
+  const updated = setMemoryState(session, {
+    ...memory,
+    activeTurn,
+    lastVisibleRecallFingerprint: nextFingerprint,
+  });
+  return nextFingerprint === previousFingerprint ? updated : invalidatePromptAccounting(updated);
 }
 
 export function getActiveMemoryTurn(session: HarnessSession): DurableMemoryTurnState | null {
@@ -140,189 +135,18 @@ export function getPendingMemoryCompaction(
   return getMemoryState(session).pendingCompaction;
 }
 
-export function anchorUnanchoredVisibleMemoryProjections(input: {
-  readonly anchorIndex: number;
-  readonly session: HarnessSession;
-  readonly slots: readonly DurableMemorySlotLock[];
-}): HarnessSession {
-  assertAnchorIndex(input.anchorIndex);
-  const memory = getMemoryState(input.session);
-  const before = visibleProjectionFingerprint(memory);
-  const projections = memory.projections.map((projection) => {
-    const anchorIndex = isProjectionVisible(projection, input.slots)
-      ? (projection.anchorIndex ?? input.anchorIndex)
-      : null;
-    return projection.anchorIndex === anchorIndex ? projection : { ...projection, anchorIndex };
-  });
-  if (projections.every((projection, index) => projection === memory.projections[index])) {
-    return input.session;
-  }
-  return setMemoryStateWithProjectionAccounting(
-    input.session,
-    { ...memory, projections },
-    before,
-    true,
-  );
-}
-
-export function reanchorVisibleMemoryProjections(input: {
-  readonly anchorIndex: number;
-  readonly session: HarnessSession;
-  readonly slots: readonly DurableMemorySlotLock[];
-}): HarnessSession {
-  assertAnchorIndex(input.anchorIndex);
-  const memory = getMemoryState(input.session);
-  const before = visibleProjectionFingerprint(memory);
-  if (
-    !memory.projections.some((projection) => {
-      const expected = isProjectionVisible(projection, input.slots) ? input.anchorIndex : null;
-      return projection.anchorIndex !== expected;
-    })
-  ) {
-    return input.session;
-  }
-  const projections = memory.projections.map((projection) => ({
-    ...projection,
-    anchorIndex: isProjectionVisible(projection, input.slots) ? input.anchorIndex : null,
-  }));
-  return setMemoryStateWithProjectionAccounting(
-    input.session,
-    { ...memory, projections },
-    before,
-    true,
-  );
-}
-
-export function clearMemoryProjectionAnchors(session: HarnessSession): HarnessSession {
-  const memory = getMemoryState(session);
-  const before = visibleProjectionFingerprint(memory);
-  if (memory.projections.every((projection) => projection.anchorIndex === null)) return session;
-  const projections = memory.projections.map((projection) => ({
-    ...projection,
-    anchorIndex: null,
-  }));
-  return setMemoryStateWithProjectionAccounting(session, { ...memory, projections }, before, true);
-}
-
-export function updateMemoryProjection(input: {
-  readonly anchorIndex: number;
-  readonly result: MemoryProjection | null | undefined;
-  readonly scope: MemoryScope;
-  readonly session: HarnessSession;
-  readonly slot: string;
-}): HarnessSession {
-  if (input.result === undefined) return input.session;
-  assertAnchorIndex(input.anchorIndex);
-
-  const memory = getMemoryState(input.session);
-  const before = visibleProjectionFingerprint(memory);
-  const index = memory.projections.findIndex(
-    (projection) => projection.slot === input.slot && projection.scopeKey === input.scope.key,
-  );
-
-  if (input.result === null) {
-    if (index < 0) return input.session;
-    const projections = memory.projections.filter((_, candidate) => candidate !== index);
-    return setMemoryStateWithProjectionAccounting(
-      input.session,
-      { ...memory, projections },
-      before,
-      true,
-    );
-  }
-
-  if (typeof input.result.content !== "string") {
-    throw new TypeError(`Memory provider "${input.slot}" returned a non-string projection.`);
-  }
-  if (input.result.content.length === 0) {
-    throw new TypeError(`Memory provider "${input.slot}" returned an empty projection.`);
-  }
-
-  if (index >= 0) {
-    const projections = [...memory.projections];
-    const current = projections[index]!;
-    const anchorIndex = current.anchorIndex ?? input.anchorIndex;
-    if (current.content === input.result.content && current.anchorIndex === anchorIndex) {
-      return input.session;
-    }
-    projections[index] = {
-      ...current,
-      anchorIndex,
-      content: input.result.content,
-    };
-    return setMemoryStateWithProjectionAccounting(
-      input.session,
-      { ...memory, projections },
-      before,
-      true,
-    );
-  }
-
-  return setMemoryStateWithProjectionAccounting(
-    input.session,
-    {
-      ...memory,
-      nextProjectionOrder: memory.nextProjectionOrder + 1,
-      projections: [
-        ...memory.projections,
-        {
-          anchorIndex: input.anchorIndex,
-          content: input.result.content,
-          order: memory.nextProjectionOrder,
-          scopeKey: input.scope.key,
-          slot: input.slot,
-        },
-      ],
-    },
-    before,
-    true,
-  );
-}
-
-export function getMemoryProjection(input: {
-  readonly scope: MemoryScope;
-  readonly session: HarnessSession;
-  readonly slot: string;
-}): MemoryProjection | null {
-  const projection = getMemoryState(input.session).projections.find(
-    (candidate) => candidate.slot === input.slot && candidate.scopeKey === input.scope.key,
-  );
-  return projection === undefined ? null : { content: projection.content };
-}
-
+/** Filters attributed recall messages according to the active operation's slot locks. */
 export function projectMemoryMessages(input: {
   readonly messages: readonly ModelMessage[];
   readonly session: HarnessSession;
 }): ModelMessage[] {
   const memory = getMemoryState(input.session);
-  const active = memory.activeTurn;
-  if (active === null) return [...input.messages];
-
-  const projections = memory.projections
-    .filter(
-      (projection) =>
-        projection.anchorIndex !== null && isProjectionVisible(projection, active.slots),
-    )
-    .sort(compareProjections);
-  if (projections.length === 0) return [...input.messages];
-
-  const byAnchor = new Map<number, DurableMemoryProjectionState[]>();
-  for (const projection of projections) {
-    const anchor = Math.min(projection.anchorIndex!, input.messages.length);
-    const entries = byAnchor.get(anchor) ?? [];
-    entries.push(projection);
-    byAnchor.set(anchor, entries);
-  }
-
-  const projected: ModelMessage[] = [];
-  for (let index = 0; index <= input.messages.length; index += 1) {
-    for (const projection of byAnchor.get(index) ?? []) {
-      projected.push({ content: projection.content, role: "user" });
-    }
-    const message = input.messages[index];
-    if (message !== undefined) projected.push(message);
-  }
-  return projected;
+  const slots = memory.pendingCompaction?.slots ?? memory.activeTurn?.slots;
+  if (slots === undefined) return [...input.messages];
+  return input.messages.filter((message) => {
+    const attribution = readMemoryMessageAttribution(message);
+    return attribution === null || isRecallVisible(attribution, slots);
+  });
 }
 
 export function recordMemoryToolOrigins(input: {
@@ -363,10 +187,7 @@ export function recordMemoryToolOrigins(input: {
     };
   }
 
-  return setMemoryState(input.session, {
-    ...memory,
-    toolOrigins,
-  });
+  return setMemoryState(input.session, { ...memory, toolOrigins });
 }
 
 export function getMemoryToolOriginCallIds(
@@ -430,11 +251,9 @@ function durableTurnIdentity(turn: DurableMemoryTurnState): string {
 function createEmptyMemoryState(): DurableMemoryState {
   return {
     activeTurn: null,
-    lastVisibleProjectionFingerprint: EMPTY_VISIBLE_PROJECTION_FINGERPRINT,
+    lastVisibleRecallFingerprint: EMPTY_VISIBLE_RECALL_FINGERPRINT,
     nextCompactionOrdinal: 0,
-    nextProjectionOrder: 0,
     pendingCompaction: null,
-    projections: [],
     toolOrigins: {},
     version: MEMORY_STATE_VERSION,
   };
@@ -448,61 +267,34 @@ function isDurableMemoryState(value: unknown): value is DurableMemoryState {
   );
 }
 
-function isProjectionVisible(
-  projection: DurableMemoryProjectionState,
+function isRecallVisible(
+  attribution: InternalMemoryMessageAttribution,
   slots: readonly DurableMemorySlotLock[],
 ): boolean {
-  const active = slots.find((candidate) => candidate.slot === projection.slot);
-  if (active?.scope === null || active === undefined) return false;
-  return active.visibility === "session" || projection.scopeKey === active.scope.key;
-}
-
-function visibleProjectionFingerprint(memory: DurableMemoryState): string {
-  const active = memory.activeTurn;
-  if (active === null) return EMPTY_VISIBLE_PROJECTION_FINGERPRINT;
-  return fingerprintVisibleProjections(
-    memory.projections
-      .filter((projection) => projection.anchorIndex !== null)
-      .filter((projection) => {
-        const slot = active.slots.find((candidate) => candidate.slot === projection.slot);
-        return (
-          slot?.scope !== null &&
-          slot !== undefined &&
-          (slot.visibility === "session" || projection.scopeKey === slot.scope.key)
-        );
-      })
-      .sort(compareProjections)
-      .map(({ anchorIndex, content, order, scopeKey, slot }) => ({
-        anchorIndex,
-        content,
-        order,
-        scopeKey,
-        slot,
-      })),
+  const active = slots.find((candidate) => candidate.slot === attribution.slot);
+  return (
+    active !== undefined &&
+    active.scope !== null &&
+    (active.visibility === "session" || attribution.scope.key === active.scope.key)
   );
 }
 
-const EMPTY_VISIBLE_PROJECTION_FINGERPRINT = fingerprintVisibleProjections([]);
-
-function fingerprintVisibleProjections(projections: unknown): string {
-  return createHash("sha256").update(JSON.stringify(projections)).digest("base64url");
+function visibleRecallFingerprint(
+  messages: readonly ModelMessage[],
+  slots: readonly DurableMemorySlotLock[],
+): string {
+  return fingerprint(
+    messages.flatMap((message, index) => {
+      const attribution = readMemoryMessageAttribution(message);
+      return attribution !== null && isRecallVisible(attribution, slots)
+        ? [{ attribution, content: message.content, index }]
+        : [];
+    }),
+  );
 }
 
-function setMemoryStateWithProjectionAccounting(
-  session: HarnessSession,
-  memory: DurableMemoryState,
-  previousFingerprint: string,
-  force = false,
-): HarnessSession {
-  const fingerprint = visibleProjectionFingerprint(memory);
-  const updated = setMemoryState(
-    session,
-    memory.activeTurn === null
-      ? memory
-      : { ...memory, lastVisibleProjectionFingerprint: fingerprint },
-  );
-  if (!force && fingerprint === previousFingerprint) return updated;
-  return invalidatePromptAccounting(updated);
+function fingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("base64url");
 }
 
 function invalidatePromptAccounting(session: HarnessSession): HarnessSession {
@@ -516,23 +308,6 @@ function invalidatePromptAccounting(session: HarnessSession): HarnessSession {
   };
 }
 
-function compareProjections(
-  left: DurableMemoryProjectionState,
-  right: DurableMemoryProjectionState,
-): number {
-  const leftAnchor = left.anchorIndex ?? Number.MAX_SAFE_INTEGER;
-  const rightAnchor = right.anchorIndex ?? Number.MAX_SAFE_INTEGER;
-  if (leftAnchor !== rightAnchor) return leftAnchor - rightAnchor;
-  if (left.order !== right.order) return left.order - right.order;
-  return compareStrings(left.slot, right.slot);
-}
-
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function assertAnchorIndex(value: number): void {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new TypeError("Memory projection anchor must be a non-negative integer.");
-  }
 }

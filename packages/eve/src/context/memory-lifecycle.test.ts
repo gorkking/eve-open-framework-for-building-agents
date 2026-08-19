@@ -14,13 +14,14 @@ import {
   MemoryOperationError,
   buildMemoryTools,
   getMemoryToolOriginCallIds,
+  prepareMemoryCompaction,
   projectMemoryPrompt,
   recordMemoryToolOrigins,
   releaseMemoryToolOrigins,
   resolveMemoryApprovalTools,
   restoreMemoryToolTurn,
   saveCompletedMemoryTurn,
-  startMemoryCompaction,
+  startMemoryCompaction as runMemoryCompactionSaves,
   startMemoryTurn,
   finishMemoryCompaction,
   type MemoryDefaultNamespaceContext,
@@ -31,7 +32,9 @@ import { defineTool } from "#public/definitions/tool.js";
 import {
   defaultNamespace,
   defineMemoryProvider,
+  getMemoryMessageAttribution,
   type MemoryProvider,
+  type MemoryRecallResult,
   type MemoryScopeContext,
   type MemoryToolSet,
 } from "#public/memory/index.js";
@@ -45,7 +48,7 @@ const defaultNamespaceContext: MemoryDefaultNamespaceContext = {
 };
 
 describe("memory lifecycle", () => {
-  it("locks scopes in slot order and projects recall before normalized turn input", async () => {
+  it("locks scopes in slot order and appends recall before normalized turn input", async () => {
     const calls: Array<{
       readonly input: readonly ModelMessage[];
       readonly messages: readonly ModelMessage[];
@@ -65,7 +68,7 @@ describe("memory lifecycle", () => {
             scopeKey: context.memory.scope.key,
             slot,
           });
-          return { content: `${slot} context` };
+          return { content: `${slot} context`, role: "user" };
         },
       });
     const memories = [
@@ -80,7 +83,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories,
         messages: prior,
-        projectionAnchorIndex: 1,
         session: createSession(prior),
         turn: { input: turnInput, sequence: 0, turnId: "turn_0" },
       }),
@@ -93,27 +95,30 @@ describe("memory lifecycle", () => {
     expect(calls.map(({ input }) => input).every((input) => input[0] === turnInput[0])).toBe(true);
     expect(new Set(calls.map(({ operationId }) => operationId)).size).toBe(2);
     expect(new Set(calls.map(({ scopeKey }) => scopeKey)).size).toBe(2);
-    expect(session.history).toEqual(prior);
-
-    const prompt = projectMemoryPrompt({
-      memories,
-      messages: [...prior, ...turnInput],
-      session,
-    });
-    expect(prompt).toEqual([
+    expect(session.history.map(({ content, role }) => ({ content, role }))).toEqual([
       prior[0],
       { content: "user context", role: "user" },
       { content: "workspace context", role: "user" },
-      turnInput[0],
     ]);
-    expect(session.compaction).toEqual({ recentWindowSize: 8, threshold: 10_000 });
+    expect(getMemoryMessageAttribution(session.history[1]!)).toMatchObject({ slot: "user" });
+    expect(getMemoryMessageAttribution(session.history[2]!)).toMatchObject({ slot: "workspace" });
+
+    const prompt = projectMemoryPrompt({
+      memories,
+      messages: [...session.history, ...turnInput],
+      session,
+    });
+    expect(prompt).toEqual([...session.history, turnInput[0]]);
+    expect(session.compaction).toMatchObject({
+      lastKnownInputTokens: 25,
+      lastKnownPromptMessageCount: 1,
+    });
 
     const continued = await runInContext(createContext(), () =>
       startMemoryTurn({
         defaultNamespaceContext,
         memories,
         messages: [...prior, ...turnInput],
-        projectionAnchorIndex: 2,
         session,
         turn: {
           input: [{ content: "must not replace the admitted input", role: "user" }],
@@ -158,7 +163,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       }),
@@ -248,7 +252,6 @@ describe("memory lifecycle", () => {
           defaultNamespaceContext: testCase.context,
           memories: [testCase.definition],
           messages: [],
-          projectionAnchorIndex: 0,
           session: createSession(),
           turn: { input: [], sequence, turnId: `turn_${sequence}` },
         }),
@@ -291,7 +294,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       }),
@@ -315,7 +317,6 @@ describe("memory lifecycle", () => {
           defaultNamespaceContext,
           memories: [definition],
           messages: [],
-          projectionAnchorIndex: 0,
           session: createSession(),
           turn: { input: [], sequence: 0, turnId: "turn_0" },
         }),
@@ -337,7 +338,6 @@ describe("memory lifecycle", () => {
 
   it("runs pre-save and post-recall with one compaction lock and durable ordinal", async () => {
     const calls: Array<{
-      readonly current: string | null;
       readonly messages: readonly ModelMessage[];
       readonly operationId: string;
       readonly phase: string;
@@ -346,17 +346,18 @@ describe("memory lifecycle", () => {
     const provider = defineMemoryProvider({
       recall(context) {
         calls.push({
-          current: context.memory.current?.content ?? null,
           messages: context.messages,
           operationId: context.operationId,
           phase: context.phase,
           turnId: context.turn?.turnId ?? null,
         });
-        return { content: context.phase === "turn.started" ? "before" : "after" };
+        return {
+          content: context.phase === "turn.started" ? "before" : "after",
+          role: "user",
+        };
       },
       save(context) {
         calls.push({
-          current: context.memory.current?.content ?? null,
           messages: context.messages,
           operationId: context.operationId,
           phase: context.phase,
@@ -377,7 +378,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: before, sequence: 0, turnId: "turn_0" },
       });
@@ -393,7 +393,6 @@ describe("memory lifecycle", () => {
       return await finishMemoryCompaction({
         memories: [definition],
         messages: after,
-        projectionAnchorIndex: 2,
         session,
       });
     });
@@ -404,13 +403,19 @@ describe("memory lifecycle", () => {
       "compaction.requested",
       "compaction.completed",
     ]);
-    expect(calls[1]).toMatchObject({ current: "before", messages: before, turnId: "turn_0" });
-    expect(calls[2]).toMatchObject({ current: "before", messages: after, turnId: "turn_0" });
+    expect(calls[1]).toMatchObject({ messages: before, turnId: "turn_0" });
+    expect(calls[2]).toMatchObject({ messages: after, turnId: "turn_0" });
     expect(calls[1]!.operationId).not.toBe(calls[2]!.operationId);
     expect(getMemoryState(result.session)).toMatchObject({
       nextCompactionOrdinal: 1,
       pendingCompaction: null,
-      projections: [{ anchorIndex: 2, content: "after", slot: "user" }],
+    });
+    expect(result.session.history.map(({ content, role }) => ({ content, role }))).toEqual([
+      ...after,
+      { content: "after", role: "user" },
+    ]);
+    expect(getMemoryMessageAttribution(result.session.history.at(-1)!)).toMatchObject({
+      slot: "user",
     });
   });
 
@@ -436,7 +441,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -453,7 +457,6 @@ describe("memory lifecycle", () => {
         await finishMemoryCompaction({
           memories: [definition],
           messages: [],
-          projectionAnchorIndex: 0,
           session,
         })
       ).session;
@@ -480,9 +483,9 @@ describe("memory lifecycle", () => {
     const provider = defineMemoryProvider({
       recall(context) {
         if (context.phase === "compaction.completed") {
-          throw new Error("secret projection content");
+          throw new Error("secret recall content");
         }
-        return { content: "preserved" };
+        return { content: "preserved", role: "user" };
       },
     });
     const definition = memory("user", provider, "user-1");
@@ -492,7 +495,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -508,17 +510,16 @@ describe("memory lifecycle", () => {
       return await finishMemoryCompaction({
         memories: [definition],
         messages: [{ content: "summary", role: "assistant" }],
-        projectionAnchorIndex: 1,
         session,
       });
     });
 
     expect(result.failure).toBeInstanceOf(MemoryOperationError);
-    expect(result.failure?.message).not.toContain("secret projection content");
+    expect(result.failure?.message).not.toContain("secret recall content");
     expect(getMemoryState(result.session)).toMatchObject({
       pendingCompaction: null,
-      projections: [{ anchorIndex: 1, content: "preserved" }],
     });
+    expect(result.session.history).toEqual([{ content: "summary", role: "assistant" }]);
   });
 
   it("settles a standalone post-recall failure after retaining the compacted checkpoint", async () => {
@@ -541,7 +542,7 @@ describe("memory lifecycle", () => {
             modelId: context.compaction.modelId,
             turnId: context.turn?.turnId ?? null,
           });
-          throw new Error("private standalone projection failure");
+          throw new Error("private standalone recall failure");
         },
       }),
       "user-1",
@@ -560,7 +561,6 @@ describe("memory lifecycle", () => {
       return await finishMemoryCompaction({
         memories: [definition],
         messages: checkpoint,
-        projectionAnchorIndex: 2,
         session: { ...pending, history: checkpoint },
       });
     });
@@ -574,31 +574,77 @@ describe("memory lifecycle", () => {
     });
   });
 
-  it("turns an empty recall projection into a content-free operation failure", async () => {
+  it("treats an empty recall message as no append", async () => {
     const definition = memory(
       "user",
-      defineMemoryProvider({ recall: () => ({ content: "" }) }),
+      defineMemoryProvider({ recall: () => ({ content: "", role: "user" }) }),
       "user-1",
     );
 
-    const operation = runInContext(createContext(), () =>
+    const session = await runInContext(createContext(), () =>
       startMemoryTurn({
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       }),
     );
 
-    const error = await operation.catch((cause: unknown) => cause);
-    expect(error).toBeInstanceOf(MemoryOperationError);
-    expect(error).toMatchObject({
-      phase: "turn.started",
-      slot: "user",
+    expect(session.history).toEqual([]);
+  });
+
+  it("leaves earlier recall untouched when a later boundary returns null", async () => {
+    const definition = memory(
+      "user",
+      defineMemoryProvider({
+        recall: (context) =>
+          context.phase === "turn.started" && context.turn.sequence === 0
+            ? { content: "first", role: "user" }
+            : null,
+      }),
+      "user-1",
+    );
+
+    const session = await runInContext(createContext(), async () => {
+      const first = await startMemoryTurn({
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: [],
+        session: createSession(),
+        turn: { input: [], sequence: 0, turnId: "turn_0" },
+      });
+      return await startMemoryTurn({
+        defaultNamespaceContext,
+        memories: [definition],
+        messages: first.history,
+        session: first,
+        turn: { input: [], sequence: 1, turnId: "turn_1" },
+      });
     });
-    expect((error as Error).message).not.toMatch(/projection content/u);
+
+    expect(session.history.map(({ content, role }) => ({ content, role }))).toEqual([
+      { content: "first", role: "user" },
+    ]);
+  });
+
+  it("rejects a non-user recall result at runtime", async () => {
+    const invalidResult: unknown = { content: "system memory", role: "system" };
+    const provider: MemoryProvider = {
+      recall: () => invalidResult as MemoryRecallResult,
+    };
+
+    await expect(
+      runInContext(createContext(), () =>
+        startMemoryTurn({
+          defaultNamespaceContext,
+          memories: [memory("user", provider, "user-1")],
+          messages: [],
+          session: createSession(),
+          turn: { input: [], sequence: 0, turnId: "turn_0" },
+        }),
+      ),
+    ).rejects.toMatchObject({ phase: "turn.started", slot: "user" });
   });
 
   it("resolves tools once per turn and replaces the prior turn's set", async () => {
@@ -629,7 +675,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -641,7 +686,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session,
         turn: { input: [], sequence: 1, turnId: "turn_1" },
       });
@@ -652,7 +696,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session,
         turn: { input: [], sequence: 2, turnId: "turn_2" },
       });
@@ -695,7 +738,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories,
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       }),
@@ -721,11 +763,10 @@ describe("memory lifecycle", () => {
     const definition = memory(
       "user",
       defineMemoryProvider({
-        recall: () => ({ content: "projection" }),
+        recall: () => ({ content: "recalled", role: "user" }),
         async tools(context) {
           await Promise.resolve();
           observed.push({
-            current: context.memory.current,
             issuer: context.session.auth.current?.issuer,
             messages: context.messages,
             sessionId: context.session.id,
@@ -742,7 +783,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: prior,
-        projectionAnchorIndex: 1,
         session: createSession(prior),
         turn: { input, sequence: 0, turnId: "turn_0" },
       }),
@@ -750,9 +790,12 @@ describe("memory lifecycle", () => {
 
     expect(observed).toEqual([
       {
-        current: { content: "projection" },
         issuer: "issuer-dynamic",
-        messages: [...prior, ...input],
+        messages: [
+          ...prior,
+          expect.objectContaining({ content: "recalled", role: "user" }),
+          ...input,
+        ],
         sessionId: "session-1",
         turn: { input, sequence: 0, turnId: "turn_0" },
       },
@@ -776,7 +819,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       }),
@@ -806,7 +848,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       }),
@@ -850,7 +891,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -889,7 +929,6 @@ describe("memory lifecycle", () => {
     });
     const restored = restoreMemoryToolTurn({
       callIds: ["ordinary-call", "call-1"],
-      projectionAnchorIndex: 0,
       session: parked,
     });
     expect(getMemoryState(restored).activeTurn?.turn.turnId).toBe("turn_0");
@@ -991,7 +1030,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [succeeding, failing],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -1005,7 +1043,7 @@ describe("memory lifecycle", () => {
     expect(getMemoryState(saved).activeTurn).toBeNull();
   });
 
-  it("suppresses every provider operation and projection when scope is null", async () => {
+  it("suppresses every provider operation and recall when scope is null", async () => {
     const recall = vi.fn();
     const tools = vi.fn();
     const namespace = vi.fn(() => "must-not-resolve");
@@ -1017,7 +1055,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -1030,7 +1067,7 @@ describe("memory lifecycle", () => {
     expect(projectMemoryPrompt({ memories: [definition], messages: [], session })).toEqual([]);
   });
 
-  it("suppresses every provider operation and projection when namespace is null", async () => {
+  it("suppresses every provider operation and recall when namespace is null", async () => {
     const recall = vi.fn();
     const tools = vi.fn();
     const provider = defineMemoryProvider({ recall, tools });
@@ -1041,7 +1078,6 @@ describe("memory lifecycle", () => {
         defaultNamespaceContext,
         memories: [definition],
         messages: [],
-        projectionAnchorIndex: 0,
         session: createSession(),
         turn: { input: [], sequence: 0, turnId: "turn_0" },
       });
@@ -1053,6 +1089,20 @@ describe("memory lifecycle", () => {
     expect(projectMemoryPrompt({ memories: [definition], messages: [], session })).toEqual([]);
   });
 });
+
+async function startMemoryCompaction(
+  input: Parameters<typeof prepareMemoryCompaction>[0] &
+    Pick<Parameters<typeof runMemoryCompactionSaves>[0], "messages" | "usageInputTokens">,
+): Promise<HarnessSession> {
+  const prepared = await prepareMemoryCompaction(input);
+  return await runMemoryCompactionSaves({
+    abortSignal: input.abortSignal,
+    memories: input.memories,
+    messages: input.messages,
+    session: prepared,
+    usageInputTokens: input.usageInputTokens,
+  });
+}
 
 function memory(
   slot: string,

@@ -16,7 +16,7 @@ const definition: CompiledMemoryDefinition = {
 describe("resolveMemoryDefinition", () => {
   it("resolves the description and three-method provider and defaults visibility to scope", async () => {
     const provider = defineMemoryProvider({
-      recall: () => ({ content: "remembered" }),
+      recall: () => ({ content: "remembered", role: "user" }),
       save: async () => {},
       tools: () => null,
     });

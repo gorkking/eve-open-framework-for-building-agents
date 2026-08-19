@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMPACTION_PROMPT_ENVELOPE } from "#harness/compaction-prompt.js";
 import {
   compactMessages,
-  compactMessagesWithProjectionAnchor,
   getInputTokenCount,
   resolveCompactionModel,
   shouldCompact,
 } from "#harness/compaction.js";
 import { estimateTokens } from "#harness/token-estimate.js";
 import type { CompactionConfig } from "#harness/types.js";
+import { attributeMemoryMessage } from "#shared/memory-message.js";
 
 vi.mock("ai", () => ({
   generateText: vi.fn(),
@@ -367,7 +367,7 @@ async function compact(
 }
 
 describe("compactMessages: tool-result cap heuristic", () => {
-  it("anchors transient context before the retained recent tail", async () => {
+  it("retains the configured recent tail", async () => {
     const [call, resultMsg] = toolExchange({
       callId: "call-anchor",
       payloadChars: 4_000,
@@ -375,16 +375,12 @@ describe("compactMessages: tool-result cap heuristic", () => {
     });
     const messages = [user("investigate"), call, resultMsg, user("what did you find?")];
 
-    const outcome = await compactMessagesWithProjectionAnchor(
-      messages,
-      {} as Parameters<typeof compactMessagesWithProjectionAnchor>[1],
-      { recentWindowSize: 1, threshold: ROOMY },
-    );
+    const outcome = await compactMessages(messages, {} as Parameters<typeof compactMessages>[1], {
+      recentWindowSize: 1,
+      threshold: ROOMY,
+    });
 
-    expect(outcome.projectionAnchorIndex).toBe(3);
-    expect(outcome.messages.slice(outcome.projectionAnchorIndex)).toEqual([
-      user("what did you find?"),
-    ]);
+    expect(outcome.at(-1)).toEqual(user("what did you find?"));
   });
 
   it("caps oversized older tool results in place without calling the summarizer", async () => {
@@ -593,24 +589,19 @@ describe("compactMessages: forced summary", () => {
 });
 
 describe("compactMessages: summarization fallback", () => {
-  it("anchors transient context after the replacement checkpoint", async () => {
+  it("places the replacement checkpoint before the retained tail", async () => {
     const { generateText } = await import("ai");
     vi.mocked(generateText).mockResolvedValue({
       text: "Distilled story",
     } as Awaited<ReturnType<typeof generateText>>);
     const messages = [user("old context to fold away"), assistant("old reply"), user("continue")];
 
-    const outcome = await compactMessagesWithProjectionAnchor(
-      messages,
-      {} as Parameters<typeof compactMessagesWithProjectionAnchor>[1],
-      { recentWindowSize: 1, threshold: HEURISTICS_FORBIDDEN },
-    );
+    const outcome = await compactMessages(messages, {} as Parameters<typeof compactMessages>[1], {
+      recentWindowSize: 1,
+      threshold: HEURISTICS_FORBIDDEN,
+    });
 
-    expect(outcome.projectionAnchorIndex).toBe(2);
-    expect(outcome.messages.slice(0, outcome.projectionAnchorIndex)).toEqual([
-      user(CHECKPOINT_MARKER),
-      assistant("Distilled story"),
-    ]);
+    expect(outcome.slice(0, 2)).toEqual([user(CHECKPOINT_MARKER), assistant("Distilled story")]);
   });
 
   it("summarizes when capping cannot free enough space", async () => {
@@ -728,6 +719,26 @@ describe("compactMessages: summarization fallback", () => {
     const messages = [
       user("please fix the flaky test"),
       assistant("working on it"),
+      assistant("still going"),
+    ];
+
+    const { result } = await compact(messages, {
+      recentWindowSize: 1,
+      threshold: HEURISTICS_FORBIDDEN,
+    });
+
+    expect(result.at(-1)).toEqual(user("please fix the flaky test"));
+  });
+
+  it("does not replay recalled context as the user's active prompt", async () => {
+    const recalled = attributeMemoryMessage(user("prefers concise answers"), {
+      scope: { key: "mem_user", namespace: "app", value: "user-1" },
+      slot: "profile",
+    });
+    const messages = [
+      user("please fix the flaky test"),
+      assistant("working on it"),
+      recalled,
       assistant("still going"),
     ];
 

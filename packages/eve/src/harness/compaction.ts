@@ -12,6 +12,7 @@ import {
 import { estimateTokens } from "#harness/token-estimate.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { CompactionConfig, ToolLoopHarnessConfig } from "#harness/types.js";
+import { readMemoryMessageAttribution } from "#shared/memory-message.js";
 
 const COMPACTION_SUMMARY_RESERVE_TOKENS = 2_048;
 
@@ -109,11 +110,7 @@ interface CompactionHeuristicInput {
  * failure channel — anything exceptional throws.
  */
 type CompactionHeuristicOutcome =
-  | {
-      readonly messages: ModelMessage[];
-      readonly projectionAnchorIndex: number;
-      readonly type: "within-limit";
-    }
+  | { readonly messages: ModelMessage[]; readonly type: "within-limit" }
   | { readonly type: "insufficient" };
 
 type CompactionHeuristic = (input: CompactionHeuristicInput) => CompactionHeuristicOutcome;
@@ -151,11 +148,7 @@ function toolResultCapHeuristic(input: CompactionHeuristicInput): CompactionHeur
   // re-fire every step without compaction ever making progress.
   const evaluation = evaluateThreshold(capped, input.config, "should-compact");
   return evaluation.type === "within-limit"
-    ? {
-        messages: capped,
-        projectionAnchorIndex: checkpointHead.length + input.older.length,
-        type: "within-limit",
-      }
+    ? { messages: capped, type: "within-limit" }
     : { type: "insufficient" };
 }
 
@@ -184,17 +177,7 @@ function evaluateThreshold(
  * model — keeping the recent tail verbatim when it fits, degrading it to
  * text-only, then shrinking the window.
  */
-export interface CompactedMessages {
-  readonly messages: ModelMessage[];
-  /** Boundary after rewritten context and before the retained recent tail. */
-  readonly projectionAnchorIndex: number;
-}
-
-/**
- * Compacts messages and identifies the stable boundary where transient
- * framework context can be re-anchored without entering durable history.
- */
-export async function compactMessagesWithProjectionAnchor(
+export async function compactMessages(
   messages: ModelMessage[],
   model: LanguageModel,
   config: CompactionConfig,
@@ -203,7 +186,7 @@ export async function compactMessagesWithProjectionAnchor(
   headers?: Record<string, string>,
   abortSignal?: AbortSignal,
   forceSummary = false,
-): Promise<CompactedMessages> {
+): Promise<ModelMessage[]> {
   const { conversation, previousCheckpoint } = extractPreviousCheckpoint(messages);
   const recentConfig = forceSummary ? { ...config, recentWindowSize: 1 } : config;
   let keep = selectRecentWindowSize(conversation, recentConfig);
@@ -211,19 +194,13 @@ export async function compactMessagesWithProjectionAnchor(
   if (!forceSummary) {
     const { older, recent } = splitMessagesForCompaction(conversation, keep);
     if (older.length === 0 && previousCheckpoint === undefined) {
-      return {
-        messages: keepNonToolResultMessages(recent),
-        projectionAnchorIndex: 0,
-      };
+      return keepNonToolResultMessages(recent);
     }
 
     for (const heuristic of COMPACTION_HEURISTICS) {
       const outcome = heuristic({ config, conversation, older, previousCheckpoint, recent });
       if (outcome.type === "within-limit") {
-        return {
-          messages: outcome.messages,
-          projectionAnchorIndex: outcome.projectionAnchorIndex,
-        };
+        return outcome.messages;
       }
     }
   }
@@ -258,7 +235,7 @@ export async function compactMessagesWithProjectionAnchor(
     // smaller window, only under threshold pressure.
     const verbatim = withResumptionGuard([...summaryHead, ...recent], conversation);
     if (evaluateThreshold(verbatim, config, "estimate").type === "within-limit") {
-      return { messages: verbatim, projectionAnchorIndex: summaryHead.length };
+      return verbatim;
     }
 
     const stripped = withResumptionGuard(
@@ -266,36 +243,11 @@ export async function compactMessagesWithProjectionAnchor(
       conversation,
     );
     if (evaluateThreshold(stripped, config, "estimate").type === "within-limit" || keep === 0) {
-      return { messages: stripped, projectionAnchorIndex: summaryHead.length };
+      return stripped;
     }
 
     keep -= 1;
   }
-}
-
-/** Compacts durable model history without exposing its projection boundary. */
-export async function compactMessages(
-  messages: ModelMessage[],
-  model: LanguageModel,
-  config: CompactionConfig,
-  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"],
-  telemetry?: TelemetryOptions,
-  headers?: Record<string, string>,
-  abortSignal?: AbortSignal,
-  forceSummary = false,
-): Promise<ModelMessage[]> {
-  return (
-    await compactMessagesWithProjectionAnchor(
-      messages,
-      model,
-      config,
-      providerOptions,
-      telemetry,
-      headers,
-      abortSignal,
-      forceSummary,
-    )
-  ).messages;
 }
 
 const CAPPED_RESULT_ANNOTATION =
@@ -392,7 +344,8 @@ function findLastRealUserMessage(conversation: readonly ModelMessage[]): ModelMe
     if (
       message.content === COMPACTION_RESUMPTION_MESSAGE ||
       message.content === COMPACTION_CHECKPOINT_MARKER ||
-      message.content.startsWith(TODO_COMPACTION_PRESERVATION_LABEL)
+      message.content.startsWith(TODO_COMPACTION_PRESERVATION_LABEL) ||
+      readMemoryMessageAttribution(message) !== null
     ) {
       continue;
     }

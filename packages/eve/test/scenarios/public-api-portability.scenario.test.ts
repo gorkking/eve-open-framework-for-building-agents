@@ -100,9 +100,12 @@ export default defineSandbox({
   defaultNamespace,
   defineMemory,
   defineMemoryProvider,
+  getMemoryMessageAttribution,
+  type MemoryMessageAttribution,
   type MemoryNamespaceDefinition,
-  type MemoryProjection,
   type MemoryRecallContext,
+  type MemoryRecallMessage,
+  type MemoryRecallResult,
   type MemorySaveContext,
   type MemoryScopeContext,
   type MemoryScopeDefinition,
@@ -113,13 +116,27 @@ export default defineSandbox({
 import { byPrincipal } from "eve/memory/scope";
 
 const provider = defineMemoryProvider({
-  async recall(ctx: MemoryRecallContext): Promise<MemoryProjection | undefined> {
+  async recall(ctx: MemoryRecallContext): Promise<MemoryRecallResult> {
     if (ctx.phase === "turn.started") {
       void ctx.turn.sequence;
     } else {
       void ctx.compaction.modelId;
     }
-    return ctx.memory.current ?? { content: ctx.memory.scope.key };
+    const previous = ctx.messages.findLast((message) => {
+      const attribution: MemoryMessageAttribution | null =
+        getMemoryMessageAttribution(message);
+      return (
+        attribution?.slot === ctx.memory.slot &&
+        attribution.scope.key === ctx.memory.scope.key
+      );
+    });
+    if (previous !== undefined) return null;
+
+    const recalled: MemoryRecallMessage = {
+      content: ctx.memory.scope.key,
+      role: "user",
+    };
+    return recalled;
   },
   async save(ctx: MemorySaveContext): Promise<void> {
     void (ctx.phase === "compaction.requested" ? ctx.compaction.modelId : ctx.turn.turnId);
