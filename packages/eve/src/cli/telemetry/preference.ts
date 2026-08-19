@@ -4,6 +4,8 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 
+const EVE_TELEMETRY_NOTICE_VERSION = 1;
+
 export type EveTelemetryPreference = {
   readonly enabled: boolean;
   readonly notified: boolean;
@@ -36,6 +38,7 @@ const EveConfigSchema = z.looseObject({
   telemetry: z
     .looseObject({
       enabled: z.boolean().optional(),
+      noticeVersion: z.number().int().positive().optional(),
       notifiedAt: z.string().optional(),
     })
     .optional(),
@@ -45,7 +48,7 @@ function parsePreference(value: unknown): EveTelemetryPreference {
   const telemetry = EveConfigSchema.safeParse(value).data?.telemetry;
   return {
     enabled: telemetry?.enabled !== false,
-    notified: typeof telemetry?.notifiedAt === "string",
+    notified: telemetry?.noticeVersion === EVE_TELEMETRY_NOTICE_VERSION,
   };
 }
 
@@ -58,7 +61,7 @@ export async function readEveTelemetryPreference(): Promise<EveTelemetryPreferen
 }
 
 async function updateEveTelemetryPreference(
-  update: Record<string, boolean | string>,
+  update: Record<string, boolean | number | string>,
 ): Promise<void> {
   const path = eveConfigPath();
   let existing: Record<string, unknown> = {};
@@ -88,5 +91,8 @@ export async function setEveTelemetryEnabled(enabled: boolean): Promise<void> {
 }
 
 export async function markEveTelemetryNotified(): Promise<void> {
-  await updateEveTelemetryPreference({ notifiedAt: new Date().toISOString() });
+  await updateEveTelemetryPreference({
+    noticeVersion: EVE_TELEMETRY_NOTICE_VERSION,
+    notifiedAt: new Date().toISOString(),
+  });
 }

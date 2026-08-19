@@ -30,10 +30,18 @@ describe("eve telemetry preference", () => {
     await expect(readEveTelemetryPreference()).resolves.toEqual({ enabled: true, notified: false });
   });
 
-  it("reads a persisted opt-out", async () => {
-    vi.mocked(readFile).mockResolvedValue('{"telemetry":{"enabled":false,"notifiedAt":"now"}}');
+  it("reads a persisted opt-out and current notice version", async () => {
+    vi.mocked(readFile).mockResolvedValue(
+      '{"telemetry":{"enabled":false,"noticeVersion":1,"notifiedAt":"now"}}',
+    );
 
     await expect(readEveTelemetryPreference()).resolves.toEqual({ enabled: false, notified: true });
+  });
+
+  it("shows an updated notice when only an older notice timestamp exists", async () => {
+    vi.mocked(readFile).mockResolvedValue('{"telemetry":{"notifiedAt":"now"}}');
+
+    await expect(readEveTelemetryPreference()).resolves.toEqual({ enabled: true, notified: false });
   });
 
   it("ignores a relative XDG config home", async () => {
@@ -73,6 +81,12 @@ describe("eve telemetry preference", () => {
       2,
       expect.stringMatching(/^\/eve-config\/eve\/config\.json\./),
       expect.stringContaining('"enabled": false'),
+      { mode: 0o600 },
+    );
+    expect(writeFile).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/^\/eve-config\/eve\/config\.json\./),
+      expect.stringContaining('"noticeVersion": 1'),
       { mode: 0o600 },
     );
     expect(writeFile).toHaveBeenNthCalledWith(

@@ -36,22 +36,7 @@ When `eve build` fails on discovery errors, it prints the full diagnostics repor
 
 ## CLI telemetry
 
-eve collects CLI telemetry by default to improve the command-line interface. Each command sends these fields to Vercel:
-
-- eve version, operating system, CPU architecture, and whether stdin is a TTY;
-- an allowlisted command path and outcome (`success`, `usage_error`, or `error`); and
-- for `eve dev`, whether the target is local or remote and whether the UI is headless or interactive.
-
-Telemetry does not include command arguments, agent files, prompts, URLs, error messages, arbitrary error properties, environment variables, file paths, or file contents. Vercel handles the telemetry under the [Vercel Privacy Notice](https://vercel.com/legal/privacy-notice).
-
-Run `eve telemetry disable` to disable telemetry collection on this machine. Use `eve telemetry status` to check the current setting, or `eve telemetry enable` to enable collection again. `EVE_TELEMETRY_DISABLED` is a higher-priority per-command override:
-
-```bash
-eve telemetry disable
-EVE_TELEMETRY_DISABLED=1 eve dev
-```
-
-On an interactive terminal, eve prints this choice and the opt-out instructions once before collecting telemetry. Set `EVE_TELEMETRY_DEBUG=1` to print the collected event batch to stderr instead of sending it. The durable preference is stored in the platform’s user configuration directory: `%APPDATA%\\eve\\config.json` on Windows, `~/Library/Preferences/eve/config.json` on macOS, and `$XDG_CONFIG_HOME/eve/config.json` (or `~/.config/eve/config.json`) on other platforms.
+eve collects CLI telemetry by default to improve the command-line interface. Run `eve telemetry disable` to disable it for this machine, or set `EVE_TELEMETRY_DISABLED=1` for one command. See [CLI telemetry](./telemetry) for the current data fields, exclusions, debug mode, notice, and local preference storage.
 
 ## `eve init`
 
