@@ -1,5 +1,5 @@
 import { loadContext } from "#context/container.js";
-import { SessionKey } from "#context/keys.js";
+import { ProgressGroupKey, SessionKey } from "#context/keys.js";
 import { submitProgressCommand } from "#execution/submit-progress.js";
 import {
   normalizeProgressText,
@@ -27,6 +27,7 @@ export async function reportProgress(input: {
         kind: "report",
         report: { id: input.callId, message, reportedAt: now },
         turn: {
+          groupId: context.get(ProgressGroupKey),
           id: progressTurnId(session.sessionId, session.turn.id),
           phase: "running",
           sequence: session.turn.sequence,
