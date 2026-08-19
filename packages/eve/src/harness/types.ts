@@ -211,6 +211,8 @@ export interface SettledTurn {
  * Result returned by one harness step invocation.
  */
 export interface StepResult {
+  /** Parent sandbox snapshot captured specifically for an inheriting delegated task. */
+  readonly delegatedTaskSandboxState?: SandboxState;
   /** Durable task runs started by in-loop subagent tools and awaiting parent-state commit. */
   readonly delegatedTasks?: readonly {
     readonly taskInboxToken: string;

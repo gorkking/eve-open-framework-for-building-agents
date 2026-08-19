@@ -108,6 +108,7 @@ const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
 
 interface DurableStepResultFields {
+  readonly delegatedTaskSandboxState?: StepResult["delegatedTaskSandboxState"];
   readonly delegatedTasks?: StepResult["delegatedTasks"];
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
@@ -546,6 +547,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     const effects = readSubagentToolExecutionEffects(error);
     return {
       action: "cancelled",
+      delegatedTaskSandboxState: effects?.delegatedTaskSandboxState,
       delegatedTasks: effects?.delegatedTasks,
       serializedContext: preserveSerializedInstrumentationState(
         preserveSerializedAgentTraceState(
@@ -569,6 +571,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const nextState = createDurableSessionState({ session: stepResult.session });
   const sleepDurationMs = readTurnSleepDurationMs(ctx);
   const sleepTransition = sleepDurationMs === undefined ? {} : { sleepDurationMs };
+  const delegatedTaskSandboxState = stepResult.delegatedTaskSandboxState;
   const delegatedTasks = stepResult.delegatedTasks;
 
   if (
@@ -584,6 +587,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     const sessionTotals = getTurnUsageState(stepResult.session.state)?.session;
     return {
       action: "done",
+      delegatedTaskSandboxState,
       delegatedTasks,
       output: stepResult.next.output,
       isError: stepResult.next.isError,
@@ -605,6 +609,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     ) {
       return {
         action: "dispatch-workflow-runtime-actions",
+        delegatedTaskSandboxState,
         delegatedTasks,
         pendingRuntimeActionKeys: getRuntimeActionKeysFromWorkflowInterrupt(
           workflowInterrupt.interrupt,
@@ -625,6 +630,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       const { delta, session: reportedSession } = takeSessionUsageDelta(stepResult.session);
       return {
         action: "park",
+        delegatedTaskSandboxState,
         delegatedTasks,
         ...pending,
         ...sleepTransition,
@@ -641,6 +647,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
     return {
       action: "park",
+      delegatedTaskSandboxState,
       delegatedTasks,
       ...pending,
       ...sleepTransition,
@@ -653,6 +660,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   writer.releaseLock();
   return {
     action: "continue",
+    delegatedTaskSandboxState,
     delegatedTasks,
     ...sleepTransition,
     serializedContext: nextSerializedContext,

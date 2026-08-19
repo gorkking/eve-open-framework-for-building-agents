@@ -35,6 +35,7 @@ import { activeTurnId } from "#harness/active-turn-id.js";
 import { getRuntimeActionResultKey } from "#runtime/actions/keys.js";
 import { resolveRuntimeActionResultsForKeys } from "#runtime/actions/results.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
+import type { SandboxState } from "#sandbox/state.js";
 
 const TASK_MODE_WAIT_ERROR_MESSAGE = "Task mode cannot wait for follow-up input (`next: null`).";
 const SUBAGENT_TOOL_EFFECT_STATE_KEYS = ["eve.tasks", "eve.agent.handles"] as const;
@@ -120,14 +121,16 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
           sessionState: retainSubagentToolExecutionEffects({
             current: beforeStep.sessionState,
             effects: result.sessionState,
+            sandboxState: result.delegatedTaskSandboxState,
           }),
         });
         await acknowledgeDelegatedTasksStep({ tasks: result.delegatedTasks ?? [] });
       }
 
       // A cancel observed while the step was returning must still win: the
-      // step may have missed the abort and completed normally. Pending
-      // runtime-action batches are exempt — their wait observes the signal.
+      // step may have missed the abort and completed normally. A pending batch
+      // is exempt only when this step has not already admitted direct tasks;
+      // otherwise none of its pending siblings have been dispatched yet.
       if (result.action === "cancelled") {
         // The cancelled step returns only the context carve-outs required by
         // the driver epilogue and later turns; adopt those before settling.
@@ -139,7 +142,10 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
         return;
       }
 
-      if (cancellation?.signal.aborted === true && pendingActionKeys === undefined) {
+      if (
+        cancellation?.signal.aborted === true &&
+        (pendingActionKeys === undefined || hasDelegatedTasks)
+      ) {
         // Some worlds cannot interrupt a running step, so it can complete
         // normally after the workflow observes cancellation. Roll that result
         // back except for a session model selected by its one-time preamble.
@@ -296,6 +302,7 @@ async function finishCancelledTurn(input: {
 function retainSubagentToolExecutionEffects(input: {
   readonly current: DurableSessionState;
   readonly effects: DurableSessionState;
+  readonly sandboxState?: SandboxState;
 }): DurableSessionState {
   const currentSnapshot = input.current.snapshot;
   const effectsSnapshot = input.effects.snapshot;
@@ -315,7 +322,7 @@ function retainSubagentToolExecutionEffects(input: {
       ...currentSnapshot,
       session: {
         ...currentSession,
-        sandboxState: effectsSession.sandboxState ?? currentSession.sandboxState,
+        sandboxState: input.sandboxState ?? currentSession.sandboxState,
         state,
       },
     },

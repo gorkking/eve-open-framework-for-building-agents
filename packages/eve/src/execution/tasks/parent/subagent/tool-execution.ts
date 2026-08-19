@@ -52,6 +52,7 @@ import {
 type SubagentCallAction = RuntimeRemoteAgentCallActionRequest | RuntimeSubagentCallActionRequest;
 
 interface SubagentToolExecutionEffects {
+  readonly delegatedTaskSandboxState?: HarnessSession["sandboxState"];
   readonly delegatedTasks: readonly {
     readonly taskInboxToken: string;
     readonly taskId: string;
@@ -183,6 +184,7 @@ class SubagentToolExecutionController {
   private readonly dispatches: Promise<void>[] = [];
   private readonly initialSession: HarnessSession;
   private parentSandboxPreparation?: Promise<void>;
+  private parentSandboxState?: HarnessSession["sandboxState"];
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
   private expectedCallIds?: readonly string[];
   private readonly fingerprintOccurrences = new Map<string, number>();
@@ -269,6 +271,7 @@ class SubagentToolExecutionController {
       ? withSession
       : {
           ...withSession,
+          delegatedTaskSandboxState: this.parentSandboxState,
           delegatedTasks: [...(result.delegatedTasks ?? []), ...delegatedTasks],
         };
   }
@@ -277,7 +280,11 @@ class SubagentToolExecutionController {
     await this.settleDispatches();
     const delegatedTasks = [...this.pendingTasks.values()];
     if (delegatedTasks.length === 0) return undefined;
-    return { delegatedTasks, session: this.session };
+    return {
+      delegatedTaskSandboxState: this.parentSandboxState,
+      delegatedTasks,
+      session: this.session,
+    };
   }
 
   private async dispatch(
@@ -429,6 +436,7 @@ class SubagentToolExecutionController {
     const sandbox = loadContext().require(SandboxKey);
     await sandbox.get();
     const sandboxState = await sandbox.captureState();
+    this.parentSandboxState = sandboxState;
     this.session = { ...this.session, sandboxState };
   }
 

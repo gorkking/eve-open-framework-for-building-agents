@@ -204,8 +204,26 @@ describe("subagent tool execution controller", () => {
       nodeId: "remote-node",
       remoteAgentName: "research",
     };
+    const task = {
+      taskId: "task-provider-call",
+      taskInboxToken: "inbox-provider-call",
+      taskRunId: "run-provider-call",
+    };
+    const entry = {
+      ...task,
+      createdByStepIndex: 2,
+      createdByTurnId: "turn-1",
+      metadata: {
+        agentId: "remote-agent",
+        kind: "subagent" as const,
+        mode: "remote" as const,
+        name: action.name,
+      },
+      operationId: "operation-provider-call",
+    };
     mocks.start.mockImplementation(async (_workflow, [input]) => {
       const dispatchAction = input.batch.actions[0] as RuntimeRemoteAgentCallActionRequest;
+      const current = input.sessionState.snapshot.session;
       return {
         returnValue: Promise.resolve({
           calledEvents: [
@@ -221,26 +239,43 @@ describe("subagent tool execution controller", () => {
               workflowId: "remote-workflow",
             }),
           ],
-          pendingTasks: [],
+          pendingTasks: [task],
           results: [
             {
+              backgroundTask: { status: "working", taskId: task.taskId },
               callId: dispatchAction.callId,
               kind: "subagent-result",
               origin: "child",
-              output: "accepted",
+              output: { agentId: "remote-agent", status: "working", taskId: task.taskId },
               subagentName: action.name,
             },
           ],
-          sessionState: input.sessionState,
+          sessionState: replaceDurableSessionSnapshot({
+            session: {
+              ...current,
+              state: { [SESSION_TASKS_STATE_KEY]: { tasks: [entry] } },
+            },
+            state: input.sessionState,
+          }),
         }),
         runId: "remote-workflow",
       };
     });
+    const unrelatedToolSandboxState = {
+      initialized: true,
+      session: { backendName: "test", metadata: {}, sessionKey: "unrelated-tool" },
+    } as const;
+    const sandbox = {
+      captureState: vi.fn(async () => unrelatedToolSandboxState),
+      get: vi.fn(async () => null),
+      stop: vi.fn(async () => undefined),
+    };
     const events: UnstampedMessageStreamEvent[] = [];
     const ctx = new ContextContainer();
     ctx.set(BundleKey, createBundle() as never);
+    ctx.set(SandboxKey, sandbox);
 
-    await contextStorage.run(ctx, () =>
+    const output = await contextStorage.run(ctx, () =>
       runWithSubagentToolExecution({
         handleEvent: async (event) => {
           events.push(event);
@@ -249,11 +284,17 @@ describe("subagent tool execution controller", () => {
         step: async () => {
           prepareBatch([action]);
           await executeSubagentToolCall({ action });
-          return { next: null, session };
+          return {
+            next: null,
+            session: { ...session, sandboxState: unrelatedToolSandboxState },
+          };
         },
       }),
     );
 
+    expect(output.delegatedTaskSandboxState).toBeUndefined();
+    expect(output.session.sandboxState).toEqual(unrelatedToolSandboxState);
+    expect(sandbox.get).not.toHaveBeenCalled();
     const called = events.find((event) => event.type === "subagent.called");
     expect(called).toMatchObject({
       data: {
@@ -449,6 +490,7 @@ describe("subagent tool execution controller", () => {
 
     expect(requestEvents).toHaveLength(1);
     expect(sandbox.get).toHaveBeenCalledTimes(1);
+    expect(outputs.delegatedTaskSandboxState).toEqual({ initialized: true, session: null });
     expect(maxActiveEmissions).toBe(1);
     expect(resultEvents).toEqual([
       localAction.callId,

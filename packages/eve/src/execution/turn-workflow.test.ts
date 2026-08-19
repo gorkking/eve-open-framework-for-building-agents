@@ -6,6 +6,7 @@ import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-st
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
+import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import type { DurableSession, DurableSessionState } from "#execution/durable-session-store.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { turnWorkflow } from "#execution/turn-workflow.js";
@@ -46,6 +47,10 @@ vi.mock("./workflow-steps.js", () => ({
 
 vi.mock("./dispatch-runtime-actions-step.js", () => ({
   dispatchRuntimeActionsStep: vi.fn(),
+}));
+
+vi.mock("./tasks/parent/dispatch-task-step.js", () => ({
+  dispatchTaskStep: vi.fn(),
 }));
 
 vi.mock("./tasks/parent/delegate.js", () => ({
@@ -411,9 +416,22 @@ describe("turnWorkflow", () => {
     );
   });
 
-  it("retains only direct subagent effects when late cancellation wins", async () => {
+  it("retains only admitted direct subagent effects and skips pending siblings on late cancel", async () => {
+    const initialSandboxState = {
+      initialized: true,
+      session: { backendName: "test", metadata: {}, sessionKey: "initial" },
+    } as const;
+    const delegatedTaskSandboxState = {
+      initialized: true,
+      session: { backendName: "test", metadata: {}, sessionKey: "shared-child" },
+    } as const;
+    const unrelatedToolSandboxState = {
+      initialized: true,
+      session: { backendName: "test", metadata: {}, sessionKey: "unrelated-tool" },
+    } as const;
     const initialState = withSessionSnapshot(createSessionState(), {
       history: [{ content: "keep", role: "user" }],
+      sandboxState: initialSandboxState,
       state: { existing: { value: "keep" } },
     });
     const task = {
@@ -448,13 +466,12 @@ describe("turnWorkflow", () => {
       },
       phase: "addressed" as const,
     };
-    const sandboxState = { initialized: true, session: null } as const;
     const completedState = withSessionSnapshot(initialState, {
       history: [
         { content: "keep", role: "user" },
         { content: "discard", role: "assistant" },
       ],
-      sandboxState,
+      sandboxState: unrelatedToolSandboxState,
       state: {
         existing: { value: "keep" },
         leaked: { value: "discard" },
@@ -464,7 +481,7 @@ describe("turnWorkflow", () => {
     });
     const retainedState = withSessionSnapshot(initialState, {
       history: [{ content: "keep", role: "user" }],
-      sandboxState,
+      sandboxState: delegatedTaskSandboxState,
       state: {
         existing: { value: "keep" },
         [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
@@ -479,15 +496,19 @@ describe("turnWorkflow", () => {
     vi.mocked(turnStep).mockImplementationOnce(async (stepInput) => {
       await vi.waitFor(() => expect(stepInput.abortSignal?.aborted).toBe(true));
       return {
-        action: "done",
+        action: "park",
+        delegatedTaskSandboxState,
         delegatedTasks: [task],
-        output: "must not complete",
+        hasPendingAuthorization: false,
+        hasPendingInputBatch: false,
+        pendingRuntimeActionKeys: ["task-control:task_cancel:call_cancel"],
         serializedContext: {
           leaked: "discard",
-          state: "done",
+          state: "parked",
           [SessionDynamicModelReferenceKey.name]: sessionModel,
         },
         sessionState: completedState,
+        tasksEnabled: true,
       };
     });
 
@@ -502,6 +523,7 @@ describe("turnWorkflow", () => {
       [SessionDynamicModelReferenceKey.name]: sessionModel,
     };
     expect(acknowledgeDelegatedTasksStep).toHaveBeenCalledExactlyOnceWith({ tasks: [task] });
+    expect(dispatchTaskStep).not.toHaveBeenCalled();
     expect(cancelDescendantTurnsStep).toHaveBeenCalledWith({
       serializedContext: retainedContext,
       sessionState: retainedState,
