@@ -985,33 +985,26 @@ describe("scaffoldBaseProject", () => {
     );
     const agentsMd = await readFile(join(projectRoot, "AGENTS.md"), "utf8");
     expect(agentsMd).toContain("content-only change to the root agent's");
-    expect(agentsMd).toContain("You do not\nneed to read the framework docs");
+    expect(agentsMd).toContain("You do not need to read the framework docs");
+    expect(agentsMd).toContain("preserve that file unless the user asks to change the model");
     expect(agentsMd).toContain("`agent/instructions.ts` or files under `agent/instructions/`");
-    expect(agentsMd).toContain("Before adding or changing eve framework features");
-    expect(agentsMd).toContain("installed eve package docs");
-    expect(agentsMd).toContain("node_modules/eve/docs/tools/overview.mdx");
-    expect(agentsMd).toContain("node_modules/eve/docs/connections/overview.mdx");
+    expect(agentsMd).toContain("ls node_modules/eve/docs");
+    expect(agentsMd).toContain("Start with `docs/README.md`: it maps each task");
     expect(agentsMd).toContain("Use a bounded authoring loop");
     expect(agentsMd).toContain("Stop discovery once the file location");
-    expect(agentsMd).toContain("Do not create a plan or todo list");
+    expect(agentsMd).toContain("Follow links or inspect public types only");
     expect(agentsMd).toContain("recursively glob `node_modules`");
-    expect(agentsMd).toContain("realpath node_modules/eve");
-    expect(agentsMd).toContain("## Routine typed tools");
-    expect(agentsMd).toContain('import { defineTool } from "eve/tools"');
-    expect(agentsMd).toContain("Omitting `approval` allows calls without human approval");
     expect(agentsMd).toContain("eve registry search <query> --json");
     expect(agentsMd).toContain("eve registry view <item>");
+    expect(agentsMd).toContain("For a generic capability, author a tool instead.");
     expect(agentsMd).toContain("eve add <item> --non-interactive");
-    expect(agentsMd).toContain("`implementation` is `native`");
-    expect(agentsMd).toContain("`deploymentRequired: true`");
     expect(agentsMd).toContain("Exit code 0 means setup completed");
-    expect(agentsMd).toContain("next.command");
-    expect(agentsMd).toContain("--skip-install");
-    expect(agentsMd).toContain("eve link");
+    expect(agentsMd).toContain("replace its `<JSON value>` answer placeholder");
+    expect(agentsMd).toContain("docs/install-integrations.mdx");
     expect(agentsMd).toContain("eve link --non-interactive --project <name-or-id>");
     expect(agentsMd).toContain("eve deploy --non-interactive --yes");
-    expect(agentsMd).toContain("instead of calling `vercel` directly");
-    expect(agentsMd).toContain("external_action_resolved");
+    expect(agentsMd).toContain("Use eve to link and deploy Vercel projects");
+    expect(agentsMd).toContain("Run the validation the task requests");
     // `vercel deploy` uploads everything a .vercelignore doesn't exclude, and
     // the platform default-ignores only the .env.local variants — eve's dev
     // artifacts and a bare .env must be excluded here or a source deploy

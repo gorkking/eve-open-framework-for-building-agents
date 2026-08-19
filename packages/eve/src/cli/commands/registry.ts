@@ -34,11 +34,9 @@ import {
   type RegistrySearchPresentationSection,
 } from "./registry-presentation.js";
 import type { runRegistrySetupCommand } from "./registry-setup-command.js";
-import { serializeHeadlessSetupEvent } from "./setup-headless.js";
+import { reportHeadlessSetupCompletion, serializeHeadlessSetupEvent } from "./setup-headless.js";
 import { addRegistryMappings, readRegistryConfig } from "./registry-project.js";
-
 export type { RegistryCommandLogger } from "./registry-recovery.js";
-
 export interface AddCommandOptions {
   skipInstall?: boolean;
   overwrite?: boolean;
@@ -530,7 +528,7 @@ export async function runAddCommand(
           setupReminder: (packageItem) => setupReminder(packageItem, "skipped"),
         },
       });
-      return completion === false ? undefined : completion;
+      return reportCompletion(logger, item, completion, options);
     }
 
     if (options.skipInstall === true) {
@@ -547,7 +545,7 @@ export async function runAddCommand(
         cancelledReminder: setupReminder(item, "cancelled"),
         resumeCommand: setupResumeCommand(item),
       });
-      return completion === false ? undefined : completion;
+      return reportCompletion(logger, item, completion, options);
     }
 
     await addRegistryItems([address], {
@@ -556,7 +554,8 @@ export async function runAddCommand(
       overwrite: options.overwrite,
       silent: options.silent,
     });
-    if (eveMetadata?.setup === undefined) return;
+    if (eveMetadata?.setup === undefined)
+      return reportCompletion(logger, item, { facts: [] }, options);
 
     const interactive =
       dependencies.hasInteractiveTerminal?.() ??
@@ -570,9 +569,16 @@ export async function runAddCommand(
         }),
       );
     }
+    if (options.skipSetup === true) {
+      if (options.nonInteractive) return reportCompletion(logger, item, { facts: [] }, options);
+      logger.log(setupReminder(item, "skipped"));
+      return;
+    }
     if (
-      options.skipSetup === true ||
-      (!options.nonInteractive && !options.yes && !interactive && options.setupAuthorized !== true)
+      !options.nonInteractive &&
+      !options.yes &&
+      !interactive &&
+      options.setupAuthorized !== true
     ) {
       logger.log(setupReminder(item, "skipped"));
       return;
@@ -613,23 +619,20 @@ export async function runAddCommand(
       cancelledReminder: setupReminder(item, "cancelled"),
       resumeCommand: setupResumeCommand(item),
     });
-    if (completion !== false && options.nonInteractive) {
-      logger.log(
-        serializeHeadlessSetupEvent({
-          version: 1,
-          type: "completed",
-          item,
-          completedItems: [item],
-          ...(completion.deploymentRequired === true
-            ? {
-                deploymentRequired: true as const,
-                next: { command: "eve", args: ["deploy"] },
-              }
-            : {}),
-        }),
-      );
-    }
-    return completion === false ? undefined : completion;
+    return reportCompletion(logger, item, completion, options);
+  });
+}
+function reportCompletion(
+  logger: RegistryCommandLogger,
+  item: string,
+  completion: RegistrySetupCompletion | false,
+  options: AddCommandOptions,
+): RegistrySetupCompletion | undefined {
+  return reportHeadlessSetupCompletion({
+    logger,
+    item,
+    completion,
+    nonInteractive: options.nonInteractive,
   });
 }
 
