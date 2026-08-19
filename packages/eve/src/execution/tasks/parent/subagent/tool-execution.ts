@@ -1,8 +1,14 @@
 import { contextStorage, loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
+import { SandboxKey } from "#context/keys.js";
 import { serializeContext } from "#context/serialize.js";
-import { createDurableSessionState } from "#execution/durable-session-store.js";
+import { createAgentErrorResult } from "#execution/agent-handle-dispatch.js";
+import {
+  createDurableSessionState,
+  type DurableSession,
+} from "#execution/durable-session-store.js";
 import { cancelOwnedTask } from "#execution/tasks/parent/dispatch.js";
+import { findTaskAgentAddress } from "#execution/tasks/parent/control-shared.js";
 import type {
   SubagentToolDispatchInput,
   SubagentToolDispatchResult,
@@ -10,6 +16,12 @@ import type {
 import { acknowledgeDelegatedTasks } from "#execution/tasks/parent/delegate.js";
 import { subagentWorkflowReference } from "#execution/tasks/parent/subagent/workflow-reference.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
+import { AGENT_BUSY } from "#harness/agent-handle-errors.js";
+import {
+  AGENT_HANDLES_STATE_KEY,
+  assertPersistableAgentHandleStore,
+  getAgentHandleStore,
+} from "#harness/handles/store.js";
 import { CallbackBaseUrlKey } from "#harness/authorization.js";
 import type { PendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import { isTurnCancellation } from "#harness/turn-cancellation.js";
@@ -26,8 +38,12 @@ import type {
   RuntimeRemoteAgentCallActionRequest,
   RuntimeSubagentCallActionRequest,
 } from "#runtime/actions/types.js";
-import { BundleKey } from "#runtime/sessions/runtime-context-keys.js";
-import { findSessionTaskEntry } from "#tasks/session-index.js";
+import { BundleKey, type CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
+import {
+  findSessionTaskEntry,
+  getSessionTaskIndex,
+  SESSION_TASKS_STATE_KEY,
+} from "#tasks/session-index.js";
 
 type SubagentCallAction = RuntimeRemoteAgentCallActionRequest | RuntimeSubagentCallActionRequest;
 
@@ -147,9 +163,12 @@ class SubagentToolExecutionController {
     SubagentToolExecutionEffects["delegatedTasks"][number]
   >();
   private readonly callbackBaseUrl?: string;
+  private readonly claimedAgentIds = new Set<string>();
+  private emissionTail: Promise<void> = Promise.resolve();
   private readonly handleEvent?: HandleEventFn;
   private dispatchStarted = false;
-  private dispatchTail: Promise<void> = Promise.resolve();
+  private readonly dispatches: Promise<RuntimeActionResult>[] = [];
+  private parentSandboxPreparation?: Promise<void>;
   private batchEvent: PendingRuntimeActionBatch["event"];
   private session: HarnessSession;
   private updateSession?: (session: HarnessSession) => void;
@@ -175,13 +194,34 @@ class SubagentToolExecutionController {
   }
 
   async execute(action: SubagentCallAction): Promise<unknown> {
+    const requestedAgentId = action.input.agentId;
+    const agentId =
+      typeof requestedAgentId === "string" &&
+      findTaskAgentAddress(this.session, requestedAgentId) !== undefined
+        ? requestedAgentId
+        : undefined;
     this.dispatchStarted = true;
-    const dispatch = this.dispatchTail.then(() => this.dispatch(action));
-    this.dispatchTail = dispatch.then(
-      () => undefined,
-      () => undefined,
-    );
-    const result = await dispatch;
+    if (agentId !== undefined && this.claimedAgentIds.has(agentId)) {
+      return this.readResult(
+        await this.rejectSiblingCall({
+          action,
+          agentId,
+        }),
+      );
+    }
+    if (agentId !== undefined) this.claimedAgentIds.add(agentId);
+    const dispatch = this.dispatch(action, agentId !== undefined);
+    this.dispatches.push(dispatch);
+    let result: RuntimeActionResult;
+    try {
+      result = await dispatch;
+    } finally {
+      if (agentId !== undefined) this.claimedAgentIds.delete(agentId);
+    }
+    return this.readResult(result);
+  }
+
+  private readResult(result: RuntimeActionResult): unknown {
     if (result.isError === true) {
       throw new Error(
         typeof result.output === "string" ? result.output : JSON.stringify(result.output),
@@ -207,21 +247,18 @@ class SubagentToolExecutionController {
     return { delegatedTasks, session: this.session };
   }
 
-  private async dispatch(action: SubagentCallAction): Promise<RuntimeActionResult> {
-    await this.emit(
-      createActionsRequestedEvent({
-        actions: [action],
-        sequence: this.batchEvent.sequence,
-        stepIndex: this.batchEvent.stepIndex,
-        turnId: this.batchEvent.turnId,
-      }),
-      "subagent action request emission failed",
-    );
+  private async dispatch(
+    action: SubagentCallAction,
+    continuesAgent: boolean,
+  ): Promise<RuntimeActionResult> {
+    await this.emitActionRequested(action);
+    if (!continuesAgent) await this.prepareParentSandbox(action);
+    const session = this.session;
     const workflowInput: SubagentToolDispatchInput = {
       batch: { actions: [action], event: this.batchEvent, responseMessages: [] },
       callbackBaseUrl: this.callbackBaseUrl,
       serializedContext: serializeContext(loadContext()),
-      sessionState: createDurableSessionState({ session: this.session }),
+      sessionState: createDurableSessionState({ session }),
     };
     const run = await start<[SubagentToolDispatchInput], SubagentToolDispatchResult>(
       subagentWorkflowReference,
@@ -232,11 +269,11 @@ class SubagentToolExecutionController {
     if (dispatched === undefined) {
       throw new Error("Subagent workflow returned no durable session snapshot.");
     }
-    this.session = {
-      ...this.session,
-      sandboxState: dispatched.sandboxState,
-      state: dispatched.state,
-    };
+    this.session = mergeSubagentDispatchSession({
+      current: this.session,
+      dispatched,
+      initial: session,
+    });
     this.updateSession?.(this.session);
     for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
     for (const event of output.calledEvents ?? []) {
@@ -267,6 +304,52 @@ class SubagentToolExecutionController {
         result.callId,
       );
     }
+    await this.emitActionResult(result);
+    return result;
+  }
+
+  private async rejectSiblingCall(input: {
+    readonly action: SubagentCallAction;
+    readonly agentId: string;
+  }): Promise<RuntimeActionResult> {
+    await this.emitActionRequested(input.action);
+    const result = createAgentErrorResult({
+      action: input.action,
+      code: AGENT_BUSY,
+      message: `Agent "${input.agentId}" already has a sibling call in this model step.`,
+    });
+    await this.emitActionResult(result);
+    return result;
+  }
+
+  private async prepareParentSandbox(action: SubagentCallAction): Promise<void> {
+    if (!sharesParentSandbox(action, loadContext().require(BundleKey))) return;
+    if (!loadContext().has(SandboxKey)) return;
+    this.parentSandboxPreparation ??= this.initializeParentSandbox();
+    await this.parentSandboxPreparation;
+  }
+
+  private async initializeParentSandbox(): Promise<void> {
+    const sandbox = loadContext().require(SandboxKey);
+    await sandbox.get();
+    const sandboxState = await sandbox.captureState();
+    this.session = { ...this.session, sandboxState };
+    this.updateSession?.(this.session);
+  }
+
+  private async emitActionRequested(action: SubagentCallAction): Promise<void> {
+    await this.emit(
+      createActionsRequestedEvent({
+        actions: [action],
+        sequence: this.batchEvent.sequence,
+        stepIndex: this.batchEvent.stepIndex,
+        turnId: this.batchEvent.turnId,
+      }),
+      "subagent action request emission failed",
+    );
+  }
+
+  private async emitActionResult(result: RuntimeActionResult): Promise<void> {
     await this.emit(
       createActionResultEvent({
         result,
@@ -277,7 +360,6 @@ class SubagentToolExecutionController {
       "subagent action result emission failed",
       result.callId,
     );
-    return result;
   }
 
   private async emit(
@@ -286,14 +368,84 @@ class SubagentToolExecutionController {
     callId?: string,
   ): Promise<void> {
     if (this.handleEvent === undefined) return;
-    try {
-      await this.handleEvent(event);
-    } catch (error) {
-      logError(log, message, error, callId === undefined ? undefined : { callId });
-    }
+    const emission = this.emissionTail.then(async () => {
+      try {
+        await this.handleEvent?.(event);
+      } catch (error) {
+        logError(log, message, error, callId === undefined ? undefined : { callId });
+      }
+    });
+    this.emissionTail = emission;
+    await emission;
   }
 
   private async settleDispatches(): Promise<void> {
-    await this.dispatchTail;
+    await Promise.allSettled(this.dispatches);
   }
+}
+
+function mergeSubagentDispatchSession(input: {
+  readonly current: HarnessSession;
+  readonly dispatched: DurableSession;
+  readonly initial: HarnessSession;
+}): HarnessSession {
+  let session = {
+    ...input.current,
+    sandboxState: input.current.sandboxState ?? input.dispatched.sandboxState,
+  };
+  const currentTasks = getSessionTaskIndex(session.state);
+  const currentTaskIds = new Set(currentTasks.map((entry) => entry.taskId));
+  const addedTasks = getSessionTaskIndex(input.dispatched.state).filter(
+    (entry) => !currentTaskIds.has(entry.taskId),
+  );
+  if (addedTasks.length > 0) {
+    session = {
+      ...session,
+      state: {
+        ...session.state,
+        [SESSION_TASKS_STATE_KEY]: { tasks: [...currentTasks, ...addedTasks] },
+      },
+    };
+  }
+
+  const initialHandles = getAgentHandleStore(input.initial.state)?.handles ?? [];
+  const initialHandleIds = new Set(initialHandles.map((handle) => handle.identity.id));
+  const dispatchedHandles = getAgentHandleStore(input.dispatched.state)?.handles ?? [];
+  const dispatchedHandleIds = new Set(dispatchedHandles.map((handle) => handle.identity.id));
+  const removedHandleIds = new Set(
+    initialHandles
+      .filter((handle) => !dispatchedHandleIds.has(handle.identity.id))
+      .map((handle) => handle.identity.id),
+  );
+  const handles = (getAgentHandleStore(session.state)?.handles ?? []).filter(
+    (handle) => !removedHandleIds.has(handle.identity.id),
+  );
+  const knownHandleIds = new Set(handles.map((handle) => handle.identity.id));
+  const addedHandles = dispatchedHandles.filter(
+    (handle) =>
+      !initialHandleIds.has(handle.identity.id) && !knownHandleIds.has(handle.identity.id),
+  );
+  if (removedHandleIds.size > 0 || addedHandles.length > 0) {
+    session = {
+      ...session,
+      state: {
+        ...session.state,
+        [AGENT_HANDLES_STATE_KEY]: assertPersistableAgentHandleStore({
+          handles: [...handles, ...addedHandles],
+        }),
+      },
+    };
+  }
+
+  return session;
+}
+
+function sharesParentSandbox(action: SubagentCallAction, bundle: CompiledBundle): boolean {
+  if (action.kind !== "subagent-call") return false;
+  const registered = bundle.subagentRegistry.subagentsByNodeId.has(action.nodeId);
+  return (
+    (action.subagentName === "agent" && !registered) ||
+    bundle.graph.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox.definition
+      .inheritsParent === true
+  );
 }
