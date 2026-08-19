@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
-import { SandboxKey } from "#context/keys.js";
+import { AuthKey, SandboxKey, SessionIdKey } from "#context/keys.js";
+import { runStep } from "#context/run-step.js";
 import { BundleKey } from "#runtime/sessions/runtime-context-keys.js";
 import { replaceDurableSessionSnapshot } from "#execution/durable-session-store.js";
 import {
   beginSubagentToolExecutionAttempt,
+  createSubagentToolExecutionCommitFailureHandler,
   executeSubagentToolCall,
   prepareSubagentToolExecutionBatch,
   runWithSubagentToolExecution,
@@ -19,10 +21,11 @@ import type {
 } from "#runtime/actions/types.js";
 import { createSubagentCalledEvent, type UnstampedMessageStreamEvent } from "#protocol/message.js";
 import { getSessionTaskIndex, SESSION_TASKS_STATE_KEY } from "#tasks/session-index.js";
+import { deriveTaskId } from "#tasks/task-id.js";
 
 const mocks = vi.hoisted(() => ({
-  acknowledgeDelegatedTasks: vi.fn(),
   cancelOwnedTask: vi.fn(),
+  rejectDelegatedDispatch: vi.fn(),
   start: vi.fn(),
 }));
 
@@ -32,7 +35,7 @@ vi.mock("#internal/workflow/runtime.js", async (importOriginal) => ({
 }));
 vi.mock("#execution/tasks/parent/delegate.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("#execution/tasks/parent/delegate.js")>()),
-  acknowledgeDelegatedTasks: mocks.acknowledgeDelegatedTasks,
+  rejectDelegatedDispatch: mocks.rejectDelegatedDispatch,
 }));
 vi.mock("#execution/tasks/parent/dispatch.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("#execution/tasks/parent/dispatch.js")>()),
@@ -72,7 +75,10 @@ const independentAction: RuntimeSubagentCallActionRequest = {
 };
 
 function prepareBatch(actions: readonly SubagentAction[]): void {
-  prepareSubagentToolExecutionBatch(actions.map(({ callId }) => callId));
+  prepareSubagentToolExecutionBatch({
+    executableCallIds: actions.map(({ callId }) => callId),
+    localFanoutSize: actions.filter((action) => action.kind === "subagent-call").length,
+  });
 }
 
 type SubagentAction = RuntimeRemoteAgentCallActionRequest | RuntimeSubagentCallActionRequest;
@@ -191,7 +197,10 @@ describe("subagent tool execution controller", () => {
         }),
       }),
     });
-    expect(mocks.acknowledgeDelegatedTasks).toHaveBeenCalledWith({ tasks: [task] });
+    expect(mocks.rejectDelegatedDispatch).toHaveBeenCalledWith({
+      error: expect.objectContaining({ code: "PARENT_STEP_FAILED" }),
+      task,
+    });
   });
 
   it("rebuilds a remote child stream path with the provider-visible call ID", async () => {
@@ -393,6 +402,130 @@ describe("subagent tool execution controller", () => {
     expect(output.delegatedTaskSandboxState).toBeUndefined();
   });
 
+  it("settles an admitted remote sibling when the sandbox provider commit fails", async () => {
+    const remoteAction: RuntimeRemoteAgentCallActionRequest = {
+      callId: "call-remote",
+      description: "Remote worker",
+      input: { message: "remote" },
+      kind: "remote-agent-call",
+      name: "remote-worker",
+      nodeId: "remote-node",
+      remoteAgentName: "remote-worker",
+    };
+    const task = {
+      taskId: "task-remote",
+      taskInboxToken: "inbox-remote",
+      taskRunId: "run-remote",
+    };
+    const entry = {
+      ...task,
+      createdByStepIndex: 2,
+      createdByTurnId: "turn-1",
+      metadata: {
+        agentId: "remote-agent",
+        kind: "subagent" as const,
+        mode: "remote" as const,
+        name: remoteAction.name,
+      },
+      operationId: "operation-remote",
+    };
+    mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const action = input.batch.actions[0] as SubagentAction;
+      if (action.kind === "subagent-call") {
+        return {
+          returnValue: Promise.resolve({
+            pendingTasks: [],
+            results: [
+              {
+                callId: action.callId,
+                kind: "subagent-result",
+                origin: "child",
+                output: "local complete",
+                subagentName: action.name,
+              },
+            ],
+            sessionState: input.sessionState,
+          }),
+          runId: "workflow-local",
+        };
+      }
+      return {
+        returnValue: Promise.resolve({
+          pendingTasks: [task],
+          results: [
+            {
+              backgroundTask: { status: "working", taskId: task.taskId },
+              callId: action.callId,
+              kind: "subagent-result",
+              origin: "child",
+              output: { agentId: "remote-agent", status: "working", taskId: task.taskId },
+              subagentName: action.name,
+            },
+          ],
+          sessionState: replaceDurableSessionSnapshot({
+            session: {
+              ...input.sessionState.snapshot.session,
+              state: { [SESSION_TASKS_STATE_KEY]: { tasks: [entry] } },
+            },
+            state: input.sessionState,
+          }),
+        }),
+        runId: "workflow-remote",
+      };
+    });
+    const commitFailure = new Error("persistent sandbox capture failed");
+    const sandboxState = { initialized: true, session: null } as const;
+    const sandbox = {
+      captureState: vi
+        .fn()
+        .mockResolvedValueOnce(sandboxState)
+        .mockRejectedValueOnce(commitFailure),
+      get: vi.fn(async () => null),
+      stop: vi.fn(async () => undefined),
+    };
+    const bundle = createBundle(true) as never;
+    const ctx = new ContextContainer();
+    ctx.set(AuthKey, null);
+    ctx.set(SandboxKey, sandbox);
+    ctx.set(SessionIdKey, session.sessionId);
+
+    await expect(
+      runStep(
+        ctx,
+        session,
+        async (enrichedSession) => {
+          ctx.set(BundleKey, bundle);
+          return runWithSubagentToolExecution({
+            session: enrichedSession,
+            step: async () => {
+              prepareBatch([localAction, remoteAction]);
+              await Promise.all(
+                [localAction, remoteAction].map((action) => executeSubagentToolCall({ action })),
+              );
+              return { next: null, session: enrichedSession };
+            },
+          });
+        },
+        createSubagentToolExecutionCommitFailureHandler(bundle),
+      ),
+    ).rejects.toBe(commitFailure);
+
+    expect(sandbox.captureState).toHaveBeenCalledTimes(2);
+    expect(mocks.cancelOwnedTask).toHaveBeenCalledWith({
+      bundle,
+      entry,
+      session: expect.objectContaining({
+        state: expect.objectContaining({
+          [SESSION_TASKS_STATE_KEY]: { tasks: [entry] },
+        }),
+      }),
+    });
+    expect(mocks.rejectDelegatedDispatch).toHaveBeenCalledWith({
+      error: expect.objectContaining({ code: "PARENT_STEP_FAILED" }),
+      task,
+    });
+  });
+
   it("keeps semantic dispatch ownership stable when retry siblings reorder", async () => {
     const dispatchCallIds: string[] = [];
     mocks.start.mockImplementation(async (_workflow, [input]) => {
@@ -478,6 +611,60 @@ describe("subagent tool execution controller", () => {
       "call-from-retry",
       "call-local-later-from-retry",
     ]);
+  });
+
+  it("derives distinct task identity for the same call on consecutive turns", async () => {
+    const dispatches: { callId: string; turnId: string }[] = [];
+    mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
+      dispatches.push({ callId: action.callId, turnId: input.batch.event.turnId });
+      return {
+        returnValue: Promise.resolve({
+          pendingTasks: [],
+          results: [
+            {
+              callId: action.callId,
+              kind: "subagent-result",
+              origin: "child",
+              output: "accepted",
+              subagentName: action.name,
+            },
+          ],
+          sessionState: input.sessionState,
+        }),
+        runId: `workflow-${action.callId}`,
+      };
+    });
+    const ctx = new ContextContainer();
+    ctx.set(BundleKey, createBundle() as never);
+
+    for (const sequence of [2, 3]) {
+      const betweenTurns = setHarnessEmissionState(session, {
+        sessionStarted: true,
+        sequence,
+        stepIndex: 0,
+        turnId: "",
+      });
+      await contextStorage.run(ctx, () =>
+        runWithSubagentToolExecution({
+          session: betweenTurns,
+          step: async () => {
+            prepareBatch([localAction]);
+            await executeSubagentToolCall({ action: localAction });
+            return { next: null, session: betweenTurns };
+          },
+        }),
+      );
+    }
+
+    expect(dispatches.map(({ turnId }) => turnId)).toEqual(["turn_2", "turn_3"]);
+    expect(
+      new Set(
+        dispatches.map(({ callId, turnId }) =>
+          deriveTaskId({ callId, parentSessionId: session.sessionId, parentTurnId: turnId }),
+        ),
+      ),
+    ).toHaveProperty("size", 2);
   });
 
   it("emits one request batch before starting sibling AI SDK subagent workflows", async () => {
@@ -797,110 +984,5 @@ describe("subagent tool execution controller", () => {
         status: "rejected",
       }),
     ]);
-  });
-
-  it("emits a terminal action result when the Workflow launch fails", async () => {
-    const failure = new Error("workflow transport unavailable");
-    mocks.start.mockRejectedValue(failure);
-    const events: UnstampedMessageStreamEvent[] = [];
-    const ctx = new ContextContainer();
-    ctx.set(BundleKey, createBundle() as never);
-
-    await expect(
-      contextStorage.run(ctx, () =>
-        runWithSubagentToolExecution({
-          handleEvent: async (event) => {
-            events.push(event);
-          },
-          session,
-          step: async () => {
-            prepareBatch([localAction]);
-            await executeSubagentToolCall({ action: localAction });
-            return { next: null, session };
-          },
-        }),
-      ),
-    ).rejects.toBe(failure);
-
-    expect(events).toEqual([
-      expect.objectContaining({ type: "actions.requested" }),
-      expect.objectContaining({
-        data: expect.objectContaining({
-          result: expect.objectContaining({
-            callId: localAction.callId,
-            isError: true,
-            output: {
-              code: "SUBAGENT_EXECUTION_FAILED",
-              message: "Subagent dispatch failed: workflow transport unavailable",
-            },
-          }),
-        }),
-        type: "action.result",
-      }),
-    ]);
-  });
-
-  it("cancels and acknowledges a started task when the model step fails", async () => {
-    const { entry, task } = createTask(localAction, "call-local");
-    mocks.start.mockImplementation(async (_workflow, [input]) => {
-      const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
-      const current = input.sessionState.snapshot.session;
-      return {
-        returnValue: Promise.resolve({
-          pendingTasks: [task],
-          results: [
-            {
-              backgroundTask: { status: "working", taskId: task.taskId },
-              callId: action.callId,
-              kind: "subagent-result",
-              origin: "child",
-              output: { agentId: "call-local", status: "working", taskId: task.taskId },
-              subagentName: localAction.name,
-            },
-          ],
-          sessionState: replaceDurableSessionSnapshot({
-            session: {
-              ...current,
-              sandboxState: { initialized: true, session: null },
-              state: { [SESSION_TASKS_STATE_KEY]: { tasks: [entry] } },
-            },
-            state: input.sessionState,
-          }),
-        }),
-        runId: "workflow-batch",
-      };
-    });
-    const bundle = {
-      ...createBundle(),
-      compiledArtifactsSource: { kind: "bundled" },
-    } as never;
-    const ctx = new ContextContainer();
-    ctx.set(BundleKey, bundle);
-    const failure = new Error("model failed after tool execution");
-
-    await expect(
-      contextStorage.run(ctx, () =>
-        runWithSubagentToolExecution({
-          session,
-          step: async () => {
-            prepareBatch([localAction]);
-            await executeSubagentToolCall({ action: localAction });
-            throw failure;
-          },
-        }),
-      ),
-    ).rejects.toBe(failure);
-
-    expect(mocks.cancelOwnedTask).toHaveBeenCalledWith({
-      bundle,
-      entry,
-      session: expect.objectContaining({
-        sandboxState: { initialized: true, session: null },
-        state: expect.objectContaining({
-          [SESSION_TASKS_STATE_KEY]: { tasks: [entry] },
-        }),
-      }),
-    });
-    expect(mocks.acknowledgeDelegatedTasks).toHaveBeenCalledWith({ tasks: [task] });
   });
 });

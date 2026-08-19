@@ -38,6 +38,7 @@ import type { ResolvedDynamicInstructionsResolver } from "#runtime/types.js";
 import type { DynamicResolveContext } from "#shared/dynamic-tool-definition.js";
 import type { RunMode } from "#shared/run-mode.js";
 import { compactMessages, shouldCompact } from "#harness/compaction.js";
+import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { getHarnessEmissionState, isHarnessBetweenTurns } from "#harness/emission.js";
 import {
   getPendingAuthorization,
@@ -205,20 +206,20 @@ function createDelegationToolMap(): ToolLoopHarnessConfig["tools"] {
         name: "add",
       },
     ],
-    [
-      "delegate",
-      {
-        description: "Delegate to a subagent.",
-        inputSchema: jsonSchema({ type: "object" }),
-        name: "delegate",
-        runtimeAction: {
-          kind: "subagent-call",
-          nodeId: "workers",
-          subagentName: "worker",
-        },
-      },
-    ],
+    ["delegate", createRuntimeDelegationTool()],
   ]);
+}
+
+function createRuntimeDelegationTool(): HarnessToolDefinition {
+  return {
+    delegation: {
+      action: { kind: "subagent-call", nodeId: "workers", subagentName: "worker" },
+      execution: "runtime-action",
+    },
+    description: "Delegate to a subagent.",
+    inputSchema: jsonSchema({ type: "object" }),
+    name: "delegate",
+  };
 }
 
 function createScheduleContext(): ContextContainer {
@@ -402,6 +403,7 @@ async function* createMockFullStream(
 }
 
 type MockAgentSettings = {
+  onLanguageModelCallEnd?: (event: { readonly content: readonly unknown[] }) => void;
   onStepFinish?: (step: unknown) => Promise<void> | void;
   output?: unknown;
   prepareStep?: (input: unknown) => Promise<unknown> | unknown;
@@ -418,7 +420,12 @@ function setupMockAgent(result: Record<string, unknown>): void {
     this: Record<string, unknown>,
     settings: MockAgentSettings,
   ) {
-    const { onStepFinish, prepareStep } = settings;
+    const { onLanguageModelCallEnd, onStepFinish, prepareStep } = settings;
+    const finishModelCall = () => {
+      onLanguageModelCallEnd?.({
+        content: (result.toolCalls as readonly unknown[] | undefined) ?? [],
+      });
+    };
 
     this.generate = vi.fn().mockImplementation(async (options: { messages: unknown[] }) => {
       if (prepareStep) {
@@ -430,6 +437,7 @@ function setupMockAgent(result: Record<string, unknown>): void {
           context: undefined,
         });
       }
+      finishModelCall();
       if (onStepFinish) await onStepFinish(result);
       return createMockGenerateResult(result);
     });
@@ -444,6 +452,7 @@ function setupMockAgent(result: Record<string, unknown>): void {
           context: undefined,
         });
       }
+      finishModelCall();
       const mockResult = createMockStreamResult(result);
       // Schedule onStepFinish to fire after a microtask so the stream
       // can start being consumed first by emitStreamContent.
@@ -1542,21 +1551,7 @@ describe("createToolLoopHarness", () => {
 
     const config = createTestConfig("conversation", undefined, {
       workflow: true,
-      tools: new Map([
-        [
-          "delegate",
-          {
-            description: "Delegate to a subagent.",
-            inputSchema: jsonSchema({ type: "object" }),
-            name: "delegate",
-            runtimeAction: {
-              kind: "subagent-call",
-              nodeId: "workers",
-              subagentName: "worker",
-            },
-          },
-        ],
-      ]),
+      tools: new Map([["delegate", createRuntimeDelegationTool()]]),
     });
     const runStep = createToolLoopHarness(config);
 
@@ -3386,21 +3381,7 @@ describe("createToolLoopHarness", () => {
     const { emit, events } = createEventCollector();
     const session = createTestSession();
     const config = createTestConfig("conversation", emit, {
-      tools: new Map([
-        [
-          "delegate",
-          {
-            description: "Delegate to a subagent.",
-            inputSchema: jsonSchema({ type: "object" }),
-            name: "delegate",
-            runtimeAction: {
-              kind: "subagent-call",
-              nodeId: "workers",
-              subagentName: "worker",
-            },
-          },
-        ],
-      ]),
+      tools: new Map([["delegate", createRuntimeDelegationTool()]]),
     });
 
     const runStep = createToolLoopHarness(config);
@@ -3411,6 +3392,76 @@ describe("createToolLoopHarness", () => {
     expect(result.session.state?.["eve.runtime.pendingActionBatch"]).toBeUndefined();
     expect(events.some((event) => event.type === "actions.requested")).toBe(false);
     expect(events.some((event) => event.type === "turn.failed")).toBe(false);
+  });
+
+  it("shares one local fanout across executable and runtime-action subagents", async () => {
+    const toolCalls = [
+      {
+        input: { message: "static" },
+        toolCallId: "call-static",
+        toolName: "static-worker",
+        type: "tool-call" as const,
+      },
+      {
+        input: { message: "dynamic" },
+        toolCallId: "call-dynamic",
+        toolName: "dynamic-worker",
+        type: "tool-call" as const,
+      },
+    ];
+    setupMockAgent({
+      finishReason: "tool-calls",
+      response: { messages: [{ content: toolCalls, role: "assistant" }] },
+      text: "",
+      toolCalls,
+      toolResults: [],
+    });
+    const onSubagentToolCalls = vi.fn();
+    const tools = new Map<string, HarnessToolDefinition>([
+      [
+        "static-worker",
+        {
+          delegation: {
+            action: {
+              kind: "subagent-call",
+              nodeId: "subagents/static-worker",
+              subagentName: "static-worker",
+            },
+            execution: "ai-sdk",
+          },
+          description: "Static worker",
+          execute: async () => ({ status: "working" }),
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "static-worker",
+        },
+      ],
+      [
+        "dynamic-worker",
+        {
+          delegation: {
+            action: {
+              kind: "subagent-call",
+              nodeId: "subagents/dynamic-worker",
+              subagentName: "dynamic-worker",
+            },
+            execution: "runtime-action",
+          },
+          description: "Dynamic worker",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "dynamic-worker",
+        },
+      ],
+    ]);
+
+    const result = await createToolLoopHarness(
+      createTestConfig("conversation", undefined, { onSubagentToolCalls, tools }),
+    )(createTestSession(), { message: "Delegate both." });
+
+    expect(onSubagentToolCalls).toHaveBeenCalledWith({
+      executableCallIds: ["call-static"],
+      localFanoutSize: 2,
+    });
+    expect(getPendingRuntimeActionBatch(result.session.state)?.localFanoutSize).toBe(2);
   });
 
   it("stamps the live emission state onto a parked runtime-action batch so resume is a continuation", async () => {
@@ -3446,17 +3497,7 @@ describe("createToolLoopHarness", () => {
 
     const { emit } = createEventCollector();
     const config = createTestConfig("conversation", emit, {
-      tools: new Map([
-        [
-          "delegate",
-          {
-            description: "Delegate to a subagent.",
-            inputSchema: jsonSchema({ type: "object" }),
-            name: "delegate",
-            runtimeAction: { kind: "subagent-call", nodeId: "workers", subagentName: "worker" },
-          },
-        ],
-      ]),
+      tools: new Map([["delegate", createRuntimeDelegationTool()]]),
     });
 
     const runStep = createToolLoopHarness(config);

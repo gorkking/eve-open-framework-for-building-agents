@@ -4,6 +4,7 @@ import { createActionResultEvent, type UnstampedMessageStreamEvent } from "#prot
 import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import { resolveRuntimeActionResultsForKeys } from "#runtime/actions/results.js";
 import type { RuntimeActionRequest, RuntimeActionResult } from "#runtime/actions/types.js";
+import { getHarnessDelegationAction } from "#harness/execute-tool.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type { AgentTurnOutcome } from "#shared/agent-turn-outcome.js";
 import { findRunningAgentHandle, isResultBoundToRunningHandle } from "#harness/handles/query.js";
@@ -59,6 +60,7 @@ interface PendingRuntimeActionEventMetadata {
 export interface PendingRuntimeActionBatch {
   readonly actions: readonly RuntimeActionRequest[];
   readonly event: PendingRuntimeActionEventMetadata;
+  readonly localFanoutSize?: number;
   readonly responseMessages: readonly ModelMessage[];
 }
 
@@ -117,6 +119,7 @@ export function clearPendingRuntimeActionBatch(session: HarnessSession): Harness
 export function setPendingRuntimeActionBatch(input: {
   readonly actions: readonly RuntimeActionRequest[];
   readonly event: PendingRuntimeActionEventMetadata;
+  readonly localFanoutSize?: number;
   readonly responseMessages: readonly ModelMessage[];
   readonly session: HarnessSession;
 }): HarnessSession {
@@ -125,6 +128,7 @@ export function setPendingRuntimeActionBatch(input: {
   state[PENDING_RUNTIME_ACTION_BATCH_KEY] = {
     actions: [...input.actions],
     event: input.event,
+    localFanoutSize: input.localFanoutSize,
     responseMessages: [...input.responseMessages],
   } satisfies PendingRuntimeActionBatch;
 
@@ -363,7 +367,7 @@ export function createRuntimeActionRequestFromToolCall(input: {
   readonly tools: HarnessToolMap;
 }): RuntimeActionRequest {
   const definition = input.tools.get(input.toolCall.toolName);
-  const runtimeAction = definition?.workflowAction ?? definition?.runtimeAction;
+  const runtimeAction = getHarnessDelegationAction(definition) ?? definition?.runtimeAction;
 
   if (definition?.frameworkAction === "load-skill") {
     return {

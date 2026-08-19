@@ -1,54 +1,42 @@
-import type { HarnessToolDefinition } from "#harness/execute-tool.js";
+import type { HarnessDelegationAction, HarnessToolDefinition } from "#harness/execute-tool.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { defineSubagent } from "#runtime/framework-tools/subagent/local.js";
 import { defineRemoteSubagent } from "#runtime/framework-tools/subagent/remote.js";
 import type { PreparedRuntimeDelegationTool } from "#runtime/sessions/turn.js";
-import { UNSPECIFIED_INPUT_SCHEMA, toInputSchema, toOutputSchema } from "#shared/tool-schema.js";
+import {
+  UNSPECIFIED_INPUT_SCHEMA,
+  toInputSchema,
+  toOutputSchema,
+  type ToolSchemaSource,
+} from "#shared/tool-schema.js";
+
+type HarnessDelegationTool = Pick<
+  PreparedRuntimeDelegationTool,
+  "description" | "kind" | "name" | "nodeId"
+> & {
+  readonly inputSchema?: ToolSchemaSource | null;
+  readonly outputSchema?: ToolSchemaSource | null;
+  readonly rootOnly?: boolean;
+};
 
 export function createHarnessDelegationToolDefinition(
-  tool: PreparedRuntimeDelegationTool,
+  tool: HarnessDelegationTool,
 ): HarnessToolDefinition {
-  const runtimeAction: HarnessToolDefinition["runtimeAction"] =
-    tool.kind === "remote"
-      ? {
-          kind: "remote-agent-call",
-          nodeId: tool.nodeId,
-          remoteAgentName: tool.name,
-          subagentName: tool.name,
-        }
-      : {
-          kind: "subagent-call",
-          nodeId: tool.nodeId,
-          subagentName: tool.name,
-        };
+  const action = createDelegationAction(tool);
 
   return {
+    delegation: { action, execution: "runtime-action", rootOnly: tool.rootOnly },
     description: tool.description ?? "",
     inputSchema: toInputSchema(tool.inputSchema) ?? UNSPECIFIED_INPUT_SCHEMA,
     name: tool.name,
-    outputSchema: toOutputSchema(tool.outputSchema),
-    runtimeAction,
+    outputSchema: toOutputSchema(tool.outputSchema) ?? undefined,
   };
 }
 
 export function createTaskSubagentHarnessDefinition(
-  tool: Pick<PreparedRuntimeDelegationTool, "description" | "kind" | "name" | "nodeId"> & {
-    readonly rootOnly?: boolean;
-  },
+  tool: HarnessDelegationTool,
 ): HarnessToolDefinition {
-  const workflowAction: NonNullable<HarnessToolDefinition["workflowAction"]> =
-    tool.kind === "remote"
-      ? {
-          kind: "remote-agent-call",
-          nodeId: tool.nodeId,
-          remoteAgentName: tool.name,
-          subagentName: tool.name,
-        }
-      : {
-          kind: "subagent-call",
-          nodeId: tool.nodeId,
-          subagentName: tool.name,
-        };
+  const action = createDelegationAction(tool);
   const definition =
     tool.kind === "remote"
       ? defineRemoteSubagent({
@@ -63,16 +51,31 @@ export function createTaskSubagentHarnessDefinition(
         });
 
   return {
+    delegation: { action, execution: "ai-sdk", rootOnly: tool.rootOnly },
     description: definition.description,
     execute: createToolExecuteWithAuth({
       execute: definition.execute,
       scope: tool.name,
     }),
-    frameworkAction: "subagent",
     inputSchema: toInputSchema(definition.inputSchema) ?? UNSPECIFIED_INPUT_SCHEMA,
     name: tool.name,
     outputSchema: toOutputSchema(definition.outputSchema),
-    rootOnly: tool.rootOnly,
-    workflowAction,
   };
+}
+
+function createDelegationAction(
+  tool: Pick<PreparedRuntimeDelegationTool, "kind" | "name" | "nodeId">,
+): HarnessDelegationAction {
+  return tool.kind === "remote"
+    ? {
+        kind: "remote-agent-call",
+        nodeId: tool.nodeId,
+        remoteAgentName: tool.name,
+        subagentName: tool.name,
+      }
+    : {
+        kind: "subagent-call",
+        nodeId: tool.nodeId,
+        subagentName: tool.name,
+      };
 }

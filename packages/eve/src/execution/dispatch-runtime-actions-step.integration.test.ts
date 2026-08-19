@@ -430,8 +430,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     if (batch === undefined) throw new Error("Expected a pending subagent call.");
 
     await dispatchTaskStep({
-      batch,
-      localFanoutSize: 2,
+      batch: { ...batch, localFanoutSize: 2 },
       serializedContext: {},
       sessionState: BASE_STATE,
     });

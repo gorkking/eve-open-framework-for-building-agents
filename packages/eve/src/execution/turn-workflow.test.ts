@@ -458,12 +458,6 @@ describe("turnWorkflow", () => {
         sessionId: "child_direct",
       },
       identity: { id: "agent_direct", name: "delegate", nodeId: "subagents/delegate" },
-      operation: {
-        callId: "call_direct",
-        id: "operation_direct",
-        kind: "start" as const,
-        parentTurnId: "turn_0",
-      },
       phase: "addressed" as const,
     };
     const completedState = withSessionSnapshot(

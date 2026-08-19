@@ -96,16 +96,18 @@ describe("createRuntimeActionRequestFromToolCall", () => {
           [
             "researcher",
             {
+              delegation: {
+                action: {
+                  kind: "subagent-call" as const,
+                  nodeId: "subagents/researcher",
+                  subagentName: "researcher",
+                },
+                execution: "ai-sdk" as const,
+              },
               description: "Delegate research.",
               execute: async () => ({ status: "working" }),
-              frameworkAction: "subagent" as const,
               inputSchema: jsonSchema({ type: "object" }),
               name: "researcher",
-              workflowAction: {
-                kind: "subagent-call" as const,
-                nodeId: "subagents/researcher",
-                subagentName: "researcher",
-              },
             },
           ],
         ]),

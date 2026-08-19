@@ -106,7 +106,10 @@ describe("local subagent defineTool execution", () => {
           session,
           step: async () => {
             const tools = new Map([["agent", tool]]);
-            prepareSubagentToolExecutionBatch(["call-define-tool"]);
+            prepareSubagentToolExecutionBatch({
+              executableCallIds: ["call-define-tool"],
+              localFanoutSize: 1,
+            });
             generated = await generateText({
               model,
               prompt: "Delegate the work.",
@@ -395,7 +398,10 @@ describe("local subagent defineTool execution", () => {
           runWithSubagentToolExecution({
             session,
             step: async () => {
-              prepareSubagentToolExecutionBatch(calls.map(({ id }) => id));
+              prepareSubagentToolExecutionBatch({
+                executableCallIds: calls.map(({ id }) => id),
+                localFanoutSize: calls.length,
+              });
               generated = await generateText({
                 model,
                 prompt: "Delegate both independent tasks.",

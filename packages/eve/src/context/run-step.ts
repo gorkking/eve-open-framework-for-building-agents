@@ -75,11 +75,21 @@ export async function runStep(
   ctx: ContextContainer,
   harnessSession: HarnessSession,
   callback: (session: HarnessSession) => Promise<StepResult>,
+  onProviderCommitFailure?: (result: StepResult, cause: unknown) => Promise<void>,
 ): Promise<StepResult> {
-  const { result, session } = await withContextScope(ctx, harnessSession, async (enriched) => {
-    const result = await callback(enriched);
-    return { result, session: result.session };
-  });
+  let callbackResult: StepResult | undefined;
+  try {
+    const { result, session } = await withContextScope(ctx, harnessSession, async (enriched) => {
+      const result = await callback(enriched);
+      callbackResult = result;
+      return { result, session: result.session };
+    });
 
-  return { ...result, session };
+    return { ...result, session };
+  } catch (error) {
+    if (callbackResult !== undefined && onProviderCommitFailure !== undefined) {
+      await onProviderCommitFailure(callbackResult, error);
+    }
+    throw error;
+  }
 }

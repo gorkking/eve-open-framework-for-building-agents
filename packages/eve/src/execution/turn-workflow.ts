@@ -13,6 +13,7 @@ import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
+import { reduceSubagentToolExecutionSession } from "#execution/tasks/parent/subagent/session-effects.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import {
   migrateTurnWorkflowInput,
@@ -38,7 +39,6 @@ import type { RuntimeActionResult } from "#runtime/actions/types.js";
 import type { SandboxState } from "#sandbox/state.js";
 
 const TASK_MODE_WAIT_ERROR_MESSAGE = "Task mode cannot wait for follow-up input (`next: null`).";
-const SUBAGENT_TOOL_EFFECT_STATE_KEYS = ["eve.tasks", "eve.agent.handles"] as const;
 
 export type { TurnWorkflowInput };
 
@@ -324,35 +324,18 @@ function retainSubagentToolExecutionEffects(input: {
     throw new Error("Subagent tool effects require embedded durable session snapshots.");
   }
   const currentSession = currentSnapshot.session;
-  const effectsSession = effectsSnapshot.session;
-
-  const state = { ...currentSession.state };
-  for (const key of SUBAGENT_TOOL_EFFECT_STATE_KEYS) {
-    retainStateEntry(state, effectsSession.state, key);
-  }
   return {
     ...input.current,
     snapshot: {
       ...currentSnapshot,
-      session: {
-        ...currentSession,
-        sandboxState: input.sandboxState ?? currentSession.sandboxState,
-        state,
-      },
+      session: reduceSubagentToolExecutionSession({
+        current: currentSession,
+        dispatched: effectsSnapshot.session,
+        initial: currentSession,
+        sandboxState: input.sandboxState,
+      }),
     },
   };
-}
-
-function retainStateEntry(
-  target: Record<string, unknown>,
-  source: Readonly<Record<string, unknown>> | undefined,
-  key: string,
-): void {
-  if (source !== undefined && Object.hasOwn(source, key)) {
-    target[key] = source[key];
-  } else {
-    delete target[key];
-  }
 }
 
 async function waitForTurnSleep(

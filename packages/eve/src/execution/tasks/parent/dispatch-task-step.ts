@@ -52,7 +52,7 @@ import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 export interface SubagentToolDispatchInput {
   readonly batch: PendingRuntimeActionBatch;
   readonly callbackBaseUrl?: string;
-  readonly localFanoutSize: number;
+  readonly localFanoutSize?: number;
   readonly requireExistingAgent?: boolean;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;

@@ -23,24 +23,71 @@ export type HarnessRuntimeActionDefinition =
     }
   | { readonly kind: "task-control" };
 
-/**
- * Unified harness-owned tool definition.
- */
-export interface HarnessToolDefinition {
+export type HarnessDelegationAction = Exclude<
+  HarnessRuntimeActionDefinition,
+  { readonly kind: "task-control" }
+>;
+
+type HarnessToolExecute = (input: any, options: ToolExecuteOptions) => any;
+
+interface HarnessToolBase {
   readonly approvalKey?: (toolInput: Readonly<Record<string, unknown>>) => string;
   readonly description: string;
-  readonly execute?: (input: any, options: ToolExecuteOptions) => any;
-  readonly frameworkAction?: "load-skill" | "subagent";
   readonly inputSchema: FlexibleSchema;
   readonly name: string;
   readonly approval?: Approval;
   readonly outputSchema?: FlexibleSchema;
-  readonly rootOnly?: boolean;
-  readonly runtimeAction?: HarnessRuntimeActionDefinition;
   readonly toModelOutput?: (output: unknown) => unknown;
-  /** Runtime action used only when this executable tool is called from `Workflow`. */
-  readonly workflowAction?: Exclude<
-    HarnessRuntimeActionDefinition,
-    { readonly kind: "task-control" }
-  >;
+}
+
+/** Harness-visible tool. Delegation routing has one discriminated owner. */
+export type HarnessToolDefinition = HarnessToolBase &
+  (
+    | {
+        readonly delegation?: never;
+        readonly execute?: HarnessToolExecute;
+        readonly frameworkAction?: "load-skill";
+        readonly runtimeAction?: Extract<
+          HarnessRuntimeActionDefinition,
+          { readonly kind: "task-control" }
+        >;
+      }
+    | {
+        readonly delegation: {
+          readonly action: HarnessDelegationAction;
+          readonly execution: "ai-sdk";
+          readonly rootOnly?: boolean;
+        };
+        readonly execute: HarnessToolExecute;
+        readonly frameworkAction?: never;
+        readonly runtimeAction?: never;
+      }
+    | {
+        readonly delegation: {
+          readonly action: HarnessDelegationAction;
+          readonly execution: "runtime-action";
+          readonly rootOnly?: boolean;
+        };
+        readonly execute?: never;
+        readonly frameworkAction?: never;
+        readonly runtimeAction?: never;
+      }
+  );
+
+export function getHarnessDelegationAction(
+  definition: HarnessToolDefinition | undefined,
+): HarnessDelegationAction | undefined {
+  return definition?.delegation?.action;
+}
+
+export function getHarnessRuntimeAction(
+  definition: HarnessToolDefinition | undefined,
+): HarnessRuntimeActionDefinition | undefined {
+  return definition?.delegation?.execution === "runtime-action"
+    ? definition.delegation.action
+    : definition?.runtimeAction;
+}
+
+export function isAiSdkDelegationTool(definition: HarnessToolDefinition | undefined): boolean {
+  return definition?.delegation?.execution === "ai-sdk";
 }

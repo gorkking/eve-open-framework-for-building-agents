@@ -243,19 +243,17 @@ export function createNodeHarnessTools(input: {
             nodeId: input.node.nodeId,
             rootOnly: true,
           })
-        : {
+        : createHarnessDelegationToolDefinition({
             description: AGENT_TOOL_DESCRIPTION,
             inputSchema:
               input.node.agent.config?.experimental?.subagentPersistentSessions === true
                 ? PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA
                 : SUBAGENT_TOOL_INPUT_SCHEMA,
+            kind: "subagent",
             name: AGENT_TOOL_NAME,
-            runtimeAction: {
-              kind: "subagent-call",
-              nodeId: input.node.nodeId,
-              subagentName: AGENT_TOOL_NAME,
-            },
-          },
+            nodeId: input.node.nodeId,
+            rootOnly: true,
+          }),
     );
   }
 

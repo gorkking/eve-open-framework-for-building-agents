@@ -49,12 +49,15 @@ describe("dynamic subagent lifecycle", () => {
     expect(buildDynamicSubagentTools(ctx)).toMatchObject([
       {
         description: "Research the request.",
-        name: "researcher",
-        runtimeAction: {
-          kind: "subagent-call",
-          nodeId: "subagents/researcher",
-          subagentName: "researcher",
+        delegation: {
+          action: {
+            kind: "subagent-call",
+            nodeId: "subagents/researcher",
+            subagentName: "researcher",
+          },
+          execution: "runtime-action",
         },
+        name: "researcher",
       },
     ]);
     expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toBeDefined();
@@ -182,12 +185,15 @@ describe("dynamic subagent lifecycle", () => {
     expect(buildDynamicSubagentTools(ctx)).toMatchObject([
       {
         description: "Research on the remote deployment.",
-        name: "researcher",
-        runtimeAction: {
-          kind: "remote-agent-call",
-          nodeId: "subagents/researcher",
-          remoteAgentName: "researcher",
+        delegation: {
+          action: {
+            kind: "remote-agent-call",
+            nodeId: "subagents/researcher",
+            remoteAgentName: "researcher",
+          },
+          execution: "runtime-action",
         },
+        name: "researcher",
       },
     ]);
     expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toMatchObject({

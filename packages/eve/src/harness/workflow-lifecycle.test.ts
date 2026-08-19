@@ -20,14 +20,17 @@ function createTools(): HarnessToolMap {
     [
       "researcher",
       {
+        delegation: {
+          action: {
+            kind: "subagent-call",
+            nodeId: "subagents/researcher",
+            subagentName: "researcher",
+          },
+          execution: "runtime-action",
+        },
         description: "Delegate to the researcher.",
         inputSchema: jsonSchema({ type: "object" }),
         name: "researcher",
-        runtimeAction: {
-          kind: "subagent-call",
-          nodeId: "subagents/researcher",
-          subagentName: "researcher",
-        },
       },
     ],
   ]);

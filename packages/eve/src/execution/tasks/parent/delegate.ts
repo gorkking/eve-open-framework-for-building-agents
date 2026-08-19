@@ -184,7 +184,7 @@ export async function failDelegatedDispatch(input: {
 /** Silently terminates a task whose child dispatch failed before parent indexing. */
 export async function rejectDelegatedDispatch(input: {
   readonly error: JsonValue;
-  readonly task: DelegatedTask;
+  readonly task: Pick<DelegatedTask, "taskInboxToken">;
 }): Promise<void> {
   await sendTaskCommand({
     command: { data: input.error, kind: "reject-dispatch" },

@@ -4,10 +4,7 @@ import { loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
 import { SandboxKey } from "#context/keys.js";
 import { serializeContext } from "#context/serialize.js";
-import {
-  createDurableSessionState,
-  type DurableSession,
-} from "#execution/durable-session-store.js";
+import { createDurableSessionState } from "#execution/durable-session-store.js";
 import { cancelOwnedTask } from "#execution/tasks/parent/dispatch.js";
 import { createAgentErrorResult } from "#execution/agent-handle-dispatch.js";
 import { findTaskAgentAddress } from "#execution/tasks/parent/control-shared.js";
@@ -15,14 +12,11 @@ import type {
   SubagentToolDispatchInput,
   SubagentToolDispatchResult,
 } from "#execution/tasks/parent/dispatch-task-step.js";
-import { acknowledgeDelegatedTasks } from "#execution/tasks/parent/delegate.js";
+import { rejectDelegatedDispatch } from "#execution/tasks/parent/delegate.js";
+import { reduceSubagentToolExecutionSession } from "#execution/tasks/parent/subagent/session-effects.js";
 import { subagentWorkflowReference } from "#execution/tasks/parent/subagent/workflow-reference.js";
+import { activeTurnId } from "#harness/active-turn-id.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
-import {
-  AGENT_HANDLES_STATE_KEY,
-  assertPersistableAgentHandleStore,
-  getAgentHandleStore,
-} from "#harness/handles/store.js";
 import { CallbackBaseUrlKey } from "#harness/authorization.js";
 import type { PendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import { isTurnCancellation } from "#harness/turn-cancellation.js";
@@ -43,11 +37,7 @@ import type {
 } from "#runtime/actions/types.js";
 import { BundleKey, type CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import { toError } from "#shared/errors.js";
-import {
-  findSessionTaskEntry,
-  getSessionTaskIndex,
-  SESSION_TASKS_STATE_KEY,
-} from "#tasks/session-index.js";
+import { findSessionTaskEntry } from "#tasks/session-index.js";
 
 type SubagentCallAction = RuntimeRemoteAgentCallActionRequest | RuntimeSubagentCallActionRequest;
 
@@ -88,8 +78,11 @@ export function beginSubagentToolExecutionAttempt(): void {
   loadContext().require(SubagentToolExecutionKey).beginAttempt();
 }
 
-export function prepareSubagentToolExecutionBatch(callIds: readonly string[]): void {
-  loadContext().require(SubagentToolExecutionKey).prepareBatch(callIds);
+export function prepareSubagentToolExecutionBatch(input: {
+  readonly executableCallIds: readonly string[];
+  readonly localFanoutSize: number;
+}): void {
+  loadContext().require(SubagentToolExecutionKey).prepareBatch(input);
 }
 
 export async function runWithSubagentToolExecution(input: {
@@ -112,7 +105,7 @@ export async function runWithSubagentToolExecution(input: {
       if (isTurnCancellation(error)) {
         throw new SubagentToolExecutionBoundaryError(error, effects);
       }
-      await compensateSubagentToolExecutionFailure(effects, error);
+      await compensateSubagentToolExecutionFailure(ctx.require(BundleKey), effects, error);
       throw error;
     }
   } finally {
@@ -130,11 +123,28 @@ export function readSubagentToolExecutionCause(error: unknown): unknown {
   return error instanceof SubagentToolExecutionBoundaryError ? error.cause : error;
 }
 
+export function createSubagentToolExecutionCommitFailureHandler(
+  bundle: CompiledBundle,
+): (result: StepResult, cause: unknown) => Promise<void> {
+  return async (result, cause) => {
+    if (result.delegatedTasks === undefined || result.delegatedTasks.length === 0) return;
+    await compensateSubagentToolExecutionFailure(
+      bundle,
+      {
+        delegatedTaskSandboxState: result.delegatedTaskSandboxState,
+        delegatedTasks: result.delegatedTasks,
+        session: result.session,
+      },
+      cause,
+    );
+  };
+}
+
 async function compensateSubagentToolExecutionFailure(
+  bundle: CompiledBundle,
   effects: SubagentToolExecutionEffects,
   cause: unknown,
 ): Promise<void> {
-  const bundle = loadContext().require(BundleKey);
   const failures: unknown[] = [];
   for (const task of effects.delegatedTasks) {
     const entry = findSessionTaskEntry(effects.session.state, task.taskId);
@@ -150,7 +160,10 @@ async function compensateSubagentToolExecutionFailure(
       }
     }
     try {
-      await acknowledgeDelegatedTasks({ tasks: [task] });
+      await rejectDelegatedDispatch({
+        error: { code: "PARENT_STEP_FAILED", message: toError(cause).message },
+        task,
+      });
     } catch (error) {
       failures.push(error);
     }
@@ -188,6 +201,7 @@ class SubagentToolExecutionController {
   private delegatedTaskSandboxState?: HarnessSession["sandboxState"];
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
   private expectedCallIds?: readonly string[];
+  private localFanoutSize = 0;
   private readonly fingerprintOccurrences = new Map<string, number>();
   private readonly registeredCalls = new Map<string, RegisteredSubagentCall>();
   private session: HarnessSession;
@@ -195,7 +209,8 @@ class SubagentToolExecutionController {
   constructor(input: { readonly handleEvent?: HandleEventFn; readonly session: HarnessSession }) {
     this.callbackBaseUrl = loadContext().get(CallbackBaseUrlKey);
     this.handleEvent = input.handleEvent;
-    this.batchEvent = getHarnessEmissionState(input.session.state);
+    const batchEvent = getHarnessEmissionState(input.session.state);
+    this.batchEvent = { ...batchEvent, turnId: activeTurnId(batchEvent) };
     this.initialSession = input.session;
     this.session = input.session;
   }
@@ -208,10 +223,15 @@ class SubagentToolExecutionController {
     }
     this.fingerprintOccurrences.clear();
     this.expectedCallIds = undefined;
+    this.localFanoutSize = 0;
     this.registeredCalls.clear();
   }
 
-  prepareBatch(callIds: readonly string[]): void {
+  prepareBatch(input: {
+    readonly executableCallIds: readonly string[];
+    readonly localFanoutSize: number;
+  }): void {
+    const callIds = input.executableCallIds;
     if (this.expectedCallIds !== undefined || this.registeredCalls.size > 0) {
       throw new Error("A subagent tool batch is already being registered.");
     }
@@ -220,6 +240,7 @@ class SubagentToolExecutionController {
     }
     if (callIds.length === 0) return;
     this.expectedCallIds = callIds;
+    this.localFanoutSize = input.localFanoutSize;
     this.flushIfReady();
   }
 
@@ -262,7 +283,7 @@ class SubagentToolExecutionController {
     const delegatedTasks = [...this.pendingTasks.values()];
     const withSession = {
       ...result,
-      session: mergeSubagentDispatchSession({
+      session: reduceSubagentToolExecutionSession({
         current: result.session,
         dispatched: this.session,
         initial: this.initialSession,
@@ -316,7 +337,7 @@ class SubagentToolExecutionController {
     if (dispatched === undefined) {
       throw new Error("Subagent workflow returned no durable session snapshot.");
     }
-    this.session = mergeSubagentDispatchSession({
+    this.session = reduceSubagentToolExecutionSession({
       current: this.session,
       dispatched,
       initial: session,
@@ -387,17 +408,19 @@ class SubagentToolExecutionController {
     if (this.expectedCallIds.some((callId) => !this.registeredCalls.has(callId))) return;
 
     const calls = this.expectedCallIds.map((callId) => this.registeredCalls.get(callId)!);
+    const localFanoutSize = this.localFanoutSize;
     this.expectedCallIds = undefined;
+    this.localFanoutSize = 0;
     this.registeredCalls.clear();
-    const dispatch = this.flushRegisteredCalls(calls);
+    const dispatch = this.flushRegisteredCalls(calls, localFanoutSize);
     this.dispatches.push(dispatch);
   }
 
-  private async flushRegisteredCalls(calls: readonly RegisteredSubagentCall[]): Promise<void> {
+  private async flushRegisteredCalls(
+    calls: readonly RegisteredSubagentCall[],
+    localFanoutSize: number,
+  ): Promise<void> {
     await this.emitActionsRequested(calls.map(({ action }) => action));
-    const localFanoutSize = calls.filter(
-      ({ action, continuesAgent }) => action.kind === "subagent-call" && !continuesAgent,
-    ).length;
     const activeAgents = new Map<string, Promise<SubagentDispatchOutcome>>();
 
     const outcomes = calls.map((call) => {
@@ -511,62 +534,6 @@ function sortJsonObjectKeys(value: unknown): unknown {
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, entry]) => [key, sortJsonObjectKeys(entry)]),
   );
-}
-
-function mergeSubagentDispatchSession(input: {
-  readonly current: HarnessSession;
-  readonly dispatched: DurableSession;
-  readonly initial: HarnessSession;
-}): HarnessSession {
-  let session = {
-    ...input.current,
-    sandboxState: input.current.sandboxState ?? input.dispatched.sandboxState,
-  };
-  const currentTasks = getSessionTaskIndex(session.state);
-  const currentTaskIds = new Set(currentTasks.map((entry) => entry.taskId));
-  const addedTasks = getSessionTaskIndex(input.dispatched.state).filter(
-    (entry) => !currentTaskIds.has(entry.taskId),
-  );
-  if (addedTasks.length > 0) {
-    session = {
-      ...session,
-      state: {
-        ...session.state,
-        [SESSION_TASKS_STATE_KEY]: { tasks: [...currentTasks, ...addedTasks] },
-      },
-    };
-  }
-
-  const initialHandles = getAgentHandleStore(input.initial.state)?.handles ?? [];
-  const initialHandleIds = new Set(initialHandles.map((handle) => handle.identity.id));
-  const dispatchedHandles = getAgentHandleStore(input.dispatched.state)?.handles ?? [];
-  const dispatchedHandleIds = new Set(dispatchedHandles.map((handle) => handle.identity.id));
-  const removedHandleIds = new Set(
-    initialHandles
-      .filter((handle) => !dispatchedHandleIds.has(handle.identity.id))
-      .map((handle) => handle.identity.id),
-  );
-  const handles = (getAgentHandleStore(session.state)?.handles ?? []).filter(
-    (handle) => !removedHandleIds.has(handle.identity.id),
-  );
-  const knownHandleIds = new Set(handles.map((handle) => handle.identity.id));
-  const addedHandles = dispatchedHandles.filter(
-    (handle) =>
-      !initialHandleIds.has(handle.identity.id) && !knownHandleIds.has(handle.identity.id),
-  );
-  if (removedHandleIds.size > 0 || addedHandles.length > 0) {
-    session = {
-      ...session,
-      state: {
-        ...session.state,
-        [AGENT_HANDLES_STATE_KEY]: assertPersistableAgentHandleStore({
-          handles: [...handles, ...addedHandles],
-        }),
-      },
-    };
-  }
-
-  return session;
 }
 
 function sharesParentSandbox(action: SubagentCallAction, bundle: CompiledBundle): boolean {

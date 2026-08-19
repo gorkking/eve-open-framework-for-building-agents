@@ -237,6 +237,7 @@ export async function prepareRuntimeActionDispatch(input: {
     channelMetadata: ctx.get(ChannelInstrumentationKey),
     fanoutSize:
       input.localFanoutSize ??
+      batch.localFanoutSize ??
       plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local").length,
     initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
     parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),

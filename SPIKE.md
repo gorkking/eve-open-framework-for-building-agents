@@ -18,11 +18,11 @@ updated parent session; if an earlier sibling removes that address, the later
 call fails as unreachable rather than becoming a fresh start. Fresh local
 siblings share the parent token remainder by the full AI SDK fanout. The
 turn-local executor combines task and agent registrations before child readiness
-is released, and cancels and acknowledges started tasks if the model step fails.
+is released, and cancels and silently rejects started tasks if the model step fails.
 No pending RuntimeAction batch is created for these calls.
 
 Local children publish HITL events to their task inbox. Remote children use the
-existing authenticated task callback URL. Existing task APIs continue to own
+existing task callback URL. Existing task APIs continue to own
 progress, input, approval, completion, failure, and cancellation.
 
 The production-path integration runs AI SDK `generateText` -> `defineTool` ->

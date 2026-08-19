@@ -266,19 +266,26 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         const policyRejection = checkUploadPolicy(body, uploadPolicy);
         if (policyRejection !== null) return policyRejection;
 
-        if (body.operationId !== undefined && forwarded.auth.principalType === "anonymous") {
-          return Response.json(
-            { error: "operationId requires an authenticated principal.", ok: false },
-            { status: 400 },
-          );
+        let operationToken: string | undefined;
+        if (body.operationId !== undefined) {
+          if (forwarded.auth.principalType === "anonymous") {
+            if (body.callback === undefined) {
+              return Response.json(
+                { error: "Anonymous operationId requires a callback capability.", ok: false },
+                { status: 400 },
+              );
+            }
+            operationToken = await deriveOperationContinuationToken({
+              callbackToken: body.callback.token,
+              operationId: body.operationId,
+            });
+          } else {
+            operationToken = await deriveOperationContinuationToken({
+              auth: forwarded.auth,
+              operationId: body.operationId,
+            });
+          }
         }
-        const operationToken =
-          body.operationId === undefined
-            ? undefined
-            : await deriveOperationContinuationToken({
-                auth: forwarded.auth,
-                operationId: body.operationId,
-              });
         if (operationToken !== undefined) {
           const owner = await args.resolveSession(operationToken);
           if (owner !== undefined) {
@@ -823,19 +830,24 @@ interface ParsedCreateBody {
   outputSchema?: JsonObject;
 }
 
-/** Replay-stable identity for one authenticated create operation. */
-async function deriveOperationContinuationToken(input: {
-  readonly auth: SessionAuthContext;
-  readonly operationId: string;
-}): Promise<string> {
-  const identity = JSON.stringify([
-    "eve:create-session:v1",
-    input.auth.authenticator,
-    input.auth.issuer ?? null,
-    input.auth.principalType,
-    input.auth.principalId,
-    input.operationId,
-  ]);
+/** Replay-stable identity for one principal or callback-scoped create operation. */
+async function deriveOperationContinuationToken(
+  input:
+    | { readonly auth: SessionAuthContext; readonly operationId: string }
+    | { readonly callbackToken: string; readonly operationId: string },
+): Promise<string> {
+  const identity = JSON.stringify(
+    "auth" in input
+      ? [
+          "eve:create-session:v1",
+          input.auth.authenticator,
+          input.auth.issuer ?? null,
+          input.auth.principalType,
+          input.auth.principalId,
+          input.operationId,
+        ]
+      : ["eve:create-session:v1", "callback", input.callbackToken, input.operationId],
+  );
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
   const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
     "",

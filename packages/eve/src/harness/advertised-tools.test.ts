@@ -51,7 +51,24 @@ describe("getAdvertisedTools", () => {
   it("removes an executable built-in agent tool from delegated sessions", () => {
     const tools = new Map([
       ["add", createTool("add")],
-      ["agent", { ...createTool("agent"), execute: async () => undefined, rootOnly: true }],
+      [
+        "agent",
+        {
+          delegation: {
+            action: {
+              kind: "subagent-call",
+              nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+              subagentName: "agent",
+            },
+            execution: "ai-sdk",
+            rootOnly: true,
+          },
+          description: "agent description",
+          execute: async () => undefined,
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "agent",
+        },
+      ],
     ]) satisfies HarnessToolMap;
 
     const advertisedTools = getAdvertisedTools({
@@ -218,42 +235,51 @@ function createTool(name: string): HarnessToolDefinition {
 
 function createSubagentTool(name: string): HarnessToolDefinition {
   return {
-    ...createTool(name),
-    runtimeAction: {
-      kind: "subagent-call",
-      nodeId: "workers",
-      subagentName: name,
+    delegation: {
+      action: { kind: "subagent-call", nodeId: "workers", subagentName: name },
+      execution: "runtime-action",
     },
+    description: `${name} description`,
+    inputSchema: jsonSchema({ type: "object" }),
+    name,
   };
 }
 
 function createExecutableSubagentTool(name: string): HarnessToolDefinition {
   return {
-    ...createTool(name),
-    execute: async () => ({ status: "working" }),
-    frameworkAction: "subagent",
-    workflowAction: {
-      kind: "subagent-call",
-      nodeId: "workers",
-      subagentName: name,
+    delegation: {
+      action: { kind: "subagent-call", nodeId: "workers", subagentName: name },
+      execution: "ai-sdk",
     },
+    description: `${name} description`,
+    execute: async () => ({ status: "working" }),
+    inputSchema: jsonSchema({ type: "object" }),
+    name,
   };
 }
 
 function createBuiltInAgentTool(): HarnessToolDefinition {
   return {
-    ...createSubagentTool("agent"),
-    runtimeAction: {
-      kind: "subagent-call",
-      nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
-      subagentName: "agent",
+    delegation: {
+      action: {
+        kind: "subagent-call",
+        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+        subagentName: "agent",
+      },
+      execution: "runtime-action",
+      rootOnly: true,
     },
+    description: "agent description",
+    inputSchema: jsonSchema({ type: "object" }),
+    name: "agent",
   };
 }
 
 function createTaskControlTool(name: string): HarnessToolDefinition {
   return {
-    ...createTool(name),
+    description: `${name} description`,
+    inputSchema: jsonSchema({ type: "object" }),
+    name,
     runtimeAction: { kind: "task-control" },
   };
 }

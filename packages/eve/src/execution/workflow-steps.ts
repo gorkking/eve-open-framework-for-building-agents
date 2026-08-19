@@ -87,6 +87,7 @@ import type { TurnStepInput } from "#execution/durable-session-migrations/turn-w
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { appendTaskAgentAnnouncement } from "#execution/tasks/parent/agent-views.js";
 import {
+  createSubagentToolExecutionCommitFailureHandler as settleOnCommit,
   readSubagentToolExecutionCause,
   readSubagentToolExecutionEffects,
 } from "#execution/tasks/parent/subagent/tool-execution.js";
@@ -441,7 +442,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // runtime-action wait) must settle before the park-resume stages run,
     // or the pending batch would re-park and later re-dispatch.
     throwIfTurnAborted(input.abortSignal);
-    stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
+    const runLifecycle = async (enrichedSession: HarnessSession) => {
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
         input: resolved,
@@ -532,7 +533,8 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       };
 
       return runHarnessStep(schemaSession, resolved);
-    });
+    };
+    stepResult = await runStep(ctx, initialSession, runLifecycle, settleOnCommit(bundle));
   } catch (error) {
     if (!isTurnCancellation(readSubagentToolExecutionCause(error))) {
       await failChannelDeliveries(error);

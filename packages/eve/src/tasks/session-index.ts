@@ -2,7 +2,10 @@ import { z } from "#compiled/zod/index.js";
 
 import type { HarnessSession, SessionStateMap } from "#harness/types.js";
 import type { JsonValue } from "#shared/json.js";
+import { SESSION_TASKS_STATE_KEY } from "#tasks/session-state-key.js";
 import type { TaskMetadata, TaskView } from "#tasks/types.js";
+
+export { SESSION_TASKS_STATE_KEY };
 
 /**
  * Session-state key for the parent's live-task index.
@@ -13,8 +16,6 @@ import type { TaskMetadata, TaskView } from "#tasks/types.js";
  * threads through step results, while callback routes and child
  * executors must update tasks without holding the current snapshot.
  */
-export const SESSION_TASKS_STATE_KEY = "eve.tasks";
-
 /**
  * One task owned by this session. Immutable model-safe metadata keeps the
  * task-to-agent join available before the task run publishes its first view.

@@ -245,10 +245,14 @@ describe("createNodeHarnessTools", () => {
     expect(agentTool?.description).toContain("include essential context");
     expect(agentTool?.description).toContain("non-overlapping scopes");
     expect(agentTool?.description).not.toContain("eve");
-    expect(agentTool?.runtimeAction).toEqual({
-      kind: "subagent-call",
-      nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
-      subagentName: "agent",
+    expect(agentTool?.delegation).toEqual({
+      action: {
+        kind: "subagent-call",
+        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+        subagentName: "agent",
+      },
+      execution: "runtime-action",
+      rootOnly: true,
     });
   });
 
@@ -336,11 +340,11 @@ describe("createNodeHarnessTools", () => {
     const plainTools = createNodeHarnessTools({ node: plainNode });
     const taskTools = createNodeHarnessTools({ node: taskNode });
     for (const name of ["agent", "local-worker", "remote-worker"]) {
-      expect(plainTools.get(name)?.runtimeAction).toBeDefined();
+      expect(plainTools.get(name)?.delegation).toMatchObject({ execution: "runtime-action" });
       expect(plainTools.get(name)?.execute).toBeUndefined();
       expect(taskTools.get(name)?.runtimeAction).toBeUndefined();
       expect(taskTools.get(name)?.execute).toBeDefined();
-      expect(taskTools.get(name)?.workflowAction).toBeDefined();
+      expect(taskTools.get(name)?.delegation).toMatchObject({ execution: "ai-sdk" });
     }
   });
 
@@ -507,6 +511,7 @@ describe("createExecutionNodeStep", () => {
         stepIndex: 0,
         turnId: "",
       },
+      localFanoutSize: 1,
       responseMessages: [
         {
           content: [
