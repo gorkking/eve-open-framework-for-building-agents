@@ -7,7 +7,6 @@ import {
 import {
   isStepCount,
   type LanguageModel,
-  type LanguageModelCallEndEvent,
   type ModelMessage,
   type ProviderMetadata,
   type SystemModelMessage,
@@ -209,11 +208,7 @@ import {
   getRegisteredTelemetryIntegrations,
 } from "#harness/ai-sdk-telemetry.js";
 import { getAdvertisedTools } from "#harness/advertised-tools.js";
-import {
-  getHarnessDelegationAction,
-  getHarnessRuntimeAction,
-  isAiSdkDelegationTool,
-} from "#harness/execute-tool.js";
+import { createBackgroundToolCallBatch } from "#harness/background-tools.js";
 import {
   applyLastToolCacheBreakpoint,
   applySystemCacheBreakpoint,
@@ -223,7 +218,6 @@ import {
 import { resolveFrameworkToolFromUpstreamType } from "#harness/provider-tools.js";
 import {
   createRuntimeActionRequestFromToolCall,
-  resolveToolCallInputObject,
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
@@ -1364,7 +1358,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const runSingleModelCall = async (
       opts: ModelCallOptions & { readonly attemptIndex: number },
     ): Promise<HarnessStepResult> => {
-      config.onModelAttempt?.();
       const { instructions, telemetryRuntimeContext = {} } =
         opts.preparedInput ?? prepareModelCallInput(opts.extraSystemNote);
       // Label the reissued call's telemetry; without this a retry is only
@@ -1380,6 +1373,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         ? [...modelMessages, { role: "user" as const, content: opts.trailingUserNote }]
         : modelMessages;
       const harnessTools = buildHarnessToolsWithDynamicSubagents(config.tools, ctx);
+      const backgroundBatch = createBackgroundToolCallBatch();
       const advertisedHarnessTools = getAdvertisedTools({
         delegatedCaller: taskUpdatesEnabled,
         session,
@@ -1389,6 +1383,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
       const flatTools = await buildToolSetWithProviderTools({
         approvedTools,
+        backgroundBatch,
         capabilities: config.capabilities,
         disabledProviderTools: opts.disabledProviderTools,
         modelReference: requireSessionModelReference(session),
@@ -1404,17 +1399,14 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         });
         const dynamicToolSet = buildToolSetFromDefinitions({
           approvedTools,
+          backgroundBatch,
           capabilities: config.capabilities,
           disabledProviderTools: opts.disabledProviderTools,
           tools: dynamicTools,
         });
         // Dynamic tools override a same-named authored tool.
         for (const [name, toolDefinition] of Object.entries(dynamicToolSet)) {
-          const harnessTool = advertisedHarnessTools.get(name);
-          if (
-            getHarnessRuntimeAction(harnessTool) !== undefined ||
-            isAiSdkDelegationTool(harnessTool)
-          ) {
+          if (advertisedHarnessTools.get(name)?.runtimeAction !== undefined) {
             throw new Error(`Dynamic tool "${name}" collides with a runtime-visible subagent.`);
           }
           flatTools[name] = toolDefinition;
@@ -1489,28 +1481,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         headers: attributionHeaders,
         instructions,
         model,
-        onLanguageModelCallEnd:
-          config.onSubagentToolCalls === undefined
-            ? undefined
-            : (event: LanguageModelCallEndEvent) => {
-                const toolCalls = event.content.flatMap((part) => {
-                  if (
-                    part.type !== "tool-call" ||
-                    part.providerExecuted === true ||
-                    isInvalidToolCall(part)
-                  ) {
-                    return [];
-                  }
-                  return [part as TypedToolCall<ToolSet>];
-                });
-                config.onSubagentToolCalls?.(
-                  resolveModelSubagentBatch({
-                    session,
-                    toolCalls,
-                    tools: advertisedHarnessTools,
-                  }),
-                );
-              },
         onToolExecutionEnd: logToolExecutionError,
         // Replaces the AI SDK's default `console.error`; the harness still
         // emits stream events, this just keeps the raw error from being silent.
@@ -1545,17 +1515,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           const hiddenRuntimeActionToolNames = [...config.tools]
             .filter(
               ([name, tool]) =>
-                getHarnessRuntimeAction(tool) !== undefined &&
-                advertisedHarnessTools.get(name) === undefined,
+                tool.runtimeAction !== undefined && advertisedHarnessTools.get(name) === undefined,
             )
             .map(([name]) => name);
           const excludedActionToolNames = new Set([
             ASK_QUESTION_TOOL_NAME,
             FINAL_OUTPUT_TOOL_NAME,
             ...hiddenRuntimeActionToolNames,
-            ...[...advertisedHarnessTools]
-              .filter(([, tool]) => isAiSdkDelegationTool(tool))
-              .map(([name]) => name),
           ]);
           const streamResult = await agent.stream({
             abortSignal: config.abortSignal,
@@ -2458,37 +2424,6 @@ async function attemptEmptyResponseRecovery(input: {
 // Post-step result handling
 // ---------------------------------------------------------------------------
 
-function resolveModelSubagentBatch(input: {
-  readonly session: HarnessSession;
-  readonly toolCalls: readonly TypedToolCall<ToolSet>[];
-  readonly tools: HarnessToolMap;
-}): { readonly executableCallIds: readonly string[]; readonly localFanoutSize: number } {
-  const addressedAgentIds = new Set(
-    (getAgentHandleStore(input.session.state)?.handles ?? []).map((handle) => handle.identity.id),
-  );
-  const executableCallIds: string[] = [];
-  let localFanoutSize = 0;
-
-  for (const toolCall of input.toolCalls) {
-    const definition = input.tools.get(toolCall.toolName);
-    const action = getHarnessDelegationAction(definition);
-    if (action === undefined) continue;
-    if (isAiSdkDelegationTool(definition)) executableCallIds.push(toolCall.toolCallId);
-    if (action.kind !== "subagent-call") continue;
-
-    const toolInput = resolveToolCallInputObject(toolCall.input, {
-      callId: toolCall.toolCallId,
-      toolName: toolCall.toolName,
-    });
-    const agentId = toolInput.agentId;
-    if (typeof agentId !== "string" || !addressedAgentIds.has(agentId)) {
-      localFanoutSize += 1;
-    }
-  }
-
-  return { executableCallIds, localFanoutSize };
-}
-
 /**
  * Processes the step result: extracts input requests, decides whether to
  * park, continue the tool loop, or terminate.
@@ -2597,23 +2532,13 @@ async function handleStepResult(input: {
     session: baseSession,
     tools: input.runtimeActionTools,
   });
-  const modelSubagentBatch = resolveModelSubagentBatch({
-    session: baseSession,
-    toolCalls: ((result.toolCalls ?? []) as TypedToolCall<ToolSet>[]).filter(
-      (toolCall) => !invalidInputToolCallIds.has(toolCall.toolCallId),
-    ),
-    tools: advertisedRuntimeActionTools,
-  });
   const pendingRuntimeActions = ((result.toolCalls ?? []) as TypedToolCall<ToolSet>[])
     .filter((toolCall) => !invalidInputToolCallIds.has(toolCall.toolCallId))
     .filter(
-      (toolCall) =>
-        getHarnessRuntimeAction(input.runtimeActionTools.get(toolCall.toolName)) !== undefined,
+      (toolCall) => input.runtimeActionTools.get(toolCall.toolName)?.runtimeAction !== undefined,
     )
     .filter((toolCall) => {
-      if (
-        getHarnessRuntimeAction(advertisedRuntimeActionTools.get(toolCall.toolName)) !== undefined
-      ) {
+      if (advertisedRuntimeActionTools.get(toolCall.toolName)?.runtimeAction !== undefined) {
         return true;
       }
       log.warn("runtime action tool call blocked because tool is not advertised", {
@@ -2648,7 +2573,6 @@ async function handleStepResult(input: {
               stepIndex: emissionState.stepIndex,
               turnId: emissionState.turnId,
             },
-            localFanoutSize: modelSubagentBatch.localFanoutSize,
             responseMessages,
             session: { ...baseSession, history: [...promptMessages] },
           }),
@@ -2664,7 +2588,6 @@ async function handleStepResult(input: {
         stepIndex: emissionState.stepIndex,
         turnId: emissionState.turnId,
       },
-      localFanoutSize: modelSubagentBatch.localFanoutSize,
       responseMessages,
       session: { ...baseSession, history: parkedInputHistory },
     });

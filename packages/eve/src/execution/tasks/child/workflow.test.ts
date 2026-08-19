@@ -311,45 +311,6 @@ describe("taskRunWorkflow", () => {
     expect(disposeHook).toHaveBeenCalledTimes(1);
   });
 
-  it("does not wake the parent when a cancelled dispatch is rejected before indexing", async () => {
-    const usageDelta = {
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    };
-    mockCommandHook([
-      { command: { kind: "cancel" }, kind: "task-command" },
-      {
-        command: { data: { code: "PARENT_STEP_FAILED" }, kind: "reject-dispatch" },
-        kind: "task-command",
-      },
-      {
-        kind: "runtime-action-result",
-        results: [
-          {
-            outcome: {
-              kind: "parked",
-              result: { kind: "succeeded", output: "late child output" },
-              usageDelta,
-            },
-            output: "late child output",
-          },
-        ],
-      },
-    ]);
-
-    await taskRunWorkflow({
-      taskInboxToken: "task-token",
-      initialView: createWorkingView(),
-      parentContinuationToken: "parent-session-token",
-    });
-
-    expect(appendedStatuses()).toEqual(["working", "cancelled", "cancelled"]);
-    expect(wakeTaskParentStep).not.toHaveBeenCalled();
-    expect(disposeHook).toHaveBeenCalledTimes(1);
-  });
-
   it("releases a fast input request when the readiness barrier arrives", async () => {
     mockCommandHook([
       {

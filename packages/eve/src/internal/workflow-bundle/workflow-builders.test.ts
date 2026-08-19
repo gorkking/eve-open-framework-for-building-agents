@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { subagentWorkflowReference } from "#execution/tasks/parent/subagent/workflow-reference.js";
 import { resolvePackageRoot, resolvePackageSourceFilePath } from "#internal/application/package.js";
 
 import { applyWorkflowTransform } from "./workflow-builders.js";
@@ -22,30 +21,6 @@ describe("applyWorkflowTransform", () => {
     expect(transformed.workflowManifest.workflows?.[filename]?.turnWorkflow).toEqual({
       workflowId: "workflow//eve//turnWorkflow",
     });
-  });
-
-  it("registers the subagent tool workflow under its stable reference", async () => {
-    const filename = "src/execution/tasks/parent/subagent/workflow.ts";
-    const workflowName = "executeSubagentWorkflow";
-    const transformed = await applyWorkflowTransform(
-      filename,
-      [
-        `export async function ${workflowName}(): Promise<void> {`,
-        '  "use workflow";',
-        "}",
-        "",
-      ].join("\n"),
-      "workflow",
-      resolvePackageSourceFilePath(filename),
-      resolvePackageRoot(),
-    );
-
-    expect(transformed.workflowManifest.workflows?.[filename]?.[workflowName]).toEqual({
-      workflowId: subagentWorkflowReference.workflowId,
-    });
-    expect(transformed.code).toContain(
-      `globalThis.__private_workflows.set("${subagentWorkflowReference.workflowId}", ${workflowName});`,
-    );
   });
 
   it("registers step functions in step mode", async () => {

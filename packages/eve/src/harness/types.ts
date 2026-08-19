@@ -211,10 +211,10 @@ export interface SettledTurn {
  * Result returned by one harness step invocation.
  */
 export interface StepResult {
-  /** Parent sandbox snapshot captured specifically for an inheriting delegated task. */
-  readonly delegatedTaskSandboxState?: SandboxState;
-  /** Durable task runs started by in-loop subagent tools and awaiting parent-state commit. */
-  readonly delegatedTasks?: readonly {
+  /** Background-tool effects projected onto the session that entered this step. */
+  readonly backgroundTaskSession?: HarnessSession;
+  /** Durable tasks started by background tools and awaiting the parent commit barrier. */
+  readonly backgroundTasks?: readonly {
     readonly taskInboxToken: string;
     readonly taskId: string;
     readonly taskRunId: string;
@@ -321,13 +321,6 @@ export interface ToolLoopHarnessConfig {
    * compacted history.
    */
   readonly onCompaction?: () => readonly ModelMessage[];
-  /** Notifies execution-owned tools before each actual model attempt. */
-  readonly onModelAttempt?: () => void;
-  /** Reports the complete model-response delegation fanout before AI SDK tool execution. */
-  readonly onSubagentToolCalls?: (input: {
-    readonly executableCallIds: readonly string[];
-    readonly localFanoutSize: number;
-  }) => void;
   /**
    * Whether the agent opted into `experimental.subagentPersistentSessions`.
    * Gates delegated-agent handle tracking and the model-visible `<agents>`

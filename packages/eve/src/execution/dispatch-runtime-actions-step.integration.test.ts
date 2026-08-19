@@ -8,7 +8,6 @@ import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import {
-  getPendingRuntimeActionBatch,
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
@@ -415,36 +414,6 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     ]);
   });
 
-  it("uses the AI SDK sibling fanout when assigning a task child token budget", async () => {
-    const session = {
-      ...createStartSession({ kind: "local" }),
-      limits: { maxInputTokensPerSession: 100, maxOutputTokensPerSession: 40 },
-    };
-    installContext(
-      session,
-      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
-      true,
-    );
-    vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({ runId: "task-run-1" });
-    const batch = getPendingRuntimeActionBatch(session.state);
-    if (batch === undefined) throw new Error("Expected a pending subagent call.");
-
-    await dispatchTaskStep({
-      batch: { ...batch, localFanoutSize: 2 },
-      serializedContext: {},
-      sessionState: BASE_STATE,
-    });
-
-    expect(mocks.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        limits: {
-          maxInputTokensPerSession: 50,
-          maxOutputTokensPerSession: 20,
-        },
-      }),
-    );
-  });
-
   it("silently rejects a tasks-mode start that failed before index admission", async () => {
     const session = createStartSession({ kind: "local" });
     installContext(
@@ -728,70 +697,6 @@ describe("dispatchRuntimeActionsStep child starts", () => {
 });
 
 describe("dispatchRuntimeActionsStep agent delivery", () => {
-  it("does not reclassify a missing task continuation as a fresh start", async () => {
-    const agentId = LOCAL_PARKED_HANDLE.identity.id;
-    const session = createPendingSession({ agentId });
-    installContext(session, undefined, true);
-    const batch = getPendingRuntimeActionBatch(session.state);
-    if (batch === undefined) throw new Error("Expected a pending continuation.");
-
-    const result = await dispatchTaskStep({
-      batch,
-      localFanoutSize: 0,
-      requireExistingAgent: true,
-      serializedContext: {},
-      sessionState: BASE_STATE,
-    });
-
-    expect(result.results).toEqual([
-      expect.objectContaining({
-        isError: true,
-        output: { code: "AGENT_UNREACHABLE", message: expect.stringContaining(agentId) },
-      }),
-    ]);
-    expect(mocks.createSession).not.toHaveBeenCalled();
-    expect(mocks.startWorkflowPreferLatest).not.toHaveBeenCalled();
-  });
-
-  it("delivers a task-owned continuation with its replay-stable task id", async () => {
-    const addressedHandle: AgentHandle = {
-      address: LOCAL_PARKED_HANDLE.address,
-      identity: LOCAL_PARKED_HANDLE.identity,
-      phase: "addressed",
-    };
-    const session = createPendingSession({
-      handle: addressedHandle,
-      agentId: addressedHandle.identity.id,
-    });
-    installContext(session, undefined, true);
-
-    const result = await dispatchTaskStep({
-      parentContinuationToken: "turn-inbox",
-      parentWritable: createWritable(),
-      serializedContext: {},
-      sessionState: BASE_STATE,
-    });
-    const task = result.pendingTasks[0];
-    if (task === undefined) throw new Error("Expected one admitted continuation task.");
-
-    expect(mocks.dispatchSession).toHaveBeenCalledWith({
-      command: {
-        caller: {
-          callId: "call-1",
-          replyTo: { kind: "hook", token: task.taskInboxToken },
-          subagentName: "research",
-          taskId: task.taskId,
-        },
-        kind: "send",
-        payload: {
-          message: "continue with raw input",
-          outputSchema: undefined,
-        },
-      },
-      sessionId: CHILD_SESSION_ID,
-    });
-  });
-
   it("rejects a tasks-mode continuation while the addressed agent has active work", async () => {
     const addressedHandle: AgentHandle = {
       address: LOCAL_PARKED_HANDLE.address,

@@ -21,6 +21,10 @@ function createView(status: TaskStatus, overrides: Partial<TaskView> = {}): Task
 
 const TERMINAL_STATUSES: readonly TaskStatus[] = ["completed", "failed", "cancelled"];
 const ALL_COMMANDS: readonly TaskCommand[] = [
+  {
+    executor: { data: { operationId: "operation-1" }, kind: "export" },
+    kind: "configure",
+  },
   { data: { answer: 42 }, kind: "complete" },
   { data: { message: "boom" }, kind: "fail" },
   { data: { message: "unindexed" }, kind: "reject-dispatch" },
@@ -32,6 +36,52 @@ const ALL_COMMANDS: readonly TaskCommand[] = [
 ];
 
 describe("applyTaskTransition", () => {
+  it("configures an opaque executor binding idempotently", () => {
+    const command = {
+      executor: { data: { operationId: "operation-1" }, kind: "export" },
+      kind: "configure",
+    } as const;
+
+    const configured = applyTaskTransition(createView("working"), command);
+    expect(configured).toMatchObject({
+      outcome: "accepted",
+      view: {
+        executor: { binding: command.executor },
+        metadata: createView("working").metadata,
+        status: "working",
+      },
+    });
+    expect(applyTaskTransition(configured.view, command)).toEqual({
+      outcome: "noop",
+      view: configured.view,
+    });
+    expect(
+      applyTaskTransition(configured.view, {
+        executor: { data: { operationId: "operation-2" }, kind: "export" },
+        kind: "configure",
+      }),
+    ).toMatchObject({ outcome: "rejected", view: configured.view });
+  });
+
+  it("retains a late executor binding after fast task completion", () => {
+    const completed = applyTaskTransition(createView("working"), {
+      data: { answer: 42 },
+      kind: "complete",
+    });
+    const executor = { data: { operationId: "operation-1" }, kind: "export" };
+
+    const configured = applyTaskTransition(completed.view, { executor, kind: "configure" });
+
+    expect(configured).toMatchObject({
+      outcome: "accepted",
+      view: {
+        executor: { binding: executor },
+        lastOutput: { data: { answer: 42 }, type: "result" },
+        status: "completed",
+      },
+    });
+  });
+
   it("completes a working task with a result output", () => {
     const result = applyTaskTransition(createView("working"), {
       data: { answer: 42 },
@@ -247,9 +297,10 @@ describe("applyTaskTransition", () => {
     expect(again.view.status).toBe("cancelled");
   });
 
-  it.each(TERMINAL_STATUSES)("keeps %s final against every non-cancel command", (status) => {
+  it.each(TERMINAL_STATUSES)("keeps %s final against every lifecycle command", (status) => {
     const view = createView(status);
     for (const command of ALL_COMMANDS) {
+      if (command.kind === "configure") continue;
       if (command.kind === "cancel" && status === "cancelled") continue;
       const result = applyTaskTransition(view, command);
       expect(result.outcome).toBe("rejected");

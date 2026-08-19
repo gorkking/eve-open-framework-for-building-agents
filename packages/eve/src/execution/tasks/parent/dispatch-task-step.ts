@@ -28,10 +28,7 @@ import {
   type RuntimeActionDispatchResult,
   startSubagent,
 } from "#execution/dispatch-runtime-actions-shared.js";
-import {
-  createDurableSessionState,
-  type DurableSessionState,
-} from "#execution/durable-session-store.js";
+import { createDurableSessionState } from "#execution/durable-session-store.js";
 import {
   beginDelegatedTask,
   type DelegatedTask,
@@ -46,34 +43,13 @@ import {
   type PersistedContinuationTask,
 } from "#execution/tasks/parent/continuation-dispatch.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
-import type { PendingRuntimeActionBatch } from "#harness/runtime-actions.js";
-import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
-
-export interface SubagentToolDispatchInput {
-  readonly batch: PendingRuntimeActionBatch;
-  readonly callbackBaseUrl?: string;
-  readonly localFanoutSize?: number;
-  readonly requireExistingAgent?: boolean;
-  readonly serializedContext: Record<string, unknown>;
-  readonly sessionState: DurableSessionState;
-}
-
-export interface SubagentToolDispatchResult extends RuntimeActionDispatchResult {
-  readonly calledEvents?: readonly Extract<
-    UnstampedMessageStreamEvent,
-    { readonly type: "subagent.called" }
-  >[];
-}
 
 export async function dispatchTaskStep(
-  input: RuntimeActionDispatchInput | SubagentToolDispatchInput,
-): Promise<SubagentToolDispatchResult> {
+  input: RuntimeActionDispatchInput,
+): Promise<RuntimeActionDispatchResult> {
   "use step";
 
   const prepared = await prepareRuntimeActionDispatch({
-    batch: "batch" in input ? input.batch : undefined,
-    localFanoutSize: "localFanoutSize" in input ? input.localFanoutSize : undefined,
-    requireExistingAgent: "requireExistingAgent" in input ? input.requireExistingAgent : undefined,
     serializedContext: input.serializedContext,
     sessionState: input.sessionState,
     taskControls: true,
@@ -85,12 +61,11 @@ export async function dispatchTaskStep(
   const { batch, bundle, session } = prepared;
   // Acquired only once preflight can no longer throw, so a planning failure
   // never leaks the writer lock.
-  const writer = "parentWritable" in input ? input.parentWritable.getWriter() : undefined;
+  const writer = input.parentWritable.getWriter();
 
   let nextSession = session;
   const results: RuntimeActionResult[] = [];
   const pendingTasks: DelegatedTask[] = [];
-  const calledEvents: NonNullable<SubagentToolDispatchResult["calledEvents"]>[number][] = [];
 
   try {
     for (const entry of prepared.plan) {
@@ -222,7 +197,7 @@ export async function dispatchTaskStep(
       }
       pendingTasks.push(delegated);
 
-      const calledEvent = await emitSubagentCalled({
+      await emitSubagentCalled({
         adapter: prepared.adapter,
         adapterCtx: prepared.adapterCtx,
         batchEvent: batch.event,
@@ -231,14 +206,12 @@ export async function dispatchTaskStep(
         sessionId: session.sessionId,
         writer,
       });
-      if (writer === undefined && calledEvent !== undefined) calledEvents.push(calledEvent);
     }
   } finally {
-    writer?.releaseLock();
+    writer.releaseLock();
   }
 
   return {
-    calledEvents: calledEvents.length === 0 ? undefined : calledEvents,
     results,
     sessionState:
       nextSession === session

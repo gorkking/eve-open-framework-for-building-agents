@@ -3,14 +3,9 @@ import type { LanguageModel } from "ai";
 import type { Runtime, SessionCapabilities } from "#channel/types.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import {
+  createBackgroundSubagentHarnessDefinition,
   createHarnessDelegationToolDefinition,
-  createTaskSubagentHarnessDefinition,
 } from "#execution/delegation-tool.js";
-import {
-  beginSubagentToolExecutionAttempt,
-  prepareSubagentToolExecutionBatch,
-  runWithSubagentToolExecution,
-} from "#execution/tasks/parent/subagent/tool-execution.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
 import { createToolLoopHarness } from "#harness/tool-loop.js";
@@ -106,7 +101,6 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
           input.modelResolutionScope,
           input.node.turnAgent.dynamicModel,
         );
-  const tasksEnabled = input.node.agent.config?.experimental?.tasks === true;
   const tools = createNodeHarnessTools({ node: input.node });
   const instrumentation = getInstrumentationRuntime();
   const step = createToolLoopHarness({
@@ -121,8 +115,6 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     instrumentation,
     mode: input.mode,
     onCompaction: preserveFrameworkStateOnCompaction,
-    onModelAttempt: tasksEnabled ? beginSubagentToolExecutionAttempt : undefined,
-    onSubagentToolCalls: tasksEnabled ? prepareSubagentToolExecutionBatch : undefined,
     persistentSubagentSessions:
       input.node.agent.config?.experimental?.tasks === true ||
       input.node.agent.config?.experimental?.subagentPersistentSessions === true,
@@ -131,18 +123,10 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     runtimeIdentity: buildRuntimeIdentity(input.node),
     tools,
   });
-  const executeStep: StepFn = tasksEnabled
-    ? (session, stepInput) =>
-        runWithSubagentToolExecution({
-          handleEvent: input.handleEvent,
-          session,
-          step: () => step(session, stepInput),
-        })
-    : step;
-  if (instrumentation === undefined) return executeStep;
+  if (instrumentation === undefined) return step;
   return async (session, stepInput) => {
     try {
-      return await executeStep(session, stepInput);
+      return await step(session, stepInput);
     } finally {
       await instrumentation.forceFlush();
     }
@@ -204,8 +188,8 @@ function createRuntimeDynamicModelEventDispatcher(
  * Resolves unified {@link HarnessToolDefinition}s from the node's registries.
  *
  * For authored tools: copies all lifecycle fields from the resolved definition.
- * For subagent tools: selects runtime-action metadata in plain mode or an
- * executable `defineTool` adapter in task mode.
+ * For subagent tools: selects the existing runtime-action definition or the
+ * background `defineTool` definition from the node's task-mode setting.
  * Tools without `execute` (provider-managed) get entries with schema but no execute.
  */
 export function createNodeHarnessTools(input: {
@@ -233,27 +217,22 @@ export function createNodeHarnessTools(input: {
       nodeId: input.node.nodeId,
     })
   ) {
+    const implicitAgent = {
+      description: AGENT_TOOL_DESCRIPTION,
+      inputSchema:
+        tasksEnabled || input.node.agent.config?.experimental?.subagentPersistentSessions === true
+          ? PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA
+          : SUBAGENT_TOOL_INPUT_SCHEMA,
+      kind: "subagent" as const,
+      name: AGENT_TOOL_NAME,
+      nodeId: input.node.nodeId,
+      rootOnly: true,
+    };
     tools.set(
       AGENT_TOOL_NAME,
       tasksEnabled
-        ? createTaskSubagentHarnessDefinition({
-            description: AGENT_TOOL_DESCRIPTION,
-            kind: "subagent",
-            name: AGENT_TOOL_NAME,
-            nodeId: input.node.nodeId,
-            rootOnly: true,
-          })
-        : createHarnessDelegationToolDefinition({
-            description: AGENT_TOOL_DESCRIPTION,
-            inputSchema:
-              input.node.agent.config?.experimental?.subagentPersistentSessions === true
-                ? PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA
-                : SUBAGENT_TOOL_INPUT_SCHEMA,
-            kind: "subagent",
-            name: AGENT_TOOL_NAME,
-            nodeId: input.node.nodeId,
-            rootOnly: true,
-          }),
+        ? createBackgroundSubagentHarnessDefinition(implicitAgent)
+        : createHarnessDelegationToolDefinition(implicitAgent),
     );
   }
 
@@ -280,7 +259,7 @@ function resolveHarnessToolDefinition(input: {
 }): HarnessToolDefinition | null {
   if (input.tool.kind === "subagent" || input.tool.kind === "remote") {
     return input.tasksEnabled
-      ? createTaskSubagentHarnessDefinition(input.tool)
+      ? createBackgroundSubagentHarnessDefinition(input.tool)
       : createHarnessDelegationToolDefinition(input.tool);
   }
 
@@ -302,6 +281,7 @@ function resolveHarnessToolDefinition(input: {
   return {
     approvalKey: def.approvalKey,
     description: def.description,
+    execution: def.execution,
     execute: resolveAuthoredExecute({
       isFrameworkTool,
       rawExecute,
@@ -340,6 +320,10 @@ function resolveAuthoredExecute(input: {
   if (isFrameworkTool) {
     return rawExecute;
   }
-  const authored = rawExecute as (toolInput: unknown, ctx: unknown) => unknown;
+  const authored = rawExecute as (
+    toolInput: unknown,
+    ctx: unknown,
+    task?: Parameters<NonNullable<HarnessToolDefinition["execute"]>>[2],
+  ) => unknown;
   return createToolExecuteWithAuth({ execute: authored, scope });
 }

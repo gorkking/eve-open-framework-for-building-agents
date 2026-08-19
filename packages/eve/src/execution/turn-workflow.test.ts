@@ -5,9 +5,8 @@ import { SessionDynamicModelReferenceKey } from "#context/keys.js";
 import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-step.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
+import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
-import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
-import type { DurableSession, DurableSessionState } from "#execution/durable-session-store.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { turnWorkflow } from "#execution/turn-workflow.js";
 import {
@@ -17,7 +16,6 @@ import {
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { turnStep } from "#execution/workflow-steps.js";
 import { AGENT_HANDLES_STATE_KEY } from "#harness/handles/store.js";
-import { SESSION_TASKS_STATE_KEY } from "#tasks/session-index.js";
 
 const resumeHookMock = vi.fn();
 const createHookMock = vi.fn();
@@ -49,20 +47,16 @@ vi.mock("./dispatch-runtime-actions-step.js", () => ({
   dispatchRuntimeActionsStep: vi.fn(),
 }));
 
-vi.mock("./tasks/parent/dispatch-task-step.js", () => ({
-  dispatchTaskStep: vi.fn(),
-}));
-
-vi.mock("./tasks/parent/delegate.js", () => ({
-  acknowledgeDelegatedTasksStep: vi.fn(),
-}));
-
 vi.mock("./dispatch-workflow-runtime-actions-step.js", () => ({
   dispatchWorkflowRuntimeActionsStep: vi.fn(),
 }));
 
 vi.mock("./cancel-descendant-turns-step.js", () => ({
   cancelDescendantTurnsStep: vi.fn(),
+}));
+
+vi.mock("./tasks/parent/delegate.js", () => ({
+  acknowledgeDelegatedTasksStep: vi.fn(),
 }));
 
 vi.mock("./workflow-callback-url.js", () => ({
@@ -365,6 +359,39 @@ describe("turnWorkflow", () => {
     expect(resumeHookMock.mock.calls.filter((call) => call[1]?.kind === "turn-error")).toEqual([]);
   });
 
+  it("commits and releases background tasks before settling a cancelled turn", async () => {
+    const initialState = createSessionState({ continuationToken: "http:parent" });
+    const backgroundState = createSessionState({ continuationToken: "http:parent:background" });
+    const backgroundTasks = [
+      {
+        taskId: "task-1",
+        taskInboxToken: "task-inbox-1",
+        taskRunId: "task-run-1",
+      },
+    ];
+    installInbox([]);
+    vi.mocked(turnStep).mockResolvedValueOnce({
+      action: "cancelled",
+      backgroundTaskState: backgroundState,
+      backgroundTasks,
+      serializedContext: { state: "cancelled" },
+      sessionState: initialState,
+    });
+
+    const { input } = createInput({
+      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
+      mode: "task",
+      sessionState: initialState,
+    });
+    await turnWorkflow(input);
+
+    expect(acknowledgeDelegatedTasksStep).toHaveBeenCalledWith({ tasks: backgroundTasks });
+    expect(cancelDescendantTurnsStep).toHaveBeenCalledWith({
+      serializedContext: { state: "cancelled" },
+      sessionState: backgroundState,
+    });
+  });
+
   it("honors cancellation observed while a durable turn step returns", async () => {
     const sessionState = createSessionState();
     const sessionModel = {
@@ -414,153 +441,6 @@ describe("turnWorkflow", () => {
         action: expect.objectContaining({ kind: "done" }),
       }),
     );
-  });
-
-  it("retains only admitted direct subagent effects and skips pending siblings on late cancel", async () => {
-    const initialSandboxState = {
-      initialized: true,
-      session: { backendName: "test", metadata: {}, sessionKey: "initial" },
-    } as const;
-    const delegatedTaskSandboxState = {
-      initialized: true,
-      session: { backendName: "test", metadata: {}, sessionKey: "shared-child" },
-    } as const;
-    const unrelatedToolSandboxState = {
-      initialized: true,
-      session: { backendName: "test", metadata: {}, sessionKey: "unrelated-tool" },
-    } as const;
-    const initialState = withSessionSnapshot(createSessionState(), {
-      history: [{ content: "keep", role: "user" }],
-      sandboxState: initialSandboxState,
-      state: { existing: { value: "keep" } },
-    });
-    const task = {
-      taskId: "task_direct",
-      taskInboxToken: "task:task_direct:token",
-      taskRunId: "wrun_task_direct",
-    };
-    const taskEntry = {
-      ...task,
-      createdByStepIndex: 0,
-      createdByTurnId: "turn_0",
-      metadata: {
-        agentId: "agent_direct",
-        kind: "subagent" as const,
-        mode: "local" as const,
-        name: "delegate",
-      },
-      operationId: "operation_direct",
-    };
-    const handle = {
-      address: {
-        continuationToken: "subagent:parent:direct",
-        kind: "agent/local" as const,
-        sessionId: "child_direct",
-      },
-      identity: { id: "agent_direct", name: "delegate", nodeId: "subagents/delegate" },
-      phase: "addressed" as const,
-    };
-    const completedState = withSessionSnapshot(
-      { ...initialState, continuationToken: "http:rekeyed" },
-      {
-        history: [
-          { content: "keep", role: "user" },
-          { content: "discard", role: "assistant" },
-        ],
-        sandboxState: unrelatedToolSandboxState,
-        state: {
-          existing: { value: "keep" },
-          leaked: { value: "discard" },
-          [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
-          [SESSION_TASKS_STATE_KEY]: { tasks: [taskEntry] },
-        },
-      },
-    );
-    const retainedState = withSessionSnapshot(initialState, {
-      history: [{ content: "keep", role: "user" }],
-      sandboxState: delegatedTaskSandboxState,
-      state: {
-        existing: { value: "keep" },
-        [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
-        [SESSION_TASKS_STATE_KEY]: { tasks: [taskEntry] },
-      },
-    });
-    const sessionModel = {
-      id: "openai/gpt-5.6-sol",
-      contextWindowTokens: 1_000_000,
-    };
-    const inbox = createInboxMock([]);
-    const cancelRead = Promise.withResolvers<IteratorResult<unknown>>();
-    const cancelHook = {
-      token: "turn-token:cancel",
-      getConflict: vi.fn(async () => null),
-      dispose: vi.fn(),
-      [Symbol.asyncIterator](): AsyncIterator<unknown> {
-        return {
-          next: () => cancelRead.promise,
-          return: vi.fn(async () => ({ done: true, value: undefined })),
-        };
-      },
-    };
-    createHookMock.mockImplementation((input: { token: string }) =>
-      input.token.endsWith(":cancel") ? cancelHook : inbox.hook,
-    );
-    let turnSignal: AbortSignal | undefined;
-    vi.mocked(turnStep).mockImplementationOnce(async (stepInput) => {
-      turnSignal = stepInput.abortSignal;
-      return {
-        action: "park",
-        delegatedTaskSandboxState,
-        delegatedTasks: [task],
-        hasPendingAuthorization: false,
-        hasPendingInputBatch: false,
-        pendingRuntimeActionKeys: ["task-control:task_cancel:call_cancel"],
-        serializedContext: {
-          leaked: "discard",
-          state: "parked",
-          [SessionDynamicModelReferenceKey.name]: sessionModel,
-        },
-        sessionState: completedState,
-        tasksEnabled: true,
-      };
-    });
-    resumeHookMock.mockImplementation(
-      async (_token: string, payload: { continuationToken?: string; kind?: string }) => {
-        if (
-          payload.kind === "turn-continuation-token" &&
-          payload.continuationToken === "http:rekeyed"
-        ) {
-          cancelRead.resolve({ done: false, value: {} });
-          await vi.waitFor(() => expect(turnSignal?.aborted).toBe(true));
-        }
-      },
-    );
-
-    const { input } = createInput({
-      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
-      sessionState: initialState,
-    });
-    await turnWorkflow(input);
-
-    const retainedContext = {
-      state: "start",
-      [SessionDynamicModelReferenceKey.name]: sessionModel,
-    };
-    expect(acknowledgeDelegatedTasksStep).toHaveBeenCalledExactlyOnceWith({ tasks: [task] });
-    expect(dispatchTaskStep).not.toHaveBeenCalled();
-    expect(cancelDescendantTurnsStep).toHaveBeenCalledWith({
-      serializedContext: retainedContext,
-      sessionState: retainedState,
-    });
-    expect(resumeHookMock).toHaveBeenCalledWith("turn-token", {
-      action: {
-        cancelled: true,
-        kind: "park",
-        serializedContext: retainedContext,
-        sessionState: retainedState,
-      },
-      kind: "turn-result",
-    });
   });
 
   it("runs uncancellable when the session cancel token is claimed by another run", async () => {
@@ -810,52 +690,6 @@ describe("turnWorkflow", () => {
       }),
     );
     now.mockRestore();
-  });
-
-  it("commits direct subagent state before releasing its task readiness barrier", async () => {
-    const initialState = withSessionSnapshot(
-      createSessionState({ continuationToken: "http:tasks" }),
-    );
-    const delegatedState = withSessionSnapshot(
-      createSessionState({ continuationToken: "http:tasks" }),
-    );
-    const completedState = withSessionSnapshot(
-      createSessionState({ continuationToken: "http:tasks" }),
-    );
-    const task = {
-      taskId: "task_direct",
-      taskInboxToken: "task:task_direct:token",
-      taskRunId: "wrun_task_direct",
-    };
-    installInbox([]);
-    vi.mocked(turnStep)
-      .mockResolvedValueOnce({
-        action: "continue",
-        delegatedTasks: [task],
-        serializedContext: { state: "delegated" },
-        sessionState: delegatedState,
-      })
-      .mockResolvedValueOnce({
-        action: "done",
-        output: "continued after receipt",
-        serializedContext: { state: "done" },
-        sessionState: completedState,
-      });
-
-    const { input } = createInput({
-      driverCapabilities: { turnInbox: true },
-      sessionState: initialState,
-    });
-    await turnWorkflow(input);
-
-    expect(acknowledgeDelegatedTasksStep).toHaveBeenCalledExactlyOnceWith({ tasks: [task] });
-    expect(vi.mocked(turnStep).mock.calls[1]?.[0]).toMatchObject({
-      serializedContext: { state: "delegated" },
-      sessionState: delegatedState,
-    });
-    expect(vi.mocked(acknowledgeDelegatedTasksStep).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(turnStep).mock.invocationCallOrder[1] ?? 0,
-    );
   });
 
   it("waits for dispatch adoption before cascading a cancellation", async () => {
@@ -1520,25 +1354,6 @@ function createSessionState(overrides: Partial<DurableSessionState> = {}): Durab
     sessionId: "wrun_test_123",
     version: 1,
     ...overrides,
-  };
-}
-
-function withSessionSnapshot(
-  state: DurableSessionState,
-  overrides: Partial<DurableSession> = {},
-): DurableSessionState {
-  return {
-    ...state,
-    snapshot: {
-      session: {
-        agent: { system: "" },
-        continuationToken: state.continuationToken,
-        history: [],
-        sessionId: state.sessionId,
-        ...overrides,
-      },
-      version: 1,
-    },
   };
 }
 

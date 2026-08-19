@@ -20,6 +20,7 @@ import type {
 import { ContextKey } from "#context/key.js";
 import type { InstrumentationChannelDeliveryRef } from "#harness/instrumentation/lifecycle.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
+import type { HandleEventFn } from "#harness/types.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import type { DynamicRemoteAgentConfig } from "#runtime/subagents/dynamic-remote-agent-config.js";
 import type { SandboxAccess } from "#sandbox/state.js";
@@ -110,6 +111,7 @@ export const SessionCallbackKey = new ContextKey<SessionCallback>("eve.sessionCa
 
 export const SessionKey = new ContextKey<Session>("eve.session");
 export const SandboxKey = new ContextKey<SandboxAccess>("eve.sandbox");
+export const HandleEventKey = new ContextKey<HandleEventFn>("eve.internal.handleEvent");
 
 // ---------------------------------------------------------------------------
 // Dynamic model keys
@@ -196,6 +198,9 @@ export const TurnDynamicToolMetadataKey = new ContextKey<readonly DurableDynamic
  * Re-resolved every step — no cross-step persistence needed.
  */
 export const LiveStepToolsKey = new ContextKey<HarnessToolDefinition[]>("eve.liveStepTools");
+
+/** Whether this turn executes subagent definitions as durable background tools. */
+export const TasksEnabledKey = new ContextKey<boolean>("eve.tasksEnabled");
 
 export type DurableDynamicSubagentSelection =
   | {

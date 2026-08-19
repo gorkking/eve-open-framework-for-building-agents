@@ -15,7 +15,8 @@ finishes. The parent receives result-bearing lifecycle notifications and can wai
 the task with framework-owned tools. The child can intentionally report progress to its parent
 with one framework-owned tool.
 
-Without the flag, current tool and subagent behavior must remain unchanged.
+Without the flag, current subagent behavior must remain unchanged. The implementation uses a
+generic background `defineTool` execution contract so the harness does not classify subagents.
 
 This draft is based on the [Tools as Tasks proposal], the earlier background-task plan in
 [PR #1085], and the storage-boundary findings from the closed [PR #1190] implementation spike.
@@ -67,8 +68,8 @@ cancel paths.
 ## Non-goals
 
 - Exposing an MCP Tasks server or client endpoint in this work.
-- Changing authored tools, built-in tools, connections, skills, or dynamic workflows.
-- Replacing `runtimeAction` lowering with a new public `defineTool` API.
+- Stabilizing the experimental background `defineTool` contract for general authored tools.
+- Changing connections, skills, or dynamic workflows.
 - Rolling back external side effects after cancellation.
 - Retrying failed subagent work automatically.
 - Streaming every progress event into model context.
@@ -98,9 +99,9 @@ Tasks own execution lifecycle and availability; agent addresses do not duplicate
 `input_required`. At most one nonterminal task may target one child session. The model-visible
 `<agents>` projection keeps an occupied agent visible as busy and names its active task.
 
-**Delegated execution** is a runtime execution mode, not a tool-authoring surface. A delegated
-dispatch returns once the executor acknowledges the work; the task stays `working`, and every
-later transition arrives over the task wire.
+**Delegated execution** is the outcome of a background tool handing lifecycle ownership to an
+external executor. The tool's `execute` returns once that executor acknowledges the work; the task
+stays `working`, and every later transition arrives over the task wire.
 
 `completed`, `failed`, and `cancelled` are terminal statuses. `input_required` is not terminal,
 but it is ready for parent action. Entering either condition wakes the parent so it never
@@ -118,8 +119,28 @@ export default defineAgent({
 });
 ```
 
-The flag changes only local and remote subagent calls. Every such call runs in background mode.
-All other tools keep their current behavior.
+The flag changes only local and remote subagent calls. Every such call is registered as a
+background `defineTool` definition and runs in the AI SDK tool loop. Without the flag, the same
+subagent tools retain their existing `runtimeAction` path.
+
+The generic execution contract is:
+
+```ts
+defineTool({
+  execution: "background",
+  async execute(input, ctx, task) {
+    const executor = await startExternalWork(input, task.binding);
+    return task.delegated({
+      executor: executor.binding,
+      receipt: executor.receipt,
+    });
+  },
+});
+```
+
+An ordinary `execute` return completes the task with that value. `task.delegated(...)` ends the
+tool call with a `working` receipt while the external executor retains lifecycle ownership. The
+task runtime adds `taskId` and `status` to the tool-owned receipt.
 
 The parent receives these framework-owned tools:
 
@@ -159,9 +180,7 @@ interface TaskView {
 }
 
 interface TaskMetadata {
-  readonly agentId: string;
-  readonly kind: "subagent";
-  readonly mode: "local" | "remote";
+  readonly kind: string;
   readonly name: string;
 }
 
@@ -239,10 +258,10 @@ completed, failed, and cancelled are final
 
 ## Delegated execution
 
-Today the runtime parks subagent tool calls, dispatches them serially as a batch after the
-synchronous calls, and holds the turn until every action in the batch resolves (the
-[runtime-action park path], [serial dispatch loop], and [turn-level wait]). Delegated execution
-replaces the park-and-wait mechanism in the same dispatch codepath:
+Today, without `experimental.tasks`, the runtime parks subagent tool calls, dispatches them as a
+batch after synchronous calls, and holds the turn until every action in the batch resolves (the
+[runtime-action park path], [serial dispatch loop], and [turn-level wait]). With the experiment,
+the AI SDK executes subagent definitions through the generic background-tool path:
 
 1. The harness creates a durable `working` task for the subagent call.
 2. It dispatches the child with the task binding.
@@ -250,10 +269,10 @@ replaces the park-and-wait mechanism in the same dispatch codepath:
 4. The originating call receives its receipt and the turn continues.
 
 Everything after acknowledgement — progress, input requests, authorization, terminal outcome —
-arrives over the task wire instead of resolving the dispatch. Delegated execution is an agent
-runtime change, not a `defineTool` change: authored tool contracts and the `runtimeAction`
-lowering stay as they are, and the mode lands inert until the experiment selects the two subagent
-kinds into it. A later phase can expose delegation to authored tools on top of the same mode.
+arrives over the task wire instead of resolving the dispatch. Task creation, parent indexing, the
+commit barrier, readiness delivery, and compensation are generic background-tool mechanisms.
+Local and remote definitions own only child dispatch, agent-handle effects, and mapping the task
+wire onto their executor.
 
 ## Parent and executor wire contract
 

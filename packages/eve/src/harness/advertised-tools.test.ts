@@ -48,37 +48,6 @@ describe("getAdvertisedTools", () => {
     expect([...advertisedTools.keys()]).toEqual(["add"]);
   });
 
-  it("removes an executable built-in agent tool from delegated sessions", () => {
-    const tools = new Map([
-      ["add", createTool("add")],
-      [
-        "agent",
-        {
-          delegation: {
-            action: {
-              kind: "subagent-call",
-              nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
-              subagentName: "agent",
-            },
-            execution: "ai-sdk",
-            rootOnly: true,
-          },
-          description: "agent description",
-          execute: async () => undefined,
-          inputSchema: jsonSchema({ type: "object" }),
-          name: "agent",
-        },
-      ],
-    ]) satisfies HarnessToolMap;
-
-    const advertisedTools = getAdvertisedTools({
-      session: { rootSessionId: "root-session", subagentDepth: 1 },
-      tools,
-    });
-
-    expect([...advertisedTools.keys()]).toEqual(["add"]);
-  });
-
   it("keeps a declared subagent named agent in delegated sessions", () => {
     const tools = new Map([
       ["add", createTool("add")],
@@ -154,23 +123,6 @@ describe("getAdvertisedTools", () => {
     expect([...advertisedTools.harnessTools.keys()]).toEqual(["add", "delegate"]);
     expect(advertisedTools.modelTools[WORKFLOW_TOOL_NAME]).toBeDefined();
   });
-
-  it("adds Workflow for executable task subagents", async () => {
-    const tools = new Map([
-      ["delegate", createExecutableSubagentTool("delegate")],
-    ]) satisfies HarnessToolMap;
-
-    const advertisedTools = await getAdvertisedTools({
-      modelTools: buildToolSet({ tools }),
-      session: createSession(),
-      tools,
-      workflow: {},
-    });
-
-    expect(advertisedTools.harnessTools.get("delegate")?.execute).toEqual(expect.any(Function));
-    expect(advertisedTools.harnessTools.get("delegate")?.runtimeAction).toBeUndefined();
-    expect(advertisedTools.modelTools[WORKFLOW_TOOL_NAME]).toBeDefined();
-  });
 });
 
 describe("getAdvertisedTools for definition arrays", () => {
@@ -235,51 +187,30 @@ function createTool(name: string): HarnessToolDefinition {
 
 function createSubagentTool(name: string): HarnessToolDefinition {
   return {
-    delegation: {
-      action: { kind: "subagent-call", nodeId: "workers", subagentName: name },
-      execution: "runtime-action",
+    ...createTool(name),
+    runtimeAction: {
+      kind: "subagent-call",
+      nodeId: "workers",
+      subagentName: name,
     },
-    description: `${name} description`,
-    inputSchema: jsonSchema({ type: "object" }),
-    name,
-  };
-}
-
-function createExecutableSubagentTool(name: string): HarnessToolDefinition {
-  return {
-    delegation: {
-      action: { kind: "subagent-call", nodeId: "workers", subagentName: name },
-      execution: "ai-sdk",
-    },
-    description: `${name} description`,
-    execute: async () => ({ status: "working" }),
-    inputSchema: jsonSchema({ type: "object" }),
-    name,
+    workflowCallable: true,
   };
 }
 
 function createBuiltInAgentTool(): HarnessToolDefinition {
   return {
-    delegation: {
-      action: {
-        kind: "subagent-call",
-        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
-        subagentName: "agent",
-      },
-      execution: "runtime-action",
-      rootOnly: true,
+    ...createSubagentTool("agent"),
+    runtimeAction: {
+      kind: "subagent-call",
+      nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+      subagentName: "agent",
     },
-    description: "agent description",
-    inputSchema: jsonSchema({ type: "object" }),
-    name: "agent",
   };
 }
 
 function createTaskControlTool(name: string): HarnessToolDefinition {
   return {
-    description: `${name} description`,
-    inputSchema: jsonSchema({ type: "object" }),
-    name,
+    ...createTool(name),
     runtimeAction: { kind: "task-control" },
   };
 }

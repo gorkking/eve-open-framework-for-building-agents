@@ -82,46 +82,6 @@ describe("createRuntimeActionRequestFromToolCall", () => {
       toolName: "load_skill",
     });
   });
-
-  it("projects an executable subagent for a Workflow interrupt", () => {
-    expect(
-      createRuntimeActionRequestFromToolCall({
-        toolCall: {
-          input: { message: "research" },
-          toolCallId: "call-research",
-          toolName: "researcher",
-          type: "tool-call",
-        },
-        tools: new Map([
-          [
-            "researcher",
-            {
-              delegation: {
-                action: {
-                  kind: "subagent-call" as const,
-                  nodeId: "subagents/researcher",
-                  subagentName: "researcher",
-                },
-                execution: "ai-sdk" as const,
-              },
-              description: "Delegate research.",
-              execute: async () => ({ status: "working" }),
-              inputSchema: jsonSchema({ type: "object" }),
-              name: "researcher",
-            },
-          ],
-        ]),
-      }),
-    ).toEqual({
-      callId: "call-research",
-      description: "Delegate research.",
-      input: { message: "research" },
-      kind: "subagent-call",
-      name: "researcher",
-      nodeId: "subagents/researcher",
-      subagentName: "researcher",
-    });
-  });
 });
 
 function createParkedSession(): HarnessSession {

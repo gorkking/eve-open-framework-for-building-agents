@@ -53,7 +53,9 @@ describe("runtime agent framework tools", () => {
     expect(graph.root.turnAgent.tools.filter((tool) => tool.name === "agent")).toMatchObject([
       { kind: "authored-tool" },
     ]);
-    expect(createNodeHarnessTools({ node: graph.root }).get("agent")?.delegation).toBeUndefined();
+    expect(
+      createNodeHarnessTools({ node: graph.root }).get("agent")?.runtimeAction,
+    ).toBeUndefined();
   });
 
   it("lets a declared subagent named agent replace the built-in agent action", async () => {
@@ -111,10 +113,7 @@ describe("runtime agent framework tools", () => {
     expect(graph.root.turnAgent.tools.filter((tool) => tool.name === "agent")).toMatchObject([
       { kind: "subagent" },
     ]);
-    const delegation = createNodeHarnessTools({ node: graph.root }).get("agent")?.delegation;
-    expect(delegation).toMatchObject({
-      action: { kind: "subagent-call", subagentName: "agent" },
-      execution: "runtime-action",
-    });
+    const runtimeAction = createNodeHarnessTools({ node: graph.root }).get("agent")?.runtimeAction;
+    expect(runtimeAction).toMatchObject({ kind: "subagent-call", subagentName: "agent" });
   });
 });

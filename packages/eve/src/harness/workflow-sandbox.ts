@@ -1,11 +1,7 @@
 import type { ToolSet } from "ai";
 import { z } from "#compiled/zod/index.js";
 
-import {
-  getHarnessDelegationAction,
-  type HarnessDelegationAction,
-  type HarnessToolDefinition,
-} from "#harness/execute-tool.js";
+import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import type { HarnessToolMap } from "#harness/types.js";
 import { WORKFLOW_RUNTIME_ACTION_INTERRUPT_KIND } from "#harness/workflow-runtime-action-state.js";
 import { DEFAULT_WORKFLOW_MAX_SUBAGENTS } from "#harness/workflow-subagent-limit.js";
@@ -102,19 +98,15 @@ function createWorkflowHostTools(tools: HarnessToolMap, names: Iterable<string>)
 
   for (const name of names) {
     const tool = tools.get(name);
-    const action = getHarnessDelegationAction(tool);
-    if (tool !== undefined && action !== undefined) {
-      hostTools[name] = createWorkflowRuntimeActionHostTool(tool, action);
+    if (tool?.runtimeAction !== undefined) {
+      hostTools[name] = createWorkflowRuntimeActionHostTool(tool);
     }
   }
 
   return hostTools as ToolSet;
 }
 
-function createWorkflowRuntimeActionHostTool(
-  harnessTool: HarnessToolDefinition,
-  action: HarnessDelegationAction,
-): ToolSet[string] {
+function createWorkflowRuntimeActionHostTool(harnessTool: HarnessToolDefinition): ToolSet[string] {
   return {
     description: harnessTool.description,
     inputSchema: harnessTool.inputSchema,
@@ -124,7 +116,7 @@ function createWorkflowRuntimeActionHostTool(
 
       return requestWorkflowSandboxInterrupt({
         kind: WORKFLOW_RUNTIME_ACTION_INTERRUPT_KIND,
-        runtimeAction: action,
+        runtimeAction: harnessTool.runtimeAction,
         toolInput,
         toolName: harnessTool.name,
       });

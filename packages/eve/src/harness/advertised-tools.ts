@@ -1,9 +1,5 @@
 import type { ToolSet } from "ai";
-import {
-  getHarnessDelegationAction,
-  getHarnessRuntimeAction,
-  type HarnessToolDefinition,
-} from "#harness/execute-tool.js";
+import type { HarnessToolDefinition } from "#harness/execute-tool.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { AGENT_TOOL_NAME } from "#runtime/framework-tools/agent.js";
 import { TASK_TOOL_NAMES, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
@@ -164,16 +160,15 @@ function filterWorkflowHostToolsForRootSession(
   }
 
   for (const [name, tool] of tools) {
-    if (isWorkflowHostTool(tool)) {
+    if (isWorkflowCallableTool(tool)) {
       filteredTools.set(name, tool);
     }
   }
   return filteredTools;
 }
 
-function isWorkflowHostTool(definition: HarnessToolDefinition): boolean {
-  const action = getHarnessDelegationAction(definition);
-  return action?.kind === "subagent-call" || action?.kind === "remote-agent-call";
+function isWorkflowCallableTool(definition: HarnessToolDefinition): boolean {
+  return definition.workflowCallable === true;
 }
 
 function shouldHideDelegationTool(
@@ -196,13 +191,11 @@ function shouldHideDelegationTool(
  * the only signal that separates the root from its children.
  */
 function isRootOnlyFrameworkTool(definition: HarnessToolDefinition): boolean {
-  if (definition.delegation?.rootOnly === true) return true;
-
-  const runtimeAction = getHarnessRuntimeAction(definition);
+  if (definition.rootOnly === true) return true;
   if (
     definition.name === AGENT_TOOL_NAME &&
-    runtimeAction?.kind === "subagent-call" &&
-    runtimeAction.nodeId === ROOT_RUNTIME_AGENT_NODE_ID
+    definition.runtimeAction?.kind === "subagent-call" &&
+    definition.runtimeAction.nodeId === ROOT_RUNTIME_AGENT_NODE_ID
   ) {
     return true;
   }

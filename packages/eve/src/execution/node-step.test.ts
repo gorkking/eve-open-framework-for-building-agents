@@ -13,6 +13,7 @@ import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
 import type { RuntimeToolRegistry } from "#runtime/tools/registry.js";
 import { createRuntimeToolRegistry } from "#runtime/tools/registry.js";
 import { createExecutionNodeStep, createNodeHarnessTools } from "#execution/node-step.js";
+import { countLocalSubagentCalls } from "#runtime/framework-tools/subagent/local.js";
 import { createSession } from "#execution/session.js";
 import { createStubSandboxRegistry } from "#internal/testing/stub-sandbox-registry.js";
 import { toInputSchema } from "#shared/tool-schema.js";
@@ -245,14 +246,10 @@ describe("createNodeHarnessTools", () => {
     expect(agentTool?.description).toContain("include essential context");
     expect(agentTool?.description).toContain("non-overlapping scopes");
     expect(agentTool?.description).not.toContain("eve");
-    expect(agentTool?.delegation).toEqual({
-      action: {
-        kind: "subagent-call",
-        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
-        subagentName: "agent",
-      },
-      execution: "runtime-action",
-      rootOnly: true,
+    expect(agentTool?.runtimeAction).toEqual({
+      kind: "subagent-call",
+      nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+      subagentName: "agent",
     });
   });
 
@@ -307,45 +304,63 @@ describe("createNodeHarnessTools", () => {
     expect(tools.get("task_sleep")?.runtimeAction).toBeUndefined();
   });
 
-  it("executes subagents through defineTool only when experimental.tasks is on", () => {
-    const preparedTools: StaticRuntimeTurnAgent["tools"] = [
+  it("executes local and remote subagents as background tools only with experimental.tasks", () => {
+    const delegationTools: StaticRuntimeTurnAgent["tools"] = [
       {
-        description: "Local worker",
+        description: "Delegate local research.",
         inputSchema: { type: "object" },
         kind: "subagent",
-        logicalPath: "subagents/local-worker",
-        name: "local-worker",
-        nodeId: "local-worker-node",
-        sourceId: "subagents/local-worker",
+        logicalPath: "subagents/research",
+        name: "research",
+        nodeId: "subagents/research",
+        sourceId: "subagents/research",
       },
       {
-        description: "Remote worker",
+        description: "Delegate remote review.",
         inputSchema: { type: "object" },
         kind: "remote",
-        logicalPath: "subagents/remote-worker.ts",
-        name: "remote-worker",
-        nodeId: "remote-worker-node",
-        sourceId: "subagents/remote-worker.ts",
+        logicalPath: "remote-agents/reviewer",
+        name: "reviewer",
+        nodeId: "remote-agents/reviewer",
+        sourceId: "remote-agents/reviewer",
       },
     ];
-    const plainNode = createTestNode(createTestTurnAgent({ tools: preparedTools }));
-    const taskNode = {
-      ...plainNode,
-      agent: {
-        ...plainNode.agent,
-        config: { experimental: { tasks: true }, model: { id: "test-model" }, name: "test" },
-      },
+    const createNode = (tasks: boolean) => {
+      const node = createTestNode(createTestTurnAgent({ tools: delegationTools }));
+      return {
+        ...node,
+        agent: {
+          ...node.agent,
+          config: {
+            experimental: { tasks },
+            model: { id: "test-model" },
+            name: "test",
+          },
+        },
+      };
     };
 
-    const plainTools = createNodeHarnessTools({ node: plainNode });
-    const taskTools = createNodeHarnessTools({ node: taskNode });
-    for (const name of ["agent", "local-worker", "remote-worker"]) {
-      expect(plainTools.get(name)?.delegation).toMatchObject({ execution: "runtime-action" });
-      expect(plainTools.get(name)?.execute).toBeUndefined();
-      expect(taskTools.get(name)?.runtimeAction).toBeUndefined();
-      expect(taskTools.get(name)?.execute).toBeDefined();
-      expect(taskTools.get(name)?.delegation).toMatchObject({ execution: "ai-sdk" });
+    const legacy = createNodeHarnessTools({ node: createNode(false) });
+    expect(legacy.get("research")?.runtimeAction?.kind).toBe("subagent-call");
+    expect(legacy.get("reviewer")?.runtimeAction?.kind).toBe("remote-agent-call");
+    expect(legacy.get("research")?.execution).toBeUndefined();
+    expect(legacy.get("reviewer")?.execution).toBeUndefined();
+
+    const background = createNodeHarnessTools({ node: createNode(true) });
+    for (const name of ["agent", "research", "reviewer"]) {
+      expect(background.get(name)?.execution).toBe("background");
+      expect(background.get(name)?.execute).toBeDefined();
+      expect(background.get(name)?.runtimeAction).toBeUndefined();
     }
+    expect(
+      countLocalSubagentCalls(
+        ["agent", "research", "reviewer"].map((name) => {
+          const execute = background.get(name)?.execute;
+          if (execute === undefined) throw new Error(`Missing background executor for ${name}.`);
+          return { definition: { execute } };
+        }),
+      ),
+    ).toBe(2);
   });
 
   it("respects disableTool for individual task tools", () => {
@@ -511,7 +526,6 @@ describe("createExecutionNodeStep", () => {
         stepIndex: 0,
         turnId: "",
       },
-      localFanoutSize: 1,
       responseMessages: [
         {
           content: [

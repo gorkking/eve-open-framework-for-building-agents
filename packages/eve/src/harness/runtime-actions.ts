@@ -4,7 +4,6 @@ import { createActionResultEvent, type UnstampedMessageStreamEvent } from "#prot
 import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import { resolveRuntimeActionResultsForKeys } from "#runtime/actions/results.js";
 import type { RuntimeActionRequest, RuntimeActionResult } from "#runtime/actions/types.js";
-import { getHarnessDelegationAction } from "#harness/execute-tool.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import type { AgentTurnOutcome } from "#shared/agent-turn-outcome.js";
 import { findRunningAgentHandle, isResultBoundToRunningHandle } from "#harness/handles/query.js";
@@ -60,7 +59,6 @@ interface PendingRuntimeActionEventMetadata {
 export interface PendingRuntimeActionBatch {
   readonly actions: readonly RuntimeActionRequest[];
   readonly event: PendingRuntimeActionEventMetadata;
-  readonly localFanoutSize?: number;
   readonly responseMessages: readonly ModelMessage[];
 }
 
@@ -119,7 +117,6 @@ export function clearPendingRuntimeActionBatch(session: HarnessSession): Harness
 export function setPendingRuntimeActionBatch(input: {
   readonly actions: readonly RuntimeActionRequest[];
   readonly event: PendingRuntimeActionEventMetadata;
-  readonly localFanoutSize?: number;
   readonly responseMessages: readonly ModelMessage[];
   readonly session: HarnessSession;
 }): HarnessSession {
@@ -128,7 +125,6 @@ export function setPendingRuntimeActionBatch(input: {
   state[PENDING_RUNTIME_ACTION_BATCH_KEY] = {
     actions: [...input.actions],
     event: input.event,
-    localFanoutSize: input.localFanoutSize,
     responseMessages: [...input.responseMessages],
   } satisfies PendingRuntimeActionBatch;
 
@@ -367,7 +363,6 @@ export function createRuntimeActionRequestFromToolCall(input: {
   readonly tools: HarnessToolMap;
 }): RuntimeActionRequest {
   const definition = input.tools.get(input.toolCall.toolName);
-  const runtimeAction = getHarnessDelegationAction(definition) ?? definition?.runtimeAction;
 
   if (definition?.frameworkAction === "load-skill") {
     return {
@@ -380,7 +375,7 @@ export function createRuntimeActionRequestFromToolCall(input: {
     };
   }
 
-  if (definition !== undefined && runtimeAction?.kind === "subagent-call") {
+  if (definition?.runtimeAction?.kind === "subagent-call") {
     return {
       callId: input.toolCall.toolCallId,
       description: definition.description,
@@ -390,12 +385,12 @@ export function createRuntimeActionRequestFromToolCall(input: {
       }),
       kind: "subagent-call",
       name: definition.name,
-      nodeId: runtimeAction.nodeId,
-      subagentName: runtimeAction.subagentName,
+      nodeId: definition.runtimeAction.nodeId,
+      subagentName: definition.runtimeAction.subagentName,
     };
   }
 
-  if (definition !== undefined && runtimeAction?.kind === "remote-agent-call") {
+  if (definition?.runtimeAction?.kind === "remote-agent-call") {
     return {
       callId: input.toolCall.toolCallId,
       description: definition.description,
@@ -405,8 +400,8 @@ export function createRuntimeActionRequestFromToolCall(input: {
       }),
       kind: "remote-agent-call",
       name: definition.name,
-      nodeId: runtimeAction.nodeId,
-      remoteAgentName: runtimeAction.remoteAgentName ?? definition.name,
+      nodeId: definition.runtimeAction.nodeId,
+      remoteAgentName: definition.runtimeAction.remoteAgentName ?? definition.name,
     };
   }
 

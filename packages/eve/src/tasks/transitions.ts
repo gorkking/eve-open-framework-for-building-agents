@@ -5,6 +5,7 @@ import type {
   TaskUsage,
   TaskView,
 } from "#tasks/types.js";
+import type { TaskExecutorBinding } from "#shared/tool-task.js";
 import { isTerminalTaskStatus, readTaskInputRequestId } from "#tasks/types.js";
 
 /**
@@ -74,6 +75,23 @@ function terminalView(
 }
 
 export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskTransitionResult {
+  if (command.kind === "configure") {
+    if (sameExecutorBinding(view.executor?.binding, command.executor)) {
+      return { outcome: "noop", view };
+    }
+    if (view.executor?.binding !== undefined) {
+      return {
+        outcome: "rejected",
+        reason: `Task "${view.taskId}" already has an executor binding.`,
+        view,
+      };
+    }
+    return {
+      outcome: "accepted",
+      view: { ...view, executor: { ...view.executor, binding: command.executor } },
+    };
+  }
+
   if (isTerminalTaskStatus(view.status)) {
     if (command.kind === "settle-executor") {
       const executor = { ...view.executor, lifecycle: "terminal" as const };
@@ -252,6 +270,36 @@ export function applyTaskTransition(view: TaskView, command: TaskCommand): TaskT
       };
     }
   }
+}
+
+function sameExecutorBinding(
+  left: TaskExecutorBinding | undefined,
+  right: TaskExecutorBinding,
+): boolean {
+  return left !== undefined && left.kind === right.kind && sameJsonValue(left.data, right.data);
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJsonValue(value, right[index]))
+    );
+  }
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") {
+    return false;
+  }
+  const leftEntries = Object.entries(left);
+  const rightRecord = right as Record<string, unknown>;
+  return (
+    leftEntries.length === Object.keys(rightRecord).length &&
+    leftEntries.every(
+      ([key, value]) => Object.hasOwn(rightRecord, key) && sameJsonValue(value, rightRecord[key]),
+    )
+  );
 }
 
 function isValidInputRequestBatch(requests: readonly TaskInputRequest[]): boolean {

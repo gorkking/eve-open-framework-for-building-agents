@@ -60,15 +60,6 @@ function createJsonMessageRequest(body: unknown): Request {
   });
 }
 
-function createCallback(token: string) {
-  return {
-    callId: "call-1",
-    subagentName: "research",
-    token,
-    url: `https://caller.example.com/eve/v1/callback/${token}`,
-  };
-}
-
 function createMockSession(overrides: Partial<Session> = {}): Session {
   return {
     id: "test-session-id",
@@ -910,38 +901,7 @@ describe("eveChannel — create session idempotency", () => {
     expect(await tokenFor({ issuer: "issuer-a", subject: "different-provenance" })).toBe(original);
   });
 
-  it("accepts anonymous operation ids scoped to a callback capability", async () => {
-    const handler = createEveCreateHandler({ auth: none() });
-
-    const response = await handler.fetch(
-      createJsonMessageRequest({
-        callback: createCallback("callback-a"),
-        message: "hi",
-        operationId: "operation-1",
-      }),
-    );
-
-    expect(response.status).toBe(202);
-    expect(handler.send.mock.calls[0]?.[1]?.continuationToken).toMatch(/^eve:op:[0-9a-f]{32}$/);
-  });
-
-  it("scopes anonymous operation tokens to the callback capability", async () => {
-    const tokenFor = async (callbackToken: string): Promise<unknown> => {
-      const handler = createEveCreateHandler({ auth: none() });
-      await handler.fetch(
-        createJsonMessageRequest({
-          callback: createCallback(callbackToken),
-          message: "hi",
-          operationId: "operation-1",
-        }),
-      );
-      return handler.send.mock.calls[0]?.[1]?.continuationToken;
-    };
-
-    expect(await tokenFor("callback-b")).not.toBe(await tokenFor("callback-a"));
-  });
-
-  it("rejects anonymous operation ids without a callback capability", async () => {
+  it("rejects operation ids for anonymous callers", async () => {
     const handler = createEveCreateHandler({ auth: none() });
 
     const response = await handler.fetch(

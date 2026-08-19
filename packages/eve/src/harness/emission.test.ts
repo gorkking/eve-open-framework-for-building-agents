@@ -365,17 +365,14 @@ describe("emitStreamContent action requests", () => {
       [
         "delegate",
         {
-          delegation: {
-            action: {
-              kind: "subagent-call",
-              nodeId: "subagents/researcher",
-              subagentName: "researcher",
-            },
-            execution: "runtime-action",
-          },
           description: "Delegate work to a subagent.",
           inputSchema: jsonSchema({ type: "object" }),
           name: "delegate",
+          runtimeAction: {
+            kind: "subagent-call",
+            nodeId: "subagents/researcher",
+            subagentName: "researcher",
+          },
         },
       ],
     ]);

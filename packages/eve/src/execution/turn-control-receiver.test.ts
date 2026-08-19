@@ -151,7 +151,7 @@ describe("TurnControlReceiver", () => {
     expect(bufferedSessionControls).toEqual(["clear", "compact", "expired"]);
   });
 
-  it("consumes a replayed task-owned agent continuation only once", async () => {
+  it("consumes a replayed task delivery only once", async () => {
     installControlHook([parkResult()], true);
     const bufferedDeliveries: DeliverHookPayload[] = [];
     const caller = {

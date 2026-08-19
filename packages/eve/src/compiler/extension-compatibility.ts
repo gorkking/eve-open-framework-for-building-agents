@@ -21,13 +21,17 @@ interface ExtensionCapabilityContract {
 
 const EXTENSION_CAPABILITY_CONTRACTS = {
   extension: { current: 1, supported: [1], dropped: {} },
-  tool: { current: 13, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], dropped: {} },
+  tool: {
+    current: 14,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    dropped: {},
+  },
   dynamicTool: {
     current: 18,
     supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
     dropped: {},
   },
-  channel: { current: 4, supported: [1, 2, 3, 4], dropped: {} },
+  channel: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },
   schedule: { current: 2, supported: [1, 2], dropped: {} },
   subagent: { current: 2, supported: [1, 2], dropped: {} },
   connection: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },

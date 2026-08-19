@@ -28,25 +28,21 @@ import {
 } from "#runtime/sessions/runtime-context-keys.js";
 import { deserializeContext } from "#context/serialize.js";
 import {
-  createAgentErrorResult,
   type DispatchOutcome,
   isAgentHandleAction,
   type RuntimeAgentHandleAction,
   type RuntimeSession,
 } from "#execution/agent-handle-dispatch.js";
-import { AGENT_UNREACHABLE } from "#harness/agent-handle-errors.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import { readActionTraceContext } from "#tracing/agent-trace-context-store.js";
 import {
   assertUniqueRuntimeActionCallIds,
   getPendingRuntimeActionBatch,
-  type PendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
 import {
   createSubagentCalledEvent,
   encodeMessageStreamEvent,
   stampMessageStreamEvent,
-  type UnstampedMessageStreamEvent,
 } from "#protocol/message.js";
 import type {
   RuntimeActionRequest,
@@ -172,9 +168,6 @@ export interface PreparedRuntimeActionDispatch {
  * pending.
  */
 export async function prepareRuntimeActionDispatch(input: {
-  readonly batch?: PendingRuntimeActionBatch;
-  readonly localFanoutSize?: number;
-  readonly requireExistingAgent?: boolean;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
   /**
@@ -185,9 +178,46 @@ export async function prepareRuntimeActionDispatch(input: {
   readonly taskControls: boolean;
 }): Promise<PreparedRuntimeActionDispatch | undefined> {
   const durableSession = await readDurableSession(input.sessionState);
-  const batch = input.batch ?? getPendingRuntimeActionBatch(durableSession.state);
+  const batch = getPendingRuntimeActionBatch(durableSession.state);
 
   if (batch === undefined || batch.actions.length === 0) return undefined;
+  return await prepareActionDispatch({
+    batch,
+    durableSession,
+    serializedContext: input.serializedContext,
+    taskControls: input.taskControls,
+  });
+}
+
+export async function prepareAgentActionDispatch(input: {
+  readonly action: RuntimeActionRequest;
+  readonly event: {
+    readonly sequence: number;
+    readonly stepIndex: number;
+    readonly turnId: string;
+  };
+  readonly localFanoutSize: number;
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<PreparedRuntimeActionDispatch> {
+  const durableSession = await readDurableSession(input.sessionState);
+  return await prepareActionDispatch({
+    batch: { actions: [input.action], event: input.event, responseMessages: [] },
+    durableSession,
+    fanoutSize: input.localFanoutSize,
+    serializedContext: input.serializedContext,
+    taskControls: false,
+  });
+}
+
+async function prepareActionDispatch(input: {
+  readonly batch: NonNullable<ReturnType<typeof getPendingRuntimeActionBatch>>;
+  readonly durableSession: Awaited<ReturnType<typeof readDurableSession>>;
+  readonly fanoutSize?: number;
+  readonly serializedContext: Record<string, unknown>;
+  readonly taskControls: boolean;
+}): Promise<PreparedRuntimeActionDispatch> {
+  const { batch, durableSession } = input;
   assertUniqueRuntimeActionCallIds(batch.actions);
 
   const ctx = await deserializeContext(input.serializedContext);
@@ -209,7 +239,6 @@ export async function prepareRuntimeActionDispatch(input: {
     actions: batch.actions,
     bundle,
     ctx,
-    requireExistingAgent: input.requireExistingAgent,
     session,
     taskControls: input.taskControls,
   });
@@ -236,8 +265,7 @@ export async function prepareRuntimeActionDispatch(input: {
     capabilities: ctx.get(CapabilitiesKey),
     channelMetadata: ctx.get(ChannelInstrumentationKey),
     fanoutSize:
-      input.localFanoutSize ??
-      batch.localFanoutSize ??
+      input.fanoutSize ??
       plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local").length,
     initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
     parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
@@ -286,10 +314,8 @@ export async function emitSubagentCalled(input: {
   readonly entry: Extract<DispatchPlanEntry, { readonly kind: "resume" | "start" }>;
   readonly outcome: Extract<DispatchOutcome, { readonly kind: "called" }>;
   readonly sessionId: string;
-  readonly writer?: WritableStreamDefaultWriter<Uint8Array>;
-}): Promise<
-  Extract<UnstampedMessageStreamEvent, { readonly type: "subagent.called" }> | undefined
-> {
+  readonly writer: WritableStreamDefaultWriter<Uint8Array>;
+}): Promise<void> {
   const { entry, outcome } = input;
   try {
     const action = entry.kind === "resume" ? entry.action : entry.target.action;
@@ -299,49 +325,43 @@ export async function emitSubagentCalled(input: {
         : entry.target.kind === "remote"
           ? entry.target.dynamicRemoteAgent
           : undefined;
-    const event = createSubagentCalledEvent({
-      callId: outcome.callId,
-      childSessionId: outcome.address.sessionId,
-      name: outcome.name,
-      remote:
-        outcome.address.kind === "agent/remote"
-          ? {
-              // The proxy route re-resolves outbound auth from this key via
-              // resolveRemoteAgentStreamHeaders: a node id lands in
-              // subagentRegistry.subagentsByNodeId (static definition), a
-              // credentialsStepId lands in the step registry (dynamic
-              // definition). Both sides of this ternary must stay in sync
-              // with that lookup order.
-              resolverId:
-                dynamicRemoteAgent === undefined
-                  ? action.nodeId
-                  : dynamicRemoteAgent.credentialsStepId,
-              url: outcome.address.url,
-            }
-          : undefined,
-      sequence: input.batchEvent.sequence,
-      sessionId: input.sessionId,
-      toolName: outcome.toolName,
-      turnId: input.batchEvent.turnId,
-      workflowId: workflowEntryReference.workflowId,
-    });
-    if (input.writer === undefined) return event;
-
-    const parentEvent = await callAdapterEventHandler(input.adapter, event, input.adapterCtx);
-    if (parentEvent.type !== "subagent.called") {
-      throw new Error(
-        `Subagent event handler returned unexpected event type "${parentEvent.type}".`,
-      );
-    }
+    const parentEvent = await callAdapterEventHandler(
+      input.adapter,
+      createSubagentCalledEvent({
+        callId: outcome.callId,
+        childSessionId: outcome.address.sessionId,
+        name: outcome.name,
+        remote:
+          outcome.address.kind === "agent/remote"
+            ? {
+                // The proxy route re-resolves outbound auth from this key via
+                // resolveRemoteAgentStreamHeaders: a node id lands in
+                // subagentRegistry.subagentsByNodeId (static definition), a
+                // credentialsStepId lands in the step registry (dynamic
+                // definition). Both sides of this ternary must stay in sync
+                // with that lookup order.
+                resolverId:
+                  dynamicRemoteAgent === undefined
+                    ? action.nodeId
+                    : dynamicRemoteAgent.credentialsStepId,
+                url: outcome.address.url,
+              }
+            : undefined,
+        sequence: input.batchEvent.sequence,
+        sessionId: input.sessionId,
+        toolName: outcome.toolName,
+        turnId: input.batchEvent.turnId,
+        workflowId: workflowEntryReference.workflowId,
+      }),
+      input.adapterCtx,
+    );
     await input.writer.write(encodeMessageStreamEvent(stampMessageStreamEvent(parentEvent)));
-    return parentEvent;
   } catch (error) {
     logError(log, "subagent.called emission failed", error, {
       callId: outcome.callId,
       childSessionId: outcome.address.sessionId,
       toolName: outcome.toolName,
     });
-    return undefined;
   }
 }
 
@@ -363,7 +383,6 @@ function planDispatch(input: {
   readonly actions: readonly RuntimeActionRequest[];
   readonly bundle: CompiledBundle;
   readonly ctx: Parameters<typeof getDynamicSubagentSelection>[0];
-  readonly requireExistingAgent?: boolean;
   readonly session: RuntimeSession;
   readonly taskControls: boolean;
 }): DispatchPlanEntry[] {
@@ -395,16 +414,6 @@ function planDispatch(input: {
               ? dynamicSubagentSelection.remoteAgent
               : undefined,
           kind: "resume",
-        };
-      }
-      if (input.requireExistingAgent === true) {
-        return {
-          kind: "reject",
-          result: createAgentErrorResult({
-            action,
-            code: AGENT_UNREACHABLE,
-            message: `Agent with id "${agentId}" is no longer reachable.`,
-          }),
         };
       }
       log.warn("unknown agentId on subagent call; starting a new agent", {

@@ -17,34 +17,28 @@ function orchestrationTools(): HarnessToolMap {
     [
       "researcher",
       {
-        delegation: {
-          action: {
-            kind: "subagent-call",
-            nodeId: "subagents/researcher",
-            subagentName: "researcher",
-          },
-          execution: "runtime-action",
-        },
         description: "Delegate to the researcher subagent.",
         inputSchema: jsonSchema({ type: "object" }),
         name: "researcher",
+        runtimeAction: {
+          kind: "subagent-call",
+          nodeId: "subagents/researcher",
+          subagentName: "researcher",
+        },
       },
     ],
     [
       "remote_reviewer",
       {
-        delegation: {
-          action: {
-            kind: "remote-agent-call",
-            nodeId: "subagents/remote-reviewer.ts",
-            remoteAgentName: "remote_reviewer",
-            subagentName: "remote_reviewer",
-          },
-          execution: "runtime-action",
-        },
         description: "Delegate to the remote reviewer.",
         inputSchema: jsonSchema({ type: "object" }),
         name: "remote_reviewer",
+        runtimeAction: {
+          kind: "remote-agent-call",
+          nodeId: "subagents/remote-reviewer.ts",
+          remoteAgentName: "remote_reviewer",
+          subagentName: "remote_reviewer",
+        },
       },
     ],
     [
@@ -141,30 +135,6 @@ describe("applyWorkflowTool", () => {
     expect(hostTools.researcher).toBeDefined();
     expect(hostTools.remote_reviewer).toBeDefined();
     expect(hostTools.bash).toBeUndefined();
-  });
-
-  it("rebuilds executable task subagents from their Workflow action", () => {
-    const tools: HarnessToolMap = new Map([
-      [
-        "researcher",
-        {
-          delegation: {
-            action: {
-              kind: "subagent-call",
-              nodeId: "subagents/researcher",
-              subagentName: "researcher",
-            },
-            execution: "ai-sdk",
-          },
-          description: "Delegate to the researcher subagent.",
-          execute: async () => ({ status: "working" }),
-          inputSchema: jsonSchema({ type: "object" }),
-          name: "researcher",
-        },
-      ],
-    ]);
-
-    expect(buildWorkflowHostTools({ tools }).researcher?.execute).toBeDefined();
   });
 
   it("does not construct ordinary tools while rebuilding the continuation surface", () => {
