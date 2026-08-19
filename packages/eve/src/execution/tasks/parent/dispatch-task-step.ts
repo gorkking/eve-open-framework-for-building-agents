@@ -52,6 +52,7 @@ import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 export interface SubagentToolDispatchInput {
   readonly batch: PendingRuntimeActionBatch;
   readonly callbackBaseUrl?: string;
+  readonly localFanoutSize: number;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
 }
@@ -70,6 +71,7 @@ export async function dispatchTaskStep(
 
   const prepared = await prepareRuntimeActionDispatch({
     batch: "batch" in input ? input.batch : undefined,
+    localFanoutSize: "localFanoutSize" in input ? input.localFanoutSize : undefined,
     serializedContext: input.serializedContext,
     sessionState: input.sessionState,
     taskControls: true,

@@ -13,11 +13,9 @@ import {
 import { createTaskSubagentHarnessDefinition } from "#execution/delegation-tool.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
 import { readLatestTaskView } from "#execution/tasks/parent/run-parent.js";
-import {
-  runWithSubagentToolExecution,
-  syncSubagentToolExecution,
-} from "#execution/tasks/parent/subagent/tool-execution.js";
+import { runWithSubagentToolExecution } from "#execution/tasks/parent/subagent/tool-execution.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
+import { setHarnessEmissionState } from "#harness/emission.js";
 import { buildToolSet } from "#harness/tools.js";
 import type { HarnessSession } from "#harness/types.js";
 import { createTestRuntime } from "#internal/testing/app-harness.js";
@@ -53,13 +51,21 @@ describe("local subagent defineTool execution", () => {
         turn: { id: "turn-subagent-define-tool", sequence: 1 },
       });
 
-      const session: HarnessSession = {
-        agent: { modelReference: { id: "openai/gpt-5.4" }, system: "", tools: [] },
-        compaction: { recentWindowSize: 10, threshold: 100_000 },
-        continuationToken: "http:subagent-define-tool",
-        history: [],
-        sessionId: "parent-subagent-define-tool",
-      };
+      const session: HarnessSession = setHarnessEmissionState(
+        {
+          agent: { modelReference: { id: "openai/gpt-5.4" }, system: "", tools: [] },
+          compaction: { recentWindowSize: 10, threshold: 100_000 },
+          continuationToken: "http:subagent-define-tool",
+          history: [],
+          sessionId: "parent-subagent-define-tool",
+        },
+        {
+          sequence: 1,
+          sessionStarted: true,
+          stepIndex: 0,
+          turnId: "turn-subagent-define-tool",
+        },
+      );
       const tool = createTaskSubagentHarnessDefinition({
         description: "General-purpose agent",
         kind: "subagent",
@@ -86,6 +92,7 @@ describe("local subagent defineTool execution", () => {
 
       let generated: Awaited<ReturnType<typeof generateText>> | undefined;
       const events: UnstampedMessageStreamEvent[] = [];
+      let currentSession = session;
       const stepResult = await contextStorage.run(ctx, () =>
         runWithSubagentToolExecution({
           handleEvent: async (event) => {
@@ -93,14 +100,6 @@ describe("local subagent defineTool execution", () => {
           },
           session,
           step: async () => {
-            let currentSession = session;
-            syncSubagentToolExecution({
-              batchEvent: { sequence: 1, stepIndex: 0, turnId: "turn-subagent-define-tool" },
-              session: currentSession,
-              updateSession: (nextSession) => {
-                currentSession = nextSession;
-              },
-            });
             const tools = new Map([["agent", tool]]);
             generated = await generateText({
               model,

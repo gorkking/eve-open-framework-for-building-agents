@@ -171,6 +171,7 @@ export interface PreparedRuntimeActionDispatch {
  */
 export async function prepareRuntimeActionDispatch(input: {
   readonly batch?: PendingRuntimeActionBatch;
+  readonly localFanoutSize?: number;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
   /**
@@ -230,8 +231,9 @@ export async function prepareRuntimeActionDispatch(input: {
     bundle,
     capabilities: ctx.get(CapabilitiesKey),
     channelMetadata: ctx.get(ChannelInstrumentationKey),
-    fanoutSize: plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local")
-      .length,
+    fanoutSize:
+      input.localFanoutSize ??
+      plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local").length,
     initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
     parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
     plan,

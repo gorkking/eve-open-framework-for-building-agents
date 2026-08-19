@@ -10,11 +10,14 @@ Dynamic subagents and task-control tools are unchanged, and the implicit
 `agent` tool remains root-only.
 
 Each AI SDK tool execution starts `executeSubagentWorkflow`, which calls
-the existing `dispatchTaskStep` with that call. Sibling calls start concurrently.
-The turn-local executor combines their task and agent registrations in the parent
-session before child readiness is released. It cancels and acknowledges started
-tasks if the model step fails. No pending RuntimeAction batch is created for these
-calls.
+the existing `dispatchTaskStep` with that call. Calls for different agents start
+concurrently. Continuations targeting the same persistent agent are admitted in
+order so `dispatchTaskStep` can enforce its one-active-task invariant against the
+updated parent session. Fresh local siblings share the parent token remainder by
+the full AI SDK fanout. The turn-local executor combines task and agent
+registrations before child readiness is released, and cancels and acknowledges
+started tasks if the model step fails. No pending RuntimeAction batch is created
+for these calls.
 
 Local children publish HITL events to their task inbox. Remote children use the
 existing authenticated task callback URL. Existing task APIs continue to own
@@ -26,3 +29,9 @@ receipt, handle, events, and terminal output. Focused tests cover the task-mode
 gate, local and remote execution, failure cleanup, and readiness ordering.
 
 This is an internal prototype and adds no public authoring API.
+
+As with the existing child-start path, a durable parent-step retry after
+`start()` succeeds but before the step commits can create an extra wrapper
+Workflow run. Task and child identities remain replay-stable, so the duplicate
+cannot own a second working task; eliminating the extra wrapper run requires a
+Workflow `start()` idempotency key, which the current runtime does not expose.

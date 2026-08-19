@@ -53,7 +53,6 @@ import {
 } from "#context/build-dynamic-tools.js";
 import { buildDynamicSubagentTools } from "#context/dynamic-subagent-lifecycle.js";
 import { PendingSkillAnnouncementKey } from "#context/dynamic-skill-lifecycle.js";
-import { syncSubagentToolExecution } from "#execution/tasks/parent/subagent/tool-execution.js";
 import { toErrorMessage } from "#shared/errors.js";
 import {
   createActionResultEvent,
@@ -1440,13 +1439,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         workflow: workflowConfig,
       });
       session = advertisedModelTools.session;
-      syncSubagentToolExecution({
-        batchEvent: emissionState,
-        session,
-        updateSession: (nextSession) => {
-          session = nextSession;
-        },
-      });
       const modelTools = advertisedModelTools.modelTools;
 
       const effectiveTools = marker ? applyLastToolCacheBreakpoint(modelTools, marker) : modelTools;

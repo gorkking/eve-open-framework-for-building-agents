@@ -8,6 +8,7 @@ import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchTaskStep } from "#execution/tasks/parent/dispatch-task-step.js";
 import {
+  getPendingRuntimeActionBatch,
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
 } from "#harness/runtime-actions.js";
@@ -412,6 +413,37 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         taskRunId: "task-run-1",
       }),
     ]);
+  });
+
+  it("uses the AI SDK sibling fanout when assigning a task child token budget", async () => {
+    const session = {
+      ...createStartSession({ kind: "local" }),
+      limits: { maxInputTokensPerSession: 100, maxOutputTokensPerSession: 40 },
+    };
+    installContext(
+      session,
+      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
+      true,
+    );
+    vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({ runId: "task-run-1" });
+    const batch = getPendingRuntimeActionBatch(session.state);
+    if (batch === undefined) throw new Error("Expected a pending subagent call.");
+
+    await dispatchTaskStep({
+      batch,
+      localFanoutSize: 2,
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limits: {
+          maxInputTokensPerSession: 50,
+          maxOutputTokensPerSession: 20,
+        },
+      }),
+    );
   });
 
   it("silently rejects a tasks-mode start that failed before index admission", async () => {

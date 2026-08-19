@@ -1,4 +1,4 @@
-import { contextStorage, loadContext } from "#context/container.js";
+import { loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
 import { SandboxKey } from "#context/keys.js";
 import { serializeContext } from "#context/serialize.js";
@@ -7,6 +7,7 @@ import {
   type DurableSession,
 } from "#execution/durable-session-store.js";
 import { cancelOwnedTask } from "#execution/tasks/parent/dispatch.js";
+import { createAgentErrorResult } from "#execution/agent-handle-dispatch.js";
 import { findTaskAgentAddress } from "#execution/tasks/parent/control-shared.js";
 import type {
   SubagentToolDispatchInput,
@@ -23,6 +24,7 @@ import {
 import { CallbackBaseUrlKey } from "#harness/authorization.js";
 import type { PendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import { isTurnCancellation } from "#harness/turn-cancellation.js";
+import { SUBAGENT_EXECUTION_FAILED } from "#harness/agent-handle-errors.js";
 import type { HandleEventFn, HarnessSession, StepResult } from "#harness/types.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { start } from "#internal/workflow/runtime.js";
@@ -37,6 +39,7 @@ import type {
   RuntimeSubagentCallActionRequest,
 } from "#runtime/actions/types.js";
 import { BundleKey, type CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
+import { toError } from "#shared/errors.js";
 import {
   findSessionTaskEntry,
   getSessionTaskIndex,
@@ -54,6 +57,12 @@ interface SubagentToolExecutionEffects {
   readonly session: HarnessSession;
 }
 
+interface RegisteredSubagentCall {
+  readonly action: SubagentCallAction;
+  readonly continuesAgent: boolean;
+  readonly result: PromiseWithResolvers<RuntimeActionResult>;
+}
+
 const log = createLogger("execution.subagent-tool");
 const SubagentToolExecutionKey = new ContextKey<SubagentToolExecutionController>(
   "eve.internal.subagentToolExecution",
@@ -63,14 +72,6 @@ export async function executeSubagentToolCall(input: {
   readonly action: SubagentCallAction;
 }): Promise<unknown> {
   return loadContext().require(SubagentToolExecutionKey).execute(input.action);
-}
-
-export function syncSubagentToolExecution(input: {
-  readonly batchEvent: PendingRuntimeActionBatch["event"];
-  readonly session: HarnessSession;
-  readonly updateSession: (session: HarnessSession) => void;
-}): void {
-  contextStorage.getStore()?.get(SubagentToolExecutionKey)?.sync(input);
 }
 
 export async function runWithSubagentToolExecution(input: {
@@ -163,31 +164,20 @@ class SubagentToolExecutionController {
   private readonly callbackBaseUrl?: string;
   private emissionTail: Promise<void> = Promise.resolve();
   private readonly handleEvent?: HandleEventFn;
-  private dispatchStarted = false;
   private readonly dispatches: Promise<RuntimeActionResult>[] = [];
+  private readonly initialSession: HarnessSession;
   private parentSandboxPreparation?: Promise<void>;
-  private batchEvent: PendingRuntimeActionBatch["event"];
+  private readonly batchEvent: PendingRuntimeActionBatch["event"];
+  private flushScheduled = false;
+  private readonly registeredCalls: RegisteredSubagentCall[] = [];
   private session: HarnessSession;
-  private updateSession?: (session: HarnessSession) => void;
 
   constructor(input: { readonly handleEvent?: HandleEventFn; readonly session: HarnessSession }) {
     this.callbackBaseUrl = loadContext().get(CallbackBaseUrlKey);
     this.handleEvent = input.handleEvent;
     this.batchEvent = getHarnessEmissionState(input.session.state);
+    this.initialSession = input.session;
     this.session = input.session;
-  }
-
-  sync(input: {
-    readonly batchEvent: PendingRuntimeActionBatch["event"];
-    readonly session: HarnessSession;
-    readonly updateSession: (session: HarnessSession) => void;
-  }): void {
-    if (this.dispatchStarted) {
-      throw new Error("Cannot update subagent tool execution state after dispatch started.");
-    }
-    this.batchEvent = input.batchEvent;
-    this.session = input.session;
-    this.updateSession = input.updateSession;
   }
 
   async execute(action: SubagentCallAction): Promise<unknown> {
@@ -195,10 +185,15 @@ class SubagentToolExecutionController {
     const continuesAgent =
       typeof requestedAgentId === "string" &&
       findTaskAgentAddress(this.session, requestedAgentId) !== undefined;
-    this.dispatchStarted = true;
-    const dispatch = this.dispatch(action, continuesAgent);
-    this.dispatches.push(dispatch);
-    return this.readResult(await dispatch);
+    const result = Promise.withResolvers<RuntimeActionResult>();
+    this.registeredCalls.push({ action, continuesAgent, result });
+    if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      // AI SDK invokes one response's sibling tool executors synchronously
+      // before awaiting them, so the next microtask is the complete fanout.
+      queueMicrotask(() => this.flushRegisteredCalls());
+    }
+    return this.readResult(await result.promise);
   }
 
   private readResult(result: RuntimeActionResult): unknown {
@@ -213,11 +208,20 @@ class SubagentToolExecutionController {
   async apply(result: StepResult): Promise<StepResult> {
     await this.settleDispatches();
     const delegatedTasks = [...this.pendingTasks.values()];
-    if (delegatedTasks.length === 0) return result;
-    return {
+    const withSession = {
       ...result,
-      delegatedTasks: [...(result.delegatedTasks ?? []), ...delegatedTasks],
+      session: mergeSubagentDispatchSession({
+        current: result.session,
+        dispatched: this.session,
+        initial: this.initialSession,
+      }),
     };
+    return delegatedTasks.length === 0
+      ? withSession
+      : {
+          ...withSession,
+          delegatedTasks: [...(result.delegatedTasks ?? []), ...delegatedTasks],
+        };
   }
 
   async readEffects(): Promise<SubagentToolExecutionEffects | undefined> {
@@ -230,62 +234,99 @@ class SubagentToolExecutionController {
   private async dispatch(
     action: SubagentCallAction,
     continuesAgent: boolean,
+    localFanoutSize: number,
   ): Promise<RuntimeActionResult> {
     await this.emitActionRequested(action);
-    if (!continuesAgent) await this.prepareParentSandbox(action);
-    const session = this.session;
-    const workflowInput: SubagentToolDispatchInput = {
-      batch: { actions: [action], event: this.batchEvent, responseMessages: [] },
-      callbackBaseUrl: this.callbackBaseUrl,
-      serializedContext: serializeContext(loadContext()),
-      sessionState: createDurableSessionState({ session }),
-    };
-    const run = await start<[SubagentToolDispatchInput], SubagentToolDispatchResult>(
-      subagentWorkflowReference,
-      [workflowInput],
-    );
-    const output = await run.returnValue;
-    const dispatched = output.sessionState.snapshot?.session;
-    if (dispatched === undefined) {
-      throw new Error("Subagent workflow returned no durable session snapshot.");
-    }
-    this.session = mergeSubagentDispatchSession({
-      current: this.session,
-      dispatched,
-      initial: session,
-    });
-    this.updateSession?.(this.session);
-    for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
-    for (const event of output.calledEvents ?? []) {
-      await this.emit(event, "subagent.called emission failed", event.data.callId);
-    }
-
-    const result = output.results.find((candidate) => candidate.callId === action.callId);
-    if (result === undefined) {
-      throw new Error(`Subagent tool call "${action.callId}" produced no result.`);
-    }
-    if (
-      result.kind === "subagent-result" &&
-      result.isError !== true &&
-      result.backgroundTask !== undefined
-    ) {
-      await this.emit(
-        {
-          data: {
-            backgroundTask: result.backgroundTask,
-            callId: result.callId,
-            output:
-              typeof result.output === "string" ? result.output : JSON.stringify(result.output),
-            subagentName: result.subagentName,
-          },
-          type: "subagent.completed",
-        },
-        "subagent.completed emission failed",
-        result.callId,
+    try {
+      if (!continuesAgent) await this.prepareParentSandbox(action);
+      const session = this.session;
+      const workflowInput: SubagentToolDispatchInput = {
+        batch: { actions: [action], event: this.batchEvent, responseMessages: [] },
+        callbackBaseUrl: this.callbackBaseUrl,
+        localFanoutSize,
+        serializedContext: serializeContext(loadContext()),
+        sessionState: createDurableSessionState({ session }),
+      };
+      const run = await start<[SubagentToolDispatchInput], SubagentToolDispatchResult>(
+        subagentWorkflowReference,
+        [workflowInput],
       );
+      const output = await run.returnValue;
+      const dispatched = output.sessionState.snapshot?.session;
+      if (dispatched === undefined) {
+        throw new Error("Subagent workflow returned no durable session snapshot.");
+      }
+      this.session = mergeSubagentDispatchSession({
+        current: this.session,
+        dispatched,
+        initial: session,
+      });
+      for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
+      for (const event of output.calledEvents ?? []) {
+        await this.emit(event, "subagent.called emission failed", event.data.callId);
+      }
+
+      const result = output.results.find((candidate) => candidate.callId === action.callId);
+      if (result === undefined) {
+        throw new Error(`Subagent tool call "${action.callId}" produced no result.`);
+      }
+      if (
+        result.kind === "subagent-result" &&
+        result.isError !== true &&
+        result.backgroundTask !== undefined
+      ) {
+        await this.emit(
+          {
+            data: {
+              backgroundTask: result.backgroundTask,
+              callId: result.callId,
+              output:
+                typeof result.output === "string" ? result.output : JSON.stringify(result.output),
+              subagentName: result.subagentName,
+            },
+            type: "subagent.completed",
+          },
+          "subagent.completed emission failed",
+          result.callId,
+        );
+      }
+      await this.emitActionResult(result);
+      return result;
+    } catch (error) {
+      await this.emitActionResult(
+        createAgentErrorResult({
+          action,
+          code: SUBAGENT_EXECUTION_FAILED,
+          message: `Subagent dispatch failed: ${toError(error).message}`,
+        }),
+      );
+      throw error;
     }
-    await this.emitActionResult(result);
-    return result;
+  }
+
+  private flushRegisteredCalls(): void {
+    this.flushScheduled = false;
+    const calls = this.registeredCalls.splice(0);
+    const localFanoutSize = calls.filter(
+      ({ action, continuesAgent }) => action.kind === "subagent-call" && !continuesAgent,
+    ).length;
+    const activeAgents = new Map<string, Promise<RuntimeActionResult>>();
+
+    for (const call of calls) {
+      const requestedAgentId = call.action.input.agentId;
+      const agentId =
+        call.continuesAgent && typeof requestedAgentId === "string" ? requestedAgentId : undefined;
+      const prior = agentId === undefined ? undefined : activeAgents.get(agentId);
+      const dispatch =
+        prior === undefined
+          ? this.dispatch(call.action, call.continuesAgent, localFanoutSize)
+          : prior
+              .catch(() => undefined)
+              .then(() => this.dispatch(call.action, call.continuesAgent, localFanoutSize));
+      if (agentId !== undefined) activeAgents.set(agentId, dispatch);
+      this.dispatches.push(dispatch);
+      void dispatch.then(call.result.resolve, call.result.reject);
+    }
   }
 
   private async prepareParentSandbox(action: SubagentCallAction): Promise<void> {
@@ -300,7 +341,6 @@ class SubagentToolExecutionController {
     await sandbox.get();
     const sandboxState = await sandbox.captureState();
     this.session = { ...this.session, sandboxState };
-    this.updateSession?.(this.session);
   }
 
   private async emitActionRequested(action: SubagentCallAction): Promise<void> {
