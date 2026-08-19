@@ -53,6 +53,11 @@ export interface ProgressSnapshotV1 {
   readonly seenEventIds: readonly string[];
 }
 
+/** Driver-owned presentation boundary; renderers receive no turn or channel context. */
+export interface SessionProgressHandler {
+  handleProgress(command: ProgressCommandV1): Promise<void>;
+}
+
 export interface ProgressCommandV1 {
   readonly kind: "progress";
   readonly version: 1;
