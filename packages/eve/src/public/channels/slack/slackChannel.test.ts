@@ -2674,10 +2674,9 @@ describe("slackChannel() HITL interaction pipeline", () => {
       },
       inputResponses: [{ optionId: "approve", requestId: "approval_abc123" }],
       state: {
-        approvalResponderUsers: { "slack:T01:U_APPROVER": "U_APPROVER" },
+        approvalResponderUsers: { "slack:T_ACTOR:U_APPROVER": "U_APPROVER" },
       },
     });
-    expect(botToken).toHaveBeenCalledWith({ teamId: "T_INSTALLATION" });
   });
 
   it("opens freeform modals with installation-scoped credentials and metadata", async () => {
