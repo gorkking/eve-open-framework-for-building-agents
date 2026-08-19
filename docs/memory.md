@@ -154,7 +154,7 @@ export default defineMemory({
 });
 ```
 
-The provider recalls the current document at every turn start and after each successful compaction. It exposes `save_memory({ text })` and `remove_memory({ index })`, which eve qualifies with the slot name as `user__save_memory` and `user__remove_memory`. It does not implement `save`, run a hidden capture model, or persist complete transcripts. The model decides when to maintain the document by calling its tools.
+The provider reads the current document at every turn start and after each successful compaction. It appends the formatted document when durable history does not already contain an identical latest recall for the same slot and scope; an empty or unchanged document appends nothing. It exposes `save_memory({ text })` and `remove_memory({ index })`, which eve qualifies with the slot name as `user__save_memory` and `user__remove_memory`. It does not implement `save`, run a hidden capture model, or persist complete transcripts. The model decides when to maintain the document by calling its tools.
 
 The document stores one memory per line. Recall includes each stable index so the model can remove an entry without rewriting unrelated memories:
 
