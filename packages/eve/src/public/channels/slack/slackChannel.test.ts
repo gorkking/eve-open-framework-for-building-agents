@@ -3351,7 +3351,7 @@ describe("slackChannel().receive", () => {
         message: "start the investigation",
         target: {
           channelId: "C123",
-          teamId: "T_INSTALLATION",
+          installationTeamId: "T_INSTALLATION",
           initialMessage: { card: Card({ children: [CardText("Investigation")] }) },
         },
         auth: null,

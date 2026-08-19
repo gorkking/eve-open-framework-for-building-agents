@@ -274,7 +274,7 @@ export interface SlackReceiveTarget {
   readonly channelId: string;
   readonly threadTs?: string;
   /** Slack workspace whose app installation supplies credentials for this send. */
-  readonly teamId?: string;
+  readonly installationTeamId?: string;
   /**
    * Optional message posted into the Slack channel before the agent runs.
    * The post becomes the thread root and the first turn is threaded under
@@ -872,7 +872,9 @@ async function receiveOnSlack(
   const requestedThreadTs =
     typeof receiveTarget.threadTs === "string" ? receiveTarget.threadTs : "";
   const installationTeamId =
-    typeof receiveTarget.teamId === "string" ? receiveTarget.teamId : deps.installationTeamId;
+    typeof receiveTarget.installationTeamId === "string"
+      ? receiveTarget.installationTeamId
+      : deps.installationTeamId;
   const initialMessage = receiveTarget.initialMessage;
   if (initialMessage && requestedThreadTs.length > 0) {
     throw new Error(
