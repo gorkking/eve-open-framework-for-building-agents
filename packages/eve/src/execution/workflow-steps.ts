@@ -99,6 +99,7 @@ import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/s
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
+import { publishStructuralProgress } from "#execution/structural-progress.js";
 
 const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
@@ -446,6 +447,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       event: emitted,
       messages: messages ?? [],
     });
+    await publishStructuralProgress(ctx, emitted);
   };
 
   const mode = ctx.require(ModeKey);
