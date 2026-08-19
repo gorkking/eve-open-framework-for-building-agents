@@ -87,6 +87,10 @@ export function beginSubagentToolExecutionAttempt(): void {
   loadContext().require(SubagentToolExecutionKey).beginAttempt();
 }
 
+export function prepareSubagentToolExecutionBatch(callIds: readonly string[]): void {
+  loadContext().require(SubagentToolExecutionKey).prepareBatch(callIds);
+}
+
 export async function runWithSubagentToolExecution(input: {
   readonly handleEvent?: HandleEventFn;
   readonly session: HarnessSession;
@@ -175,15 +179,14 @@ class SubagentToolExecutionController {
     SubagentToolExecutionEffects["delegatedTasks"][number]
   >();
   private readonly callbackBaseUrl?: string;
-  private emissionTail: Promise<void> = Promise.resolve();
   private readonly handleEvent?: HandleEventFn;
-  private readonly dispatches: Promise<RuntimeActionResult>[] = [];
+  private readonly dispatches: Promise<void>[] = [];
   private readonly initialSession: HarnessSession;
   private parentSandboxPreparation?: Promise<void>;
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
-  private flushScheduled = false;
+  private expectedCallIds?: readonly string[];
   private readonly fingerprintOccurrences = new Map<string, number>();
-  private readonly registeredCalls: RegisteredSubagentCall[] = [];
+  private readonly registeredCalls = new Map<string, RegisteredSubagentCall>();
   private session: HarnessSession;
 
   constructor(input: { readonly handleEvent?: HandleEventFn; readonly session: HarnessSession }) {
@@ -201,9 +204,28 @@ class SubagentToolExecutionController {
       );
     }
     this.fingerprintOccurrences.clear();
+    this.expectedCallIds = undefined;
+    this.registeredCalls.clear();
+  }
+
+  prepareBatch(callIds: readonly string[]): void {
+    if (this.expectedCallIds !== undefined || this.registeredCalls.size > 0) {
+      throw new Error("A subagent tool batch is already being registered.");
+    }
+    if (new Set(callIds).size !== callIds.length) {
+      throw new Error("A model response contains duplicate subagent tool-call ids.");
+    }
+    if (callIds.length === 0) return;
+    this.expectedCallIds = callIds;
+    this.flushIfReady();
   }
 
   async execute(action: SubagentCallAction): Promise<unknown> {
+    if (this.expectedCallIds?.includes(action.callId) !== true) {
+      throw new Error(
+        `Subagent tool call "${action.callId}" is absent from the prepared model response.`,
+      );
+    }
     const requestedAgentId = action.input.agentId;
     const continuesAgent =
       typeof requestedAgentId === "string" &&
@@ -215,13 +237,11 @@ class SubagentToolExecutionController {
     const dispatchCallId = `subagent:${this.batchEvent.turnId}:${String(
       this.batchEvent.stepIndex,
     )}:${fingerprint}:${String(occurrence)}`;
-    this.registeredCalls.push({ action, continuesAgent, dispatchCallId, result });
-    if (!this.flushScheduled) {
-      this.flushScheduled = true;
-      // AI SDK invokes one response's sibling tool executors synchronously
-      // before awaiting them, so the next microtask is the complete fanout.
-      queueMicrotask(() => void this.flushRegisteredCalls());
+    if (this.registeredCalls.has(action.callId)) {
+      throw new Error(`Subagent tool call "${action.callId}" was registered more than once.`);
     }
+    this.registeredCalls.set(action.callId, { action, continuesAgent, dispatchCallId, result });
+    this.flushIfReady();
     return this.readResult(await result.promise);
   }
 
@@ -349,21 +369,30 @@ class SubagentToolExecutionController {
     }
   }
 
-  private async flushRegisteredCalls(): Promise<void> {
-    this.flushScheduled = false;
-    const calls = this.registeredCalls.splice(0);
+  private flushIfReady(): void {
+    if (this.expectedCallIds === undefined) return;
+    if (this.expectedCallIds.some((callId) => !this.registeredCalls.has(callId))) return;
+
+    const calls = this.expectedCallIds.map((callId) => this.registeredCalls.get(callId)!);
+    this.expectedCallIds = undefined;
+    this.registeredCalls.clear();
+    const dispatch = this.flushRegisteredCalls(calls);
+    this.dispatches.push(dispatch);
+  }
+
+  private async flushRegisteredCalls(calls: readonly RegisteredSubagentCall[]): Promise<void> {
     await this.emitActionsRequested(calls.map(({ action }) => action));
     const localFanoutSize = calls.filter(
       ({ action, continuesAgent }) => action.kind === "subagent-call" && !continuesAgent,
     ).length;
     const activeAgents = new Map<string, Promise<SubagentDispatchOutcome>>();
 
-    for (const call of calls) {
+    const outcomes = calls.map((call) => {
       const requestedAgentId = call.action.input.agentId;
       const agentId =
         call.continuesAgent && typeof requestedAgentId === "string" ? requestedAgentId : undefined;
       const prior = agentId === undefined ? undefined : activeAgents.get(agentId);
-      const outcome =
+      const outcome: Promise<SubagentDispatchOutcome> =
         prior === undefined
           ? this.dispatch(call.action, call.continuesAgent, call.dispatchCallId, localFanoutSize)
           : prior
@@ -377,9 +406,15 @@ class SubagentToolExecutionController {
                 ),
               );
       if (agentId !== undefined) activeAgents.set(agentId, outcome);
-      const dispatch = this.projectDispatch(call.action, outcome);
-      this.dispatches.push(dispatch);
-      void dispatch.then(call.result.resolve, call.result.reject);
+      return outcome;
+    });
+
+    for (const [index, call] of calls.entries()) {
+      try {
+        call.result.resolve(await this.projectDispatch(call.action, outcomes[index]!));
+      } catch (error) {
+        call.result.reject(error);
+      }
     }
   }
 
@@ -428,15 +463,11 @@ class SubagentToolExecutionController {
     callId?: string,
   ): Promise<void> {
     if (this.handleEvent === undefined) return;
-    const emission = this.emissionTail.then(async () => {
-      try {
-        await this.handleEvent?.(event);
-      } catch (error) {
-        logError(log, message, error, callId === undefined ? undefined : { callId });
-      }
-    });
-    this.emissionTail = emission;
-    await emission;
+    try {
+      await this.handleEvent(event);
+    } catch (error) {
+      logError(log, message, error, callId === undefined ? undefined : { callId });
+    }
   }
 
   private async settleDispatches(): Promise<void> {

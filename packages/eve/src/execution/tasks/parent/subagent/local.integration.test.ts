@@ -15,6 +15,7 @@ import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.
 import { readLatestTaskView } from "#execution/tasks/parent/run-parent.js";
 import {
   beginSubagentToolExecutionAttempt,
+  prepareSubagentToolExecutionBatch,
   runWithSubagentToolExecution,
 } from "#execution/tasks/parent/subagent/tool-execution.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
@@ -105,6 +106,7 @@ describe("local subagent defineTool execution", () => {
           session,
           step: async () => {
             const tools = new Map([["agent", tool]]);
+            prepareSubagentToolExecutionBatch(["call-define-tool"]);
             generated = await generateText({
               model,
               prompt: "Delegate the work.",
@@ -240,8 +242,14 @@ describe("local subagent defineTool execution", () => {
           return {
             content: [
               {
-                input: JSON.stringify({ message: "Reply with exactly `attempt-retry-ok`." }),
-                toolCallId: `provider-call-${String(attempt)}`,
+                input: JSON.stringify({ message: "Reply with exactly `attempt-retry-a`." }),
+                toolCallId: `provider-call-${String(attempt)}-a`,
+                toolName: "agent",
+                type: "tool-call" as const,
+              },
+              {
+                input: JSON.stringify({ message: "Reply with exactly `attempt-retry-b`." }),
+                toolCallId: `provider-call-${String(attempt)}-b`,
                 toolName: "agent",
                 type: "tool-call" as const,
               },
@@ -270,6 +278,12 @@ describe("local subagent defineTool execution", () => {
                   hooks: {
                     capturesContent: false,
                     async publish(event) {
+                      if (
+                        event.type === "tool.call.started" &&
+                        event.callId === "provider-call-1-b"
+                      ) {
+                        await new Promise((resolve) => setTimeout(resolve, 0));
+                      }
                       if (event.type !== "step.attempt.completed") return;
                       attemptIndexes.push(event.scope.attemptIndex);
                       if (!rejectedCompletion) {
@@ -284,6 +298,7 @@ describe("local subagent defineTool execution", () => {
                 },
                 mode: "task",
                 onModelAttempt: beginSubagentToolExecutionAttempt,
+                onSubagentToolCalls: prepareSubagentToolExecutionBatch,
                 resolveModel: async () => model,
                 tools: new Map([["agent", tool]]),
               })(session, { message: "Delegate once." }),
@@ -292,11 +307,23 @@ describe("local subagent defineTool execution", () => {
       ).rejects.toThrow("cannot be retried after a subagent tool has started durable work");
 
       const calledEvents = events.filter((event) => event.type === "subagent.called");
+      const requestEvents = events.filter((event) => event.type === "actions.requested");
       const results = events.filter((event) => event.type === "action.result");
       expect(model.doGenerateCalls).toHaveLength(1);
       expect(attemptIndexes).toEqual([0]);
-      expect(calledEvents.map((event) => event.data.callId)).toEqual(["provider-call-1"]);
-      expect(results.map((event) => event.data.result.callId)).toEqual(["provider-call-1"]);
+      expect(requestEvents).toHaveLength(1);
+      expect(requestEvents[0]?.data.actions.map((action) => action.callId)).toEqual([
+        "provider-call-1-a",
+        "provider-call-1-b",
+      ]);
+      expect(calledEvents.map((event) => event.data.callId)).toEqual([
+        "provider-call-1-a",
+        "provider-call-1-b",
+      ]);
+      expect(results.map((event) => event.data.result.callId)).toEqual([
+        "provider-call-1-a",
+        "provider-call-1-b",
+      ]);
     });
   }, 60_000);
 
@@ -363,6 +390,7 @@ describe("local subagent defineTool execution", () => {
           runWithSubagentToolExecution({
             session,
             step: async () => {
+              prepareSubagentToolExecutionBatch(calls.map(({ id }) => id));
               generated = await generateText({
                 model,
                 prompt: "Delegate both independent tasks.",

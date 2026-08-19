@@ -7,6 +7,7 @@ import {
 import {
   isStepCount,
   type LanguageModel,
+  type LanguageModelCallEndEvent,
   type ModelMessage,
   type ProviderMetadata,
   type SystemModelMessage,
@@ -1482,6 +1483,24 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         headers: attributionHeaders,
         instructions,
         model,
+        onLanguageModelCallEnd:
+          config.onSubagentToolCalls === undefined
+            ? undefined
+            : (event: LanguageModelCallEndEvent) => {
+                config.onSubagentToolCalls?.(
+                  event.content.flatMap((part) => {
+                    if (
+                      part.type !== "tool-call" ||
+                      part.providerExecuted === true ||
+                      isInvalidToolCall(part) ||
+                      advertisedHarnessTools.get(part.toolName)?.frameworkAction !== "subagent"
+                    ) {
+                      return [];
+                    }
+                    return [part.toolCallId];
+                  }),
+                );
+              },
         onToolExecutionEnd: logToolExecutionError,
         // Replaces the AI SDK's default `console.error`; the harness still
         // emits stream events, this just keeps the raw error from being silent.

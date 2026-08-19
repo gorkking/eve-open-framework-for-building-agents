@@ -8,6 +8,7 @@ import {
 } from "#execution/delegation-tool.js";
 import {
   beginSubagentToolExecutionAttempt,
+  prepareSubagentToolExecutionBatch,
   runWithSubagentToolExecution,
 } from "#execution/tasks/parent/subagent/tool-execution.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -121,6 +122,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     mode: input.mode,
     onCompaction: preserveFrameworkStateOnCompaction,
     onModelAttempt: tasksEnabled ? beginSubagentToolExecutionAttempt : undefined,
+    onSubagentToolCalls: tasksEnabled ? prepareSubagentToolExecutionBatch : undefined,
     persistentSubagentSessions:
       input.node.agent.config?.experimental?.tasks === true ||
       input.node.agent.config?.experimental?.subagentPersistentSessions === true,

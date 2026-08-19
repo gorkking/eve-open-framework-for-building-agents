@@ -7,6 +7,7 @@ import { replaceDurableSessionSnapshot } from "#execution/durable-session-store.
 import {
   beginSubagentToolExecutionAttempt,
   executeSubagentToolCall,
+  prepareSubagentToolExecutionBatch,
   runWithSubagentToolExecution,
 } from "#execution/tasks/parent/subagent/tool-execution.js";
 import { AGENT_HANDLES_STATE_KEY, getAgentHandleStore } from "#harness/handles/store.js";
@@ -69,6 +70,12 @@ const independentAction: RuntimeSubagentCallActionRequest = {
   input: { message: "independent" },
   nodeId: "independent-node",
 };
+
+function prepareBatch(actions: readonly SubagentAction[]): void {
+  prepareSubagentToolExecutionBatch(actions.map(({ callId }) => callId));
+}
+
+type SubagentAction = RuntimeRemoteAgentCallActionRequest | RuntimeSubagentCallActionRequest;
 
 function createTask(action: RuntimeSubagentCallActionRequest, agentId = `agent-${action.callId}`) {
   const task = {
@@ -165,6 +172,7 @@ describe("subagent tool execution controller", () => {
           session,
           step: async () => {
             beginSubagentToolExecutionAttempt();
+            prepareBatch([localAction]);
             await executeSubagentToolCall({ action: localAction });
             beginSubagentToolExecutionAttempt();
             throw new Error("unreachable");
@@ -239,6 +247,7 @@ describe("subagent tool execution controller", () => {
         },
         session,
         step: async () => {
+          prepareBatch([action]);
           await executeSubagentToolCall({ action });
           return { next: null, session };
         },
@@ -293,8 +302,10 @@ describe("subagent tool execution controller", () => {
           },
           session,
           step: async () => {
-            await Promise.all(siblings.map((action) => executeSubagentToolCall({ action })));
-            await executeSubagentToolCall({ action: later });
+            prepareBatch([...siblings, later]);
+            await Promise.all(
+              [...siblings, later].map((action) => executeSubagentToolCall({ action })),
+            );
             return { next: null, session };
           },
         }),
@@ -336,7 +347,7 @@ describe("subagent tool execution controller", () => {
     });
     let activeEmissions = 0;
     let maxActiveEmissions = 0;
-    const resultEvents = new Set<string>();
+    const resultEvents: string[] = [];
     const sandbox = {
       captureState: vi.fn(() => sandboxCapture),
       get: vi.fn(async () => null),
@@ -401,16 +412,18 @@ describe("subagent tool execution controller", () => {
             requestEvents.push(event);
             await requestEmission.promise;
           }
-          if (event.type === "action.result") resultEvents.add(event.data.result.callId);
+          if (event.type === "action.result") resultEvents.push(event.data.result.callId);
           activeEmissions -= 1;
         },
         session,
         step: async () => {
-          const toolOutputs = await Promise.all(
-            [localAction, siblingAction, independentAction].map((action) =>
-              executeSubagentToolCall({ action }),
-            ),
-          );
+          prepareBatch([localAction, siblingAction, independentAction]);
+          const localOutput = executeSubagentToolCall({ action: localAction });
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const siblingOutput = executeSubagentToolCall({ action: siblingAction });
+          await Promise.resolve();
+          const independentOutput = executeSubagentToolCall({ action: independentAction });
+          const toolOutputs = await Promise.all([localOutput, siblingOutput, independentOutput]);
           return { next: { done: true, output: toolOutputs }, session: currentSession };
         },
       }),
@@ -426,7 +439,8 @@ describe("subagent tool execution controller", () => {
     requestEmission.resolve();
     await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1));
     release.get(independentAction.callId)?.();
-    await vi.waitFor(() => expect(resultEvents.has(independentAction.callId)).toBe(true));
+    await Promise.resolve();
+    expect(resultEvents).toEqual([]);
     releaseSandboxCapture();
     await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(3));
     release.get(siblingAction.callId)?.();
@@ -436,6 +450,11 @@ describe("subagent tool execution controller", () => {
     expect(requestEvents).toHaveLength(1);
     expect(sandbox.get).toHaveBeenCalledTimes(1);
     expect(maxActiveEmissions).toBe(1);
+    expect(resultEvents).toEqual([
+      localAction.callId,
+      siblingAction.callId,
+      independentAction.callId,
+    ]);
     expect(
       Object.fromEntries(
         mocks.start.mock.calls.map(([, [input]]) => [
@@ -573,6 +592,7 @@ describe("subagent tool execution controller", () => {
         },
         session: addressedSession,
         step: async () => {
+          prepareBatch(actions);
           results = await Promise.allSettled(
             actions.map((action) => executeSubagentToolCall({ action })),
           );
@@ -650,6 +670,7 @@ describe("subagent tool execution controller", () => {
           },
           session,
           step: async () => {
+            prepareBatch([localAction]);
             await executeSubagentToolCall({ action: localAction });
             return { next: null, session };
           },
@@ -718,6 +739,7 @@ describe("subagent tool execution controller", () => {
         runWithSubagentToolExecution({
           session,
           step: async () => {
+            prepareBatch([localAction]);
             await executeSubagentToolCall({ action: localAction });
             throw failure;
           },

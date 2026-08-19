@@ -6,7 +6,7 @@ import { cancelDescendantTurnsStep } from "#execution/cancel-descendant-turns-st
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
 import { dispatchWorkflowRuntimeActionsStep } from "#execution/dispatch-workflow-runtime-actions-step.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
-import type { DurableSessionState } from "#execution/durable-session-store.js";
+import type { DurableSession, DurableSessionState } from "#execution/durable-session-store.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
 import { turnWorkflow } from "#execution/turn-workflow.js";
 import {
@@ -16,6 +16,7 @@ import {
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { turnStep } from "#execution/workflow-steps.js";
 import { AGENT_HANDLES_STATE_KEY } from "#harness/handles/store.js";
+import { SESSION_TASKS_STATE_KEY } from "#tasks/session-index.js";
 
 const resumeHookMock = vi.fn();
 const createHookMock = vi.fn();
@@ -410,6 +411,112 @@ describe("turnWorkflow", () => {
     );
   });
 
+  it("retains only direct subagent effects when late cancellation wins", async () => {
+    const initialState = withSessionSnapshot(createSessionState(), {
+      history: [{ content: "keep", role: "user" }],
+      state: { existing: { value: "keep" } },
+    });
+    const task = {
+      taskId: "task_direct",
+      taskInboxToken: "task:task_direct:token",
+      taskRunId: "wrun_task_direct",
+    };
+    const taskEntry = {
+      ...task,
+      createdByStepIndex: 0,
+      createdByTurnId: "turn_0",
+      metadata: {
+        agentId: "agent_direct",
+        kind: "subagent" as const,
+        mode: "local" as const,
+        name: "delegate",
+      },
+      operationId: "operation_direct",
+    };
+    const handle = {
+      address: {
+        continuationToken: "subagent:parent:direct",
+        kind: "agent/local" as const,
+        sessionId: "child_direct",
+      },
+      identity: { id: "agent_direct", name: "delegate", nodeId: "subagents/delegate" },
+      operation: {
+        callId: "call_direct",
+        id: "operation_direct",
+        kind: "start" as const,
+        parentTurnId: "turn_0",
+      },
+      phase: "addressed" as const,
+    };
+    const sandboxState = { initialized: true, session: null } as const;
+    const completedState = withSessionSnapshot(initialState, {
+      history: [
+        { content: "keep", role: "user" },
+        { content: "discard", role: "assistant" },
+      ],
+      sandboxState,
+      state: {
+        existing: { value: "keep" },
+        leaked: { value: "discard" },
+        [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
+        [SESSION_TASKS_STATE_KEY]: { tasks: [taskEntry] },
+      },
+    });
+    const retainedState = withSessionSnapshot(initialState, {
+      history: [{ content: "keep", role: "user" }],
+      sandboxState,
+      state: {
+        existing: { value: "keep" },
+        [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
+        [SESSION_TASKS_STATE_KEY]: { tasks: [taskEntry] },
+      },
+    });
+    const sessionModel = {
+      id: "openai/gpt-5.6-sol",
+      contextWindowTokens: 1_000_000,
+    };
+    installInbox([], { cancelPayloads: [{}] });
+    vi.mocked(turnStep).mockImplementationOnce(async (stepInput) => {
+      await vi.waitFor(() => expect(stepInput.abortSignal?.aborted).toBe(true));
+      return {
+        action: "done",
+        delegatedTasks: [task],
+        output: "must not complete",
+        serializedContext: {
+          leaked: "discard",
+          state: "done",
+          [SessionDynamicModelReferenceKey.name]: sessionModel,
+        },
+        sessionState: completedState,
+      };
+    });
+
+    const { input } = createInput({
+      driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
+      sessionState: initialState,
+    });
+    await turnWorkflow(input);
+
+    const retainedContext = {
+      state: "start",
+      [SessionDynamicModelReferenceKey.name]: sessionModel,
+    };
+    expect(acknowledgeDelegatedTasksStep).toHaveBeenCalledExactlyOnceWith({ tasks: [task] });
+    expect(cancelDescendantTurnsStep).toHaveBeenCalledWith({
+      serializedContext: retainedContext,
+      sessionState: retainedState,
+    });
+    expect(resumeHookMock).toHaveBeenCalledWith("turn-token", {
+      action: {
+        cancelled: true,
+        kind: "park",
+        serializedContext: retainedContext,
+        sessionState: retainedState,
+      },
+      kind: "turn-result",
+    });
+  });
+
   it("runs uncancellable when the session cancel token is claimed by another run", async () => {
     const sessionState = createSessionState();
     installInbox([], { cancelConflict: { runId: "wrun_stale_prior_turn" } });
@@ -660,9 +767,15 @@ describe("turnWorkflow", () => {
   });
 
   it("commits direct subagent state before releasing its task readiness barrier", async () => {
-    const initialState = createSessionState({ continuationToken: "http:tasks" });
-    const delegatedState = createSessionState({ continuationToken: "http:tasks" });
-    const completedState = createSessionState({ continuationToken: "http:tasks" });
+    const initialState = withSessionSnapshot(
+      createSessionState({ continuationToken: "http:tasks" }),
+    );
+    const delegatedState = withSessionSnapshot(
+      createSessionState({ continuationToken: "http:tasks" }),
+    );
+    const completedState = withSessionSnapshot(
+      createSessionState({ continuationToken: "http:tasks" }),
+    );
     const task = {
       taskId: "task_direct",
       taskInboxToken: "task:task_direct:token",
@@ -1361,6 +1474,25 @@ function createSessionState(overrides: Partial<DurableSessionState> = {}): Durab
     sessionId: "wrun_test_123",
     version: 1,
     ...overrides,
+  };
+}
+
+function withSessionSnapshot(
+  state: DurableSessionState,
+  overrides: Partial<DurableSession> = {},
+): DurableSessionState {
+  return {
+    ...state,
+    snapshot: {
+      session: {
+        agent: { system: "" },
+        continuationToken: state.continuationToken,
+        history: [],
+        sessionId: state.sessionId,
+        ...overrides,
+      },
+      version: 1,
+    },
   };
 }
 

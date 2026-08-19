@@ -321,6 +321,8 @@ export interface ToolLoopHarnessConfig {
   readonly onCompaction?: () => readonly ModelMessage[];
   /** Notifies execution-owned tools before each actual model attempt. */
   readonly onModelAttempt?: () => void;
+  /** Reports executable subagent call ids before the AI SDK starts their definitions. */
+  readonly onSubagentToolCalls?: (callIds: readonly string[]) => void;
   /**
    * Whether the agent opted into `experimental.subagentPersistentSessions`.
    * Gates delegated-agent handle tracking and the model-visible `<agents>`
