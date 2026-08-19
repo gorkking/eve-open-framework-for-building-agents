@@ -262,7 +262,7 @@ describe("eve init smoke", () => {
     await expect(pathExists(join(projectDir, "package-lock.json"))).resolves.toBe(true);
     expect(await fakeNpm.readCalls()).toEqual([
       {
-        args: ["install", "--min-release-age=0"],
+        args: ["install", "--min-release-age=0", "--legacy-peer-deps"],
         cwd: canonicalProjectDir,
       },
       {
