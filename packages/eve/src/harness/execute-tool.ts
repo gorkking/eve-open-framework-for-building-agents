@@ -38,4 +38,9 @@ export interface HarnessToolDefinition {
   readonly rootOnly?: boolean;
   readonly runtimeAction?: HarnessRuntimeActionDefinition;
   readonly toModelOutput?: (output: unknown) => unknown;
+  /** Runtime action used only when this executable tool is called from `Workflow`. */
+  readonly workflowAction?: Exclude<
+    HarnessRuntimeActionDefinition,
+    { readonly kind: "task-control" }
+  >;
 }

@@ -178,7 +178,6 @@ class SubagentToolExecutionController {
   private emissionTail: Promise<void> = Promise.resolve();
   private readonly handleEvent?: HandleEventFn;
   private readonly dispatches: Promise<RuntimeActionResult>[] = [];
-  private readonly outcomesByDispatchCallId = new Map<string, Promise<SubagentDispatchOutcome>>();
   private readonly initialSession: HarnessSession;
   private parentSandboxPreparation?: Promise<void>;
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
@@ -196,6 +195,11 @@ class SubagentToolExecutionController {
   }
 
   beginAttempt(): void {
+    if (this.dispatches.length > 0) {
+      throw new Error(
+        "The model call cannot be retried after a subagent tool has started durable work.",
+      );
+    }
     this.fingerprintOccurrences.clear();
   }
 
@@ -296,19 +300,6 @@ class SubagentToolExecutionController {
     return { calledEvents: output.calledEvents ?? [], result };
   }
 
-  private dispatchOnce(
-    action: SubagentCallAction,
-    continuesAgent: boolean,
-    dispatchCallId: string,
-    localFanoutSize: number,
-  ): Promise<SubagentDispatchOutcome> {
-    const existing = this.outcomesByDispatchCallId.get(dispatchCallId);
-    if (existing !== undefined) return existing;
-    const outcome = this.dispatch(action, continuesAgent, dispatchCallId, localFanoutSize);
-    this.outcomesByDispatchCallId.set(dispatchCallId, outcome);
-    return outcome;
-  }
-
   private async projectDispatch(
     action: SubagentCallAction,
     outcome: Promise<SubagentDispatchOutcome>,
@@ -374,16 +365,11 @@ class SubagentToolExecutionController {
       const prior = agentId === undefined ? undefined : activeAgents.get(agentId);
       const outcome =
         prior === undefined
-          ? this.dispatchOnce(
-              call.action,
-              call.continuesAgent,
-              call.dispatchCallId,
-              localFanoutSize,
-            )
+          ? this.dispatch(call.action, call.continuesAgent, call.dispatchCallId, localFanoutSize)
           : prior
               .catch(() => undefined)
               .then(() =>
-                this.dispatchOnce(
+                this.dispatch(
                   call.action,
                   call.continuesAgent,
                   call.dispatchCallId,

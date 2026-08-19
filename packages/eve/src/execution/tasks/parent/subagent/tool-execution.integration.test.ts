@@ -126,52 +126,64 @@ afterEach(() => {
 });
 
 describe("subagent tool execution controller", () => {
-  it("reuses a completed dispatch when a model attempt retries with a new provider call ID", async () => {
+  it("settles started tasks instead of retrying the model after a subagent dispatch", async () => {
+    const { entry, task } = createTask(localAction, "call-local");
     mocks.start.mockImplementation(async (_workflow, [input]) => {
       const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
+      const current = input.sessionState.snapshot.session;
       return {
         returnValue: Promise.resolve({
-          pendingTasks: [],
+          pendingTasks: [task],
           results: [
             {
+              backgroundTask: { status: "working", taskId: task.taskId },
               callId: action.callId,
               kind: "subagent-result",
               origin: "child",
-              output: { accepted: true },
+              output: { status: "working", taskId: task.taskId },
               subagentName: action.name,
             },
           ],
-          sessionState: input.sessionState,
+          sessionState: replaceDurableSessionSnapshot({
+            session: {
+              ...current,
+              state: { [SESSION_TASKS_STATE_KEY]: { tasks: [entry] } },
+            },
+            state: input.sessionState,
+          }),
         }),
         runId: `workflow-${action.callId}`,
       };
     });
-    const retryAction = { ...localAction, callId: "call-local-from-retry" };
-    const resultCallIds: string[] = [];
+    const bundle = createBundle() as never;
     const ctx = new ContextContainer();
-    ctx.set(BundleKey, createBundle() as never);
+    ctx.set(BundleKey, bundle);
 
-    const output = await contextStorage.run(ctx, () =>
-      runWithSubagentToolExecution({
-        handleEvent: async (event) => {
-          if (event.type === "action.result") resultCallIds.push(event.data.result.callId);
-        },
-        session,
-        step: async () => {
-          beginSubagentToolExecutionAttempt();
-          const first = await executeSubagentToolCall({ action: localAction });
-          beginSubagentToolExecutionAttempt();
-          const retry = await executeSubagentToolCall({ action: retryAction });
-          return { next: { done: true, output: { first, retry } }, session };
-        },
-      }),
-    );
+    await expect(
+      contextStorage.run(ctx, () =>
+        runWithSubagentToolExecution({
+          session,
+          step: async () => {
+            beginSubagentToolExecutionAttempt();
+            await executeSubagentToolCall({ action: localAction });
+            beginSubagentToolExecutionAttempt();
+            throw new Error("unreachable");
+          },
+        }),
+      ),
+    ).rejects.toThrow("cannot be retried after a subagent tool has started durable work");
 
     expect(mocks.start).toHaveBeenCalledOnce();
-    expect(output.next).toMatchObject({
-      output: { first: { accepted: true }, retry: { accepted: true } },
+    expect(mocks.cancelOwnedTask).toHaveBeenCalledWith({
+      bundle,
+      entry,
+      session: expect.objectContaining({
+        state: expect.objectContaining({
+          [SESSION_TASKS_STATE_KEY]: { tasks: [entry] },
+        }),
+      }),
     });
-    expect(resultCallIds).toEqual([localAction.callId, retryAction.callId]);
+    expect(mocks.acknowledgeDelegatedTasks).toHaveBeenCalledWith({ tasks: [task] });
   });
 
   it("rebuilds a remote child stream path with the provider-visible call ID", async () => {

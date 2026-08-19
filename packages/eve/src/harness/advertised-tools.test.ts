@@ -137,6 +137,23 @@ describe("getAdvertisedTools", () => {
     expect([...advertisedTools.harnessTools.keys()]).toEqual(["add", "delegate"]);
     expect(advertisedTools.modelTools[WORKFLOW_TOOL_NAME]).toBeDefined();
   });
+
+  it("adds Workflow for executable task subagents", async () => {
+    const tools = new Map([
+      ["delegate", createExecutableSubagentTool("delegate")],
+    ]) satisfies HarnessToolMap;
+
+    const advertisedTools = await getAdvertisedTools({
+      modelTools: buildToolSet({ tools }),
+      session: createSession(),
+      tools,
+      workflow: {},
+    });
+
+    expect(advertisedTools.harnessTools.get("delegate")?.execute).toEqual(expect.any(Function));
+    expect(advertisedTools.harnessTools.get("delegate")?.runtimeAction).toBeUndefined();
+    expect(advertisedTools.modelTools[WORKFLOW_TOOL_NAME]).toBeDefined();
+  });
 });
 
 describe("getAdvertisedTools for definition arrays", () => {
@@ -203,6 +220,19 @@ function createSubagentTool(name: string): HarnessToolDefinition {
   return {
     ...createTool(name),
     runtimeAction: {
+      kind: "subagent-call",
+      nodeId: "workers",
+      subagentName: name,
+    },
+  };
+}
+
+function createExecutableSubagentTool(name: string): HarnessToolDefinition {
+  return {
+    ...createTool(name),
+    execute: async () => ({ status: "working" }),
+    frameworkAction: "subagent",
+    workflowAction: {
       kind: "subagent-call",
       nodeId: "workers",
       subagentName: name,

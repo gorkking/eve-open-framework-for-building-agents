@@ -754,6 +754,45 @@ describe("dispatchRuntimeActionsStep agent delivery", () => {
     expect(mocks.startWorkflowPreferLatest).not.toHaveBeenCalled();
   });
 
+  it("delivers a task-owned continuation with its replay-stable task id", async () => {
+    const addressedHandle: AgentHandle = {
+      address: LOCAL_PARKED_HANDLE.address,
+      identity: LOCAL_PARKED_HANDLE.identity,
+      phase: "addressed",
+    };
+    const session = createPendingSession({
+      handle: addressedHandle,
+      agentId: addressedHandle.identity.id,
+    });
+    installContext(session, undefined, true);
+
+    const result = await dispatchTaskStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+    const task = result.pendingTasks[0];
+    if (task === undefined) throw new Error("Expected one admitted continuation task.");
+
+    expect(mocks.dispatchSession).toHaveBeenCalledWith({
+      command: {
+        caller: {
+          callId: "call-1",
+          replyTo: { kind: "hook", token: task.taskInboxToken },
+          subagentName: "research",
+          taskId: task.taskId,
+        },
+        kind: "send",
+        payload: {
+          message: "continue with raw input",
+          outputSchema: undefined,
+        },
+      },
+      sessionId: CHILD_SESSION_ID,
+    });
+  });
+
   it("rejects a tasks-mode continuation while the addressed agent has active work", async () => {
     const addressedHandle: AgentHandle = {
       address: LOCAL_PARKED_HANDLE.address,

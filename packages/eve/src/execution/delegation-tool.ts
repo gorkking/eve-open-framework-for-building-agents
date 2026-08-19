@@ -36,6 +36,19 @@ export function createTaskSubagentHarnessDefinition(
     readonly rootOnly?: boolean;
   },
 ): HarnessToolDefinition {
+  const workflowAction: NonNullable<HarnessToolDefinition["workflowAction"]> =
+    tool.kind === "remote"
+      ? {
+          kind: "remote-agent-call",
+          nodeId: tool.nodeId,
+          remoteAgentName: tool.name,
+          subagentName: tool.name,
+        }
+      : {
+          kind: "subagent-call",
+          nodeId: tool.nodeId,
+          subagentName: tool.name,
+        };
   const definition =
     tool.kind === "remote"
       ? defineRemoteSubagent({
@@ -60,5 +73,6 @@ export function createTaskSubagentHarnessDefinition(
     name: tool.name,
     outputSchema: toOutputSchema(definition.outputSchema),
     rootOnly: tool.rootOnly,
+    workflowAction,
   };
 }

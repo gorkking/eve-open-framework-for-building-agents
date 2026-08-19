@@ -98,15 +98,19 @@ function createWorkflowHostTools(tools: HarnessToolMap, names: Iterable<string>)
 
   for (const name of names) {
     const tool = tools.get(name);
-    if (tool?.runtimeAction !== undefined) {
-      hostTools[name] = createWorkflowRuntimeActionHostTool(tool);
+    const action = tool?.workflowAction ?? tool?.runtimeAction;
+    if (tool !== undefined && action !== undefined) {
+      hostTools[name] = createWorkflowRuntimeActionHostTool(tool, action);
     }
   }
 
   return hostTools as ToolSet;
 }
 
-function createWorkflowRuntimeActionHostTool(harnessTool: HarnessToolDefinition): ToolSet[string] {
+function createWorkflowRuntimeActionHostTool(
+  harnessTool: HarnessToolDefinition,
+  action: NonNullable<HarnessToolDefinition["runtimeAction"]>,
+): ToolSet[string] {
   return {
     description: harnessTool.description,
     inputSchema: harnessTool.inputSchema,
@@ -116,7 +120,7 @@ function createWorkflowRuntimeActionHostTool(harnessTool: HarnessToolDefinition)
 
       return requestWorkflowSandboxInterrupt({
         kind: WORKFLOW_RUNTIME_ACTION_INTERRUPT_KIND,
-        runtimeAction: harnessTool.runtimeAction,
+        runtimeAction: action,
         toolInput,
         toolName: harnessTool.name,
       });

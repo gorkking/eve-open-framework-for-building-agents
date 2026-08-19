@@ -160,16 +160,16 @@ function filterWorkflowHostToolsForRootSession(
   }
 
   for (const [name, tool] of tools) {
-    if (isDelegatedRuntimeActionTool(tool)) {
+    if (isWorkflowHostTool(tool)) {
       filteredTools.set(name, tool);
     }
   }
   return filteredTools;
 }
 
-function isDelegatedRuntimeActionTool(definition: HarnessToolDefinition): boolean {
-  const runtimeAction = definition.runtimeAction;
-  return runtimeAction?.kind === "subagent-call" || runtimeAction?.kind === "remote-agent-call";
+function isWorkflowHostTool(definition: HarnessToolDefinition): boolean {
+  const action = definition.workflowAction ?? definition.runtimeAction;
+  return action?.kind === "subagent-call" || action?.kind === "remote-agent-call";
 }
 
 function shouldHideDelegationTool(

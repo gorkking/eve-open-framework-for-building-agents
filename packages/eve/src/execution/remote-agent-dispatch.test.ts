@@ -677,6 +677,7 @@ describe("continueRemoteAgentSession", () => {
       callback: {
         callId: "call-next",
         subagentName: "research",
+        taskId: "task-next",
         token: "parent-inbox",
         url: "https://caller.example.com/eve/v1/callback/parent-inbox",
       },
@@ -693,6 +694,7 @@ describe("continueRemoteAgentSession", () => {
           callback: {
             callId: "call-next",
             subagentName: "research",
+            taskId: "task-next",
             token: "parent-inbox",
             url: "https://caller.example.com/eve/v1/callback/parent-inbox",
           },

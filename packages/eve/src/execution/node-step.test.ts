@@ -340,6 +340,7 @@ describe("createNodeHarnessTools", () => {
       expect(plainTools.get(name)?.execute).toBeUndefined();
       expect(taskTools.get(name)?.runtimeAction).toBeUndefined();
       expect(taskTools.get(name)?.execute).toBeDefined();
+      expect(taskTools.get(name)?.workflowAction).toBeDefined();
     }
   });
 

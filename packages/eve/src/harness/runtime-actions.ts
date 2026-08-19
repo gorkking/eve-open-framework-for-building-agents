@@ -363,6 +363,7 @@ export function createRuntimeActionRequestFromToolCall(input: {
   readonly tools: HarnessToolMap;
 }): RuntimeActionRequest {
   const definition = input.tools.get(input.toolCall.toolName);
+  const runtimeAction = definition?.workflowAction ?? definition?.runtimeAction;
 
   if (definition?.frameworkAction === "load-skill") {
     return {
@@ -375,7 +376,7 @@ export function createRuntimeActionRequestFromToolCall(input: {
     };
   }
 
-  if (definition?.runtimeAction?.kind === "subagent-call") {
+  if (definition !== undefined && runtimeAction?.kind === "subagent-call") {
     return {
       callId: input.toolCall.toolCallId,
       description: definition.description,
@@ -385,12 +386,12 @@ export function createRuntimeActionRequestFromToolCall(input: {
       }),
       kind: "subagent-call",
       name: definition.name,
-      nodeId: definition.runtimeAction.nodeId,
-      subagentName: definition.runtimeAction.subagentName,
+      nodeId: runtimeAction.nodeId,
+      subagentName: runtimeAction.subagentName,
     };
   }
 
-  if (definition?.runtimeAction?.kind === "remote-agent-call") {
+  if (definition !== undefined && runtimeAction?.kind === "remote-agent-call") {
     return {
       callId: input.toolCall.toolCallId,
       description: definition.description,
@@ -400,8 +401,8 @@ export function createRuntimeActionRequestFromToolCall(input: {
       }),
       kind: "remote-agent-call",
       name: definition.name,
-      nodeId: definition.runtimeAction.nodeId,
-      remoteAgentName: definition.runtimeAction.remoteAgentName ?? definition.name,
+      nodeId: runtimeAction.nodeId,
+      remoteAgentName: runtimeAction.remoteAgentName ?? definition.name,
     };
   }
 

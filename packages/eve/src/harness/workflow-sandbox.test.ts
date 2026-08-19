@@ -137,6 +137,28 @@ describe("applyWorkflowTool", () => {
     expect(hostTools.bash).toBeUndefined();
   });
 
+  it("rebuilds executable task subagents from their Workflow action", () => {
+    const tools: HarnessToolMap = new Map([
+      [
+        "researcher",
+        {
+          description: "Delegate to the researcher subagent.",
+          execute: async () => ({ status: "working" }),
+          frameworkAction: "subagent",
+          inputSchema: jsonSchema({ type: "object" }),
+          name: "researcher",
+          workflowAction: {
+            kind: "subagent-call",
+            nodeId: "subagents/researcher",
+            subagentName: "researcher",
+          },
+        },
+      ],
+    ]);
+
+    expect(buildWorkflowHostTools({ tools }).researcher?.execute).toBeDefined();
+  });
+
   it("does not construct ordinary tools while rebuilding the continuation surface", () => {
     const tools: HarnessToolMap = new Map([
       [
