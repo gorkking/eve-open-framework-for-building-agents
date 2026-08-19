@@ -485,6 +485,13 @@ async function runInitSteps(input: {
         // The scaffold pins versions younger than typical release-age cooldown
         // windows; gating them would fail every fresh bootstrap.
         bypassMinimumReleaseAge: true,
+        // npm otherwise resolves hundreds of unused optional peers exposed by
+        // Nitro's integration ecosystem. Keep normal peer validation when eve
+        // adds to an existing project or installs inside an ancestor workspace.
+        skipPeerDependencyResolution:
+          project.kind === "created" &&
+          project.packageManager === "npm" &&
+          !project.workspaceMember,
         progressDetails: process.stdout.isTTY === true && !debug,
         onOutput: (line) => {
           if (line.text.trim() !== "") {

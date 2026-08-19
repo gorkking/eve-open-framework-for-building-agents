@@ -169,6 +169,22 @@ describe("runPackageManagerInstall", () => {
     );
   });
 
+  test("skips npm peer dependency resolution when requested", async () => {
+    expect(
+      packageManagerInstallSucceeded(
+        await runPackageManagerInstall("npm", "/tmp/app", {
+          skipPeerDependencyResolution: true,
+        }),
+      ),
+    ).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "npm",
+      ["install", "--legacy-peer-deps"],
+      expect.objectContaining({ cwd: "/tmp/app" }),
+    );
+  });
+
   test("requests npm output before registry operations complete", async () => {
     expect(
       packageManagerInstallSucceeded(

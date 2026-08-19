@@ -706,6 +706,28 @@ describe("runInitCommand", () => {
     },
   );
 
+  it("keeps npm peer resolution for a fresh ancestor workspace member", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "eve-init-npm-workspace-member-"));
+    const appsDirectory = join(workspaceRoot, "apps");
+    await mkdir(appsDirectory, { recursive: true });
+    await writeFile(
+      join(workspaceRoot, "package.json"),
+      `${JSON.stringify({ private: true, workspaces: ["apps/*"] }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(join(workspaceRoot, "package-lock.json"), "", "utf8");
+    const output = logger();
+    const deps = dependencies();
+
+    await runInitCommand(output, appsDirectory, "my-agent", {}, deps);
+
+    expect(deps.runPackageManagerInstall).toHaveBeenCalledWith(
+      "npm",
+      join(appsDirectory, "my-agent"),
+      expect.objectContaining({ skipPeerDependencyResolution: false }),
+    );
+  });
+
   it("adds Web Chat to an npm-owned fresh scaffold without pnpm configuration", async () => {
     const parentDirectory = await mkdtemp(join(tmpdir(), "eve-init-agent-web-npm-"));
     const output = logger();
@@ -720,7 +742,7 @@ describe("runInitCommand", () => {
     expect(deps.runPackageManagerInstall).toHaveBeenCalledWith(
       "npm",
       projectPath,
-      expect.anything(),
+      expect.objectContaining({ skipPeerDependencyResolution: true }),
     );
     expect(deps.spawnPackageManager).toHaveBeenCalledWith("npm", projectPath, [
       "exec",
@@ -1019,7 +1041,7 @@ describe("runInitCommand", () => {
       expect(deps.runPackageManagerInstall).toHaveBeenCalledWith(
         kind,
         projectRoot,
-        expect.anything(),
+        expect.objectContaining({ skipPeerDependencyResolution: false }),
       );
       expect(deps.spawnPackageManager).toHaveBeenCalledWith(kind, projectRoot, [...devArguments]);
     },
