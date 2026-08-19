@@ -122,7 +122,7 @@ afterEach(() => {
 });
 
 describe("subagent tool execution controller", () => {
-  it("keeps dispatch ownership stable when a retried step returns a new AI SDK call id", async () => {
+  it("keeps semantic dispatch ownership stable when retry siblings reorder", async () => {
     const dispatchCallIds: string[] = [];
     mocks.start.mockImplementation(async (_workflow, [input]) => {
       const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
@@ -148,7 +148,10 @@ describe("subagent tool execution controller", () => {
     const ctx = new ContextContainer();
     ctx.set(BundleKey, createBundle() as never);
 
-    const runAttempt = async (actions: readonly RuntimeSubagentCallActionRequest[]) =>
+    const runAttempt = async (
+      siblings: readonly RuntimeSubagentCallActionRequest[],
+      later: RuntimeSubagentCallActionRequest,
+    ) =>
       contextStorage.run(ctx, () =>
         runWithSubagentToolExecution({
           handleEvent: async (event) => {
@@ -156,34 +159,43 @@ describe("subagent tool execution controller", () => {
           },
           session,
           step: async () => {
-            for (const action of actions) await executeSubagentToolCall({ action });
+            await Promise.all(siblings.map((action) => executeSubagentToolCall({ action })));
+            await executeSubagentToolCall({ action: later });
             return { next: null, session };
           },
         }),
       );
 
-    await runAttempt([localAction, siblingAction]);
-    await runAttempt([
-      { ...localAction, callId: "call-from-retry" },
-      { ...siblingAction, callId: "call-sibling-from-retry" },
-    ]);
+    await runAttempt([localAction, siblingAction], { ...localAction, callId: "call-local-later" });
+    const firstAttemptIds = dispatchCallIds.slice();
+    await runAttempt(
+      [
+        { ...siblingAction, callId: "call-sibling-from-retry" },
+        { ...localAction, callId: "call-from-retry" },
+      ],
+      { ...localAction, callId: "call-local-later-from-retry" },
+    );
 
-    expect(dispatchCallIds).toEqual([
-      "subagent:turn-1:2:0",
-      "subagent:turn-1:2:1",
-      "subagent:turn-1:2:0",
-      "subagent:turn-1:2:1",
+    expect(new Set(firstAttemptIds)).toHaveProperty("size", 3);
+    expect(dispatchCallIds.slice(3)).toEqual([
+      firstAttemptIds[1],
+      firstAttemptIds[0],
+      firstAttemptIds[2],
     ]);
     expect(outwardCallIds).toEqual([
       localAction.callId,
       siblingAction.callId,
-      "call-from-retry",
+      "call-local-later",
       "call-sibling-from-retry",
+      "call-from-retry",
+      "call-local-later-from-retry",
     ]);
   });
 
-  it("starts sibling AI SDK subagent workflows concurrently", async () => {
+  it("emits one request batch before starting sibling AI SDK subagent workflows", async () => {
     const release = new Map<string, () => void>();
+    const requestEmission = Promise.withResolvers<void>();
+    const requestEvents: Extract<UnstampedMessageStreamEvent, { type: "actions.requested" }>[] = [];
     let releaseSandboxCapture!: () => void;
     const sandboxCapture = new Promise<{ initialized: boolean; session: null }>((resolve) => {
       releaseSandboxCapture = () => resolve({ initialized: true, session: null });
@@ -251,7 +263,10 @@ describe("subagent tool execution controller", () => {
         handleEvent: async (event) => {
           activeEmissions += 1;
           maxActiveEmissions = Math.max(maxActiveEmissions, activeEmissions);
-          await Promise.resolve();
+          if (event.type === "actions.requested") {
+            requestEvents.push(event);
+            await requestEmission.promise;
+          }
           if (event.type === "action.result") resultEvents.add(event.data.result.callId);
           activeEmissions -= 1;
         },
@@ -267,6 +282,14 @@ describe("subagent tool execution controller", () => {
       }),
     );
 
+    await vi.waitFor(() => expect(requestEvents).toHaveLength(1));
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(requestEvents[0]?.data.actions.map((action) => action.callId)).toEqual([
+      localAction.callId,
+      siblingAction.callId,
+      independentAction.callId,
+    ]);
+    requestEmission.resolve();
     await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1));
     release.get(independentAction.callId)?.();
     await vi.waitFor(() => expect(resultEvents.has(independentAction.callId)).toBe(true));
@@ -276,6 +299,7 @@ describe("subagent tool execution controller", () => {
     release.get(localAction.callId)?.();
     const outputs = await execution;
 
+    expect(requestEvents).toHaveLength(1);
     expect(sandbox.get).toHaveBeenCalledTimes(1);
     expect(maxActiveEmissions).toBe(1);
     expect(

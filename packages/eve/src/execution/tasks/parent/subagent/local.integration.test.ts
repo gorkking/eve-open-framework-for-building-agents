@@ -188,4 +188,161 @@ describe("local subagent defineTool execution", () => {
       }
     });
   }, 60_000);
+
+  it("keeps real task and child ownership when retry siblings reorder", async () => {
+    const runtime = createTestRuntime({ agent: { name: "subagent-replay" } });
+
+    await runtime.run(async () => {
+      const compiledArtifactsSource = createBundledRuntimeCompiledArtifactsSource();
+      const bundle = await getCompiledRuntimeAgentBundle({ compiledArtifactsSource });
+      const ctx = new ContextContainer();
+      ctx.set(AuthKey, null);
+      ctx.set(BundleKey, bundle);
+      ctx.set(ChannelKey, { kind: "http", state: {} });
+      ctx.set(ContinuationTokenKey, "http:subagent-replay");
+      ctx.set(InitiatorAuthKey, null);
+      ctx.set(SessionIdKey, "parent-subagent-replay");
+      ctx.set(SessionKey, {
+        auth: { current: null, initiator: null },
+        sessionId: "parent-subagent-replay",
+        turn: { id: "turn-subagent-replay", sequence: 1 },
+      });
+
+      const session: HarnessSession = setHarnessEmissionState(
+        {
+          agent: { modelReference: { id: "openai/gpt-5.4" }, system: "", tools: [] },
+          compaction: { recentWindowSize: 10, threshold: 100_000 },
+          continuationToken: "http:subagent-replay",
+          history: [],
+          sessionId: "parent-subagent-replay",
+        },
+        { sequence: 1, sessionStarted: true, stepIndex: 0, turnId: "turn-subagent-replay" },
+      );
+      const tool = createTaskSubagentHarnessDefinition({
+        description: "General-purpose agent",
+        kind: "subagent",
+        name: "agent",
+        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+      });
+
+      const runAttempt = async (
+        calls: readonly {
+          readonly id: string;
+          readonly message: string;
+          readonly reverseKeys: boolean;
+        }[],
+      ) => {
+        const model = new MockLanguageModelV4({
+          doGenerate: {
+            content: calls.map((call) => ({
+              input: call.reverseKeys
+                ? JSON.stringify({ agentId: null, message: call.message })
+                : JSON.stringify({ message: call.message, agentId: null }),
+              toolCallId: call.id,
+              toolName: "agent",
+              type: "tool-call" as const,
+            })),
+            finishReason: { raw: undefined, unified: "tool-calls" },
+            usage,
+            warnings: [],
+          },
+        });
+        let generated: Awaited<ReturnType<typeof generateText>> | undefined;
+        const stepResult = await contextStorage.run(ctx, () =>
+          runWithSubagentToolExecution({
+            session,
+            step: async () => {
+              generated = await generateText({
+                model,
+                prompt: "Delegate both independent tasks.",
+                tools: buildToolSet({ tools: new Map([["agent", tool]]) }),
+              });
+              return { next: null, session };
+            },
+          }),
+        );
+        const handles = getAgentHandleStore(stepResult.session.state)?.handles ?? [];
+        const byMessage = Object.fromEntries(
+          calls.map((call) => {
+            const toolResult = generated?.toolResults.find(
+              (result) => result.toolCallId === call.id,
+            );
+            const output = toolResult?.output;
+            if (
+              typeof output !== "object" ||
+              output === null ||
+              !("agentId" in output) ||
+              typeof output.agentId !== "string" ||
+              !("taskId" in output) ||
+              typeof output.taskId !== "string"
+            ) {
+              throw new Error(`Subagent call "${call.id}" returned no working task receipt.`);
+            }
+            const handle = handles.find((candidate) => candidate.identity.id === output.agentId);
+            if (handle?.phase !== "addressed") {
+              throw new Error(`Subagent call "${call.id}" returned no addressed child.`);
+            }
+            return [
+              call.message,
+              {
+                agentId: output.agentId,
+                childSessionId: handle.address.sessionId,
+                taskId: output.taskId,
+              },
+            ];
+          }),
+        );
+        return { byMessage, handles, tasks: stepResult.delegatedTasks ?? [] };
+      };
+
+      const research = "Reply with exactly `replay-research-ok`.";
+      const writing = "Reply with exactly `replay-writing-ok`.";
+      const first = await runAttempt([
+        { id: "first-research", message: research, reverseKeys: false },
+        { id: "first-writing", message: writing, reverseKeys: false },
+      ]);
+      const retry = await runAttempt([
+        { id: "retry-writing", message: writing, reverseKeys: true },
+        { id: "retry-research", message: research, reverseKeys: true },
+      ]);
+
+      expect(retry.byMessage).toEqual(first.byMessage);
+      expect(new Set(retry.tasks.map((task) => task.taskId))).toEqual(
+        new Set(first.tasks.map((task) => task.taskId)),
+      );
+
+      try {
+        await acknowledgeDelegatedTasksStep({ tasks: retry.tasks });
+        await Promise.all(retry.tasks.map((task) => getRun(task.taskRunId).returnValue));
+        await expect(
+          Promise.all(retry.tasks.map((task) => readLatestTaskView({ taskRunId: task.taskRunId }))),
+        ).resolves.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              lastOutput: { data: expect.stringContaining("replay-research-ok"), type: "result" },
+              status: "completed",
+            }),
+            expect.objectContaining({
+              lastOutput: { data: expect.stringContaining("replay-writing-ok"), type: "result" },
+              status: "completed",
+            }),
+          ]),
+        );
+      } finally {
+        const childRunIds = new Set(
+          [...first.handles, ...retry.handles].flatMap((handle) =>
+            handle.phase === "addressed" ? [handle.address.sessionId] : [],
+          ),
+        );
+        const taskRunIds = new Set([...first.tasks, ...retry.tasks].map((task) => task.taskRunId));
+        await Promise.all(
+          [...childRunIds, ...taskRunIds].map((runId) =>
+            getRun(runId)
+              .cancel()
+              .catch(() => {}),
+          ),
+        );
+      }
+    });
+  }, 60_000);
 });

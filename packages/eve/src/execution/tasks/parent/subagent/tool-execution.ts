@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
 import { SandboxKey } from "#context/keys.js";
@@ -170,7 +172,7 @@ class SubagentToolExecutionController {
   private parentSandboxPreparation?: Promise<void>;
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
   private flushScheduled = false;
-  private nextDispatchIndex = 0;
+  private readonly fingerprintOccurrences = new Map<string, number>();
   private readonly registeredCalls: RegisteredSubagentCall[] = [];
   private session: HarnessSession;
 
@@ -188,18 +190,18 @@ class SubagentToolExecutionController {
       typeof requestedAgentId === "string" &&
       findTaskAgentAddress(this.session, requestedAgentId) !== undefined;
     const result = Promise.withResolvers<RuntimeActionResult>();
-    // A retried turn step may receive a new provider call id. The model-step
-    // position is stable, so task and child ownership must derive from it.
+    const fingerprint = fingerprintSubagentAction(action);
+    const occurrence = this.fingerprintOccurrences.get(fingerprint) ?? 0;
+    this.fingerprintOccurrences.set(fingerprint, occurrence + 1);
     const dispatchCallId = `subagent:${this.batchEvent.turnId}:${String(
       this.batchEvent.stepIndex,
-    )}:${String(this.nextDispatchIndex)}`;
-    this.nextDispatchIndex += 1;
+    )}:${fingerprint}:${String(occurrence)}`;
     this.registeredCalls.push({ action, continuesAgent, dispatchCallId, result });
     if (!this.flushScheduled) {
       this.flushScheduled = true;
       // AI SDK invokes one response's sibling tool executors synchronously
       // before awaiting them, so the next microtask is the complete fanout.
-      queueMicrotask(() => this.flushRegisteredCalls());
+      queueMicrotask(() => void this.flushRegisteredCalls());
     }
     return this.readResult(await result.promise);
   }
@@ -245,7 +247,6 @@ class SubagentToolExecutionController {
     dispatchCallId: string,
     localFanoutSize: number,
   ): Promise<RuntimeActionResult> {
-    await this.emitActionRequested(action);
     try {
       if (!continuesAgent) await this.prepareParentSandbox(action);
       const session = this.session;
@@ -322,9 +323,10 @@ class SubagentToolExecutionController {
     }
   }
 
-  private flushRegisteredCalls(): void {
+  private async flushRegisteredCalls(): Promise<void> {
     this.flushScheduled = false;
     const calls = this.registeredCalls.splice(0);
+    await this.emitActionsRequested(calls.map(({ action }) => action));
     const localFanoutSize = calls.filter(
       ({ action, continuesAgent }) => action.kind === "subagent-call" && !continuesAgent,
     ).length;
@@ -368,10 +370,10 @@ class SubagentToolExecutionController {
     this.session = { ...this.session, sandboxState };
   }
 
-  private async emitActionRequested(action: SubagentCallAction): Promise<void> {
+  private async emitActionsRequested(actions: readonly SubagentCallAction[]): Promise<void> {
     await this.emit(
       createActionsRequestedEvent({
-        actions: [action],
+        actions,
         sequence: this.batchEvent.sequence,
         stepIndex: this.batchEvent.stepIndex,
         turnId: this.batchEvent.turnId,
@@ -413,6 +415,23 @@ class SubagentToolExecutionController {
   private async settleDispatches(): Promise<void> {
     await Promise.allSettled(this.dispatches);
   }
+}
+
+function fingerprintSubagentAction(action: SubagentCallAction): string {
+  const { callId: _callId, ...identity } = action;
+  return createHash("sha256")
+    .update(JSON.stringify(sortJsonObjectKeys(identity)))
+    .digest("hex");
+}
+
+function sortJsonObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonObjectKeys);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, entry]) => [key, sortJsonObjectKeys(entry)]),
+  );
 }
 
 function mergeSubagentDispatchSession(input: {
