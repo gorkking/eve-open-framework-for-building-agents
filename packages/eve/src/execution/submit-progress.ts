@@ -1,4 +1,4 @@
-import type { ContextContainer } from "#context/container.js";
+import type { AlsContext } from "#context/container.js";
 import { ProgressCallbackKey, SessionKey } from "#context/keys.js";
 import { postSessionCallbackRequest } from "#execution/session-callback-request.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
@@ -7,7 +7,7 @@ import { resumeHook } from "#internal/workflow/runtime.js";
 
 /** Submits one progress command over the inherited remote route or local root inbox. */
 export async function submitProgressCommand(
-  context: ContextContainer,
+  context: AlsContext,
   command: ProgressCommandV1,
   options: { readonly remoteTimeoutMs?: number } = {},
 ): Promise<void> {
