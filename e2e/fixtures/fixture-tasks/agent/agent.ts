@@ -64,6 +64,7 @@ function respond(request: MockModelRequest): MockModelResponse | string {
 
   if (message === "TASK-FANOUT-PARENT-UPDATES") return fanoutTasks(request, 10);
   if (message === "TASK-PARENT-WAKE-UPDATES") return fanoutTasks(request, 3);
+  if (message === "TASK-DISPATCH-PARKS-PARENT") return startParentParkWorker(request);
   if (message === "TASK-WAKE-CONDITIONAL-DELIVERY") return startConditionalWakeWorker(request);
   if (message === "TASK-FAN-IN") return fanInTasks(request);
   if (message === "TASK-UPDATE-SETUP") return startTaskUpdateChild(request);
@@ -142,6 +143,21 @@ function startConditionalWakeWorker(request: MockModelRequest): MockModelRespons
     };
   }
   return "TASK-WAKE-CONDITIONAL-STARTED";
+}
+
+function startParentParkWorker(request: MockModelRequest): MockModelResponse | string {
+  if (resultById(request, "task-parent-park-worker") === undefined) {
+    return {
+      toolCalls: [
+        {
+          id: "task-parent-park-worker",
+          input: { message: "BUSY-WORKER-A TASK-DISPATCH-PARKS-CHILD" },
+          name: "busy-worker",
+        },
+      ],
+    };
+  }
+  return "TASK-DISPATCH-PARENT-RAN-AFTER-RECEIPT";
 }
 
 function sendTaskUpdate(request: MockModelRequest): MockModelResponse | string {

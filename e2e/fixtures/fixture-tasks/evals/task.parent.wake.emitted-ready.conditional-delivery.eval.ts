@@ -18,7 +18,6 @@ export default defineTaskEval({
   async test(t) {
     const started = await t.send("TASK-WAKE-CONDITIONAL-DELIVERY");
     started.expectOk();
-    started.messageIncludes("TASK-WAKE-CONDITIONAL-STARTED");
     const taskId = requireBackgroundTaskId(started);
 
     const sessionId = started.sessionId;

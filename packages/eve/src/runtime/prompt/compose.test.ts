@@ -22,17 +22,16 @@ describe("composeRuntimeBasePrompt", () => {
     expect(prompt).not.toContainEqual(expect.stringContaining("<agents>"));
   });
 
-  it("instructs task-mode parents to rely on notifications instead of polling", () => {
+  it("instructs task-mode parents when admission parks until a notification", () => {
     const prompt = composeRuntimeBasePrompt({
       persistentSubagentSessions: true,
       subagentsAvailable: true,
       tasksEnabled: true,
     });
 
-    expect(prompt).toContainEqual(
-      expect.stringContaining("return immediately with a task receipt"),
-    );
-    expect(prompt).toContainEqual(expect.stringContaining("do not poll with task_peek"));
+    expect(prompt).toContainEqual(expect.stringContaining("resolves only to admitted tasks"));
+    expect(prompt).toContainEqual(expect.stringContaining("synchronous result"));
+    expect(prompt).toContainEqual(expect.stringContaining("parks your current turn"));
     expect(prompt).toContainEqual(expect.stringContaining("notify you"));
   });
 
