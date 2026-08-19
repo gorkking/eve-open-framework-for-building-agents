@@ -1,6 +1,6 @@
 ---
 title: "CLI"
-description: "Reference for every eve CLI command: init, set, info, build, start, dev, logs, trace, link, deploy, eval, channels, and extension."
+description: "Reference for every eve CLI command: init, set, info, build, start, dev, logs, traces, link, deploy, eval, channels, extension, and telemetry."
 ---
 
 Relevant `eve` commands can run from the application root or any directory beneath it. Running `eve` with no command runs `eve init` when the current directory is not an eve project, or `eve dev` when it is.
@@ -21,6 +21,7 @@ Relevant `eve` commands can run from the application root or any directory benea
 | `eve logs ls`                 | List `eve dev` diagnostic logs, most recent first                                                                                  |
 | `eve traces ls`               | List locally captured agent traces, most recent first                                                                              |
 | `eve traces [trace]`          | Show a local span tree (the most recent when omitted)                                                                              |
+| `eve telemetry <command>`     | Show, enable, or disable CLI telemetry collection                                                                                  |
 | `eve link`                    | Link the directory to a Vercel project and pull AI Gateway credentials                                                             |
 | `eve deploy`                  | Deploy the agent to Vercel production (links first if needed)                                                                      |
 | `eve eval`                    | Run evals against the local app or a remote target                                                                                 |
@@ -32,6 +33,10 @@ Relevant `eve` commands can run from the application root or any directory benea
 | `eve registry <command>`      | Add sources and list, search, or view registry catalog items                                                                       |
 
 When `eve build` fails on discovery errors, it prints the full diagnostics report (severity, message, source path) and the diagnostics artifact path.
+
+## CLI telemetry
+
+eve collects CLI telemetry by default to improve the command-line interface. Run `eve telemetry disable` to disable it for this machine, or set `EVE_TELEMETRY_DISABLED=1` for one command. See [CLI telemetry](./telemetry) for the current data fields, exclusions, debug mode, notice, and local preference storage.
 
 ## `eve init`
 
