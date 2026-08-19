@@ -2,7 +2,6 @@ import { contextStorage, loadContext } from "#context/container.js";
 import { ContextKey } from "#context/key.js";
 import { SandboxKey } from "#context/keys.js";
 import { serializeContext } from "#context/serialize.js";
-import { createAgentErrorResult } from "#execution/agent-handle-dispatch.js";
 import {
   createDurableSessionState,
   type DurableSession,
@@ -16,7 +15,6 @@ import type {
 import { acknowledgeDelegatedTasks } from "#execution/tasks/parent/delegate.js";
 import { subagentWorkflowReference } from "#execution/tasks/parent/subagent/workflow-reference.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
-import { AGENT_BUSY } from "#harness/agent-handle-errors.js";
 import {
   AGENT_HANDLES_STATE_KEY,
   assertPersistableAgentHandleStore,
@@ -163,7 +161,6 @@ class SubagentToolExecutionController {
     SubagentToolExecutionEffects["delegatedTasks"][number]
   >();
   private readonly callbackBaseUrl?: string;
-  private readonly claimedAgentIds = new Set<string>();
   private emissionTail: Promise<void> = Promise.resolve();
   private readonly handleEvent?: HandleEventFn;
   private dispatchStarted = false;
@@ -195,30 +192,13 @@ class SubagentToolExecutionController {
 
   async execute(action: SubagentCallAction): Promise<unknown> {
     const requestedAgentId = action.input.agentId;
-    const agentId =
+    const continuesAgent =
       typeof requestedAgentId === "string" &&
-      findTaskAgentAddress(this.session, requestedAgentId) !== undefined
-        ? requestedAgentId
-        : undefined;
+      findTaskAgentAddress(this.session, requestedAgentId) !== undefined;
     this.dispatchStarted = true;
-    if (agentId !== undefined && this.claimedAgentIds.has(agentId)) {
-      return this.readResult(
-        await this.rejectSiblingCall({
-          action,
-          agentId,
-        }),
-      );
-    }
-    if (agentId !== undefined) this.claimedAgentIds.add(agentId);
-    const dispatch = this.dispatch(action, agentId !== undefined);
+    const dispatch = this.dispatch(action, continuesAgent);
     this.dispatches.push(dispatch);
-    let result: RuntimeActionResult;
-    try {
-      result = await dispatch;
-    } finally {
-      if (agentId !== undefined) this.claimedAgentIds.delete(agentId);
-    }
-    return this.readResult(result);
+    return this.readResult(await dispatch);
   }
 
   private readResult(result: RuntimeActionResult): unknown {
@@ -304,20 +284,6 @@ class SubagentToolExecutionController {
         result.callId,
       );
     }
-    await this.emitActionResult(result);
-    return result;
-  }
-
-  private async rejectSiblingCall(input: {
-    readonly action: SubagentCallAction;
-    readonly agentId: string;
-  }): Promise<RuntimeActionResult> {
-    await this.emitActionRequested(input.action);
-    const result = createAgentErrorResult({
-      action: input.action,
-      code: AGENT_BUSY,
-      message: `Agent "${input.agentId}" already has a sibling call in this model step.`,
-    });
     await this.emitActionResult(result);
     return result;
   }

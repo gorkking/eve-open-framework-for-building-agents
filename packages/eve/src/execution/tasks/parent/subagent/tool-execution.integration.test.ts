@@ -248,7 +248,7 @@ describe("subagent tool execution controller", () => {
     );
   });
 
-  it("rejects concurrent sibling calls to the same addressed agent", async () => {
+  it("dispatches concurrent sibling calls to the same addressed agent", async () => {
     mocks.start.mockImplementation(async (_workflow, [input]) => {
       const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
       const current = input.sessionState.snapshot.session;
@@ -337,7 +337,7 @@ describe("subagent tool execution controller", () => {
       }),
     );
 
-    expect(mocks.start).toHaveBeenCalledTimes(2);
+    expect(mocks.start).toHaveBeenCalledTimes(3);
     expect(sandbox.get).not.toHaveBeenCalled();
     expect(getAgentHandleStore(output.session.state)?.handles).toEqual([]);
     expect(
@@ -348,14 +348,16 @@ describe("subagent tool execution controller", () => {
         event.type === "actions.requested" ? event.data.actions.map((action) => action.callId) : [],
       ),
     ).toEqual(expect.arrayContaining(actions.map((action) => action.callId)));
-    expect(results[2]).toMatchObject({
-      reason: expect.objectContaining({
-        message: expect.stringContaining(
-          'Agent \\"agent-a\\" already has a sibling call in this model step.',
-        ),
-      }),
-      status: "rejected",
-    });
+    expect(results).toEqual(
+      actions.map(() =>
+        expect.objectContaining({
+          reason: expect.objectContaining({
+            message: expect.stringContaining("test dispatch completed"),
+          }),
+          status: "rejected",
+        }),
+      ),
+    );
   });
 
   it("cancels and acknowledges a started task when the model step fails", async () => {
