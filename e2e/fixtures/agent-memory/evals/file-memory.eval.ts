@@ -4,7 +4,7 @@ import { equals } from "eve/evals/expect";
 import { MEMORY_FACT, MEMORY_PHRASE, SAVE_CONFIRMATION } from "../agent/constants.js";
 
 export default defineEval({
-  description: "File memory persists a saved fact and recalls it in a new session.",
+  description: "File memory persists, recalls, and does not duplicate an unchanged document.",
 
   async test(t) {
     const saved = await t.send(
@@ -28,5 +28,13 @@ export default defineEval({
     recalled.usedNoTools();
     recalled.messageIncludes(MEMORY_PHRASE);
     await t.require(recalled.sessionId === saved.sessionId, equals(false));
+
+    const recalledAgain = await nextSession.send(
+      "What is the verification phrase in persistent memory? Reply with the phrase only. " +
+        "Do not call any tools.",
+    );
+    recalledAgain.expectOk();
+    recalledAgain.usedNoTools();
+    recalledAgain.messageIncludes(MEMORY_PHRASE);
   },
 });

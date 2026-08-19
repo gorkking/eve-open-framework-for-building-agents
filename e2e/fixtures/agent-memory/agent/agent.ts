@@ -15,9 +15,12 @@ function respond(request: MockModelRequest): MockModelResponse | string {
   }
 
   if (/verification phrase/iu.test(prompt)) {
-    return request.userMessages.some((message) => message.includes(MEMORY_FACT))
+    const recalls = request.userMessages.filter((message) => message.includes(MEMORY_FACT));
+    return recalls.length === 1
       ? MEMORY_PHRASE
-      : "MEMORY-NOT-FOUND";
+      : recalls.length === 0
+        ? "MEMORY-NOT-FOUND"
+        : "MEMORY-DUPLICATED";
   }
 
   return `Mock reply: ${prompt}`;
