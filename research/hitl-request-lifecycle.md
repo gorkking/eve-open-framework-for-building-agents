@@ -1,36 +1,74 @@
 ---
 issue: https://github.com/vercel/eve/issues/1224
 status: proposed
-last_updated: "2026-08-17"
+last_updated: "2026-08-19"
 ---
 
 # HITL requests must not wedge sessions
 
-## The problem
+## Motivation
 
-Today, a user can send a message while an approval is waiting and get no useful
-response.
+HITL has been eve's least stable surface, and the failures form one pattern:
 
-```text
-approval waits
-  -> user sends a message
-  -> eve hides the message in deferredStepInput
-  -> eve waits for the approval again
-```
+- [#1224](https://github.com/vercel/eve/issues/1224) — a freeform reply to a
+  pending approval mutes the session forever: eve hides the message in
+  `deferredStepInput`, waits for the approval again, and no model call ever
+  runs.
+- [#1201](https://github.com/vercel/eve/issues/1201) — an approval is
+  silently dropped when the same step also requests a subagent call.
+- [#1608](https://github.com/vercel/eve/issues/1608) — a duplicate input
+  response resumes a disposed child hook and fails the parent session.
+- [#786](https://github.com/vercel/eve/issues/786) — a message is consumed
+  as the answer to a pending question the sender never saw.
+- [PR #1231](https://github.com/vercel/eve/pull/1231) — an attempted fix
+  made every message replace unresolved input, breaking request ownership in
+  the opposite direction.
+- [#1830] and [#1868] — two mitigations, months apart, for what turned out
+  to be one bug wearing two coats: **an obligation encoded as a blocked
+  continuation** — "the code is waiting on X, therefore only X can arrive" —
+  instead of as data the session carries while remaining receptive.
 
-No model call runs. If nobody answers the approval, the message stays hidden.
-The session looks broken. The same defect exists one layer down: while a
-connection-authorization challenge is open, the session driver reads only the
-callback hook, so ordinary deliveries are never admitted at all.
+The instability is structural, twice over.
 
-Both wedges are one bug wearing two coats: **an obligation encoded as a blocked
-continuation** — "the code is waiting on X, therefore only X can arrive" —
-instead of as data the session carries while remaining receptive. The
-mitigations ([#1830], [#1868]) removed the two blocked continuations. This
-document defines the end state they were aiming at: a state machine in which
-every open request, challenge, and prompt is a row in durable state, every
-delivery is interpreted against those rows by one pure function, and nothing
-the session receives is ever silently consumed.
+**Too many entry points.** Deliveries reach HITL decisions through the
+channel POST, the OAuth callback route, the driver inbox, the turn step, and
+the tool loop, and interpretation is smeared across ten modules — 6,780
+lines across 14 principal modules, with 39 files consuming some fragment of
+the state APIs. No single seam ever sees the whole state, which is exactly
+why both wedges could ship:
+
+| Fragment                                         | Today lives in                                                                                                                                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| batch resolution, defer decisions                | [`harness/input-requests.ts`](../packages/eve/src/harness/input-requests.ts)                                                                                                                             |
+| batch + deferred-input storage                   | [`harness/pending-input-batches.ts`](../packages/eve/src/harness/pending-input-batches.ts)                                                                                                               |
+| stale-response conversion (a second interpreter) | [`harness/stale-input-responses.ts`](../packages/eve/src/harness/stale-input-responses.ts)                                                                                                               |
+| required/dismissable classification              | [`harness/input-request-class.ts`](../packages/eve/src/harness/input-request-class.ts)                                                                                                                   |
+| limit prompt creation + resolution special cases | [`harness/session-limit-enforcement.ts`](../packages/eve/src/harness/session-limit-enforcement.ts), [`harness/session-limit-continuation.ts`](../packages/eve/src/harness/session-limit-continuation.ts) |
+| challenge storage + callback pairing             | [`harness/authorization.ts`](../packages/eve/src/harness/authorization.ts), [`execution/workflow-steps.ts`](../packages/eve/src/execution/workflow-steps.ts)                                             |
+| callback wait scheduling                         | [`execution/workflow-entry.ts`](../packages/eve/src/execution/workflow-entry.ts), window gating in [`execution/session-command-inbox.ts`](../packages/eve/src/execution/session-command-inbox.ts)        |
+| projection routing                               | [`harness/proxy-input-requests.ts`](../packages/eve/src/harness/proxy-input-requests.ts), [`execution/subagent-hitl-proxy.ts`](../packages/eve/src/execution/subagent-hitl-proxy.ts)                     |
+| text matching in the resolution path             | [`channel/resolve-text.ts`](../packages/eve/src/channel/resolve-text.ts) via input-requests                                                                                                              |
+| forced-closure sweeps                            | [`execution/settle-cancelled-turn-step.ts`](../packages/eve/src/execution/settle-cancelled-turn-step.ts)                                                                                                 |
+
+**Multiplicative state.** Obligation state lives in three unrelated keys
+(`pending-input-batches`, `pendingAuthorization`, `deferredStepInput`), so
+behavior is the cross product of approvals × challenges × limit prompts ×
+projections × actor guards — and every fix touches an unknown subset of that
+product.
+
+**No per-case specification.** Expected behavior lived in scattered tests
+and code paths. Neither a human nor a coding agent could change one case and
+prove the others unchanged — regressions surfaced as user reports, not as
+failing gates.
+
+This document is the fix for all three: a state machine in which every open
+request, challenge, and prompt is a row in durable state, one pure function
+interprets every delivery against those rows, and nothing the session
+receives is silently consumed. Every behavior is one anchored entry in the
+[transition catalog](#transition-catalog) — machine state, input, outcome
+planes, required events — and every eval declares which anchor it proves
+([coverage](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md)),
+so a change that regresses a case fails a named gate instead of a user.
 
 Three rules carry over unchanged from the original proposal:
 
@@ -397,26 +435,6 @@ additive `AuthorizationOutcome` value.
 `input.responded` is that family generalized to every request kind — not a
 competing event. Exactly one settlement event family may exist on the wire.
 
-### Durable state
-
-**Durable state.** The pending-batch collection shipped in [#1868] with a
-read shim for the legacy singleton key; the remaining state changes (candidate
-records, limit generations, auth groups) ride the documented snapshot
-versioning convention. Legacy `deferredStepInput` content — messages wedged
-behind an approval before the mitigation — releases as an ordinary message
-turn on the first delivery after upgrade.
-
-### Transport
-
-**Transport consolidation — deliberately breaking, scoped.** The dedicated
-authorization hook (`${sessionId}:auth`) is a transitional artifact of the
-removed exclusive wait: callbacks are already payload-discriminated
-(`authorizationCallback`) and classified at the turn step, so the end state
-delivers them through the session's one command stream and deletes the
-window-gating machinery. Cost: challenge URLs minted before the cutover embed
-the old hook token and would 404; ship either a one-release token alias or
-accept the break for in-flight challenges under the pre-1.0 policy.
-
 ### Behavior break
 
 **Deliberately breaking, behavior not wire.** Runtime text matching is
@@ -459,48 +477,7 @@ executor outcome ──turn-outcome input──▶ executeHitl
 
 The driver never sees obligation state; the interpreter never performs a side
 effect; the store never decides. Today each of those sentences is false in at
-least one module — see [Consolidation](#consolidation-one-interpreter).
-
-### Canonical walks
-
-Data at each step for the three flows that historically wedged or clobbered.
-
-**Message while an approval is open** (`owner.approval.message.run-open`):
-
-```text
-delivery         = Message(actor B, "what's the status?")
-store.read()     = groups: [Batch{ A1: open }]
-interpret        ⊢ no correlated candidate; not limit-gated
-decision.state   = groups: [Batch{ A1: open }] // A1 untouched, still answerable
-decision.effects = [emit(message.received),
-                    run-model(message)]        // model runs WITHOUT withheld output
-```
-
-**Late accepted response** (`owner.approval.response.settle-allow-after-turns`):
-
-```text
-delivery         = Responses(actor A, [{ requestId: A1, optionId: allow }])
-store.read()     = groups: [Batch{ A1: open }, withheldOutput W]
-interpret        ⊢ candidate c = {A1, deliveryId}; policy accepts; A1 is the last open member
-decision.state   = Batch{ A1: settled(allowed), continuation: claimed }
-decision.effects = [emit(input.responded(A1, c, responder A)),
-                    restore-group(Batch), execute-tool(call-1), run-model(resume)]
-```
-
-**Authorization callback** (`owner.auth.callback.complete`):
-
-```text
-delivery         = Callback("weather", { code })
-store.read()     = groups: [AuthGroup{ C1: open }]
-interpret        ⊢ C1 matches; completes(authorized); last member closes the group
-decision.state   = AuthGroup{ C1: completed(authorized), continuation: claimed }
-decision.effects = [emit(authorization.completed(C1)),
-                    restore-group(AuthGroup)] // re-drive with callback result
-```
-
-A stale variant of any walk changes only the decision: `interpret` finds the
-terminal obligation, leaves `nextState` unchanged, and returns ordered effects
-to emit the rejection and run a turn with the stale-attempt context.
+least one module — see [Implementation](#implementation).
 
 ## Transition catalog
 
@@ -1328,47 +1305,31 @@ obligation.
   `input.response.rejected(scope: projection, reason: unauthorized)`; no
   terminal request event.
 
-## Implementation state and staging
+## Implementation
 
-Shipped by the mitigations, with their deliberate deviations from this
-contract:
+### Shipped so far
 
-- **Always-receptive scheduler** — [#1830] (authorization; via a window-gated
-  extra inbox source, superseded by the transport consolidation above) and
-  [#1868] (approvals). The two blocked continuations are gone.
-- **Group collection** — [#1868] stores pending batches as an ordered list
-  with a legacy-key read shim. Deviations to replace: partial responses are
-  deferred rather than settled per-member
-  (`owner.batch.response.settle-partial`); text matching is retained
-  (`owner.approval.message.run-open`); question supersession is not
-  actor-scoped (`owner.question.message.run-open-other-actor`); multi-batch
-  question dismissal is suppressed rather than per-group.
+The mitigations shipped the always-receptive scheduler ([#1830]
+authorization, via a window-gated extra inbox source; [#1868] approvals) and
+the ordered pending-batch collection with a legacy-key read shim ([#1868]).
+Their deliberate deviations from this contract, each named by its anchor:
+partial responses are deferred rather than settled per member
+(`owner.batch.response.settle-partial`); text matching is retained
+(`owner.approval.message.run-open`); question supersession is not
+actor-scoped (`owner.question.message.run-open-other-actor`); multi-batch
+question dismissal is suppressed rather than per-group; the window-gated
+authorization hook remains (deleted in stage 4).
 
-### Consolidation: one interpreter
+### Target: one engine
 
-The machine above is currently implemented nowhere and enforced everywhere:
-interpretation logic is smeared across ten modules, each owning a fragment of
-the transition table. That dispersion is why both wedges could exist — no
-single seam ever saw the whole state.
-
-| Fragment                                         | Today lives in                                                                                                                                                                                           |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| batch resolution, defer decisions                | [`harness/input-requests.ts`](../packages/eve/src/harness/input-requests.ts)                                                                                                                             |
-| batch + deferred-input storage                   | [`harness/pending-input-batches.ts`](../packages/eve/src/harness/pending-input-batches.ts)                                                                                                               |
-| stale-response conversion (a second interpreter) | [`harness/stale-input-responses.ts`](../packages/eve/src/harness/stale-input-responses.ts)                                                                                                               |
-| required/dismissable classification              | [`harness/input-request-class.ts`](../packages/eve/src/harness/input-request-class.ts)                                                                                                                   |
-| limit prompt creation + resolution special cases | [`harness/session-limit-enforcement.ts`](../packages/eve/src/harness/session-limit-enforcement.ts), [`harness/session-limit-continuation.ts`](../packages/eve/src/harness/session-limit-continuation.ts) |
-| challenge storage + callback pairing             | [`harness/authorization.ts`](../packages/eve/src/harness/authorization.ts), [`execution/workflow-steps.ts`](../packages/eve/src/execution/workflow-steps.ts)                                             |
-| callback wait scheduling                         | [`execution/workflow-entry.ts`](../packages/eve/src/execution/workflow-entry.ts), window gating in [`execution/session-command-inbox.ts`](../packages/eve/src/execution/session-command-inbox.ts)        |
-| projection routing                               | [`harness/proxy-input-requests.ts`](../packages/eve/src/harness/proxy-input-requests.ts), [`execution/subagent-hitl-proxy.ts`](../packages/eve/src/execution/subagent-hitl-proxy.ts)                     |
-| text matching in the resolution path             | [`channel/resolve-text.ts`](../packages/eve/src/channel/resolve-text.ts) via input-requests                                                                                                              |
-| forced-closure sweeps                            | [`execution/settle-cancelled-turn-step.ts`](../packages/eve/src/execution/settle-cancelled-turn-step.ts)                                                                                                 |
-
-Target shape — one harness-owned package implements the machine; everything
-else is an adapter that feeds it inputs or executes its plans:
+One harness-owned package implements the machine; everything else is an
+adapter that feeds it inputs or executes its plans. The driver schedules,
+the interpreter decides, the store persists, the executor performs — no
+other module may settle, dismiss, supersede, reject, buffer, or resume an
+obligation.
 
 ```text
-harness/hitl/
+packages/eve/src/harness/hitl/
   types.ts         state, inputs, transitions, and ordered effects
   obligations.ts   one durable ledger: obligations, groups, candidates,
                    routes, and generations; migration + the only state writer
@@ -1379,62 +1340,124 @@ harness/hitl/
   execute.ts       persist nextState, then perform effects in order
 ```
 
-Adapters after consolidation:
+```ts
+type HitlInput =
+  | { type: "delivery"; delivery: AdmittedDelivery } // server-assigned deliveryId; verified actor or null
+  | { type: "timer"; timer: AuthorizationDeadline | SessionDeadline }
+  | { type: "turn-outcome"; outcome: TurnOutcome }
+  | { type: "child-event"; event: ChildHitlEvent }
+  | { type: "control"; control: CancelTurn | EndSession };
 
-- **tool-loop**: parked model output becomes an ApprovalBatch continuation;
-  new requests and challenges return as turn outcomes. `execute.ts` owns the
-  ordered effects. This replaces `resolvePendingInput`, the stale-conversion
-  pass, the limit special cases, and deferral _decisions_. The AI SDK constraint
-  that an approval response resolves in isolation becomes an ordered effect
-  sequence, not a hidden state key.
-- **workflow-steps**: callback extraction and `authorization.completed`
-  emission become `interpret(Callback)`; `derivePendingState` reads the one
-  store.
-- **workflow-entry**: pure scheduler. The window machinery
-  (`claimAuthorization`, `setAuthorizationWindow`, `nextWithSource`,
-  `awaitAuthorizationResume`) is deleted by the transport consolidation;
-  callbacks arrive through the one command stream and are classified by
-  payload, which the turn step already does.
-- **session-limit-enforcement**: the budget gate opens a `Limit(gen)`
-  obligation in the store; resolution is an interpret row like any other.
-- **proxy modules**: fold into `projector.ts`.
-- **resolve-text**: leaves the runtime path; stays exported for channel
-  adapters.
+interface HitlState {
+  obligations: Record<ObligationId, Obligation>;
+  groups: Record<GroupId, ObligationGroup>; // members + fire-once continuation
+  groupOrder: readonly GroupId[];
+  candidates: Record<CandidateId, ResponseCandidate>;
+  routes: Record<RequestId, ProjectionRoute>;
+  nextLimitGeneration: number;
+}
 
-Deleted outright: `stale-input-responses.ts` (becomes the `reject-stale`
-rows), `input-request-class.ts` (classification is the obligation kind), the
-inbox window machinery, and `deferredStepInput` as a decision mechanism. If
-internal-step persistence remains necessary, it stores an executor-owned effect
-cursor, never reinterpretable user input.
+type HitlEffect =
+  | { type: "emit"; event: InputLifecycleEvent }
+  | { type: "restore-group"; groupId: GroupId }
+  | { type: "execute-tool"; callId: string }
+  | { type: "run-model"; input: ModelTurnInput }
+  | { type: "forward-response"; routeId: string; response: InputResponse }
+  | { type: "terminate-turn" };
+```
+
+`interpretHitl` is pure — no persistence, network, model, clock, or hook
+access; timers and verified identity arrive as input values. The executor
+persists `nextState` before performing the ordered effects; an effect that
+produces a turn outcome feeds it back through the same interpreter. Terminal
+obligations stay in the ledger as tombstones until the session ends — that
+record is what classifies duplicates and late callbacks as stale; there is
+no second stale-response mechanism.
+
+Machine-checked at the store/interpreter boundary: only the store writes
+obligation state; every obligation belongs to exactly one group; terminal
+obligations never transition again; a continuation leaves `pending` exactly
+once; every candidate names one obligation and one admitted delivery; every
+route names one child-owned obligation or tombstone; every admitted input
+produces an observable effect or a documented no-op; interpreter output is
+deterministic for equal state and input; no two open approvals share one
+authored intent key.
+
+### Adapters and deletions
+
+- **tool-loop** keeps AI SDK transcript conversion, tool execution, and
+  model calls. Parked output becomes an ApprovalBatch continuation; new
+  requests and challenges return as turn outcomes; `resolvePendingInput`,
+  the stale-conversion pass, the limit special cases, and
+  `deferredStepInput` decisions all disappear into interpreter rows and
+  ordered effects.
+- **workflow-entry** becomes a pure scheduler: callbacks arrive through the
+  one command stream, classified by payload; the authorization window
+  machinery (`claimAuthorization`, `setAuthorizationWindow`,
+  `nextWithSource`, `awaitAuthorizationResume`) is deleted.
+- **workflow-steps** normalizes inputs and executes effects; callback
+  pairing and pending-state derivation move into the machine.
+- **session-limit-enforcement**: the budget gate opens `Limit(gen)` in the
+  store; resolution is an interpreter row like any other.
+- **proxy modules** fold into `projector.ts`; **resolve-text** leaves the
+  runtime path but stays exported for channel adapters.
+- Deleted outright: `stale-input-responses.ts` (becomes the `reject-stale`
+  rows), `input-request-class.ts` (classification is the obligation kind),
+  the inbox window machinery, and `deferredStepInput` as a decision
+  mechanism.
+
+### Migration and compatibility
+
+`loadHitlState` reads the new key first, then migrates the legacy sources in
+memory — pending batches (and the older singleton), `pendingAuthorization`,
+limit continuations, projected routes, `deferredStepInput`; the first write
+stores only the new shape. Messages wedged behind an approval before the
+mitigation release as an ordinary message turn on the first delivery after
+upgrade. One scoped transport break: challenge URLs minted before the
+cutover embed the old `${sessionId}:auth` hook token — ship a one-release
+token alias or accept the break for in-flight challenges under the pre-1.0
+policy.
+
+### Decisions and alternatives
+
+- **Approval intent compares authored keys only** (invariant 4). Deduping on
+  the `toolName` fallback would coalesce distinct actions — two different
+  `bash` commands share a tool name; unkeyed tools keep duplicate cards,
+  failing open.
+- **A duplicate raise resolves as already-pending**
+  (`owner.batch.park.dedupe-open-intent`): the duplicate call closes with a
+  synthetic result naming the open request. Rejected alternatives: binding
+  the call site to the open obligation breaks one-group-per-obligation;
+  failing the park punishes ordinary invariant-1 traffic.
+- **No pending marker in the projection, yet.** Telling the model about open
+  approvals would make re-raises unlikely, not impossible; it is a
+  compatible future addition, and invariant 4 stays the hard guarantee.
 
 ### Stages
 
-Each lands alone with its own gate; after stage 4, every remaining contract
-behavior is a diff to `interpret.ts` and its unit matrix.
+Each stage lands alone; its executable gate is recorded in
+[coverage.md](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md#implementation-stage-gates)
+and must pass before the next stage begins. After stage 4, every remaining
+behavior change is a diff to `interpret.ts` and its unit matrix.
 
-1. **Store extraction.** `obligations.ts` unifies pending batches,
+1. **Store foundation.** `obligations.ts` unifies pending batches,
    `pendingAuthorization`, and the limit prompt into one shape, with
-   candidate records and generations. Pure data; existing suite unchanged;
-   read shims for both legacy keys.
+   candidate records and generations; read shims for the legacy keys;
+   existing behavior unchanged.
 2. **Interpreter extraction.** `interpret.ts` absorbs `resolvePendingInput`,
-   stale conversion, and limit resolution, behavior-preserving; the existing
-   unit matrices move with it. Text matching enters as an explicit,
-   removable rule.
-3. **Auth through the machine.** Challenge parks become AuthGroups in the
-   store; callback extraction becomes `interpret(Callback)`; the deadline
-   becomes a timer input (today it has no producer). Multi-challenge resume
-   falls out of group closure.
-4. **Transport and routing.** Callbacks through the command stream (window
-   machinery deleted; in-flight challenge-URL cost per Compatibility);
-   projector extraction with per-request route accumulation (fixes #1608);
-   actor-partitioned coalescing.
-5. **Behavior completion, inside the interpreter.** Per-member settlement
-   replacing defer-partials; actor-scoped question supersession; text-match
-   removal with its docs update; fail-closed request creation (fixes #1201);
-   limit re-prompt closure.
-6. **Lifecycle events + eval matrix.** `events.ts` emits the event family;
-   the gated evals
-   ([`e2e/fixtures/agent-tools-hitl/evals/lifecycle/`](../e2e/fixtures/agent-tools-hitl/evals/lifecycle/coverage.md))
+   stale conversion, and limit resolution, behavior-preserving; text
+   matching enters as an explicit, removable rule.
+3. **Auth through the machine.** Challenge parks become AuthGroups;
+   callbacks and deadlines pass through the interpreter (the deadline gains
+   its missing producer); multi-challenge resume falls out of group closure.
+4. **Single stream and projection.** Callbacks through the command stream
+   (window machinery deleted); projector extraction with per-request route
+   accumulation (fixes #1608); actor-partitioned coalescing.
+5. **Target semantics.** Per-member settlement, actor-scoped question
+   supersession, candidate races, text-match removal with its docs update,
+   limit generations, forced closure, fail-closed request creation (fixes
+   #1201).
+6. **Lifecycle events.** `events.ts` emits the event family; the gated evals
    activate via `EVE_HITL_LIFECYCLE_CONTRACT=1`, keyed by anchor, with
    expected sequences written literally and never computed from runtime
    code.
@@ -1468,12 +1491,6 @@ response resumes a disposed child hook and fails the parent.
 
 ## Related work
 
-- [`hitl-admission-invariants.md`](./hitl-admission-invariants.md): decision
-  record for invariants 1–4 — the spec changes they forced, tradeoffs, and
-  the open duplicate-intent resolution.
-- [`hitl-engine.md`](./hitl-engine.md): implementation
-  architecture for one durable store, pure interpreter, and ordered effect
-  executor.
 - [PR #1368](https://github.com/vercel/eve/pull/1368): responder identity,
   authorization, Allow, Cancel, and request settlement.
 - [PR #1231](https://github.com/vercel/eve/pull/1231): makes every message
