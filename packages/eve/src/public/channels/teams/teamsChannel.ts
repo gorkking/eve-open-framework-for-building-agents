@@ -289,7 +289,10 @@ export function teamsChannel(config: TeamsChannelConfig = {}): TeamsChannel {
     kindHint: "teams",
     turnPolicy: config.turnPolicy,
     state: initialTeamsState(),
-    fetchFile: createTeamsFetchFile(filesPolicy),
+    fetchFile: createTeamsFetchFile(filesPolicy, {
+      ...config.api,
+      credentials: config.credentials,
+    }),
     metadata: (state) => ({
       channelId: state.channelId,
       conversationType: state.conversationType,
