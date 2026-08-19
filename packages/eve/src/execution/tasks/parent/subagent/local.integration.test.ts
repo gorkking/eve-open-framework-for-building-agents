@@ -365,6 +365,7 @@ describe("local subagent defineTool execution", () => {
 
       const runAttempt = async (
         calls: readonly {
+          readonly agentId?: string | null;
           readonly id: string;
           readonly message: string;
           readonly reverseKeys: boolean;
@@ -373,9 +374,13 @@ describe("local subagent defineTool execution", () => {
         const model = new MockLanguageModelV4({
           doGenerate: {
             content: calls.map((call) => ({
-              input: call.reverseKeys
-                ? JSON.stringify({ agentId: null, message: call.message })
-                : JSON.stringify({ message: call.message, agentId: null }),
+              input: JSON.stringify(
+                call.agentId === undefined
+                  ? { message: call.message }
+                  : call.reverseKeys
+                    ? { agentId: call.agentId, message: call.message }
+                    : { message: call.message, agentId: call.agentId },
+              ),
               toolCallId: call.id,
               toolName: "agent",
               type: "tool-call" as const,
@@ -438,11 +443,11 @@ describe("local subagent defineTool execution", () => {
       const writing = "Reply with exactly `replay-writing-ok`.";
       const first = await runAttempt([
         { id: "first-research", message: research, reverseKeys: false },
-        { id: "first-writing", message: writing, reverseKeys: false },
+        { agentId: "", id: "first-writing", message: writing, reverseKeys: false },
       ]);
       const retry = await runAttempt([
-        { id: "retry-writing", message: writing, reverseKeys: true },
-        { id: "retry-research", message: research, reverseKeys: true },
+        { agentId: "   ", id: "retry-writing", message: writing, reverseKeys: true },
+        { agentId: null, id: "retry-research", message: research, reverseKeys: true },
       ]);
 
       expect(retry.byMessage).toEqual(first.byMessage);

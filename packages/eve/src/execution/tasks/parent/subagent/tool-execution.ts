@@ -185,6 +185,7 @@ class SubagentToolExecutionController {
   private readonly initialSession: HarnessSession;
   private parentSandboxPreparation?: Promise<void>;
   private parentSandboxState?: HarnessSession["sandboxState"];
+  private delegatedTaskSandboxState?: HarnessSession["sandboxState"];
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
   private expectedCallIds?: readonly string[];
   private readonly fingerprintOccurrences = new Map<string, number>();
@@ -233,7 +234,7 @@ class SubagentToolExecutionController {
       typeof requestedAgentId === "string" &&
       findTaskAgentAddress(this.session, requestedAgentId) !== undefined;
     const result = Promise.withResolvers<RuntimeActionResult>();
-    const fingerprint = fingerprintSubagentAction(action);
+    const fingerprint = fingerprintSubagentAction(action, continuesAgent);
     const occurrence = this.fingerprintOccurrences.get(fingerprint) ?? 0;
     this.fingerprintOccurrences.set(fingerprint, occurrence + 1);
     const dispatchCallId = `subagent:${this.batchEvent.turnId}:${String(
@@ -271,7 +272,7 @@ class SubagentToolExecutionController {
       ? withSession
       : {
           ...withSession,
-          delegatedTaskSandboxState: this.parentSandboxState,
+          delegatedTaskSandboxState: this.delegatedTaskSandboxState,
           delegatedTasks: [...(result.delegatedTasks ?? []), ...delegatedTasks],
         };
   }
@@ -281,7 +282,7 @@ class SubagentToolExecutionController {
     const delegatedTasks = [...this.pendingTasks.values()];
     if (delegatedTasks.length === 0) return undefined;
     return {
-      delegatedTaskSandboxState: this.parentSandboxState,
+      delegatedTaskSandboxState: this.delegatedTaskSandboxState,
       delegatedTasks,
       session: this.session,
     };
@@ -293,7 +294,9 @@ class SubagentToolExecutionController {
     dispatchCallId: string,
     localFanoutSize: number,
   ): Promise<SubagentDispatchOutcome> {
-    if (!continuesAgent) await this.prepareParentSandbox(action);
+    const inheritsParentSandbox =
+      !continuesAgent && sharesParentSandbox(action, loadContext().require(BundleKey));
+    if (inheritsParentSandbox) await this.prepareParentSandbox();
     const session = this.session;
     const dispatchAction = { ...action, callId: dispatchCallId };
     const workflowInput: SubagentToolDispatchInput = {
@@ -319,6 +322,9 @@ class SubagentToolExecutionController {
       initial: session,
     });
     for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
+    if (inheritsParentSandbox && output.pendingTasks.length > 0) {
+      this.delegatedTaskSandboxState = this.parentSandboxState;
+    }
 
     const result = output.results.find((candidate) => candidate.callId === dispatchAction.callId);
     if (result === undefined) {
@@ -425,8 +431,7 @@ class SubagentToolExecutionController {
     }
   }
 
-  private async prepareParentSandbox(action: SubagentCallAction): Promise<void> {
-    if (!sharesParentSandbox(action, loadContext().require(BundleKey))) return;
+  private async prepareParentSandbox(): Promise<void> {
     if (!loadContext().has(SandboxKey)) return;
     this.parentSandboxPreparation ??= this.initializeParentSandbox();
     await this.parentSandboxPreparation;
@@ -483,10 +488,18 @@ class SubagentToolExecutionController {
   }
 }
 
-function fingerprintSubagentAction(action: SubagentCallAction): string {
+function fingerprintSubagentAction(action: SubagentCallAction, continuesAgent: boolean): string {
   const { callId: _callId, ...identity } = action;
+  const canonicalIdentity = continuesAgent
+    ? identity
+    : {
+        ...identity,
+        input: Object.fromEntries(
+          Object.entries(identity.input).filter(([key]) => key !== "agentId"),
+        ),
+      };
   return createHash("sha256")
-    .update(JSON.stringify(sortJsonObjectKeys(identity)))
+    .update(JSON.stringify(sortJsonObjectKeys(canonicalIdentity)))
     .digest("hex");
 }
 

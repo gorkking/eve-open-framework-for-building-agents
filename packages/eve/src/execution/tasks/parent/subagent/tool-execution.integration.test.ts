@@ -306,6 +306,93 @@ describe("subagent tool execution controller", () => {
     });
   });
 
+  it("does not attribute a failed inheriting call's sandbox to an admitted remote sibling", async () => {
+    const remoteAction: RuntimeRemoteAgentCallActionRequest = {
+      callId: "call-remote",
+      description: "Remote worker",
+      input: { message: "remote" },
+      kind: "remote-agent-call",
+      name: "remote-worker",
+      nodeId: "remote-node",
+      remoteAgentName: "remote-worker",
+    };
+    const task = {
+      taskId: "task-remote",
+      taskInboxToken: "inbox-remote",
+      taskRunId: "run-remote",
+    };
+    const entry = {
+      ...task,
+      createdByStepIndex: 2,
+      createdByTurnId: "turn-1",
+      metadata: {
+        agentId: "remote-agent",
+        kind: "subagent" as const,
+        mode: "remote" as const,
+        name: remoteAction.name,
+      },
+      operationId: "operation-remote",
+    };
+    mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const action = input.batch.actions[0] as SubagentAction;
+      if (action.kind === "subagent-call") {
+        return {
+          returnValue: Promise.reject(new Error("local admission failed")),
+          runId: "workflow-local",
+        };
+      }
+      return {
+        returnValue: Promise.resolve({
+          pendingTasks: [task],
+          results: [
+            {
+              backgroundTask: { status: "working", taskId: task.taskId },
+              callId: action.callId,
+              kind: "subagent-result",
+              origin: "child",
+              output: { agentId: "remote-agent", status: "working", taskId: task.taskId },
+              subagentName: action.name,
+            },
+          ],
+          sessionState: replaceDurableSessionSnapshot({
+            session: {
+              ...input.sessionState.snapshot.session,
+              state: { [SESSION_TASKS_STATE_KEY]: { tasks: [entry] } },
+            },
+            state: input.sessionState,
+          }),
+        }),
+        runId: "workflow-remote",
+      };
+    });
+    const sandboxState = { initialized: true, session: null } as const;
+    const sandbox = {
+      captureState: vi.fn(async () => sandboxState),
+      get: vi.fn(async () => null),
+      stop: vi.fn(async () => undefined),
+    };
+    const ctx = new ContextContainer();
+    ctx.set(BundleKey, createBundle(true) as never);
+    ctx.set(SandboxKey, sandbox);
+
+    const output = await contextStorage.run(ctx, () =>
+      runWithSubagentToolExecution({
+        session,
+        step: async () => {
+          prepareBatch([localAction, remoteAction]);
+          await Promise.allSettled(
+            [localAction, remoteAction].map((action) => executeSubagentToolCall({ action })),
+          );
+          return { next: null, session };
+        },
+      }),
+    );
+
+    expect(sandbox.get).toHaveBeenCalledOnce();
+    expect(output.delegatedTasks).toEqual([task]);
+    expect(output.delegatedTaskSandboxState).toBeUndefined();
+  });
+
   it("keeps semantic dispatch ownership stable when retry siblings reorder", async () => {
     const dispatchCallIds: string[] = [];
     mocks.start.mockImplementation(async (_workflow, [input]) => {
@@ -352,14 +439,29 @@ describe("subagent tool execution controller", () => {
         }),
       );
 
-    await runAttempt([localAction, siblingAction], { ...localAction, callId: "call-local-later" });
+    await runAttempt(
+      [localAction, { ...siblingAction, input: { agentId: null, message: "sibling" } }],
+      {
+        ...localAction,
+        callId: "call-local-later",
+        input: { agentId: "", message: "local" },
+      },
+    );
     const firstAttemptIds = dispatchCallIds.slice();
     await runAttempt(
       [
-        { ...siblingAction, callId: "call-sibling-from-retry" },
-        { ...localAction, callId: "call-from-retry" },
+        {
+          ...siblingAction,
+          callId: "call-sibling-from-retry",
+          input: { agentId: "   ", message: "sibling" },
+        },
+        { ...localAction, callId: "call-from-retry", input: { agentId: null, message: "local" } },
       ],
-      { ...localAction, callId: "call-local-later-from-retry" },
+      {
+        ...localAction,
+        callId: "call-local-later-from-retry",
+        input: { message: "local" },
+      },
     );
 
     expect(new Set(firstAttemptIds)).toHaveProperty("size", 3);

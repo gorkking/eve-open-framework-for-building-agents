@@ -114,15 +114,18 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
           ? result.pendingRuntimeActionKeys
           : undefined;
       const hasDelegatedTasks = (result.delegatedTasks?.length ?? 0) > 0;
+      const retainedSessionState = hasDelegatedTasks
+        ? retainSubagentToolExecutionEffects({
+            current: beforeStep.sessionState,
+            effects: result.sessionState,
+            sandboxState: result.delegatedTaskSandboxState,
+          })
+        : beforeStep.sessionState;
 
       if (hasDelegatedTasks) {
         await cursor.adopt({
           serializedContext: beforeStep.serializedContext,
-          sessionState: retainSubagentToolExecutionEffects({
-            current: beforeStep.sessionState,
-            effects: result.sessionState,
-            sandboxState: result.delegatedTaskSandboxState,
-          }),
+          sessionState: retainedSessionState,
         });
         await acknowledgeDelegatedTasksStep({ tasks: result.delegatedTasks ?? [] });
       }
@@ -154,7 +157,7 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
             beforeStep.serializedContext,
             result.serializedContext,
           ),
-          sessionState: cursor.sessionState,
+          sessionState: retainedSessionState,
         });
         // No `canPark` check here: that gate rejects model-authored waits
         // (`next: null`) in task mode, whereas every session can resume by
@@ -198,6 +201,17 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
       // `experimental.tasks`, and plain runtime-action dispatch otherwise.
       if (pendingActionKeys !== undefined) {
         if (!hasDelegatedTasks) await cursor.adopt(result);
+        if (hasDelegatedTasks && cancellation?.signal.aborted === true) {
+          await cursor.adopt({
+            serializedContext: preserveSerializedSessionDynamicModelSelection(
+              beforeStep.serializedContext,
+              result.serializedContext,
+            ),
+            sessionState: retainedSessionState,
+          });
+          await finishCancelledTurn({ bufferedDeliveries, cancellation, cursor });
+          return;
+        }
         const hasPendingTasks = result.action === "park" && result.tasksEnabled;
         let dispatch;
         if (result.action === "dispatch-workflow-runtime-actions") {

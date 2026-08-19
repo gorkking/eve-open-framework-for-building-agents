@@ -466,19 +466,22 @@ describe("turnWorkflow", () => {
       },
       phase: "addressed" as const,
     };
-    const completedState = withSessionSnapshot(initialState, {
-      history: [
-        { content: "keep", role: "user" },
-        { content: "discard", role: "assistant" },
-      ],
-      sandboxState: unrelatedToolSandboxState,
-      state: {
-        existing: { value: "keep" },
-        leaked: { value: "discard" },
-        [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
-        [SESSION_TASKS_STATE_KEY]: { tasks: [taskEntry] },
+    const completedState = withSessionSnapshot(
+      { ...initialState, continuationToken: "http:rekeyed" },
+      {
+        history: [
+          { content: "keep", role: "user" },
+          { content: "discard", role: "assistant" },
+        ],
+        sandboxState: unrelatedToolSandboxState,
+        state: {
+          existing: { value: "keep" },
+          leaked: { value: "discard" },
+          [AGENT_HANDLES_STATE_KEY]: { handles: [handle] },
+          [SESSION_TASKS_STATE_KEY]: { tasks: [taskEntry] },
+        },
       },
-    });
+    );
     const retainedState = withSessionSnapshot(initialState, {
       history: [{ content: "keep", role: "user" }],
       sandboxState: delegatedTaskSandboxState,
@@ -492,9 +495,25 @@ describe("turnWorkflow", () => {
       id: "openai/gpt-5.6-sol",
       contextWindowTokens: 1_000_000,
     };
-    installInbox([], { cancelPayloads: [{}] });
+    const inbox = createInboxMock([]);
+    const cancelRead = Promise.withResolvers<IteratorResult<unknown>>();
+    const cancelHook = {
+      token: "turn-token:cancel",
+      getConflict: vi.fn(async () => null),
+      dispose: vi.fn(),
+      [Symbol.asyncIterator](): AsyncIterator<unknown> {
+        return {
+          next: () => cancelRead.promise,
+          return: vi.fn(async () => ({ done: true, value: undefined })),
+        };
+      },
+    };
+    createHookMock.mockImplementation((input: { token: string }) =>
+      input.token.endsWith(":cancel") ? cancelHook : inbox.hook,
+    );
+    let turnSignal: AbortSignal | undefined;
     vi.mocked(turnStep).mockImplementationOnce(async (stepInput) => {
-      await vi.waitFor(() => expect(stepInput.abortSignal?.aborted).toBe(true));
+      turnSignal = stepInput.abortSignal;
       return {
         action: "park",
         delegatedTaskSandboxState,
@@ -511,6 +530,17 @@ describe("turnWorkflow", () => {
         tasksEnabled: true,
       };
     });
+    resumeHookMock.mockImplementation(
+      async (_token: string, payload: { continuationToken?: string; kind?: string }) => {
+        if (
+          payload.kind === "turn-continuation-token" &&
+          payload.continuationToken === "http:rekeyed"
+        ) {
+          cancelRead.resolve({ done: false, value: {} });
+          await vi.waitFor(() => expect(turnSignal?.aborted).toBe(true));
+        }
+      },
+    );
 
     const { input } = createInput({
       driverCapabilities: { cancelledTurnSettle: true, turnInbox: true },
