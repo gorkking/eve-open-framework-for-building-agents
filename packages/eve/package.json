@@ -384,6 +384,7 @@
     "next": "catalog:",
     "picocolors": "catalog:",
     "react": "catalog:",
+    "react-dom": "catalog:",
     "react-test-renderer": "19.2.6",
     "semver": "7.8.4",
     "shadcn": "4.16.1",
