@@ -416,6 +416,8 @@ export interface SessionCapabilities {
    *    approvals and `ask_question` prompts the model has already emitted.
    */
   readonly requestInput?: boolean;
+  /** Internal channel opt-in for presentation-only progress reporting. */
+  readonly progress?: boolean;
 }
 
 // ---------------------------------------------------------------------------

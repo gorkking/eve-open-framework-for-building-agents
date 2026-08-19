@@ -114,6 +114,28 @@ describe("reduceProgressCommand", () => {
     expect(next.recentActivity).toHaveLength(2);
   });
 
+  it("retains a fast report by materializing its framework-stamped source", () => {
+    const snapshot = reduce({
+      commandId: "command_1",
+      events: [
+        {
+          entityId: "agent:child",
+          eventId: "report_1",
+          kind: "report",
+          report: { id: "report_1", message: "Starting", reportedAt: turn.startedAt },
+          source: { ...entity, id: "agent:child", kind: "subagent", name: "child" },
+        },
+      ],
+      kind: "progress",
+      version: 1,
+    });
+
+    expect(snapshot.entities["agent:child"]).toMatchObject({
+      currentReport: { message: "Starting" },
+      phase: "running",
+    });
+  });
+
   it("normalizes untrusted reports and retains only the most recent activity", () => {
     const message = `  running\u0000\n${"x".repeat(MAX_PROGRESS_TEXT_LENGTH + 1)} `;
     expect(normalizeProgressText(message)).toHaveLength(MAX_PROGRESS_TEXT_LENGTH);

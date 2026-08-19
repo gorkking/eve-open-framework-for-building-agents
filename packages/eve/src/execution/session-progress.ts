@@ -82,6 +82,8 @@ export type ProgressEventV1 =
       readonly eventId: string;
       readonly entityId: string;
       readonly report: ProgressReportV1;
+      /** Framework-stamped fallback when a report wins its lifecycle race. */
+      readonly source?: Omit<ProgressEntityV1, "currentReport">;
     };
 
 export function createProgressSnapshot(): ProgressSnapshotV1 {
@@ -148,7 +150,7 @@ function reduceEvent(snapshot: ProgressSnapshotV1, event: ProgressEventV1): Prog
       );
     }
     case "report": {
-      const entity = snapshot.entities[event.entityId];
+      const entity = snapshot.entities[event.entityId] ?? event.source;
       if (entity === undefined || isTerminal(entity.phase)) return snapshot;
       const report = { ...event.report, message: normalizeProgressText(event.report.message) };
       return addActivity(
