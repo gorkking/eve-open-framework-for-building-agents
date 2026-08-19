@@ -729,6 +729,31 @@ describe("dispatchRuntimeActionsStep child starts", () => {
 });
 
 describe("dispatchRuntimeActionsStep agent delivery", () => {
+  it("does not reclassify a missing task continuation as a fresh start", async () => {
+    const agentId = LOCAL_PARKED_HANDLE.identity.id;
+    const session = createPendingSession({ agentId });
+    installContext(session, undefined, true);
+    const batch = getPendingRuntimeActionBatch(session.state);
+    if (batch === undefined) throw new Error("Expected a pending continuation.");
+
+    const result = await dispatchTaskStep({
+      batch,
+      localFanoutSize: 0,
+      requireExistingAgent: true,
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        isError: true,
+        output: { code: "AGENT_UNREACHABLE", message: expect.stringContaining(agentId) },
+      }),
+    ]);
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.startWorkflowPreferLatest).not.toHaveBeenCalled();
+  });
+
   it("rejects a tasks-mode continuation while the addressed agent has active work", async () => {
     const addressedHandle: AgentHandle = {
       address: LOCAL_PARKED_HANDLE.address,

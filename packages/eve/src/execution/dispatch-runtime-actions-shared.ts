@@ -28,11 +28,13 @@ import {
 } from "#runtime/sessions/runtime-context-keys.js";
 import { deserializeContext } from "#context/serialize.js";
 import {
+  createAgentErrorResult,
   type DispatchOutcome,
   isAgentHandleAction,
   type RuntimeAgentHandleAction,
   type RuntimeSession,
 } from "#execution/agent-handle-dispatch.js";
+import { AGENT_UNREACHABLE } from "#harness/agent-handle-errors.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import { readActionTraceContext } from "#tracing/agent-trace-context-store.js";
 import {
@@ -172,6 +174,7 @@ export interface PreparedRuntimeActionDispatch {
 export async function prepareRuntimeActionDispatch(input: {
   readonly batch?: PendingRuntimeActionBatch;
   readonly localFanoutSize?: number;
+  readonly requireExistingAgent?: boolean;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
   /**
@@ -206,6 +209,7 @@ export async function prepareRuntimeActionDispatch(input: {
     actions: batch.actions,
     bundle,
     ctx,
+    requireExistingAgent: input.requireExistingAgent,
     session,
     taskControls: input.taskControls,
   });
@@ -358,6 +362,7 @@ function planDispatch(input: {
   readonly actions: readonly RuntimeActionRequest[];
   readonly bundle: CompiledBundle;
   readonly ctx: Parameters<typeof getDynamicSubagentSelection>[0];
+  readonly requireExistingAgent?: boolean;
   readonly session: RuntimeSession;
   readonly taskControls: boolean;
 }): DispatchPlanEntry[] {
@@ -389,6 +394,16 @@ function planDispatch(input: {
               ? dynamicSubagentSelection.remoteAgent
               : undefined,
           kind: "resume",
+        };
+      }
+      if (input.requireExistingAgent === true) {
+        return {
+          kind: "reject",
+          result: createAgentErrorResult({
+            action,
+            code: AGENT_UNREACHABLE,
+            message: `Agent with id "${agentId}" is no longer reachable.`,
+          }),
         };
       }
       log.warn("unknown agentId on subagent call; starting a new agent", {

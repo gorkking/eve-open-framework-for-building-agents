@@ -122,6 +122,66 @@ afterEach(() => {
 });
 
 describe("subagent tool execution controller", () => {
+  it("keeps dispatch ownership stable when a retried step returns a new AI SDK call id", async () => {
+    const dispatchCallIds: string[] = [];
+    mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
+      dispatchCallIds.push(action.callId);
+      return {
+        returnValue: Promise.resolve({
+          pendingTasks: [],
+          results: [
+            {
+              callId: action.callId,
+              kind: "subagent-result",
+              origin: "child",
+              output: "accepted",
+              subagentName: action.name,
+            },
+          ],
+          sessionState: input.sessionState,
+        }),
+        runId: `workflow-${action.callId}`,
+      };
+    });
+    const outwardCallIds: string[] = [];
+    const ctx = new ContextContainer();
+    ctx.set(BundleKey, createBundle() as never);
+
+    const runAttempt = async (actions: readonly RuntimeSubagentCallActionRequest[]) =>
+      contextStorage.run(ctx, () =>
+        runWithSubagentToolExecution({
+          handleEvent: async (event) => {
+            if (event.type === "action.result") outwardCallIds.push(event.data.result.callId);
+          },
+          session,
+          step: async () => {
+            for (const action of actions) await executeSubagentToolCall({ action });
+            return { next: null, session };
+          },
+        }),
+      );
+
+    await runAttempt([localAction, siblingAction]);
+    await runAttempt([
+      { ...localAction, callId: "call-from-retry" },
+      { ...siblingAction, callId: "call-sibling-from-retry" },
+    ]);
+
+    expect(dispatchCallIds).toEqual([
+      "subagent:turn-1:2:0",
+      "subagent:turn-1:2:1",
+      "subagent:turn-1:2:0",
+      "subagent:turn-1:2:1",
+    ]);
+    expect(outwardCallIds).toEqual([
+      localAction.callId,
+      siblingAction.callId,
+      "call-from-retry",
+      "call-sibling-from-retry",
+    ]);
+  });
+
   it("starts sibling AI SDK subagent workflows concurrently", async () => {
     const release = new Map<string, () => void>();
     let releaseSandboxCapture!: () => void;
@@ -138,14 +198,18 @@ describe("subagent tool execution controller", () => {
     };
     mocks.start.mockImplementation(async (_workflow, [input]) => {
       const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
+      const outwardAction = [localAction, siblingAction, independentAction].find(
+        (candidate) => candidate.input.message === action.input.message,
+      );
+      if (outwardAction === undefined) throw new Error("Unexpected test action.");
       const current = input.sessionState.snapshot.session;
-      const agentId = `agent-${action.callId}`;
-      const { entry, task } = createTask(action, agentId);
+      const agentId = `agent-${outwardAction.callId}`;
+      const { entry, task } = createTask(outwardAction, agentId);
       const handles = getAgentHandleStore(current.state)?.handles ?? [];
       const tasks = getSessionTaskIndex(current.state);
       return {
         returnValue: new Promise((resolve) => {
-          release.set(action.callId, () => {
+          release.set(outwardAction.callId, () => {
             resolve({
               pendingTasks: [task],
               results: [
@@ -164,7 +228,7 @@ describe("subagent tool execution controller", () => {
                   state: {
                     ...current.state,
                     [AGENT_HANDLES_STATE_KEY]: {
-                      handles: [...handles, createAddressedHandle(action, agentId)],
+                      handles: [...handles, createAddressedHandle(outwardAction, agentId)],
                     },
                     [SESSION_TASKS_STATE_KEY]: { tasks: [...tasks, entry] },
                   },
@@ -217,14 +281,14 @@ describe("subagent tool execution controller", () => {
     expect(
       Object.fromEntries(
         mocks.start.mock.calls.map(([, [input]]) => [
-          input.batch.actions[0]?.callId,
+          input.batch.actions[0]?.input.message,
           input.sessionState.snapshot.session.sandboxState?.initialized,
         ]),
       ),
     ).toEqual({
-      [independentAction.callId]: undefined,
-      [localAction.callId]: true,
-      [siblingAction.callId]: true,
+      independent: undefined,
+      local: true,
+      sibling: true,
     });
     expect(mocks.start.mock.calls.map(([, [input]]) => input.localFanoutSize)).toEqual([3, 3, 3]);
     expect(outputs.next).toMatchObject({
@@ -250,8 +314,8 @@ describe("subagent tool execution controller", () => {
     mocks.start.mockImplementation(async (_workflow, [input]) => {
       const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
       const current = input.sessionState.snapshot.session;
-      if (action.callId === localAction.callId) {
-        const { entry, task } = createTask(action, "agent-a");
+      if (action.input.message === "first") {
+        const { entry, task } = createTask(localAction, "agent-a");
         return {
           returnValue: releaseFirst.promise.then(() => ({
             pendingTasks: [task],
@@ -360,12 +424,12 @@ describe("subagent tool execution controller", () => {
     );
 
     await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(2));
-    expect(mocks.start.mock.calls.map(([, [input]]) => input.batch.actions[0]?.callId)).toEqual(
-      expect.arrayContaining([localAction.callId, "call-local-sibling"]),
-    );
     expect(
-      mocks.start.mock.calls.map(([, [input]]) => input.batch.actions[0]?.callId),
-    ).not.toContain("call-local-duplicate");
+      mocks.start.mock.calls.map(([, [input]]) => input.batch.actions[0]?.input.message),
+    ).toEqual(expect.arrayContaining(["first", "second"]));
+    expect(
+      mocks.start.mock.calls.map(([, [input]]) => input.batch.actions[0]?.input.message),
+    ).not.toContain("duplicate");
     releaseFirst.resolve();
     const output = await execution;
 
@@ -375,8 +439,9 @@ describe("subagent tool execution controller", () => {
       "task-call-local",
     );
     const duplicateInput = mocks.start.mock.calls.find(
-      ([, [input]]) => input.batch.actions[0]?.callId === "call-local-duplicate",
+      ([, [input]]) => input.batch.actions[0]?.input.message === "duplicate",
     )?.[1][0];
+    expect(duplicateInput?.requireExistingAgent).toBe(true);
     expect(
       duplicateInput === undefined
         ? []
@@ -455,6 +520,7 @@ describe("subagent tool execution controller", () => {
   it("cancels and acknowledges a started task when the model step fails", async () => {
     const { entry, task } = createTask(localAction, "call-local");
     mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
       const current = input.sessionState.snapshot.session;
       return {
         returnValue: Promise.resolve({
@@ -462,7 +528,7 @@ describe("subagent tool execution controller", () => {
           results: [
             {
               backgroundTask: { status: "working", taskId: task.taskId },
-              callId: localAction.callId,
+              callId: action.callId,
               kind: "subagent-result",
               origin: "child",
               output: { agentId: "call-local", status: "working", taskId: task.taskId },

@@ -60,6 +60,7 @@ interface SubagentToolExecutionEffects {
 interface RegisteredSubagentCall {
   readonly action: SubagentCallAction;
   readonly continuesAgent: boolean;
+  readonly dispatchCallId: string;
   readonly result: PromiseWithResolvers<RuntimeActionResult>;
 }
 
@@ -169,6 +170,7 @@ class SubagentToolExecutionController {
   private parentSandboxPreparation?: Promise<void>;
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
   private flushScheduled = false;
+  private nextDispatchIndex = 0;
   private readonly registeredCalls: RegisteredSubagentCall[] = [];
   private session: HarnessSession;
 
@@ -186,7 +188,13 @@ class SubagentToolExecutionController {
       typeof requestedAgentId === "string" &&
       findTaskAgentAddress(this.session, requestedAgentId) !== undefined;
     const result = Promise.withResolvers<RuntimeActionResult>();
-    this.registeredCalls.push({ action, continuesAgent, result });
+    // A retried turn step may receive a new provider call id. The model-step
+    // position is stable, so task and child ownership must derive from it.
+    const dispatchCallId = `subagent:${this.batchEvent.turnId}:${String(
+      this.batchEvent.stepIndex,
+    )}:${String(this.nextDispatchIndex)}`;
+    this.nextDispatchIndex += 1;
+    this.registeredCalls.push({ action, continuesAgent, dispatchCallId, result });
     if (!this.flushScheduled) {
       this.flushScheduled = true;
       // AI SDK invokes one response's sibling tool executors synchronously
@@ -234,16 +242,19 @@ class SubagentToolExecutionController {
   private async dispatch(
     action: SubagentCallAction,
     continuesAgent: boolean,
+    dispatchCallId: string,
     localFanoutSize: number,
   ): Promise<RuntimeActionResult> {
     await this.emitActionRequested(action);
     try {
       if (!continuesAgent) await this.prepareParentSandbox(action);
       const session = this.session;
+      const dispatchAction = { ...action, callId: dispatchCallId };
       const workflowInput: SubagentToolDispatchInput = {
-        batch: { actions: [action], event: this.batchEvent, responseMessages: [] },
+        batch: { actions: [dispatchAction], event: this.batchEvent, responseMessages: [] },
         callbackBaseUrl: this.callbackBaseUrl,
         localFanoutSize,
+        requireExistingAgent: continuesAgent,
         serializedContext: serializeContext(loadContext()),
         sessionState: createDurableSessionState({ session }),
       };
@@ -263,13 +274,20 @@ class SubagentToolExecutionController {
       });
       for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
       for (const event of output.calledEvents ?? []) {
-        await this.emit(event, "subagent.called emission failed", event.data.callId);
+        const outwardEvent = {
+          ...event,
+          data: { ...event.data, callId: action.callId },
+        };
+        await this.emit(outwardEvent, "subagent.called emission failed", action.callId);
       }
 
-      const result = output.results.find((candidate) => candidate.callId === action.callId);
-      if (result === undefined) {
-        throw new Error(`Subagent tool call "${action.callId}" produced no result.`);
+      const dispatchResult = output.results.find(
+        (candidate) => candidate.callId === dispatchAction.callId,
+      );
+      if (dispatchResult === undefined) {
+        throw new Error(`Subagent tool call "${dispatchAction.callId}" produced no result.`);
       }
+      const result = { ...dispatchResult, callId: action.callId };
       if (
         result.kind === "subagent-result" &&
         result.isError !== true &&
@@ -319,10 +337,17 @@ class SubagentToolExecutionController {
       const prior = agentId === undefined ? undefined : activeAgents.get(agentId);
       const dispatch =
         prior === undefined
-          ? this.dispatch(call.action, call.continuesAgent, localFanoutSize)
+          ? this.dispatch(call.action, call.continuesAgent, call.dispatchCallId, localFanoutSize)
           : prior
               .catch(() => undefined)
-              .then(() => this.dispatch(call.action, call.continuesAgent, localFanoutSize));
+              .then(() =>
+                this.dispatch(
+                  call.action,
+                  call.continuesAgent,
+                  call.dispatchCallId,
+                  localFanoutSize,
+                ),
+              );
       if (agentId !== undefined) activeAgents.set(agentId, dispatch);
       this.dispatches.push(dispatch);
       void dispatch.then(call.result.resolve, call.result.reject);
