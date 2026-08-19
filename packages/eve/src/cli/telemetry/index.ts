@@ -106,7 +106,7 @@ export function createEveCliTelemetry(version: string): EveCliTelemetry {
         return;
       }
       logger.error(
-        "Attention: eve collects anonymous CLI telemetry to improve the command-line interface.\n" +
+        "Attention: eve collects CLI telemetry to improve the command-line interface.\n" +
           "Disable it with `eve telemetry disable`, or for one command set EVE_TELEMETRY_DISABLED=1.\n" +
           "Learn more: https://eve.dev/docs/reference/cli#cli-telemetry",
       );

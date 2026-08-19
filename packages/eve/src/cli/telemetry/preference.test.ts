@@ -1,4 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -32,6 +34,15 @@ describe("eve telemetry preference", () => {
     vi.mocked(readFile).mockResolvedValue('{"telemetry":{"enabled":false,"notifiedAt":"now"}}');
 
     await expect(readEveTelemetryPreference()).resolves.toEqual({ enabled: false, notified: true });
+  });
+
+  it("ignores a relative XDG config home", async () => {
+    vi.stubEnv("XDG_CONFIG_HOME", "relative-config");
+    vi.mocked(readFile).mockRejectedValue(new Error("missing"));
+
+    await setEveTelemetryEnabled(false);
+
+    expect(mkdir).toHaveBeenCalledWith(join(homedir(), ".config", "eve"), { recursive: true });
   });
 
   it("merges telemetry changes into the eve config atomically", async () => {

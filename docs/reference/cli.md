@@ -21,7 +21,7 @@ Relevant `eve` commands can run from the application root or any directory benea
 | `eve logs ls`                 | List `eve dev` diagnostic logs, most recent first                                                                                  |
 | `eve traces ls`               | List locally captured agent traces, most recent first                                                                              |
 | `eve traces [trace]`          | Show a local span tree (the most recent when omitted)                                                                              |
-| `eve telemetry <command>`     | Show, enable, or disable anonymous CLI telemetry collection                                                                        |
+| `eve telemetry <command>`     | Show, enable, or disable CLI telemetry collection                                                                                  |
 | `eve link`                    | Link the directory to a Vercel project and pull AI Gateway credentials                                                             |
 | `eve deploy`                  | Deploy the agent to Vercel production (links first if needed)                                                                      |
 | `eve eval`                    | Run evals against the local app or a remote target                                                                                 |
@@ -36,7 +36,13 @@ When `eve build` fails on discovery errors, it prints the full diagnostics repor
 
 ## CLI telemetry
 
-eve collects anonymous CLI telemetry by default to help improve the command-line interface. Each command records the eve version, operating system, CPU architecture, whether stdin is a TTY, an allowlisted command path, and its outcome (`success`, `usage_error`, or `error`). For `eve dev`, telemetry also records whether the target is local or remote and whether the UI is headless or interactive. Telemetry collection does not include command arguments, agent files, prompts, URLs, error messages, or arbitrary error properties.
+eve collects CLI telemetry by default to improve the command-line interface. Each command sends these fields to Vercel:
+
+- eve version, operating system, CPU architecture, and whether stdin is a TTY;
+- an allowlisted command path and outcome (`success`, `usage_error`, or `error`); and
+- for `eve dev`, whether the target is local or remote and whether the UI is headless or interactive.
+
+Telemetry does not include command arguments, agent files, prompts, URLs, error messages, arbitrary error properties, environment variables, file paths, or file contents. Vercel handles the telemetry under the [Vercel Privacy Notice](https://vercel.com/legal/privacy-notice).
 
 Run `eve telemetry disable` to disable telemetry collection on this machine. Use `eve telemetry status` to check the current setting, or `eve telemetry enable` to enable collection again. `EVE_TELEMETRY_DISABLED` is a higher-priority per-command override:
 
@@ -45,7 +51,7 @@ eve telemetry disable
 EVE_TELEMETRY_DISABLED=1 eve dev
 ```
 
-On an interactive terminal, eve prints this choice and the opt-out instructions once before collecting telemetry. Set `EVE_TELEMETRY_DEBUG=1` to print the collected event batch to stderr instead of sending it.
+On an interactive terminal, eve prints this choice and the opt-out instructions once before collecting telemetry. Set `EVE_TELEMETRY_DEBUG=1` to print the collected event batch to stderr instead of sending it. The durable preference is stored in the platform’s user configuration directory: `%APPDATA%\\eve\\config.json` on Windows, `~/Library/Preferences/eve/config.json` on macOS, and `$XDG_CONFIG_HOME/eve/config.json` (or `~/.config/eve/config.json`) on other platforms.
 
 ## `eve init`
 

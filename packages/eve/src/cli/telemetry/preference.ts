@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 
@@ -9,15 +9,27 @@ export type EveTelemetryPreference = {
   readonly notified: boolean;
 };
 
+function configuredDirectory(value: string | undefined, fallback: string): string {
+  return value && isAbsolute(value) ? value : fallback;
+}
+
 function eveConfigPath(): string {
   const home = homedir();
   if (process.platform === "win32") {
-    return join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), "eve", "config.json");
+    return join(
+      configuredDirectory(process.env.APPDATA, join(home, "AppData", "Roaming")),
+      "eve",
+      "config.json",
+    );
   }
   if (process.platform === "darwin") {
-    return join(home, "Library", "Application Support", "eve", "config.json");
+    return join(home, "Library", "Preferences", "eve", "config.json");
   }
-  return join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "eve", "config.json");
+  return join(
+    configuredDirectory(process.env.XDG_CONFIG_HOME, join(home, ".config")),
+    "eve",
+    "config.json",
+  );
 }
 
 const EveConfigSchema = z.looseObject({

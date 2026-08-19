@@ -9,7 +9,7 @@ type TelemetryLogger = {
 export function registerEveTelemetryCommands(program: Command, logger: TelemetryLogger): void {
   const telemetry = program
     .command("telemetry")
-    .description("Enable or disable anonymous CLI telemetry collection.");
+    .description("Enable or disable CLI telemetry collection.");
   telemetry
     .command("status")
     .description("Show whether telemetry collection is enabled.")
