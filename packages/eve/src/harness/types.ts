@@ -319,6 +319,8 @@ export interface ToolLoopHarnessConfig {
    * compacted history.
    */
   readonly onCompaction?: () => readonly ModelMessage[];
+  /** Notifies execution-owned tools before each actual model attempt. */
+  readonly onModelAttempt?: () => void;
   /**
    * Whether the agent opted into `experimental.subagentPersistentSessions`.
    * Gates delegated-agent handle tracking and the model-visible `<agents>`

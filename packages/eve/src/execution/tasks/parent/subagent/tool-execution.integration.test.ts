@@ -5,14 +5,18 @@ import { SandboxKey } from "#context/keys.js";
 import { BundleKey } from "#runtime/sessions/runtime-context-keys.js";
 import { replaceDurableSessionSnapshot } from "#execution/durable-session-store.js";
 import {
+  beginSubagentToolExecutionAttempt,
   executeSubagentToolCall,
   runWithSubagentToolExecution,
 } from "#execution/tasks/parent/subagent/tool-execution.js";
 import { AGENT_HANDLES_STATE_KEY, getAgentHandleStore } from "#harness/handles/store.js";
 import { setHarnessEmissionState } from "#harness/emission.js";
 import type { HarnessSession } from "#harness/types.js";
-import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
-import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
+import type {
+  RuntimeRemoteAgentCallActionRequest,
+  RuntimeSubagentCallActionRequest,
+} from "#runtime/actions/types.js";
+import { createSubagentCalledEvent, type UnstampedMessageStreamEvent } from "#protocol/message.js";
 import { getSessionTaskIndex, SESSION_TASKS_STATE_KEY } from "#tasks/session-index.js";
 
 const mocks = vi.hoisted(() => ({
@@ -122,6 +126,124 @@ afterEach(() => {
 });
 
 describe("subagent tool execution controller", () => {
+  it("reuses a completed dispatch when a model attempt retries with a new provider call ID", async () => {
+    mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const action = input.batch.actions[0] as RuntimeSubagentCallActionRequest;
+      return {
+        returnValue: Promise.resolve({
+          pendingTasks: [],
+          results: [
+            {
+              callId: action.callId,
+              kind: "subagent-result",
+              origin: "child",
+              output: { accepted: true },
+              subagentName: action.name,
+            },
+          ],
+          sessionState: input.sessionState,
+        }),
+        runId: `workflow-${action.callId}`,
+      };
+    });
+    const retryAction = { ...localAction, callId: "call-local-from-retry" };
+    const resultCallIds: string[] = [];
+    const ctx = new ContextContainer();
+    ctx.set(BundleKey, createBundle() as never);
+
+    const output = await contextStorage.run(ctx, () =>
+      runWithSubagentToolExecution({
+        handleEvent: async (event) => {
+          if (event.type === "action.result") resultCallIds.push(event.data.result.callId);
+        },
+        session,
+        step: async () => {
+          beginSubagentToolExecutionAttempt();
+          const first = await executeSubagentToolCall({ action: localAction });
+          beginSubagentToolExecutionAttempt();
+          const retry = await executeSubagentToolCall({ action: retryAction });
+          return { next: { done: true, output: { first, retry } }, session };
+        },
+      }),
+    );
+
+    expect(mocks.start).toHaveBeenCalledOnce();
+    expect(output.next).toMatchObject({
+      output: { first: { accepted: true }, retry: { accepted: true } },
+    });
+    expect(resultCallIds).toEqual([localAction.callId, retryAction.callId]);
+  });
+
+  it("rebuilds a remote child stream path with the provider-visible call ID", async () => {
+    const action: RuntimeRemoteAgentCallActionRequest = {
+      callId: "provider-call",
+      description: "Remote research agent",
+      input: { message: "research" },
+      kind: "remote-agent-call",
+      name: "research",
+      nodeId: "remote-node",
+      remoteAgentName: "research",
+    };
+    mocks.start.mockImplementation(async (_workflow, [input]) => {
+      const dispatchAction = input.batch.actions[0] as RuntimeRemoteAgentCallActionRequest;
+      return {
+        returnValue: Promise.resolve({
+          calledEvents: [
+            createSubagentCalledEvent({
+              callId: dispatchAction.callId,
+              childSessionId: "remote-child",
+              name: "research",
+              remote: { resolverId: "subagents/research", url: "https://remote.example" },
+              sequence: 1,
+              sessionId: session.sessionId,
+              toolName: "research",
+              turnId: "turn-1",
+              workflowId: "remote-workflow",
+            }),
+          ],
+          pendingTasks: [],
+          results: [
+            {
+              callId: dispatchAction.callId,
+              kind: "subagent-result",
+              origin: "child",
+              output: "accepted",
+              subagentName: action.name,
+            },
+          ],
+          sessionState: input.sessionState,
+        }),
+        runId: "remote-workflow",
+      };
+    });
+    const events: UnstampedMessageStreamEvent[] = [];
+    const ctx = new ContextContainer();
+    ctx.set(BundleKey, createBundle() as never);
+
+    await contextStorage.run(ctx, () =>
+      runWithSubagentToolExecution({
+        handleEvent: async (event) => {
+          events.push(event);
+        },
+        session,
+        step: async () => {
+          await executeSubagentToolCall({ action });
+          return { next: null, session };
+        },
+      }),
+    );
+
+    const called = events.find((event) => event.type === "subagent.called");
+    expect(called).toMatchObject({
+      data: {
+        callId: action.callId,
+        childStreamPath:
+          "/eve/v1/session/parent-session/subagents/provider-call/remote-child/stream",
+      },
+      type: "subagent.called",
+    });
+  });
+
   it("keeps semantic dispatch ownership stable when retry siblings reorder", async () => {
     const dispatchCallIds: string[] = [];
     mocks.start.mockImplementation(async (_workflow, [input]) => {

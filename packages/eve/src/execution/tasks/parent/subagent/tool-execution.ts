@@ -33,6 +33,7 @@ import { start } from "#internal/workflow/runtime.js";
 import {
   createActionResultEvent,
   createActionsRequestedEvent,
+  createSubagentCalledEvent,
   type UnstampedMessageStreamEvent,
 } from "#protocol/message.js";
 import type {
@@ -66,6 +67,11 @@ interface RegisteredSubagentCall {
   readonly result: PromiseWithResolvers<RuntimeActionResult>;
 }
 
+interface SubagentDispatchOutcome {
+  readonly calledEvents: NonNullable<SubagentToolDispatchResult["calledEvents"]>;
+  readonly result: RuntimeActionResult;
+}
+
 const log = createLogger("execution.subagent-tool");
 const SubagentToolExecutionKey = new ContextKey<SubagentToolExecutionController>(
   "eve.internal.subagentToolExecution",
@@ -75,6 +81,10 @@ export async function executeSubagentToolCall(input: {
   readonly action: SubagentCallAction;
 }): Promise<unknown> {
   return loadContext().require(SubagentToolExecutionKey).execute(input.action);
+}
+
+export function beginSubagentToolExecutionAttempt(): void {
+  loadContext().require(SubagentToolExecutionKey).beginAttempt();
 }
 
 export async function runWithSubagentToolExecution(input: {
@@ -168,6 +178,7 @@ class SubagentToolExecutionController {
   private emissionTail: Promise<void> = Promise.resolve();
   private readonly handleEvent?: HandleEventFn;
   private readonly dispatches: Promise<RuntimeActionResult>[] = [];
+  private readonly outcomesByDispatchCallId = new Map<string, Promise<SubagentDispatchOutcome>>();
   private readonly initialSession: HarnessSession;
   private parentSandboxPreparation?: Promise<void>;
   private readonly batchEvent: PendingRuntimeActionBatch["event"];
@@ -182,6 +193,10 @@ class SubagentToolExecutionController {
     this.batchEvent = getHarnessEmissionState(input.session.state);
     this.initialSession = input.session;
     this.session = input.session;
+  }
+
+  beginAttempt(): void {
+    this.fingerprintOccurrences.clear();
   }
 
   async execute(action: SubagentCallAction): Promise<unknown> {
@@ -246,49 +261,69 @@ class SubagentToolExecutionController {
     continuesAgent: boolean,
     dispatchCallId: string,
     localFanoutSize: number,
+  ): Promise<SubagentDispatchOutcome> {
+    if (!continuesAgent) await this.prepareParentSandbox(action);
+    const session = this.session;
+    const dispatchAction = { ...action, callId: dispatchCallId };
+    const workflowInput: SubagentToolDispatchInput = {
+      batch: { actions: [dispatchAction], event: this.batchEvent, responseMessages: [] },
+      callbackBaseUrl: this.callbackBaseUrl,
+      localFanoutSize,
+      requireExistingAgent: continuesAgent,
+      serializedContext: serializeContext(loadContext()),
+      sessionState: createDurableSessionState({ session }),
+    };
+    const run = await start<[SubagentToolDispatchInput], SubagentToolDispatchResult>(
+      subagentWorkflowReference,
+      [workflowInput],
+    );
+    const output = await run.returnValue;
+    const dispatched = output.sessionState.snapshot?.session;
+    if (dispatched === undefined) {
+      throw new Error("Subagent workflow returned no durable session snapshot.");
+    }
+    this.session = mergeSubagentDispatchSession({
+      current: this.session,
+      dispatched,
+      initial: session,
+    });
+    for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
+
+    const result = output.results.find((candidate) => candidate.callId === dispatchAction.callId);
+    if (result === undefined) {
+      throw new Error(`Subagent tool call "${dispatchAction.callId}" produced no result.`);
+    }
+    return { calledEvents: output.calledEvents ?? [], result };
+  }
+
+  private dispatchOnce(
+    action: SubagentCallAction,
+    continuesAgent: boolean,
+    dispatchCallId: string,
+    localFanoutSize: number,
+  ): Promise<SubagentDispatchOutcome> {
+    const existing = this.outcomesByDispatchCallId.get(dispatchCallId);
+    if (existing !== undefined) return existing;
+    const outcome = this.dispatch(action, continuesAgent, dispatchCallId, localFanoutSize);
+    this.outcomesByDispatchCallId.set(dispatchCallId, outcome);
+    return outcome;
+  }
+
+  private async projectDispatch(
+    action: SubagentCallAction,
+    outcome: Promise<SubagentDispatchOutcome>,
   ): Promise<RuntimeActionResult> {
     try {
-      if (!continuesAgent) await this.prepareParentSandbox(action);
-      const session = this.session;
-      const dispatchAction = { ...action, callId: dispatchCallId };
-      const workflowInput: SubagentToolDispatchInput = {
-        batch: { actions: [dispatchAction], event: this.batchEvent, responseMessages: [] },
-        callbackBaseUrl: this.callbackBaseUrl,
-        localFanoutSize,
-        requireExistingAgent: continuesAgent,
-        serializedContext: serializeContext(loadContext()),
-        sessionState: createDurableSessionState({ session }),
-      };
-      const run = await start<[SubagentToolDispatchInput], SubagentToolDispatchResult>(
-        subagentWorkflowReference,
-        [workflowInput],
-      );
-      const output = await run.returnValue;
-      const dispatched = output.sessionState.snapshot?.session;
-      if (dispatched === undefined) {
-        throw new Error("Subagent workflow returned no durable session snapshot.");
-      }
-      this.session = mergeSubagentDispatchSession({
-        current: this.session,
-        dispatched,
-        initial: session,
-      });
-      for (const task of output.pendingTasks) this.pendingTasks.set(task.taskId, task);
-      for (const event of output.calledEvents ?? []) {
-        const outwardEvent = {
-          ...event,
-          data: { ...event.data, callId: action.callId },
-        };
+      const dispatched = await outcome;
+      for (const event of dispatched.calledEvents) {
+        const outwardEvent = createSubagentCalledEvent({
+          ...event.data,
+          callId: action.callId,
+        });
         await this.emit(outwardEvent, "subagent.called emission failed", action.callId);
       }
 
-      const dispatchResult = output.results.find(
-        (candidate) => candidate.callId === dispatchAction.callId,
-      );
-      if (dispatchResult === undefined) {
-        throw new Error(`Subagent tool call "${dispatchAction.callId}" produced no result.`);
-      }
-      const result = { ...dispatchResult, callId: action.callId };
+      const result = { ...dispatched.result, callId: action.callId };
       if (
         result.kind === "subagent-result" &&
         result.isError !== true &&
@@ -330,27 +365,33 @@ class SubagentToolExecutionController {
     const localFanoutSize = calls.filter(
       ({ action, continuesAgent }) => action.kind === "subagent-call" && !continuesAgent,
     ).length;
-    const activeAgents = new Map<string, Promise<RuntimeActionResult>>();
+    const activeAgents = new Map<string, Promise<SubagentDispatchOutcome>>();
 
     for (const call of calls) {
       const requestedAgentId = call.action.input.agentId;
       const agentId =
         call.continuesAgent && typeof requestedAgentId === "string" ? requestedAgentId : undefined;
       const prior = agentId === undefined ? undefined : activeAgents.get(agentId);
-      const dispatch =
+      const outcome =
         prior === undefined
-          ? this.dispatch(call.action, call.continuesAgent, call.dispatchCallId, localFanoutSize)
+          ? this.dispatchOnce(
+              call.action,
+              call.continuesAgent,
+              call.dispatchCallId,
+              localFanoutSize,
+            )
           : prior
               .catch(() => undefined)
               .then(() =>
-                this.dispatch(
+                this.dispatchOnce(
                   call.action,
                   call.continuesAgent,
                   call.dispatchCallId,
                   localFanoutSize,
                 ),
               );
-      if (agentId !== undefined) activeAgents.set(agentId, dispatch);
+      if (agentId !== undefined) activeAgents.set(agentId, outcome);
+      const dispatch = this.projectDispatch(call.action, outcome);
       this.dispatches.push(dispatch);
       void dispatch.then(call.result.resolve, call.result.reject);
     }

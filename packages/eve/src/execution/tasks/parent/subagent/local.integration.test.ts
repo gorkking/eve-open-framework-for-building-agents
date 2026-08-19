@@ -1,6 +1,6 @@
 import { generateText } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
 import {
@@ -13,9 +13,13 @@ import {
 import { createTaskSubagentHarnessDefinition } from "#execution/delegation-tool.js";
 import { acknowledgeDelegatedTasksStep } from "#execution/tasks/parent/delegate.js";
 import { readLatestTaskView } from "#execution/tasks/parent/run-parent.js";
-import { runWithSubagentToolExecution } from "#execution/tasks/parent/subagent/tool-execution.js";
+import {
+  beginSubagentToolExecutionAttempt,
+  runWithSubagentToolExecution,
+} from "#execution/tasks/parent/subagent/tool-execution.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import { setHarnessEmissionState } from "#harness/emission.js";
+import { createToolLoopHarness } from "#harness/tool-loop.js";
 import { buildToolSet } from "#harness/tools.js";
 import type { HarnessSession } from "#harness/types.js";
 import { createTestRuntime } from "#internal/testing/app-harness.js";
@@ -183,6 +187,155 @@ describe("local subagent defineTool execution", () => {
           .cancel()
           .catch(() => {});
         await getRun(pendingTask.taskRunId)
+          .cancel()
+          .catch(() => {});
+      }
+    });
+  }, 60_000);
+
+  it("reuses the admitted task when post-tool instrumentation retries the model attempt", async () => {
+    const runtime = createTestRuntime({ agent: { name: "subagent-attempt-retry" } });
+
+    await runtime.run(async () => {
+      const compiledArtifactsSource = createBundledRuntimeCompiledArtifactsSource();
+      const bundle = await getCompiledRuntimeAgentBundle({ compiledArtifactsSource });
+      const ctx = new ContextContainer();
+      ctx.set(AuthKey, null);
+      ctx.set(BundleKey, bundle);
+      ctx.set(ChannelKey, { kind: "http", state: {} });
+      ctx.set(ContinuationTokenKey, "http:subagent-attempt-retry");
+      ctx.set(InitiatorAuthKey, null);
+      ctx.set(SessionIdKey, "parent-subagent-attempt-retry");
+      ctx.set(SessionKey, {
+        auth: { current: null, initiator: null },
+        sessionId: "parent-subagent-attempt-retry",
+        turn: { id: "turn-subagent-attempt-retry", sequence: 1 },
+      });
+
+      const session: HarnessSession = setHarnessEmissionState(
+        {
+          agent: { modelReference: { id: "retry-model" }, system: "", tools: [] },
+          compaction: { recentWindowSize: 10, threshold: 100_000 },
+          continuationToken: "http:subagent-attempt-retry",
+          history: [],
+          sessionId: "parent-subagent-attempt-retry",
+        },
+        {
+          sequence: 1,
+          sessionStarted: true,
+          stepIndex: 0,
+          turnId: "turn-subagent-attempt-retry",
+        },
+      );
+      const tool = createTaskSubagentHarnessDefinition({
+        description: "General-purpose agent",
+        kind: "subagent",
+        name: "agent",
+        nodeId: ROOT_RUNTIME_AGENT_NODE_ID,
+      });
+      let attempt = 0;
+      const model = new MockLanguageModelV4({
+        doGenerate: async () => {
+          attempt += 1;
+          return {
+            content: [
+              {
+                input: JSON.stringify({ message: "Reply with exactly `attempt-retry-ok`." }),
+                toolCallId: `provider-call-${String(attempt)}`,
+                toolName: "agent",
+                type: "tool-call" as const,
+              },
+            ],
+            finishReason: { raw: undefined, unified: "tool-calls" as const },
+            usage,
+            warnings: [],
+          };
+        },
+      });
+      let rejectedCompletion = false;
+      const attemptIndexes: number[] = [];
+      const events: UnstampedMessageStreamEvent[] = [];
+      vi.spyOn(Math, "random").mockReturnValue(0);
+
+      const stepResult = await contextStorage.run(ctx, () =>
+        runWithSubagentToolExecution({
+          handleEvent: async (event) => {
+            events.push(event);
+          },
+          session,
+          step: () =>
+            createToolLoopHarness({
+              instrumentation: {
+                hooks: {
+                  capturesContent: false,
+                  async publish(event) {
+                    if (event.type !== "step.attempt.completed") return;
+                    attemptIndexes.push(event.scope.attemptIndex);
+                    if (!rejectedCompletion) {
+                      rejectedCompletion = true;
+                      throw Object.assign(new Error("instrumentation unavailable"), {
+                        statusCode: 503,
+                      });
+                    }
+                  },
+                },
+                runInContext: (_operation, execute) => execute(),
+              },
+              mode: "task",
+              onModelAttempt: beginSubagentToolExecutionAttempt,
+              resolveModel: async () => model,
+              tools: new Map([["agent", tool]]),
+            })(session, { message: "Delegate once." }),
+        }),
+      );
+
+      const tasks = stepResult.delegatedTasks ?? [];
+      const handles = getAgentHandleStore(stepResult.session.state)?.handles ?? [];
+      const calledEvents = events.filter((event) => event.type === "subagent.called");
+      const results = events.filter((event) => event.type === "action.result");
+      expect(model.doGenerateCalls).toHaveLength(2);
+      expect(attemptIndexes).toEqual([0, 1]);
+      expect(tasks).toHaveLength(1);
+      expect(handles).toHaveLength(1);
+      expect(calledEvents.map((event) => event.data.callId)).toEqual([
+        "provider-call-1",
+        "provider-call-2",
+      ]);
+      expect(new Set(calledEvents.map((event) => event.data.childSessionId))).toHaveProperty(
+        "size",
+        1,
+      );
+      expect(results.map((event) => event.data.result.callId)).toEqual([
+        "provider-call-1",
+        "provider-call-2",
+      ]);
+      expect(
+        new Set(
+          results.map((event) =>
+            event.data.result.kind === "subagent-result" && event.data.result.isError !== true
+              ? event.data.result.backgroundTask?.taskId
+              : undefined,
+          ),
+        ),
+      ).toEqual(new Set([tasks[0]?.taskId]));
+
+      const handle = handles[0];
+      if (handle?.phase !== "addressed" || tasks[0] === undefined) {
+        throw new Error("Retry did not preserve one addressed child and working task.");
+      }
+      try {
+        await acknowledgeDelegatedTasksStep({ tasks });
+        await getRun(tasks[0].taskRunId).returnValue;
+        await expect(readLatestTaskView({ taskRunId: tasks[0].taskRunId })).resolves.toMatchObject({
+          lastOutput: { data: expect.stringContaining("attempt-retry-ok"), type: "result" },
+          status: "completed",
+          taskId: tasks[0].taskId,
+        });
+      } finally {
+        await getRun(handle.address.sessionId)
+          .cancel()
+          .catch(() => {});
+        await getRun(tasks[0].taskRunId)
           .cancel()
           .catch(() => {});
       }

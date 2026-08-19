@@ -1357,6 +1357,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const runSingleModelCall = async (
       opts: ModelCallOptions & { readonly attemptIndex: number },
     ): Promise<HarnessStepResult> => {
+      config.onModelAttempt?.();
       const { instructions, telemetryRuntimeContext = {} } =
         opts.preparedInput ?? prepareModelCallInput(opts.extraSystemNote);
       // Label the reissued call's telemetry; without this a retry is only
