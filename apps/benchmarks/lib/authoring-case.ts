@@ -30,7 +30,7 @@ export interface AuthoringSetup {
 
 export interface AuthoringTurn {
   readonly text: string;
-  readonly toolCalls: ReadonlyArray<{ input: unknown }>;
+  readonly toolCalls: ReadonlyArray<{ name: string; input: unknown }>;
 }
 
 export interface AuthoringInteractionContext {
@@ -41,17 +41,19 @@ export interface AuthoringInteractionContext {
 
 export interface AuthoringCase {
   readonly startingPoint: AuthoringStartingPoint;
+  /** Directory created by the agent, relative to the starting workspace. */
+  readonly projectDirectory?: string;
   readonly setup?: AuthoringSetup;
   readonly interact: (context: AuthoringInteractionContext) => Promise<void>;
 }
 
 export const emptyProject: AuthoringStartingPoint = {
-  id: "empty",
+  id: "empty-v2",
   workspace: "empty",
 };
 
 export const simpleProject: AuthoringStartingPoint = {
-  id: "simple",
+  id: "simple-v2",
   workspace: "scaffolded",
 };
 

@@ -51,6 +51,7 @@ import {
   formatSlackInboundMessage,
   formatSlackThreadContext,
 } from "#public/channels/slack/model-context.js";
+import { isPrivateSlackConversation } from "#public/channels/slack/privacy.js";
 import {
   loadThreadContextMessages,
   type LoadThreadContextMessagesOptions,
@@ -79,6 +80,7 @@ export type {
 } from "#public/channels/slack/session-operations.js";
 
 const log = createLogger("slack.channel");
+const PRIVATE_SLACK_RUN_TITLE = "Private message";
 
 type EventData<T extends UnstampedMessageStreamEvent["type"]> =
   Extract<UnstampedMessageStreamEvent, { type: T }> extends { data: infer D } ? D : undefined;
@@ -181,7 +183,6 @@ type SlackSessionFailedHandler = (
 export interface SlackPendingApprovalCard {
   readonly messageBlocks: readonly unknown[];
   readonly messageTs: string;
-  readonly userId?: string;
 }
 
 export interface SlackChannelState {
@@ -376,6 +377,11 @@ export interface SlackInboundEventContext {
  * `onDirectMessage`.
  */
 export interface SlackInboundMessageContext extends SlackContext, SlackSessionOperations {
+  /**
+   * Returns whether the inbound message belongs to a DM, group DM, or private channel.
+   * Unknown conversation types fail closed and return `true`.
+   */
+  isDMOrPrivateChannel(): Promise<boolean>;
   /** Returns whether this message belongs to a thread with an active eve session. */
   isSubscribed(): Promise<boolean>;
   /** Returns whether the inbound event explicitly mentions this bot. */
@@ -781,7 +787,8 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
       if (typeof cards === "object" && cards !== null) {
         channel.state.pendingApprovalCards = { ...channel.state.pendingApprovalCards, ...cards };
       }
-      const responders = payload.approvalResponderUsers;
+      const responders = (payload.state as Partial<SlackChannelState> | undefined)
+        ?.approvalResponderUsers;
       if (typeof responders === "object" && responders !== null) {
         channel.state.approvalResponderUsers = {
           ...channel.state.approvalResponderUsers,
@@ -1147,11 +1154,19 @@ async function dispatchSlackMessage(input: {
       triggeringUserId: author?.userId ?? null,
     },
   });
+  let privateConversation: Promise<boolean> | undefined;
+  const isDMOrPrivateChannel = () =>
+    (privateConversation ??= isPrivateSlackConversation({
+      channelId: input.message.channelId,
+      raw: input.message.raw,
+      request: slack.request,
+    }));
   const ctx: SlackInboundMessageContext = {
     ...sessionOperations,
     isBotMentioned: () =>
       input.kind === "app_mention" ||
       (input.botUserId !== undefined && input.message.text.includes(`<@${input.botUserId}`)),
+    isDMOrPrivateChannel,
     isSubscribed: async () => (await sessionOperations.resolveSession()) !== undefined,
     slack,
     thread,
@@ -1171,6 +1186,7 @@ async function dispatchSlackMessage(input: {
   await deliverSlackMessage({
     credentials: input.credentials,
     kind: input.kind,
+    isPrivateConversation: await isDMOrPrivateChannel(),
     message: input.message,
     result,
     sessionOperations,
@@ -1269,6 +1285,7 @@ async function verifyInbound(
 async function deliverSlackMessage(input: {
   readonly sessionOperations: SlackSessionOperations;
   readonly credentials: SlackChannelCredentials | undefined;
+  readonly isPrivateConversation: boolean;
   readonly kind: string;
   readonly message: SlackMessage;
   readonly result: Exclude<SlackInboundResult, null>;
@@ -1305,7 +1322,9 @@ async function deliverSlackMessage(input: {
     );
 
     const channelContext = input.result.context ?? [];
-    const title = input.result.title ?? message.markdown;
+    const title = input.isPrivateConversation
+      ? PRIVATE_SLACK_RUN_TITLE
+      : (input.result.title ?? message.markdown);
     const sendOptions: SlackSendOptions =
       channelContext.length === 0
         ? { auth: input.result.auth, title }

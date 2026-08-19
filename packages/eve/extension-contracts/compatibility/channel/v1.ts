@@ -1,8 +1,15 @@
-import { defineChannel, POST } from "#public/channels/index.js";
+import { defineChannel, POST } from "#public/definitions/channel.js";
 
-export default defineChannel({
-  routes: [POST("/files", async () => new Response("ok"))],
-  async fetchFile(url) {
-    return url.startsWith("https://files.example.com/") ? Buffer.from("example") : null;
-  },
+export default defineChannel<{ lastSender: string }>({
+  state: { lastSender: "" },
+  routes: [
+    POST("/message", async (request, { from }) => {
+      const body = (await request.json()) as { message: string; userId?: string };
+      await from(`conversation:${body.userId ?? "anonymous"}`).send(body.message, {
+        auth: null,
+        state: { lastSender: body.userId ?? "anonymous" },
+      });
+      return new Response("ok");
+    }),
+  ],
 });

@@ -17,6 +17,7 @@ import {
 } from "#context/dynamic-subagent-lifecycle.js";
 import {
   dispatchDynamicToolEvent,
+  hydrateDynamicSessionTools,
   refreshDynamicSessionToolsForRuntimeRevision,
 } from "#context/dynamic-tool-lifecycle.js";
 import {
@@ -25,6 +26,7 @@ import {
   ModeKey,
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
+  TurnTaskDeliveryKey,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { runStep } from "#context/run-step.js";
@@ -102,14 +104,8 @@ const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
 
 /**
- * Result of one durable harness step, consumed by the turn workflow.
- *
- * `park` carries the pending fields needed to choose a
- * {@link import("#execution/next-driver-action.js").NextDriverAction} without re-reading state.
- *
- * `cancelled` converts the harness's cancellation throw into a *returned*
- * result so workflow-core never classifies the abort as a step failure or
- * retries it; the epilogue runs in `settleCancelledTurnStep`.
+ * Result of one durable harness step. `cancelled` is returned so workflow-core
+ * does not retry it; `park` carries the pending state needed by the next action.
  */
 export type DurableStepResult =
   | {
@@ -175,6 +171,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
+  if (rawInput.input?.kind === "deliver") {
+    ctx.set(TurnTaskDeliveryKey, rawInput.input.taskDeliveryId !== undefined);
+  }
   const adapter = ctx.require(ChannelKey);
   const bundle = ctx.require(BundleKey);
   const tasksEnabled = bundle.resolvedAgent.config?.experimental?.tasks === true;
@@ -202,13 +201,8 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // Outside a workflow context (e.g. tests) — getHookUrl will return undefined.
   }
 
-  // Authorization callback. If the delivery carries an
-  // `authorizationCallback` and there's a pending authorization on
-  // session state, extract it, build AuthorizationResult entries, and
-  // populate PendingAuthorizationResultKey so tools can complete auth.
-  // Strip the callback from the delivery so the adapter doesn't see it.
-  // Completion event names are collected here; emission happens after
-  // the `emit` function is created below.
+  // Resolve authorization callbacks before the adapter sees the delivery.
+  // Completion events are emitted after `emit` is created below.
   const pendingAuth = getPendingAuthorization(durableSession.state);
   let completedAuths: ReturnType<typeof matchAuthorizationCallbacks>["matches"] | undefined;
   if (pendingAuth && input.input?.kind === "deliver") {
@@ -308,16 +302,13 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     resolved = { runtimeActionResults: input.input.results };
   }
 
-  // Pin adapter-state mutations back onto ctx so they survive the
-  // step boundary.
+  // Persist adapter-state mutations across the step boundary.
   if (input.input?.kind === "deliver") {
     const updatedAdapter = { ...adapter, state: { ...adapterCtx.state } };
     setChannelContext(ctx, updatedAdapter);
   }
 
-  // Adapter handled the delivery inline (e.g. a Slack interaction
-  // that only edits a message). Re-park without a model turn; skip
-  // the snapshot write when the session itself is unchanged.
+  // Adapter handled the delivery inline; re-park and skip unchanged snapshot writes.
   if (input.input?.kind === "deliver" && resolved === undefined) {
     await contextStorage.run(ctx, () =>
       instrumentChannelDelivery({
@@ -385,6 +376,12 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           runtimeRevision: dynamicRuntimeRevision,
         }),
       ]);
+      await hydrateDynamicSessionTools({
+        ctx,
+        resolvers: dynamicToolResolvers,
+        event: refreshEvent,
+        messages: initialSession.history,
+      });
     }
   } catch (error) {
     await failChannelDeliveries(error);
@@ -575,8 +572,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     };
   }
 
-  // Re-stamp the in-memory session's continuation token in case a
-  // handler called `session.continuation.rekey(...)` (eg. Slack auto-anchor).
+  // Re-stamp if a handler called `session.continuation.rekey(...)` (eg. Slack auto-anchor).
   const rekeyed = reconcileSessionContinuationToken(ctx, stepResult.session);
   const nextSerializedContext = serializeContext(ctx);
   stepResult = { ...stepResult, session: rekeyed };

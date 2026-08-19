@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { findBenchmarkModel, parseAuthoringTreatment } from "./lib/benchmark-config.ts";
+import {
+  prepareFixtures,
+  resetExperiments,
+  writeExperiment,
+  writeSubjectArchives,
+} from "./lib/experiment-files.mjs";
 import { revisionSubject, workingTreeSubject } from "./lib/source.mjs";
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +27,13 @@ const { values, positionals } = parseArgs({
     head: { type: "string" },
     dry: { type: "boolean" },
     runs: { type: "string" },
+    model: { type: "string", default: "claude-sonnet-5" },
+    treatment: { type: "string", default: "guided" },
     verbose: { type: "boolean" },
+    // The runner discards a run it decides failed for infrastructure reasons,
+    // which throws away the transcript you need to tell a real stall from a
+    // misjudged one.
+    "keep-failures": { type: "boolean" },
     help: { type: "boolean", short: "h" },
   },
   strict: true,
@@ -36,6 +49,8 @@ if (values.head !== undefined && values.base === undefined) {
 }
 const runs = parseRuns(values.runs);
 const selectedEval = positionals[0];
+const treatment = parseAuthoringTreatment(values.treatment);
+const benchmark = findBenchmarkModel(values.model);
 if (values.verbose && (selectedEval === undefined || runs !== 1 || values.base !== undefined)) {
   throw new Error("--verbose requires one eval, one run, and no revision comparison.");
 }
@@ -54,12 +69,14 @@ const subjects =
           : revisionSubject(repositoryRoot, values.head, "head"),
       ];
 
-prepareFixtures();
+prepareFixtures(evalsRoot, selectedEval === undefined ? undefined : [selectedEval]);
 mkdirSync(join(appRoot, "results"), { recursive: true });
-writeExperiments(subjects, runs, values.verbose ?? false);
+writeExperiments(subjects, runs, benchmark, treatment, values.verbose ?? false);
 const executable = join(appRoot, "node_modules/.bin/agent-eval");
 const experimentNames = subjects.map((subject) => subject.label);
-const args = values.dry ? ["status", ...experimentNames] : ["run", ...experimentNames, "--force"];
+const args = values.dry
+  ? ["status", ...experimentNames]
+  : ["run", ...experimentNames, "--force", ...(values["keep-failures"] ? ["--ack-failures"] : [])];
 
 for (const subject of subjects) console.log(`> ${subject.label}: ${subject.description}`);
 const result = spawnSync(executable, args, {
@@ -70,42 +87,24 @@ const result = spawnSync(executable, args, {
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
 
-function prepareFixtures() {
-  const names = selectedEval === undefined ? fixtureNames() : [selectedEval];
-  for (const name of names) {
-    const fixtureRoot = join(evalsRoot, name);
-    writeFileSync(join(fixtureRoot, "PROMPT.md"), "");
-    writeFileSync(
-      join(fixtureRoot, "package.json"),
-      `${JSON.stringify({ name: `eve-authoring-${name}`, private: true, type: "module" }, null, 2)}\n`,
-    );
-  }
-}
-
-function fixtureNames() {
-  return readdirSync(evalsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(evalsRoot, entry.name, "CASE.ts")))
-    .map((entry) => entry.name);
-}
-
-function writeExperiments(subjects, runs, verbose) {
-  rmSync(experimentsRoot, { recursive: true, force: true });
-  mkdirSync(experimentsRoot, { recursive: true });
+function writeExperiments(subjects, runs, benchmark, treatment, verbose) {
+  resetExperiments(experimentsRoot);
   for (const subject of subjects) {
-    const archivePath = join(experimentsRoot, `${subject.label}.source.tar.gz`);
-    writeFileSync(archivePath, subject.archive);
-    writeFileSync(
-      join(experimentsRoot, `${subject.label}.ts`),
-      `import { readFileSync } from "node:fs";\n` +
-        `import { authoringExperiment } from "../lib/experiment.js";\n\n` +
-        `export default authoringExperiment({\n` +
-        `  archive: readFileSync(new URL(${JSON.stringify(`./${subject.label}.source.tar.gz`)}, import.meta.url)),\n` +
-        `  digest: ${JSON.stringify(subject.digest)},\n` +
-        `  dependencyDigest: ${JSON.stringify(subject.dependencyDigest)},\n` +
-        `  runs: ${runs},\n` +
-        `  verbose: ${verbose},\n` +
-        `});\n`,
+    const { archiveName, dependencyArchiveName } = writeSubjectArchives(
+      experimentsRoot,
+      subject,
+      subject.label,
     );
+    writeExperiment(experimentsRoot, subject.label, {
+      archiveName,
+      dependencyArchiveName,
+      digest: subject.digest,
+      dependencyDigest: subject.dependencyDigest,
+      runs,
+      benchmark,
+      treatment,
+      verbose,
+    });
   }
 }
 
@@ -119,6 +118,6 @@ function parseRuns(value) {
 
 function usage() {
   console.log(`Usage:
-  pnpm benchmark [eval-name] [--runs N] [--dry] [--verbose]
-  pnpm benchmark [eval-name] --base <revision> [--head <revision>] [--runs N] [--dry]`);
+  pnpm benchmark [eval-name] [--model <id>] [--runs N] [--treatment baseline|guided] [--dry] [--verbose] [--keep-failures]
+  pnpm benchmark [eval-name] --base <revision> [--head <revision>] [--model <id>] [--runs N] [--treatment baseline|guided] [--dry]`);
 }
