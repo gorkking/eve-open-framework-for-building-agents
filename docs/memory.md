@@ -154,7 +154,7 @@ export default defineMemory({
 });
 ```
 
-The provider reads the current document at every turn start and after each successful compaction. It appends the formatted document when durable history does not already contain an identical latest recall for the same slot and scope; an empty or unchanged document appends nothing. It exposes `save_memory({ text })` and `remove_memory({ index })`, which eve qualifies with the slot name as `user__save_memory` and `user__remove_memory`. It does not implement `save`, run a hidden capture model, or persist complete transcripts. The model decides when to maintain the document by calling its tools.
+The provider reads the current document at every turn start and after each successful compaction. It appends the formatted document when durable history does not already contain an identical latest recall for the same slot and scope; an empty or unchanged document appends nothing. It exposes `save_memory({ text })` and `remove_memory({ index })`, which eve qualifies with the slot name as `user__save_memory` and `user__remove_memory`. It does not implement `capture`, run a hidden extraction model, or persist complete transcripts. The model decides when to maintain the document by calling its tools.
 
 The document stores one memory per line. Recall includes each stable index so the model can remove an entry without rewriting unrelated memories:
 
@@ -163,7 +163,7 @@ The document stores one memory per line. Recall includes each stable index so th
 1: Likes concise answers.
 ```
 
-New memories receive an index above the current highest index. Saving normalizes whitespace, and saving the same text again returns its existing index. Removing a missing index does nothing. Conditional writes preserve concurrent changes, and surviving entries keep their indexes.
+New memories receive an index above the current highest index. Saving normalizes whitespace, and saving the same text again is a successful no-op. Removing a missing index does nothing. Each tool completes after its conditional write and returns no output; the next recall reflects the updated document. Conditional writes preserve concurrent changes, and surviving entries keep their indexes.
 
 The default limit is 100 entries. Set `maxEntries` to another positive integer when you need a different bound. At the limit, the model must remove an outdated entry before saving another.
 
