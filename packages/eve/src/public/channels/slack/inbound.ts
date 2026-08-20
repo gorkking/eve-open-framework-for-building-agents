@@ -210,6 +210,7 @@ export function slackEventInstallationTeamId(envelope: SlackEventCallback): stri
   // Slack documents `app_mention`, which requires a bot user, with
   // `is_bot: false`. The flag describes this authorization, not whether the
   // app installation has a bot, so its team id remains valid token context.
+  // See https://docs.slack.dev/reference/events/app_mention.
   return authorizations.find((entry) => typeof entry.team_id === "string")?.team_id;
 }
 
