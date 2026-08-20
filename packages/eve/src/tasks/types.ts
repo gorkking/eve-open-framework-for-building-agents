@@ -88,9 +88,14 @@ export function sameTaskMetadata(left: DurableTaskMetadata, right: DurableTaskMe
 
 /** Private executor state retained for cancellation and address reconciliation. */
 export interface TaskExecutorState {
+  /** Write-once executor address recorded by the `bind` command. */
   readonly binding?: TaskExecutorBinding;
   readonly childSessionId?: string;
   readonly childTurnId?: string;
+  /**
+   * Child-session verdict from the last settled turn: `parked` survived
+   * and can take another delivery, `terminal` ended with the turn.
+   */
   readonly lifecycle?: "parked" | "terminal";
 }
 
@@ -242,7 +247,7 @@ export type TaskView = TaskViewBase &
 export type TaskCommand =
   | {
       readonly executor: TaskExecutorBinding;
-      readonly kind: "configure";
+      readonly kind: "bind";
     }
   | {
       readonly kind: "complete";

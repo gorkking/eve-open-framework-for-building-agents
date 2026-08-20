@@ -11,7 +11,6 @@ import type { HarnessSession, StepResult } from "#harness/types.js";
 import {
   BackgroundToolExecutorKey,
   type BackgroundExecutableTool,
-  type BackgroundToolCall,
   type BackgroundToolCallBatch,
   type BackgroundToolExecutor,
 } from "#harness/background-tools.js";
@@ -19,7 +18,12 @@ import { createEveCallbackRoutePath } from "#protocol/routes.js";
 import { isAsyncIterable } from "#shared/async-iterable.js";
 import { parseJsonValue } from "#shared/json.js";
 import type { ToolExecuteOptions } from "#shared/tool-definition.js";
-import { createTaskDelegated, isTaskDelegated, type TaskExec } from "#shared/tool-task.js";
+import {
+  createTaskDelegated,
+  isTaskDelegated,
+  type BackgroundToolEffect,
+  type TaskExec,
+} from "#shared/tool-task.js";
 import { recordSessionTask } from "#tasks/session-index.js";
 import { createWorkflowCallbackUrl } from "#execution/workflow-callback-url.js";
 import {
@@ -29,15 +33,8 @@ import {
 } from "#execution/tasks/parent/delegate.js";
 import { sendTaskCommand } from "#execution/tasks/parent/run-parent.js";
 
-export interface BackgroundToolEffect {
-  readonly apply: (session: HarnessSession) => HarnessSession;
-  readonly rollback?: (cause: unknown) => Promise<void>;
-}
-
 interface BackgroundToolExecutionRecord {
-  readonly batch: BackgroundToolCallBatch;
   readonly effects: BackgroundToolEffect[];
-  readonly session: HarnessSession;
   settled: boolean;
   task?: BackgroundTask;
 }
@@ -47,8 +44,6 @@ interface BackgroundToolStepResult {
   readonly backgroundTasks: NonNullable<StepResult["backgroundTasks"]>;
 }
 
-const taskRecords = new WeakMap<TaskExec, BackgroundToolExecutionRecord>();
-
 export function runBackgroundStep(
   ctx: ContextContainer,
   session: HarnessSession,
@@ -57,6 +52,31 @@ export function runBackgroundStep(
   return runStep(ctx, session, callback, [backgroundToolExecutionProvider]);
 }
 
+/**
+ * Makes background tool work transactional with the harness step.
+ *
+ * Concretely: when the model calls a background tool (e.g. a subagent spawn),
+ * the tool does real external work mid-step — it creates a task run and
+ * delivers commands to its inbox — while the step itself can still fail. This
+ * provider scopes that work to the step so it either lands with the step or
+ * is compensated with it.
+ *
+ * Lifetime: one {@link BackgroundToolExecutionScope} per step. `create` runs
+ * before the authored callback; exactly one of `commit` or `rollback` settles
+ * the scope afterwards; `decorateStepResult` runs last, only after a
+ * successful commit. Nothing survives the step except retained tasks (below).
+ *
+ * - `commit` — step succeeded. Compensates executions that never settled
+ *   (the tool neither delegated nor completed its task), then applies the
+ *   staged effects and task handles onto the session being persisted.
+ * - `rollback` — step failed. Compensates incomplete executions, and settled
+ *   ones too — unless the cause is turn cancellation: those tasks are already
+ *   running, so they are retained for {@link readRetainedBackgroundToolResult}
+ *   instead of killed.
+ * - `decorateStepResult` — attaches `backgroundTasks` and
+ *   `backgroundTaskSession` to the {@link StepResult} so the turn loop keeps
+ *   tracking the spawned tasks after the step returns.
+ */
 export const backgroundToolExecutionProvider: FrameworkContextProvider<BackgroundToolExecutor> = {
   key: BackgroundToolExecutorKey,
   create(_ctx, session) {
@@ -73,27 +93,14 @@ export const backgroundToolExecutionProvider: FrameworkContextProvider<Backgroun
   },
 };
 
-export function stageBackgroundToolEffect(task: TaskExec, effect: BackgroundToolEffect): void {
-  requireTaskRecord(task).effects.push(effect);
-}
-
-export function readBackgroundToolBatch(task: TaskExec): readonly BackgroundToolCall[] {
-  return requireTaskRecord(task).batch.calls;
-}
-
-export function readBackgroundTask(task: TaskExec): BackgroundTask {
-  const record = requireTaskRecord(task);
-  if (record.task === undefined) {
-    throw new Error("Background task identity is unavailable before execution starts.");
-  }
-  return record.task;
-}
-
-export function readBackgroundToolSession(task: TaskExec): HarnessSession {
-  return requireTaskRecord(task).session;
-}
-
-/** Returns effects retained when cancellation raced a successfully delegated task. */
+/**
+ * Returns what a successful commit would have produced (session with staged
+ * effects applied plus spawned task handles) when turn cancellation raced a
+ * successfully delegated task. `rollback` deliberately does not compensate
+ * settled records on cancellation — that would kill already-running tasks —
+ * so the cancellation epilogue reads this instead to keep those tasks tracked
+ * in durable state rather than orphaned. `undefined` when nothing was retained.
+ */
 export function readRetainedBackgroundToolResult(
   ctx: ContextContainer,
 ): BackgroundToolStepResult | undefined {
@@ -153,6 +160,8 @@ class BackgroundToolExecutionScope implements BackgroundToolExecutor {
       await compensateBackgroundToolExecution(incomplete, cause);
     }
     if (settled.length === 0) return;
+    // Cancellation must not compensate settled records: their tasks are
+    // already running. Retain them for readRetainedBackgroundToolResult.
     if (isTurnCancellation(cause)) {
       this.retained = true;
       return;
@@ -196,9 +205,7 @@ class BackgroundToolExecutionScope implements BackgroundToolExecutor {
     readonly toolInput: unknown;
   }): Promise<unknown> {
     const record: BackgroundToolExecutionRecord = {
-      batch: input.batch,
       effects: [],
-      session: this.initialSession,
       settled: false,
     };
     this.records.push(record);
@@ -227,10 +234,13 @@ class BackgroundToolExecutionScope implements BackgroundToolExecutor {
           }),
     };
     const taskExec: TaskExec = {
+      batch: input.batch.calls,
       binding,
       delegated: ({ executor, receipt }) => createTaskDelegated({ binding, executor, receipt }),
+      session: this.initialSession,
+      stageEffect: (effect) => record.effects.push(effect),
+      task,
     };
-    taskRecords.set(taskExec, record);
 
     const output = input.definition.execute(input.toolInput, input.options, taskExec);
     if (isAsyncIterable(output)) {
@@ -241,7 +251,7 @@ class BackgroundToolExecutionScope implements BackgroundToolExecutor {
     if (isTaskDelegated(settled)) {
       await deliverTaskCommand(task, {
         executor: settled.executor,
-        kind: "configure",
+        kind: "bind",
       });
       record.task = { ...task, executor: settled.executor };
       record.settled = true;
@@ -259,14 +269,6 @@ function requireExecutionScope(executor: BackgroundToolExecutor): BackgroundTool
     throw new Error("The background tool executor is not owned by the task runtime.");
   }
   return executor;
-}
-
-function requireTaskRecord(task: TaskExec): BackgroundToolExecutionRecord {
-  const record = taskRecords.get(task);
-  if (record === undefined) {
-    throw new Error("Background task capability is not active for this tool execution.");
-  }
-  return record;
 }
 
 async function deliverTaskCommand(

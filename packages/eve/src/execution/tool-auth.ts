@@ -93,10 +93,15 @@ export function createToolExecuteWithAuth<TInput>(
     });
 
     try {
-      const output =
-        input.execution === "background"
-          ? input.execute(toolInput, ctx, requireBackgroundTask(task))
-          : input.execute(toolInput, ctx, task);
+      let output: unknown;
+      if (input.execution === "background") {
+        if (task === undefined) {
+          throw new Error("Background tool execution requires a task runtime.");
+        }
+        output = input.execute(toolInput, ctx, task);
+      } else {
+        output = input.execute(toolInput, ctx, task);
+      }
       if (isAsyncIterable(output)) {
         return handleToolIterableErrors(output);
       }
@@ -124,13 +129,6 @@ export function createToolExecuteWithAuth<TInput>(
       }
     }
   };
-}
-
-function requireBackgroundTask(task: TaskExec | undefined): TaskExec {
-  if (task === undefined) {
-    throw new Error("Background tool execution requires a task runtime.");
-  }
-  return task;
 }
 
 /** Builds the narrow token capability used by approval response authorizers. */

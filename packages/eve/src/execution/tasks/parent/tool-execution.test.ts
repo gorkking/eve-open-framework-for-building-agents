@@ -7,11 +7,7 @@ import { ContextContainer } from "#context/container.js";
 import { AuthKey, SessionIdKey } from "#context/keys.js";
 import { runStep } from "#context/run-step.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
-import {
-  backgroundToolExecutionProvider,
-  readBackgroundToolBatch,
-  stageBackgroundToolEffect,
-} from "#execution/tasks/parent/tool-execution.js";
+import { backgroundToolExecutionProvider } from "#execution/tasks/parent/tool-execution.js";
 import { setHarnessEmissionState } from "#harness/emission.js";
 import { isAuthorizationPendingModelOutput, requestAuthorization } from "#harness/authorization.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -74,7 +70,7 @@ describe("background tool execution", () => {
       inputSchema: z.strictObject({ query: z.string() }),
       async execute(input: { readonly query: string }, _ctx: ToolContext, background: TaskExec) {
         startedQueries.push(input.query);
-        observedBatchSizes.push(readBackgroundToolBatch(background).length);
+        observedBatchSizes.push(background.batch.length);
         if (startedQueries.length === 2) releaseSiblingExecutors?.();
         await siblingExecutorsStarted;
         return background.delegated({
@@ -215,7 +211,7 @@ describe("background tool execution", () => {
       execution: "background",
       inputSchema: z.strictObject({ query: z.string() }),
       execute(input: { readonly query: string }, _ctx: ToolContext, background: TaskExec) {
-        stageBackgroundToolEffect(background, {
+        background.stageEffect({
           apply: (session) => ({ ...session, state: { ...session.state, export: input.query } }),
           rollback,
         });

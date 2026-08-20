@@ -160,15 +160,11 @@ function filterWorkflowHostToolsForRootSession(
   }
 
   for (const [name, tool] of tools) {
-    if (isWorkflowCallableTool(tool)) {
+    if (tool.workflowCallable === true) {
       filteredTools.set(name, tool);
     }
   }
   return filteredTools;
-}
-
-function isWorkflowCallableTool(definition: HarnessToolDefinition): boolean {
-  return definition.workflowCallable === true;
 }
 
 function shouldHideDelegationTool(

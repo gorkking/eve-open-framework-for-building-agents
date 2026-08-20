@@ -23,7 +23,7 @@ const TERMINAL_STATUSES: readonly TaskStatus[] = ["completed", "failed", "cancel
 const ALL_COMMANDS: readonly TaskCommand[] = [
   {
     executor: { data: { operationId: "operation-1" }, kind: "export" },
-    kind: "configure",
+    kind: "bind",
   },
   { data: { answer: 42 }, kind: "complete" },
   { data: { message: "boom" }, kind: "fail" },
@@ -36,31 +36,31 @@ const ALL_COMMANDS: readonly TaskCommand[] = [
 ];
 
 describe("applyTaskTransition", () => {
-  it("configures an opaque executor binding idempotently", () => {
+  it("binds an opaque executor binding idempotently", () => {
     const command = {
       executor: { data: { operationId: "operation-1" }, kind: "export" },
-      kind: "configure",
+      kind: "bind",
     } as const;
 
-    const configured = applyTaskTransition(createView("working"), command);
-    expect(configured).toMatchObject({
-      outcome: "accepted",
+    const bound = applyTaskTransition(createView("working"), command);
+    expect(bound).toMatchObject({
+      action: "accepted",
       view: {
         executor: { binding: command.executor },
         metadata: createView("working").metadata,
         status: "working",
       },
     });
-    expect(applyTaskTransition(configured.view, command)).toEqual({
-      outcome: "noop",
-      view: configured.view,
+    expect(applyTaskTransition(bound.view, command)).toEqual({
+      action: "noop",
+      view: bound.view,
     });
     expect(
-      applyTaskTransition(configured.view, {
+      applyTaskTransition(bound.view, {
         executor: { data: { operationId: "operation-2" }, kind: "export" },
-        kind: "configure",
+        kind: "bind",
       }),
-    ).toMatchObject({ outcome: "rejected", view: configured.view });
+    ).toMatchObject({ action: "rejected", view: bound.view });
   });
 
   it("retains a late executor binding after fast task completion", () => {
@@ -70,10 +70,10 @@ describe("applyTaskTransition", () => {
     });
     const executor = { data: { operationId: "operation-1" }, kind: "export" };
 
-    const configured = applyTaskTransition(completed.view, { executor, kind: "configure" });
+    const bound = applyTaskTransition(completed.view, { executor, kind: "bind" });
 
-    expect(configured).toMatchObject({
-      outcome: "accepted",
+    expect(bound).toMatchObject({
+      action: "accepted",
       view: {
         executor: { binding: executor },
         lastOutput: { data: { answer: 42 }, type: "result" },
@@ -88,7 +88,7 @@ describe("applyTaskTransition", () => {
       kind: "complete",
     });
 
-    expect(result.outcome).toBe("accepted");
+    expect(result.action).toBe("accepted");
     expect(result.view.status).toBe("completed");
     expect(result.view.lastOutput).toEqual({ data: { answer: 42 }, type: "result" });
   });
@@ -101,7 +101,7 @@ describe("applyTaskTransition", () => {
       { kind: "cancel", usage },
     ] as const) {
       const result = applyTaskTransition(createView("working"), command);
-      expect(result.outcome).toBe("accepted");
+      expect(result.action).toBe("accepted");
       expect(result.view.usage).toEqual(usage);
     }
 
@@ -124,7 +124,7 @@ describe("applyTaskTransition", () => {
       kind: "fail",
     });
 
-    expect(result.outcome).toBe("accepted");
+    expect(result.action).toBe("accepted");
     expect(result.view.status).toBe("failed");
     expect(result.view.lastOutput).toEqual({ data: { message: "boom" }, type: "error" });
   });
@@ -135,7 +135,7 @@ describe("applyTaskTransition", () => {
       kind: "require-input",
     });
 
-    expect(result.outcome).toBe("accepted");
+    expect(result.action).toBe("accepted");
     expect(result.view.status).toBe("input_required");
     expect(result.view.inputRequests).toEqual([{ question: "which region?", requestId: "req-1" }]);
   });
@@ -153,7 +153,7 @@ describe("applyTaskTransition", () => {
         inputRequests,
         kind: "require-input",
       });
-      expect(result.outcome).toBe("rejected");
+      expect(result.action).toBe("rejected");
       expect(result.view.status).toBe("working");
     }
   });
@@ -163,11 +163,11 @@ describe("applyTaskTransition", () => {
       inputRequests: [{ question: "which region?", requestId: "req-1" }],
       kind: "require-input",
     });
-    expect(blocked.outcome).toBe("accepted");
+    expect(blocked.action).toBe("accepted");
 
     const result = applyTaskTransition(blocked.view, { kind: "answered", requestIds: ["req-1"] });
 
-    expect(result.outcome).toBe("accepted");
+    expect(result.action).toBe("accepted");
     expect(result.view.status).toBe("working");
     expect(result.view.inputRequests).toBeUndefined();
   });
@@ -180,11 +180,11 @@ describe("applyTaskTransition", () => {
       ],
       kind: "require-input",
     });
-    expect(blocked.outcome).toBe("accepted");
+    expect(blocked.action).toBe("accepted");
 
     const result = applyTaskTransition(blocked.view, { kind: "answered", requestIds: ["req-1"] });
 
-    expect(result.outcome).toBe("accepted");
+    expect(result.action).toBe("accepted");
     expect(result.view.status).toBe("input_required");
     expect(result.view.inputRequests).toEqual([{ question: "which size?", requestId: "req-2" }]);
   });
@@ -198,11 +198,11 @@ describe("applyTaskTransition", () => {
       inputRequests: [{ question: "second", requestId: "req-2" }],
       kind: "require-input",
     });
-    expect(second.outcome).toBe("accepted");
+    expect(second.action).toBe("accepted");
 
     const stale = applyTaskTransition(second.view, { kind: "answered", requestIds: ["req-1"] });
 
-    expect(stale.outcome).toBe("noop");
+    expect(stale.action).toBe("noop");
     expect(stale.view.status).toBe("input_required");
     expect(stale.view.inputRequests).toEqual([{ question: "second", requestId: "req-2" }]);
   });
@@ -239,14 +239,14 @@ describe("applyTaskTransition", () => {
       inputRequests: [{ question: "first", requestId: "req-1" }],
       kind: "require-input",
     });
-    expect(first.outcome).toBe("accepted");
+    expect(first.action).toBe("accepted");
 
     const second = applyTaskTransition(first.view, {
       inputRequests: [{ question: "second", requestId: "req-2" }],
       kind: "require-input",
     });
 
-    expect(second.outcome).toBe("accepted");
+    expect(second.action).toBe("accepted");
     expect(second.view.inputRequests).toEqual([{ question: "second", requestId: "req-2" }]);
   });
 
@@ -255,14 +255,14 @@ describe("applyTaskTransition", () => {
       inputRequests: [{ question: "which?", requestId: "req-1" }],
       kind: "require-input",
     });
-    expect(blocked.outcome).toBe("accepted");
+    expect(blocked.action).toBe("accepted");
 
     const completed = applyTaskTransition(blocked.view, { data: "done", kind: "complete" });
-    expect(completed.outcome).toBe("accepted");
+    expect(completed.action).toBe("accepted");
     expect(completed.view.status).toBe("completed");
 
     const cancelled = applyTaskTransition(blocked.view, { kind: "cancel" });
-    expect(cancelled.outcome).toBe("accepted");
+    expect(cancelled.action).toBe("accepted");
     expect(cancelled.view.status).toBe("cancelled");
   });
 
@@ -272,38 +272,38 @@ describe("applyTaskTransition", () => {
       requestIds: ["req-1"],
     });
 
-    expect(result.outcome).toBe("noop");
+    expect(result.action).toBe("noop");
     expect(result.view.status).toBe("working");
   });
 
   it("rejects a late completion after cancellation", () => {
     const cancelled = applyTaskTransition(createView("working"), { kind: "cancel" });
-    expect(cancelled.outcome).toBe("accepted");
+    expect(cancelled.action).toBe("accepted");
 
     const late = applyTaskTransition(cancelled.view, { data: "too late", kind: "complete" });
 
-    expect(late.outcome).toBe("rejected");
+    expect(late.action).toBe("rejected");
     expect(late.view.status).toBe("cancelled");
     expect(late.view.lastOutput).toBeUndefined();
   });
 
   it("treats repeated cancellation as an idempotent noop", () => {
     const cancelled = applyTaskTransition(createView("working"), { kind: "cancel" });
-    expect(cancelled.outcome).toBe("accepted");
+    expect(cancelled.action).toBe("accepted");
 
     const again = applyTaskTransition(cancelled.view, { kind: "cancel" });
 
-    expect(again.outcome).toBe("noop");
+    expect(again.action).toBe("noop");
     expect(again.view.status).toBe("cancelled");
   });
 
   it.each(TERMINAL_STATUSES)("keeps %s final against every lifecycle command", (status) => {
     const view = createView(status);
     for (const command of ALL_COMMANDS) {
-      if (command.kind === "configure") continue;
+      if (command.kind === "bind") continue;
       if (command.kind === "cancel" && status === "cancelled") continue;
       const result = applyTaskTransition(view, command);
-      expect(result.outcome).toBe("rejected");
+      expect(result.action).toBe("rejected");
       expect(result.view).toBe(view);
     }
   });
@@ -311,7 +311,7 @@ describe("applyTaskTransition", () => {
   it("rejects cancel on completed and failed tasks", () => {
     for (const status of ["completed", "failed"] as const) {
       const result = applyTaskTransition(createView(status), { kind: "cancel" });
-      expect(result.outcome).toBe("rejected");
+      expect(result.action).toBe("rejected");
     }
   });
 
@@ -344,19 +344,19 @@ describe("applyTaskTransition", () => {
       },
     );
 
-    expect(result.outcome).toBe("rejected");
+    expect(result.action).toBe("rejected");
     expect(result.view.executor?.childSessionId).toBe("child-session-1");
   });
 
   it("retains late usage on a terminal task without reviving it", () => {
     const usage = { cacheReadTokens: 1, cacheWriteTokens: 2, inputTokens: 300, outputTokens: 40 };
     const cancelled = applyTaskTransition(createView("working"), { kind: "cancel" });
-    if (cancelled.outcome !== "accepted") throw new Error("Expected cancellation to commit.");
+    if (cancelled.action !== "accepted") throw new Error("Expected cancellation to commit.");
 
     const result = applyTaskTransition(cancelled.view, { kind: "settle-executor", usage });
 
     expect(result).toEqual({
-      outcome: "accepted",
+      action: "accepted",
       view: { ...cancelled.view, executor: { lifecycle: "terminal" }, usage },
     });
   });

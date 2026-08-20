@@ -37,6 +37,11 @@ export interface HarnessToolDefinition {
   readonly name: string;
   readonly approval?: Approval;
   readonly outputSchema?: FlexibleSchema;
+  /**
+   * Advertise this tool only to the root session, hiding it from subagent
+   * sessions. Set on the injected `agent` self-delegation tool so children
+   * cannot delegate recursively. Absent means visible everywhere.
+   */
   readonly rootOnly?: boolean;
   readonly runtimeAction?: HarnessRuntimeActionDefinition;
   readonly toModelOutput?: (output: unknown) => unknown;

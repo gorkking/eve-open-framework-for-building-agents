@@ -17,17 +17,10 @@ import {
   describeTaskDispatch,
 } from "#execution/tasks/parent/continuation-dispatch.js";
 import { cancelOwnedTask } from "#execution/tasks/parent/dispatch.js";
-import {
-  readBackgroundTask,
-  readBackgroundToolBatch,
-  readBackgroundToolSession,
-  stageBackgroundToolEffect,
-} from "#execution/tasks/parent/tool-execution.js";
+import type { BackgroundTask } from "#execution/tasks/parent/delegate.js";
 import { CallbackBaseUrlKey } from "#harness/authorization.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
-import { AGENT_HANDLES_STATE_KEY } from "#harness/handles/state-key.js";
-import type { AgentHandle, AgentHandleStore } from "#harness/handles/store.js";
-import type { HarnessSession } from "#harness/types.js";
+import { rebaseAgentHandles } from "#harness/handles/transitions.js";
 import { defineTool, type TaskExec, type ToolContext } from "#public/definitions/tool.js";
 import type {
   RuntimeRemoteAgentCallActionRequest,
@@ -62,7 +55,7 @@ interface SubagentDispatchInput {
   readonly localFanoutSize: number;
   readonly serializedContext: Record<string, unknown>;
   readonly sessionState: ReturnType<typeof createDurableSessionState>;
-  readonly task: ReturnType<typeof readBackgroundTask>;
+  readonly task: BackgroundTask;
 }
 
 interface SubagentDispatchResult {
@@ -107,20 +100,32 @@ export async function executeSubagentTool(input: {
   readonly toolInput: unknown;
 }) {
   const ctx = loadContext();
-  const session = readBackgroundToolSession(input.task);
-  const task = readBackgroundTask(input.task);
+  const { batch, session, stageEffect, task } = input.task;
   const emission = getHarnessEmissionState(session.state);
-  const action = createAction(
-    input.toolInput,
-    input.toolContext.callId,
-    input.definition,
-    input.kind,
-  );
+  const commonAction = {
+    callId: input.toolContext.callId,
+    description: input.definition.description,
+    input: parseJsonObject(PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(input.toolInput)),
+    name: input.definition.name,
+    nodeId: input.definition.nodeId,
+  };
+  const action: SubagentCallAction =
+    input.kind === "remote"
+      ? {
+          ...commonAction,
+          kind: "remote-agent-call",
+          remoteAgentName: input.definition.name,
+        }
+      : {
+          ...commonAction,
+          kind: "subagent-call",
+          subagentName: input.definition.name,
+        };
   const dispatched = await dispatchSubagent({
     action,
     callbackBaseUrl: ctx.get(CallbackBaseUrlKey),
     event: { ...emission, turnId: activeTurnId(emission) },
-    localFanoutSize: countLocalSubagents(input.task),
+    localFanoutSize: countLocalSubagentCalls(batch),
     serializedContext: serializeContext(ctx),
     sessionState: createDurableSessionState({ session }),
     task,
@@ -136,9 +141,30 @@ export async function executeSubagentTool(input: {
   } as const;
   const bundle = ctx.require(BundleKey);
 
-  stageBackgroundToolEffect(input.task, {
+  // Why stage these hooks here instead of carrying them on the executor:
+  // the two channels have incompatible lifetimes.
+  //
+  // - `executor` is durable JSON. It is persisted into session state and must
+  //   survive replay and process restarts, so a later turn can cancel or
+  //   reconcile the child. Closures cannot live there.
+  // - `apply`/`rollback` are one-shot, in-process closures. They capture
+  //   `session.state` and `dispatched` — snapshots that exist only in this
+  //   stack frame — and are only meaningful at this batch's commit/rollback
+  //   boundary, which runs moments later in the same process.
+  //
+  // `stageEffect` pushes them onto the same execution record as the
+  // delegation, so commit applies and rollback unwinds them atomically with
+  // the executor. After commit, the durable executor binding takes over as
+  // the restart-safe cancellation path.
+  stageEffect({
     apply: (current) =>
-      mergeSubagentSessionEffect({ current, dispatched: dispatched.session, session }),
+      rebaseAgentHandles(
+        {
+          ...current,
+          sandboxState: current.sandboxState ?? dispatched.session.sandboxState,
+        },
+        { base: session.state, next: dispatched.session.state },
+      ),
     rollback: async () => {
       const sessionWithTask = recordSessionTask(dispatched.session, { ...task, executor });
       const entry = findSessionTaskEntry(sessionWithTask.state, task.taskId);
@@ -286,77 +312,4 @@ async function emitSubagentCalled(input: {
       toolName: input.toolName,
     });
   }
-}
-
-function createAction(
-  toolInput: unknown,
-  callId: string,
-  definition: SubagentDefinitionInput,
-  kind: "local" | "remote",
-): SubagentCallAction {
-  const common = {
-    callId,
-    description: definition.description,
-    input: parseJsonObject(PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA.parse(toolInput)),
-    name: definition.name,
-    nodeId: definition.nodeId,
-  };
-  return kind === "remote"
-    ? {
-        ...common,
-        kind: "remote-agent-call",
-        remoteAgentName: definition.name,
-      }
-    : { ...common, kind: "subagent-call", subagentName: definition.name };
-}
-
-function countLocalSubagents(task: TaskExec): number {
-  return countLocalSubagentCalls(readBackgroundToolBatch(task));
-}
-
-function mergeSubagentSessionEffect(input: {
-  readonly current: HarnessSession;
-  readonly dispatched: RuntimeSession;
-  readonly session: HarnessSession;
-}): HarnessSession {
-  const initialHandles = readAgentHandles(input.session);
-  const initialIds = new Set(initialHandles.map((handle) => handle.identity.id));
-  const dispatchedHandles = readAgentHandles(input.dispatched);
-  const dispatchedIds = new Set(dispatchedHandles.map((handle) => handle.identity.id));
-  const removedIds = new Set(
-    initialHandles
-      .filter((handle) => !dispatchedIds.has(handle.identity.id))
-      .map((handle) => handle.identity.id),
-  );
-  const currentHandles = readAgentHandles(input.current).filter(
-    (handle) => !removedIds.has(handle.identity.id),
-  );
-  const currentIds = new Set(currentHandles.map((handle) => handle.identity.id));
-  const addedHandles = dispatchedHandles.filter(
-    (handle) => !initialIds.has(handle.identity.id) && !currentIds.has(handle.identity.id),
-  );
-  if (removedIds.size === 0 && addedHandles.length === 0) {
-    return {
-      ...input.current,
-      sandboxState: input.current.sandboxState ?? input.dispatched.sandboxState,
-    };
-  }
-  return {
-    ...input.current,
-    sandboxState: input.current.sandboxState ?? input.dispatched.sandboxState,
-    state: {
-      ...input.current.state,
-      [AGENT_HANDLES_STATE_KEY]: {
-        handles: [...currentHandles, ...addedHandles],
-      } satisfies AgentHandleStore,
-    },
-  };
-}
-
-function readAgentHandles(session: HarnessSession | RuntimeSession): readonly AgentHandle[] {
-  const raw = session.state?.[AGENT_HANDLES_STATE_KEY];
-  if (raw === undefined) return [];
-  const handles = (raw as { readonly handles?: unknown }).handles;
-  if (!Array.isArray(handles)) throw new Error("Corrupt agent handle session state.");
-  return handles as readonly AgentHandle[];
 }

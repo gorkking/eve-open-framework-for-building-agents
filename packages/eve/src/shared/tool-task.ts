@@ -1,6 +1,18 @@
+import type { BackgroundTask } from "#execution/tasks/parent/delegate.js";
+import type { BackgroundToolCall } from "#harness/background-tools.js";
+import type { HarnessSession } from "#harness/types.js";
 import type { JsonObject } from "#shared/json.js";
 
 const TASK_DELEGATED_KIND = "eve:task-delegated";
+
+/**
+ * A session mutation staged during background tool execution. `apply` runs on
+ * step commit; `rollback` compensates it when the step fails.
+ */
+export interface BackgroundToolEffect {
+  readonly apply: (session: HarnessSession) => HarnessSession;
+  readonly rollback?: (cause: unknown) => Promise<void>;
+}
 
 /** Private address an executor uses to report lifecycle changes to its owning task. */
 export interface TaskBinding {
@@ -9,13 +21,22 @@ export interface TaskBinding {
   readonly url?: string;
 }
 
-/** Opaque, task-private address used to control an external executor. */
+/**
+ * Opaque, task-private address used to control an external executor. `data`
+ * means nothing to the task layer beyond deep equality (replay idempotency);
+ * only the executor `kind` that wrote it may parse it (e.g. cancel routing).
+ */
 export interface TaskExecutorBinding {
   readonly kind: string;
   readonly data: JsonObject;
 }
 
-/** Model-facing acknowledgement returned when an executor accepts delegated work. */
+/**
+ * What the model sees as this call's tool output when work is delegated: the
+ * author-supplied data plus `status: "working"` and the `taskId` it can poll
+ * or cancel. It acknowledges delegation — it is not the task's result, which
+ * arrives later through task completion.
+ */
 export type TaskReceipt<TData extends JsonObject = JsonObject> = TData & {
   readonly status: "working";
   readonly taskId: string;
@@ -34,8 +55,38 @@ export interface TaskDelegated<TData extends JsonObject = JsonObject> {
 
 /** Task capability passed only to tools declared with `execution: "background"`. */
 export interface TaskExec {
+  /**
+   * The sibling background calls admitted in the same step. The only view a
+   * tool has of what launched alongside it, for enforcing batch-wide
+   * invariants before delegating.
+   */
+  readonly batch: readonly BackgroundToolCall[];
+  /**
+   * The task-private address for reporting lifecycle changes back to this
+   * task. Hand it to the external executor so completion routes to the task
+   * directly instead of through the (already finished) tool call.
+   */
   readonly binding: TaskBinding;
+  /**
+   * Snapshot of the harness session at step start, for reading context. The
+   * committed session is this snapshot plus staged effects — mutating it
+   * directly changes nothing durable; use `stageEffect`.
+   */
+  readonly session: HarnessSession;
+  /**
+   * Stages a session mutation that commits with the step and rolls back if
+   * the step fails. The only transactional way to mutate the session from a
+   * background tool.
+   */
+  readonly stageEffect: (effect: BackgroundToolEffect) => void;
+  /** The durable task backing this call; its identity outlives `execute`. */
+  readonly task: BackgroundTask;
 
+  /**
+   * Builds the `TaskDelegated` sentinel to return from `execute`. Centralizes
+   * receipt stamping so every receipt carries this task's `taskId` and
+   * `status: "working"` — tools cannot mint receipts for tasks they don't own.
+   */
   delegated<TData extends JsonObject>(input: {
     readonly executor: TaskExecutorBinding;
     readonly receipt: TData;

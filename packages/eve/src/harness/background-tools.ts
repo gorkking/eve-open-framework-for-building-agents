@@ -28,6 +28,16 @@ export interface BackgroundToolExecutor {
   }): Promise<unknown>;
 }
 
+// A ContextKey rather than a direct import of the task runtime, for three reasons:
+// 1. The executor is per-step state, not a module export — each task-runtime step
+//    installs a fresh instance whose commit/rollback rides that step's transaction,
+//    so the correct instance can only be resolved at call time.
+// 2. Importing the implementation from `execution/` would make the harness ↔
+//    execution dependency bidirectional; the key keeps it one-way (harness declares
+//    the contract, execution installs it).
+// 3. "No task runtime active" stays a runtime condition instead of a link-time one:
+//    tool sets can be built anywhere, and `require()` only throws if a background
+//    call actually fires outside a task step.
 export const BackgroundToolExecutorKey = new ContextKey<BackgroundToolExecutor>(
   "eve.internal.backgroundToolExecution",
 );

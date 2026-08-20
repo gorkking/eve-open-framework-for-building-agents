@@ -274,6 +274,20 @@ commit barrier, readiness delivery, and compensation are generic background-tool
 Local and remote definitions own only child dispatch, agent-handle effects, and mapping the task
 wire onto their executor.
 
+### Workflow host
+
+The dynamic-workflow sandbox drives subagent calls through the same harness tool definitions,
+but its host (`createWorkflowHostTools`) still executes only `runtimeAction` tools. With
+`experimental.tasks` enabled, the background subagent definitions pass the `workflowCallable`
+advertising filter and are then dropped by the host, so no host tools remain and the workflow
+tool is not advertised. This is an accepted scope cut: workflows are unavailable under the
+experiment.
+
+Graduating the experiment removes the `runtimeAction` dispatch path rather than extending it.
+The workflow host then executes background `defineTool` definitions through the same
+task-creating `execute` path the model loop uses, and `execution: "background"` becomes the
+workflow-callable contract, retiring the manual `workflowCallable` flag.
+
 ## Parent and executor wire contract
 
 The parent-facing half of a task binding is passed to a local or remote child executor. Routing
@@ -399,6 +413,8 @@ than MCP compatibility.
   subagent blocking behavior do not change.
 - With it enabled, a slow subagent returns a task receipt and the parent can take another model
   step before the child completes.
+- With it enabled, the workflow tool is not advertised to the root session until graduation adds
+  background-tool execution to the workflow host.
 - The original tool call has exactly one result in durable history. Later task output cannot be
   attached to that call a second time.
 - Local and remote subagents support the same five parent-child flows.
@@ -428,6 +444,12 @@ than MCP compatibility.
 4. How are repeated progress messages coalesced before they start parent model turns?
 5. How are child token usage and remaining parent budgets accounted after a background child
    completes on a later turn?
+6. Should background tool inputs be constrained to `JsonValue`? Today they cross the
+   harness ↔ executor boundary as `unknown`: schema parsing can transform (a standard schema
+   may emit e.g. a `Date`), so JSON-ness is not guaranteed by construction, and annotating the
+   boundary alone would verify nothing. An honest constraint must land at the authoring layer
+   (`TInput extends JsonValue` for background-capable tools) or as per-call runtime validation;
+   deferred until background tools need durable/serializable inputs.
 
 Two former open questions are settled and recorded in the [delivery plan]: failure taxonomy
 (`failed` carries the error output) and wake policy (terminal and `input_required` wake a
