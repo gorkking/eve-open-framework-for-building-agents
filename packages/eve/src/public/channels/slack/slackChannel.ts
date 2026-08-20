@@ -8,7 +8,7 @@ import type {
 } from "#channel/channel-operations.js";
 import { defaultDeliverResult } from "#channel/adapter.js";
 import type { Session, SessionHandle } from "#channel/session.js";
-import type { SessionAuthContext } from "#channel/types.js";
+import type { SessionAuthContext, TurnPolicy } from "#channel/types.js";
 import type { CardElement } from "#compiled/chat/index.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
 import type { ChannelContinuationOps } from "#public/definitions/channel.js";
@@ -537,6 +537,8 @@ export interface SlackChannelConfig {
 
   /** Override the default webhook route path (`/eve/v1/slack`). */
   readonly route?: string;
+  /** Policy for accepted messages that arrive while a turn is active. */
+  readonly turnPolicy?: TurnPolicy;
 
   /**
    * Inbound upload policy applied to file attachments before they reach
@@ -754,6 +756,7 @@ export function slackChannel(config: SlackChannelConfig = {}): SlackChannel {
     SlackInstrumentationMetadata
   >({
     kindHint: "slack",
+    turnPolicy: config.turnPolicy,
     state: {
       channelId: null as string | null,
       threadTs: null as string | null,

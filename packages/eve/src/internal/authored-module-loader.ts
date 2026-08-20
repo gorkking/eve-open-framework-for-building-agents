@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import type { CompiledAgentManifest } from "#compiler/manifest.js";
@@ -305,6 +305,7 @@ export async function bundleAuthoredModuleMapForGeneration(input: {
       platform: "node",
       plugins,
       resolve: {
+        conditionNames: ["eve-source"],
         extensions: [...RESOLVE_EXTENSIONS],
       },
       tsconfig: resolveAuthoredTsConfigPath(packageRoot),
@@ -418,6 +419,7 @@ async function buildAuthoredModuleBundle(
       platform: "node",
       plugins,
       resolve: {
+        conditionNames: ["eve-source"],
         extensions: [...RESOLVE_EXTENSIONS],
       },
       tsconfig: tsconfigPath,
@@ -513,7 +515,7 @@ function resolveAuthoredPackageRoot(modulePath: string): string {
 
   while (true) {
     if (existsSync(join(currentDirectory, "package.json"))) {
-      return currentDirectory;
+      return realpathSync(currentDirectory);
     }
 
     const parentDirectory = dirname(currentDirectory);

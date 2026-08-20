@@ -1,5 +1,37 @@
 # eve
 
+## 0.40.0
+
+### Minor Changes
+
+- 2838bb3: Remove `task_peek` from experimental background tasks and include completed results and failures directly in task notifications. Conditionally delivered task wakes can remain silent when that result was already covered by an earlier response.
+
+### Patch Changes
+
+- e843b4d: Registry browsing now uses titles returned by the catalog, avoiding a separate request for every displayed item.
+- 899e079: Keep `eve info --json` output valid JSON by omitting the CLI banner.
+- cda9539: Redact brokered credential transforms when sandbox network policies are written to bootstrap logs.
+- 87c61a1: Update eve's bundled Workflow SDK packages to the latest 5.0.0 beta releases, picking up a replay-determinism fix for branch wake order under concurrent replays.
+
+## 0.39.3
+
+### Patch Changes
+
+- c2bfee1: Keep top-level sessions in an independent `agent.session` trace while preserving shared trace context for local and remote subagents.
+- 9a7964b: Add a configurable, development-only `@eve/self-modification` source-editing subagent that mounts authored agent source read-write, exposes its instructions through an extension, and uses structured file tools to inspect and safely update source.
+- 542c380: Preserve the configured `turnPolicy` on built-in and custom channels, and restore the option for Slack channels.
+- 75bd9c8: Allow extension-owned external dependencies to use ESM-only packages that do not expose a CommonJS entry.
+- 6fc904d: Session inbox hook payloads are now a validated, versioned wire format following eve's existing durable-format idioms. Producers inspect the target hook's wire capability and encode the shape its pinned consumer understands, including sessions created by eve 0.30.8; readers migrate legacy shapes forward and reject unknown versions instead of reinterpreting them.
+
+## 0.39.2
+
+### Patch Changes
+
+- 33db9a4: Improve non-interactive setup recovery: `eve add` now reports terminal outcomes on every path and includes non-secret answer placeholders in blocked continuation commands. `eve link` and `eve deploy` also point non-interactive callers to eve's own project commands.
+- 6e87b13: Allow extension packages to declare runtime dependencies that eve must keep external and preserve with their complete package files. Consumers receive these packaging requirements automatically without editing their agent config.
+- 2c01eab: Rebuild untransformed session-scoped dynamic tool executors and approval policies on durable continuations so dependency-created tools remain available after replay.
+- 5e5d91b: Fix `vercel.json` services detection when a Vercel Root Directory is configured. The framework integrations now read `vercel.json` from the framework app root first, so a `services` declaration next to the app wins over the linked repository root's `vercel.json` — matching where Vercel itself reads the file from.
+
 ## 0.39.1
 
 ### Patch Changes
@@ -230,7 +262,7 @@
 
 ### Patch Changes
 
-- 2a141f0: Keep sessions resumable across eve deployment upgrades: sends now cross durable session hooks as the established `deliver` envelope (with a transitional single-payload mirror for sessions pinned to 0.30.3–0.30.8), and consumers keep accepting payloads persisted by those versions.
+- 2a141f0: Keep sessions resumable across eve deployment upgrades: sends now cross durable session hooks as the established `deliver` envelope (with a transitional single-payload mirror for sessions pinned to 0.30.5–0.30.8), and consumers keep accepting payloads persisted by those versions.
 - 99982f7: Treat AI SDK `.devtools` like other generated directories: ignore it in `eve dev` watching, agent discovery, and source snapshots so generation writes do not recompile or warn.
 - a497e8d: Preserve each tool executor's concrete return type through `defineTool`, so non-streaming tools no longer appear to return an async iterable. Allow `ctx.to()` to infer closed receive-target interfaces such as Slack's without requiring an index signature.
 - fe9e7ef: Consume interactive authorization callback results once and keep targeted connection searches from replaying callbacks for unrelated connections.

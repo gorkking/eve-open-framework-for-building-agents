@@ -9,7 +9,6 @@ import {
   createUnknownTasksError,
   findTaskAgentAddress,
   lookupTaskEntries,
-  readTaskViews,
   readTaskView,
 } from "#execution/tasks/parent/control-shared.js";
 import { executeTaskUpdate } from "#execution/tasks/child/update.js";
@@ -27,7 +26,6 @@ import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import {
   TASK_CANCEL_TOOL_NAME,
   TASK_CONTROL_TOOL_NAMES,
-  TASK_PEEK_TOOL_NAME,
   TASK_UPDATE_TOOL_NAME,
 } from "#runtime/framework-tools/tasks.js";
 import type { SessionTaskIndexEntry } from "#tasks/session-index.js";
@@ -94,24 +92,18 @@ export async function executeTaskControlAction(input: {
   }
   const entries = lookup.entries;
 
-  switch (action.toolName) {
-    case TASK_PEEK_TOOL_NAME: {
-      const views = await readTaskViews(entries);
-      return { result: createTaskViewsResult(action, views), session };
-    }
-    case TASK_CANCEL_TOOL_NAME: {
-      const views: TaskView[] = [];
-      for (const entry of entries) {
-        views.push(await cancelOwnedTask({ bundle: input.bundle, entry, session }));
-      }
-      return { result: createTaskViewsResult(action, views), session };
-    }
-    default:
-      return {
-        result: createTaskControlError(action, `Unsupported task control "${action.toolName}".`),
-        session,
-      };
+  if (action.toolName !== TASK_CANCEL_TOOL_NAME) {
+    return {
+      result: createTaskControlError(action, `Unsupported task control "${action.toolName}".`),
+      session,
+    };
   }
+
+  const views: TaskView[] = [];
+  for (const entry of entries) {
+    views.push(await cancelOwnedTask({ bundle: input.bundle, entry, session }));
+  }
+  return { result: createTaskViewsResult(action, views), session };
 }
 
 /** Commits task cancellation, then propagates it to the addressed executor. */

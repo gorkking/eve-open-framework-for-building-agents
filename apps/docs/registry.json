@@ -29,6 +29,30 @@
       }
     },
     {
+      "name": "experimental/self-modification",
+      "type": "registry:item",
+      "title": "Self-modification (Experimental)",
+      "description": "Add an experimental, development-only source editing subagent to an eve project.",
+      "dependencies": ["@eve/self-modification"],
+      "files": [
+        {
+          "path": "registry/experimental/self-modification/agent.ts",
+          "type": "registry:file",
+          "target": "agent/subagents/self-modification/agent.ts"
+        },
+        {
+          "path": "registry/experimental/self-modification/sandbox.ts",
+          "type": "registry:file",
+          "target": "agent/subagents/self-modification/sandbox.ts"
+        },
+        {
+          "path": "registry/experimental/self-modification/extension.ts",
+          "type": "registry:file",
+          "target": "agent/subagents/self-modification/extensions/selfmod.ts"
+        }
+      ]
+    },
+    {
       "name": "extension/agent-browser",
       "type": "registry:item",
       "title": "agent-browser",
