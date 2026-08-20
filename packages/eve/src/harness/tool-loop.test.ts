@@ -2710,60 +2710,10 @@ describe("createToolLoopHarness", () => {
   });
 
   it.each(["turn.started", "step.started"] as const)(
-    "parks the session when a %s hook throws",
-    async (failingEventType: "step.started" | "turn.started") => {
-      const events: UnstampedMessageStreamEvent[] = [];
-      let shouldFail = true;
+    "keeps non-hook %s emitter failures strict",
+    async (failingEventType) => {
+      const failure = new Error("emitter failed");
       const emit: HarnessEmitFn = async (event) => {
-        events.push(event);
-        if (event.type === failingEventType && shouldFail) {
-          shouldFail = false;
-          throw new Error("admission denied");
-        }
-      };
-      const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
-
-      const result = await runStep(createTestSession(), { message: "Hi" });
-
-      expect(result.next).toBeNull();
-      expect(result.settledTurn).toEqual({ isError: true, output: "admission denied" });
-      expect(getCompatibilityEventTypes(events).slice(-3)).toEqual([
-        "step.failed",
-        "turn.failed",
-        "session.waiting",
-      ]);
-      expect(events.some((event) => event.type === "session.failed")).toBe(false);
-      expect(getHarnessEmissionState(result.session.state)).toEqual({
-        sequence: 1,
-        sessionStarted: true,
-        stepIndex: 0,
-        turnId: "",
-      });
-      expect(vi.mocked(ToolLoopAgent)).not.toHaveBeenCalled();
-
-      setupMockAgent({
-        finishReason: "stop",
-        response: { messages: [{ content: "Welcome back.", role: "assistant" }] },
-        text: "Welcome back.",
-        toolCalls: [],
-        toolResults: [],
-      });
-      const followUp = await runStep(result.session, { message: "Try again" });
-
-      expect(followUp.next).toBeNull();
-      expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledOnce();
-      expect(events.filter((event) => event.type === "session.started")).toHaveLength(1);
-      expect(getHarnessEmissionState(followUp.session.state).sequence).toBe(2);
-    },
-  );
-
-  it.each(["session.started", "message.received"] as const)(
-    "does not recover a %s hook throw as a boundary failure",
-    async (failingEventType: "message.received" | "session.started") => {
-      const events: UnstampedMessageStreamEvent[] = [];
-      const failure = new Error("observer failed");
-      const emit: HarnessEmitFn = async (event) => {
-        events.push(event);
         if (event.type === failingEventType) {
           throw failure;
         }
@@ -2771,64 +2721,8 @@ describe("createToolLoopHarness", () => {
       const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
 
       await expect(runStep(createTestSession(), { message: "Hi" })).rejects.toBe(failure);
-      expect(events.some((event) => event.type === "turn.failed")).toBe(false);
     },
   );
-
-  it("preserves DynamicModelSelectionError propagation from step.started", async () => {
-    const failure = new DynamicModelSelectionError(new Error("selection failed"));
-    const emit: HarnessEmitFn = async (event) => {
-      if (event.type === "step.started") {
-        throw failure;
-      }
-    };
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
-
-    await expect(runStep(createTestSession(), { message: "Hi" })).rejects.toBe(failure);
-  });
-
-  it("parks when step.started throws on a tool-continuation step", async () => {
-    setupMockAgent({
-      finishReason: "tool-calls",
-      response: {
-        messages: [
-          {
-            content: [{ type: "tool-call", toolCallId: "call-1", toolName: "add", args: {} }],
-            role: "assistant",
-          },
-          {
-            content: [{ type: "tool-result", toolCallId: "call-1", toolName: "add", output: "42" }],
-            role: "tool",
-          },
-        ],
-      },
-      text: "",
-      toolCalls: [{ toolCallId: "call-1", toolName: "add", input: {} }],
-      toolResults: [{ toolCallId: "call-1", toolName: "add", output: "42" }],
-    });
-    const events: UnstampedMessageStreamEvent[] = [];
-    let stepStartedCount = 0;
-    const emit: HarnessEmitFn = async (event) => {
-      events.push(event);
-      if (event.type === "step.started" && ++stepStartedCount === 2) {
-        throw new Error("admission denied");
-      }
-    };
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
-
-    const firstStep = await runStep(createTestSession(), { message: "Add numbers" });
-    const secondStep = await runStep(firstStep.session);
-
-    expect(firstStep.next).toBe(runStep);
-    expect(secondStep.next).toBeNull();
-    expect(getCompatibilityEventTypes(events).slice(-3)).toEqual([
-      "step.failed",
-      "turn.failed",
-      "session.waiting",
-    ]);
-    expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledOnce();
-    expect(getHarnessEmissionState(secondStep.session.state).sequence).toBe(1);
-  });
 
   it("does not emit turn preamble on tool continuation (no input)", async () => {
     setupMockAgent({

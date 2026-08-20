@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Park durable sessions when `turn.started` or first-attempt `step.started` event handlers throw, so follow-up turns remain available after an admission failure.
+Keep authored runtime hooks from interrupting otherwise successful turns when handlers throw. eve logs the failure while remaining hooks and agent execution continue.
