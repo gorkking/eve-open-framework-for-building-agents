@@ -1,4 +1,4 @@
-import { loadContext } from "#context/container.js";
+import { type AlsContext, loadContext } from "#context/container.js";
 import { HandleEventKey } from "#context/keys.js";
 import { serializeContext } from "#context/serialize.js";
 import {
@@ -46,6 +46,7 @@ interface SubagentDefinitionInput {
 interface SubagentDispatchInput {
   readonly action: SubagentCallAction;
   readonly callbackBaseUrl?: string;
+  readonly ctx: AlsContext;
   readonly event: {
     readonly sequence: number;
     readonly stepIndex: number;
@@ -123,6 +124,7 @@ export async function executeSubagentTool(input: {
   const dispatched = await dispatchSubagent({
     action,
     callbackBaseUrl: ctx.get(CallbackBaseUrlKey),
+    ctx,
     event: { ...emission, turnId: activeTurnId(emission) },
     localFanoutSize: countLocalSubagentCalls(batch),
     serializedContext: serializeContext(ctx),
@@ -193,6 +195,7 @@ export async function executeSubagentTool(input: {
 async function dispatchSubagent(input: SubagentDispatchInput): Promise<SubagentDispatchResult> {
   const prepared = await prepareAgentActionDispatch({
     action: input.action,
+    ctx: input.ctx,
     event: input.event,
     localFanoutSize: input.localFanoutSize,
     serializedContext: input.serializedContext,
