@@ -25,8 +25,7 @@ import { getPendingAuthorization, setPendingAuthorization } from "#harness/autho
 import { getProxyInputRequests, upsertProxyInputRequests } from "#harness/proxy-input-requests.js";
 import { appendPendingInputBatch } from "#harness/input-requests.js";
 import type { HarnessSession, StepResult } from "#harness/types.js";
-import { createEmptyHookRegistry, createRuntimeHookRegistry } from "#runtime/hooks/registry.js";
-import { createSessionStartedEvent } from "#protocol/message.js";
+import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import {
   createDurableSessionState,
@@ -1366,73 +1365,6 @@ describe("dispatchRuntimeActionsStep", () => {
 });
 
 describe("turnStep", () => {
-  it("continues through dynamic resolvers and agent execution after a hook throws", async () => {
-    const hookHandler = vi.fn(async () => {
-      throw new Error("observer failed");
-    });
-    const resolverHandler = vi.fn(async () => undefined);
-    const compiledBundle = {
-      adapterRegistry: {
-        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
-      },
-      compiledArtifactsSource: {},
-      graph: {
-        nodesByNodeId: new Map(),
-        root: {
-          sandboxRegistry: { sandbox: null },
-          turnAgent: TestTurnAgent,
-        },
-      },
-      hookRegistry: createRuntimeHookRegistry([
-        {
-          events: { "session.started": hookHandler },
-          logicalPath: "hooks/observer.ts",
-          slug: "observer",
-          sourceId: "hooks/observer.ts",
-          sourceKind: "module",
-        },
-      ]),
-      moduleMap: { nodes: {} },
-      resolvedAgent: {
-        config: {},
-        dynamicToolResolvers: [
-          {
-            eventNames: ["session.started"],
-            events: { "session.started": resolverHandler },
-            logicalPath: "agent/tools/dynamic.ts",
-            slug: "dynamic",
-            sourceId: "agent/tools/dynamic.ts",
-            sourceKind: "module",
-          },
-        ],
-      },
-      subagentRegistry: {},
-      toolRegistry: {},
-      turnAgent: TestTurnAgent,
-    } as never;
-    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(compiledBundle);
-    installSessionStoreMocks([createStubSession()]);
-    let agentContinued = false;
-    vi.mocked(createExecutionNodeStep).mockImplementation((config) => {
-      return async (session): Promise<StepResult> => {
-        await config.handleEvent!(createSessionStartedEvent());
-        agentContinued = true;
-        return { next: null, session };
-      };
-    });
-
-    await turnStep({
-      input: { kind: "deliver", payloads: [{ message: "hello" }] },
-      parentWritable: createTestWritable(),
-      serializedContext: createSerializedContext(),
-      sessionState: createStubSessionState(),
-    });
-
-    expect(hookHandler).toHaveBeenCalledOnce();
-    expect(resolverHandler).toHaveBeenCalledOnce();
-    expect(agentContinued).toBe(true);
-  });
-
   it("keeps a session-scoped dynamic model selection when the first turn is cancelled", async () => {
     const session = createStubSession();
     installSessionStoreMocks([session]);
@@ -2888,5 +2820,76 @@ describe("resolveEffectiveOutputSchema", () => {
       session,
     });
     expect(resolved).toBe(session);
+  });
+});
+
+describe("turnStep hook isolation", () => {
+  it("continues through dynamic resolvers and agent execution after a hook throws", async () => {
+    const { createSessionStartedEvent } = await import("#protocol/message.js");
+    const { createRuntimeHookRegistry } = await import("#runtime/hooks/registry.js");
+    const hookHandler = vi.fn(async () => {
+      throw new Error("observer failed");
+    });
+    const resolverHandler = vi.fn(async () => undefined);
+    const compiledBundle = {
+      adapterRegistry: {
+        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
+      },
+      compiledArtifactsSource: {},
+      graph: {
+        nodesByNodeId: new Map(),
+        root: {
+          sandboxRegistry: { sandbox: null },
+          turnAgent: TestTurnAgent,
+        },
+      },
+      hookRegistry: createRuntimeHookRegistry([
+        {
+          events: { "session.started": hookHandler },
+          logicalPath: "hooks/observer.ts",
+          slug: "observer",
+          sourceId: "hooks/observer.ts",
+          sourceKind: "module",
+        },
+      ]),
+      moduleMap: { nodes: {} },
+      resolvedAgent: {
+        config: {},
+        dynamicToolResolvers: [
+          {
+            eventNames: ["session.started"],
+            events: { "session.started": resolverHandler },
+            logicalPath: "agent/tools/dynamic.ts",
+            slug: "dynamic",
+            sourceId: "agent/tools/dynamic.ts",
+            sourceKind: "module",
+          },
+        ],
+      },
+      subagentRegistry: {},
+      toolRegistry: {},
+      turnAgent: TestTurnAgent,
+    } as never;
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(compiledBundle);
+    installSessionStoreMocks([createStubSession()]);
+    let agentContinued = false;
+    vi.mocked(createExecutionNodeStep).mockImplementation((config) => {
+      return async (session): Promise<StepResult> => {
+        await config.handleEvent!(createSessionStartedEvent());
+        agentContinued = true;
+        return { next: null, session };
+      };
+    });
+
+    await turnStep({
+      input: { kind: "deliver", payloads: [{ message: "hello" }] },
+      parentWritable: createTestWritable(),
+      serializedContext: createSerializedContext(),
+      sessionState: createStubSessionState(),
+    });
+
+    expect(hookHandler).toHaveBeenCalledOnce();
+    expect(resolverHandler).toHaveBeenCalledOnce();
+    expect(agentContinued).toBe(true);
   });
 });
