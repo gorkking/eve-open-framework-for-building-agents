@@ -1,7 +1,7 @@
 import { type EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 
-import { requireTaskView, waitForCompletedTask } from "./shared.js";
+import { parseToolErrorOutput, requireTaskView, waitForCompletedTask } from "./shared.js";
 import { defineTaskEval } from "./task-transition.js";
 
 const FIRST_CALL_ID = "task-d6-success-first";
@@ -22,7 +22,10 @@ export default defineTaskEval({
     started.messageIncludes("TASK-D6-PARTIAL-FANOUT-STARTED");
     started.eventsSatisfy("dispatch results preserve success/failure/success order", (events) => {
       const callIds = events.flatMap((event) =>
-        event.type === "action.result" && event.data.result.kind === "subagent-result"
+        event.type === "action.result" &&
+        event.data.result.kind === "tool-result" &&
+        (event.data.result.toolName === "busy-worker" ||
+          event.data.result.toolName === "unstartable-worker")
           ? [event.data.result.callId]
           : [],
       );
@@ -49,18 +52,18 @@ export default defineTaskEval({
         const failed = events.filter(
           (event) =>
             event.type === "action.result" &&
-            event.data.result.kind === "subagent-result" &&
+            event.data.result.kind === "tool-result" &&
             event.data.result.callId === FAILED_CALL_ID,
         );
         const event = failed[0];
         if (event?.type !== "action.result") return false;
         const result = event.data.result;
-        if (result.kind !== "subagent-result") return false;
-        const output = result.output;
+        if (result.kind !== "tool-result") return false;
+        const output = parseToolErrorOutput(result.output);
         return (
           failed.length === 1 &&
           event.data.status === "failed" &&
-          result.origin === "dispatch" &&
+          result.isError === true &&
           output !== null &&
           typeof output === "object" &&
           Reflect.get(output, "code") === "REMOTE_AGENT_START_FAILED" &&

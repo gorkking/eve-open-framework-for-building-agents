@@ -186,10 +186,17 @@ export async function executeSubagentTool(input: {
     toolName: input.definition.name,
   });
 
-  return input.task.delegated({
+  const delegated = input.task.delegated({
     executor,
     receipt: { agentId: dispatched.agentId },
   });
+  await emitSubagentCompleted({
+    callId: input.toolContext.callId,
+    output: JSON.stringify(delegated.receipt),
+    subagentName: dispatched.name,
+    taskId: delegated.receipt.taskId,
+  });
+  return delegated;
 }
 
 async function dispatchSubagent(input: SubagentDispatchInput): Promise<SubagentDispatchResult> {
@@ -314,6 +321,32 @@ async function emitSubagentCalled(input: {
       callId: input.callId,
       childSessionId: input.childSessionId,
       toolName: input.toolName,
+    });
+  }
+}
+
+async function emitSubagentCompleted(input: {
+  readonly callId: string;
+  readonly output: string;
+  readonly subagentName: string;
+  readonly taskId: string;
+}): Promise<void> {
+  const handleEvent = loadContext().get(HandleEventKey);
+  if (handleEvent === undefined) return;
+  try {
+    await handleEvent({
+      data: {
+        backgroundTask: { status: "working", taskId: input.taskId },
+        callId: input.callId,
+        output: input.output,
+        subagentName: input.subagentName,
+      },
+      type: "subagent.completed",
+    });
+  } catch (error) {
+    logError(log, "subagent.completed emission failed", error, {
+      callId: input.callId,
+      taskId: input.taskId,
     });
   }
 }

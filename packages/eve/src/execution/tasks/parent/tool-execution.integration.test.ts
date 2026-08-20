@@ -224,9 +224,17 @@ describe("background subagent tool execution", () => {
               }),
               type: "subagent.called",
             }),
+            ...pendingTasks.map((task) =>
+              expect.objectContaining({
+                data: expect.objectContaining({
+                  backgroundTask: { status: "working", taskId: task.taskId },
+                }),
+                type: "subagent.completed",
+              }),
+            ),
           ]),
         );
-        expect(calledEvents).toHaveLength(3);
+        expect(calledEvents).toHaveLength(6);
         expect(handles).toContainEqual(
           expect.objectContaining({
             address: expect.objectContaining({ kind: "agent/remote", sessionId: "remote-child" }),
