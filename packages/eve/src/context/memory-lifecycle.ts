@@ -2,10 +2,6 @@ import type { ModelMessage } from "ai";
 
 import { buildCallbackContext } from "#context/build-callback-context.js";
 import { loadContext } from "#context/container.js";
-import {
-  runWithDefaultMemoryNamespaceContext,
-  type DefaultMemoryNamespaceContext,
-} from "#context/default-memory-namespace-context.js";
 import { buildResolveRequestContext } from "#context/dynamic-resolve-context.js";
 import {
   captureCallbackSession,
@@ -34,10 +30,10 @@ import type { HarnessSession } from "#harness/types.js";
 import { normalizeInstructionsDefinition } from "#internal/authored-definition/core.js";
 import { createLogger } from "#internal/logging.js";
 import type {
+  MemoryCaptureContext,
   MemoryNamespaceDefinition,
   MemoryRecallContext,
   MemoryRecallResult,
-  MemorySaveContext,
   MemoryScope,
   MemoryScopeContext,
   MemoryScopeDefinition,
@@ -49,7 +45,11 @@ import { attributeMemoryMessage } from "#shared/memory-message.js";
 const log = createLogger("memory");
 const MEMORY_SCOPE_DOMAIN = "eve-memory-scope-v1";
 
-export type MemoryDefaultNamespaceContext = Omit<DefaultMemoryNamespaceContext, "slot">;
+/** Deployment coordinates shared by every slot's namespace resolution. */
+export interface MemoryDefaultNamespaceContext {
+  readonly appRoot: string;
+  readonly node: string;
+}
 
 export { MemoryOperationError };
 export {
@@ -73,10 +73,7 @@ export async function startMemoryTurn(input: {
 }): Promise<HarnessSession> {
   if (input.memories.length === 0) return input.session;
   const existing = getActiveMemoryTurn(input.session);
-  if (
-    existing?.turn.turnId === input.turn.turnId &&
-    existing.turn.sequence === input.turn.sequence
-  ) {
+  if (existing?.turn.id === input.turn.id && existing.turn.sequence === input.turn.sequence) {
     return input.session;
   }
 
@@ -107,7 +104,7 @@ export async function startMemoryTurn(input: {
       scope: lock.scope,
       sessionId: callbackSession.id,
       slot: lock.slot,
-      turnId: input.turn.turnId,
+      turnId: input.turn.id,
     });
     const context: MemoryRecallContext = {
       ...createOperationContext({
@@ -201,7 +198,7 @@ export async function prepareMemoryCompaction(input: {
   return setPendingMemoryCompaction(input.session, pending, ordinal + 1);
 }
 
-/** Runs pre-compaction saves after visibility and usage have been resolved. */
+/** Runs pre-compaction captures after visibility and usage have been resolved. */
 export async function startMemoryCompaction(input: {
   readonly abortSignal?: AbortSignal;
   readonly memories: readonly ResolvedMemoryDefinition[];
@@ -224,7 +221,7 @@ export async function startMemoryCompaction(input: {
   for (const lock of pending.slots) {
     if (lock.scope === null) continue;
     const memory = requireMemory(input.memories, lock.slot);
-    if (memory.provider.save === undefined) continue;
+    if (memory.provider.capture === undefined) continue;
     const operationId = createCompactionOperationId({
       ordinal: pending.ordinal,
       phase: "compaction.requested",
@@ -232,7 +229,7 @@ export async function startMemoryCompaction(input: {
       sessionId: pending.session.id,
       slot: lock.slot,
     });
-    const context: MemorySaveContext = {
+    const context: MemoryCaptureContext = {
       ...createOperationContext({
         abortSignal,
         callbackSession: pending.session,
@@ -250,7 +247,7 @@ export async function startMemoryCompaction(input: {
     };
 
     try {
-      await memory.provider.save(context);
+      await memory.provider.capture(context);
     } catch (cause) {
       throw new MemoryOperationError({
         cause,
@@ -329,8 +326,8 @@ export async function finishMemoryCompaction(input: {
   return { session: setPendingMemoryCompaction(session, null) };
 }
 
-/** Runs best-effort completed-turn saves in stable slot order. */
-export async function saveCompletedMemoryTurn(input: {
+/** Runs best-effort completed-turn captures in stable slot order. */
+export async function captureCompletedMemoryTurn(input: {
   readonly abortSignal?: AbortSignal;
   readonly memories: readonly ResolvedMemoryDefinition[];
   readonly messages: readonly ModelMessage[];
@@ -347,13 +344,13 @@ export async function saveCompletedMemoryTurn(input: {
       scope: lock.scope,
       sessionId: active.session.id,
       slot: lock.slot,
-      turnId: active.turn.turnId,
+      turnId: active.turn.id,
     });
 
     try {
       const memory = requireMemory(input.memories, lock.slot);
-      if (memory.provider.save === undefined) continue;
-      const context: MemorySaveContext = {
+      if (memory.provider.capture === undefined) continue;
+      const context: MemoryCaptureContext = {
         ...createOperationContext({
           abortSignal,
           callbackSession: active.session,
@@ -365,7 +362,7 @@ export async function saveCompletedMemoryTurn(input: {
         phase: "turn.completed",
         turn: active.turn,
       };
-      await memory.provider.save(context);
+      await memory.provider.capture(context);
     } catch (cause) {
       logSettledFailure(
         new MemoryOperationError({
@@ -382,7 +379,7 @@ export async function saveCompletedMemoryTurn(input: {
     .filter(
       (origin) =>
         origin.turnState.session.id === active.session.id &&
-        origin.turnState.turn.turnId === active.turn.turnId &&
+        origin.turnState.turn.id === active.turn.id &&
         origin.turnState.turn.sequence === active.turn.sequence,
     )
     .map((origin) => origin.callId);
@@ -398,16 +395,14 @@ function appendRecallResult(input: {
 }): HarnessSession {
   if (input.result === null || input.result === undefined) return input.session;
   const normalized = normalizeInstructionsDefinition(
-    input.result,
+    // Recall messages default to the user role, unlike system-default instructions.
+    { ...input.result, role: input.result.role ?? "user" },
     `Memory provider "${input.slot}" returned an invalid recall message.`,
   );
-  if (normalized.role !== "user") {
-    throw new TypeError(`Memory provider "${input.slot}" recall messages must use role "user".`);
-  }
   const content = normalized.content.trim();
   if (content.length === 0) return input.session;
   const message = attributeMemoryMessage(
-    { content, role: "user" },
+    { content, role: normalized.role },
     { scope: { ...input.scope }, slot: input.slot },
   );
   return { ...input.session, history: [...input.session.history, message] };
@@ -450,15 +445,15 @@ async function resolveNamespace(
 ): Promise<string | null> {
   let namespace: unknown;
   try {
-    namespace = await runWithDefaultMemoryNamespaceContext(
-      { ...context, slot } satisfies DefaultMemoryNamespaceContext,
-      async () => await resolveDefinition(definition),
-    );
+    namespace =
+      typeof definition === "function"
+        ? await definition({ appRoot: context.appRoot, node: context.node, slot })
+        : definition;
   } catch (cause) {
     throw new Error(`Memory namespace "${slot}" failed to resolve.`, { cause });
   }
   if (namespace === null) return null;
-  validateAddressValue("namespace", slot, namespace);
+  validateResolvedValue("namespace", slot, namespace);
   return namespace;
 }
 
@@ -470,7 +465,7 @@ async function resolveScope(
   let scope: unknown;
   const fromResolver = typeof definition === "function";
   try {
-    scope = fromResolver ? await definition(context) : await definition;
+    scope = fromResolver ? await definition(context) : definition;
   } catch (cause) {
     throw new Error(`Memory scope "${slot}" failed to resolve.`, { cause });
   }
@@ -479,7 +474,7 @@ async function resolveScope(
     validateScopeComponents(slot, scope);
     return scope.join(":");
   }
-  validateAddressValue("scope", slot, scope);
+  validateResolvedValue("scope", slot, scope);
   return scope;
 }
 
@@ -501,15 +496,7 @@ function validateScopeComponents(
   }
 }
 
-async function resolveDefinition<T>(
-  definition: T | Promise<T> | (() => T | Promise<T>),
-): Promise<T> {
-  return typeof definition === "function"
-    ? await (definition as () => T | Promise<T>)()
-    : await definition;
-}
-
-function validateAddressValue(
+function validateResolvedValue(
   kind: "namespace" | "scope",
   slot: string,
   value: unknown,

@@ -70,7 +70,7 @@ export async function resolveMemoryTurnTools(input: {
   const event = {
     data: {
       sequence: active.turn.sequence,
-      turnId: active.turn.turnId,
+      turnId: active.turn.id,
     },
     type: "turn.started",
   } as UnstampedMessageStreamEvent;

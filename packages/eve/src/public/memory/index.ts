@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 
 import type { ModelMessage } from "ai";
 
-import { loadDefaultMemoryNamespaceContext } from "#context/default-memory-namespace-context.js";
 import type { SessionAuth } from "#context/keys.js";
 import type { Approval } from "#public/definitions/approval.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
@@ -12,12 +11,21 @@ import type { DynamicResolveContext } from "#shared/dynamic-tool-definition.js";
 import { readMemoryMessageAttribution } from "#shared/memory-message.js";
 import { resolveVercelProjectIdFromEnvironment } from "#shared/vercel-project.js";
 
+/** Deployment coordinates supplied to a memory namespace resolver. */
+export interface MemoryNamespaceContext {
+  /** Absolute application root used for the non-Vercel default-namespace fallback. */
+  readonly appRoot: string;
+  /** Graph node that owns the slot. */
+  readonly node: string;
+  /** Path-derived slot identity, such as "memory" or "user". */
+  readonly slot: string;
+}
+
 /** Application-owned memory domain, resolved when eve locks a memory operation. */
 export type MemoryNamespaceDefinition =
   | string
   | null
-  | Promise<string | null>
-  | (() => string | null | Promise<string | null>);
+  | ((context: MemoryNamespaceContext) => string | null | Promise<string | null>);
 
 /** Values accepted from a trusted memory scope resolver. Arrays are joined with `":"`. */
 export type MemoryScopeResolverResult = string | readonly string[] | null;
@@ -42,7 +50,6 @@ export interface MemoryScopeContext {
 export type MemoryScopeDefinition =
   | string
   | null
-  | Promise<string | null>
   | ((
       context: MemoryScopeContext,
     ) => MemoryScopeResolverResult | Promise<MemoryScopeResolverResult>);
@@ -60,7 +67,8 @@ export interface MemoryScope {
 /** Provider context appended to durable history by one recall operation. */
 export interface MemoryRecallMessage {
   readonly content: string;
-  readonly role: "user";
+  /** Defaults to `"user"`. */
+  readonly role?: "system" | "user";
 }
 
 /** Origin attached by eve to a recalled message in durable history. */
@@ -71,20 +79,21 @@ export interface MemoryMessageAttribution {
 
 /** Normalized input and durable coordinates for the active turn. */
 export interface MemoryTurnContext {
+  /** Stable turn ID, matching `ctx.session.turn.id`. */
+  readonly id: string;
   /** Normalized model messages accepted as input for this turn. */
   readonly input: readonly ModelMessage[];
   /** Zero-based durable turn sequence. */
   readonly sequence: number;
-  readonly turnId: string;
 }
 
-/** Shared context supplied to memory recall and save operations. */
+/** Shared context supplied to memory recall and capture operations. */
 export interface MemoryOperationContext extends SessionContext {
   /** Aborts when the active turn or standalone operation is cancelled. */
   readonly abortSignal: AbortSignal;
   /** Durable model history at this boundary, including prior recalls. */
   readonly messages: readonly ModelMessage[];
-  /** Identifies one logical recall or save operation across workflow replay. */
+  /** Identifies one logical recall or capture operation across workflow replay. */
   readonly operationId: string;
   readonly memory: {
     /** Trusted partition locked for the active turn or standalone operation. */
@@ -113,7 +122,7 @@ export type MemoryRecallContext = MemoryOperationContext &
   );
 
 /** Context supplied when eve asks a provider to preserve settled history. */
-export type MemorySaveContext = MemoryOperationContext &
+export type MemoryCaptureContext = MemoryOperationContext &
   (
     | {
         readonly compaction: {
@@ -142,7 +151,7 @@ export interface MemoryToolsContext extends DynamicResolveContext {
   readonly turn: MemoryTurnContext;
 }
 
-/** One append-only user-role message, or no message for this recall boundary. */
+/** One append-only recall message, or no message for this recall boundary. */
 export type MemoryRecallResult = MemoryRecallMessage | null | undefined;
 
 /** One provider-owned model tool with its authoring-time input and output types erased. */
@@ -159,7 +168,7 @@ export type MemoryToolSet = Readonly<Record<string, MemoryToolDefinition>>;
 /** Provider-owned behavior attached to one or more authored memory slots. */
 export interface MemoryProvider {
   recall(context: MemoryRecallContext): MemoryRecallResult | Promise<MemoryRecallResult>;
-  save?(context: MemorySaveContext): void | Promise<void>;
+  capture?(context: MemoryCaptureContext): void | Promise<void>;
   tools?(context: MemoryToolsContext): MemoryToolSet | null | Promise<MemoryToolSet | null>;
 }
 
@@ -205,9 +214,12 @@ export function defineMemory<const T extends MemoryDefinition>(
   return definition;
 }
 
-/** Builds eve's deployment-aware default namespace for the memory slot being resolved. */
-export function defaultNamespace(): string {
-  const context = loadDefaultMemoryNamespaceContext();
+/**
+ * Builds eve's deployment-aware default namespace for the memory slot being
+ * resolved. A pure function of the supplied context and the deployment
+ * environment, so custom namespace resolvers can compose with it.
+ */
+export function defaultNamespace(context: MemoryNamespaceContext): string {
   const projectId = resolveVercelProjectIdFromEnvironment();
   const application =
     projectId === undefined
@@ -222,7 +234,7 @@ export function defaultNamespace(): string {
     "eve-memory-default-namespace-v1",
     application,
     environment,
-    context.nodeId,
+    context.node,
     context.slot,
   ]);
 }

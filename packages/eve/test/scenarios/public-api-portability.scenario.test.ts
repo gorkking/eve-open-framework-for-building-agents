@@ -101,12 +101,12 @@ export default defineSandbox({
   defineMemory,
   defineMemoryProvider,
   getMemoryMessageAttribution,
+  type MemoryCaptureContext,
   type MemoryMessageAttribution,
   type MemoryNamespaceDefinition,
   type MemoryRecallContext,
   type MemoryRecallMessage,
   type MemoryRecallResult,
-  type MemorySaveContext,
   type MemoryScopeContext,
   type MemoryScopeDefinition,
   type MemoryScopeResolverResult,
@@ -138,8 +138,8 @@ const provider = defineMemoryProvider({
     };
     return recalled;
   },
-  async save(ctx: MemorySaveContext): Promise<void> {
-    void (ctx.phase === "compaction.requested" ? ctx.compaction.modelId : ctx.turn.turnId);
+  async capture(ctx: MemoryCaptureContext): Promise<void> {
+    void (ctx.phase === "compaction.requested" ? ctx.compaction.modelId : ctx.turn.id);
   },
   tools(ctx: MemoryToolsContext) {
     void ctx.turn.sequence;

@@ -1,8 +1,6 @@
 import { z } from "#compiled/zod/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ContextContainer, contextStorage } from "#context/container.js";
-import { runWithDefaultMemoryNamespaceContext } from "#context/default-memory-namespace-context.js";
 import { defineTool } from "#public/definitions/tool.js";
 import type { MemoryToolSet } from "#public/memory/index.js";
 import {
@@ -13,10 +11,6 @@ import {
 } from "#public/memory/index.js";
 import { attributeMemoryMessage } from "#shared/memory-message.js";
 
-function createContext(): ContextContainer {
-  return new ContextContainer();
-}
-
 describe("memory authoring", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -24,10 +18,10 @@ describe("memory authoring", () => {
 
   it("defines the three-method provider contract without rewriting it", () => {
     const recall = () => ({ content: "remembered", role: "user" as const });
-    const save = async () => {};
+    const capture = async () => {};
     const tools = () => null;
     const scope = () => "user-1";
-    const provider = defineMemoryProvider({ recall, save, tools });
+    const provider = defineMemoryProvider({ capture, recall, tools });
     const definition = defineMemory({
       description: "Personal memory.",
       namespace: "production",
@@ -36,7 +30,7 @@ describe("memory authoring", () => {
       visibility: "session",
     });
 
-    expect(provider).toEqual({ recall, save, tools });
+    expect(provider).toEqual({ capture, recall, tools });
     expect(definition).toEqual({
       description: "Personal memory.",
       namespace: "production",
@@ -46,26 +40,31 @@ describe("memory authoring", () => {
     });
   });
 
-  it("accepts scalar, promise, and resolver addressing definitions", () => {
+  it("accepts scalar and resolver scope definitions", () => {
     const provider = defineMemoryProvider({ recall: () => undefined });
 
     expect(defineMemory({ provider, scope: "user-1" }).scope).toBe("user-1");
     expect(defineMemory({ namespace: null, provider, scope: "user-1" }).namespace).toBeNull();
     expect(defineMemory({ provider, scope: null }).scope).toBeNull();
-    expect(defineMemory({ provider, scope: Promise.resolve("user-1") }).scope).toBeInstanceOf(
-      Promise,
-    );
     expect(
       defineMemory({
-        namespace: async () => "app",
+        namespace: async (ctx) => `app:${ctx.slot}`,
         provider,
         scope: async (ctx) => [ctx.session.id, "user-1"],
       }),
     ).toMatchObject({ provider });
-    expect(
-      defineMemory({ namespace: Promise.resolve(null), provider, scope: Promise.resolve(null) }),
-    ).toMatchObject({ provider });
 
+    defineMemory({
+      provider,
+      // @ts-expect-error Bare promises are not scope definitions; use a resolver.
+      scope: Promise.resolve("user-1"),
+    });
+    defineMemory({
+      // @ts-expect-error Bare promises are not namespace definitions; use a resolver.
+      namespace: Promise.resolve(null),
+      provider,
+      scope: "user-1",
+    });
     defineMemory({
       provider,
       // @ts-expect-error Arrays are resolver results, not top-level scope definitions.
@@ -79,16 +78,11 @@ describe("memory authoring", () => {
     });
   });
 
-  it("derives the default namespace from Vercel and slot context", async () => {
+  it("derives the default namespace from Vercel and slot context", () => {
     vi.stubEnv("VERCEL_PROJECT_ID", "prj_123");
     vi.stubEnv("VERCEL_TARGET_ENV", "preview");
 
-    const namespace = await contextStorage.run(createContext(), () =>
-      runWithDefaultMemoryNamespaceContext(
-        { appRoot: "/app", nodeId: "researcher", slot: "user" },
-        () => defaultNamespace(),
-      ),
-    );
+    const namespace = defaultNamespace({ appRoot: "/app", node: "researcher", slot: "user" });
 
     expect(JSON.parse(namespace)).toEqual([
       "eve-memory-default-namespace-v1",
@@ -99,19 +93,18 @@ describe("memory authoring", () => {
     ]);
   });
 
-  it("uses a hashed local app root in the default namespace", async () => {
+  it("uses a hashed local app root in the default namespace", () => {
     vi.stubEnv("VERCEL_PROJECT_ID", "");
     vi.stubEnv("VERCEL_OIDC_TOKEN", "");
     vi.stubEnv("VERCEL_TARGET_ENV", "");
     vi.stubEnv("VERCEL_ENV", "");
     vi.stubEnv("NODE_ENV", "test");
 
-    const namespace = await contextStorage.run(createContext(), () =>
-      runWithDefaultMemoryNamespaceContext(
-        { appRoot: "/private/application", nodeId: "__root__", slot: "memory" },
-        () => defaultNamespace(),
-      ),
-    );
+    const namespace = defaultNamespace({
+      appRoot: "/private/application",
+      node: "__root__",
+      slot: "memory",
+    });
     const parsed = JSON.parse(namespace) as unknown[];
 
     expect(parsed).toMatchObject([
@@ -124,28 +117,19 @@ describe("memory authoring", () => {
     expect(namespace).not.toContain("/private/application");
   });
 
-  it("requires defaultNamespace to run as a memory namespace resolver", () => {
-    expect(() => defaultNamespace()).toThrow(/memory namespace context/u);
-  });
+  it("composes the default namespace inside a custom resolver", () => {
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_123");
+    vi.stubEnv("VERCEL_TARGET_ENV", "preview");
 
-  it("restores nested default namespace context and clears it after resolution", async () => {
-    await contextStorage.run(createContext(), async () => {
-      const slots = await runWithDefaultMemoryNamespaceContext(
-        { appRoot: "/app", nodeId: "__root__", slot: "outer" },
-        async () => {
-          const before = JSON.parse(defaultNamespace()).at(-1);
-          const inner = await runWithDefaultMemoryNamespaceContext(
-            { appRoot: "/app", nodeId: "__root__", slot: "inner" },
-            () => JSON.parse(defaultNamespace()).at(-1),
-          );
-          const after = JSON.parse(defaultNamespace()).at(-1);
-          return { after, before, inner };
-        },
-      );
-
-      expect(slots).toEqual({ after: "outer", before: "outer", inner: "inner" });
-      expect(() => defaultNamespace()).toThrow(/memory namespace context/u);
+    const context = { appRoot: "/app", node: "__root__", slot: "user" };
+    const definition = defineMemory({
+      namespace: (ctx) => `${defaultNamespace(ctx)}:custom`,
+      provider: defineMemoryProvider({ recall: () => undefined }),
+      scope: "user-1",
     });
+    const resolver = definition.namespace;
+
+    expect(resolver(context)).toBe(`${defaultNamespace(context)}:custom`);
   });
 
   it("requires recall and rejects the removed event-map contract", () => {
@@ -156,9 +140,13 @@ describe("memory authoring", () => {
       events: {},
       recall: () => undefined,
     });
+    // Recall role is optional and defaults to "user".
     defineMemoryProvider({
-      // @ts-expect-error Recall messages require the same explicit user role as instructions.
-      recall: () => ({ content: "missing role" }),
+      recall: () => ({ content: "defaulted role" }),
+    });
+    defineMemoryProvider({
+      // @ts-expect-error Recall messages support only the user and system roles.
+      recall: () => ({ content: "invalid", role: "assistant" }),
     });
   });
 

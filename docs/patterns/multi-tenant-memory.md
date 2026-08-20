@@ -120,7 +120,7 @@ export const tenantMemory = defineMemoryProvider({
 });
 ```
 
-eve calls `recall` at turn start and after successful compaction. Each non-empty result becomes a durable user-role message associated with this slot and scope. It enters `ctx.messages`, completed-turn saves, and later compaction input. Returning `null`, `undefined`, or no value appends nothing and never removes an earlier recall.
+eve calls `recall` at turn start and after successful compaction. Each non-empty result becomes a durable message (user role by default) associated with this slot and scope. It enters `ctx.messages`, completed-turn captures, and later compaction input. Returning `null`, `undefined`, or no value appends nothing and never removes an earlier recall.
 
 eve resolves the provider tools once per turn after recall and binds them to the same locked scope. Because the slot is `user`, the model sees them as `user__remember` and `user__forget`. The optional approval on `forget` is product policy; provider tools support the ordinary tool approval and authorization contracts.
 
@@ -144,7 +144,7 @@ export default defineMemory({
 });
 ```
 
-Session visibility keeps earlier recalled messages visible in durable-history order. It does not change the active provider scope: `recall`, `tools`, and `save` still receive only the locked scope for the current turn.
+Session visibility keeps earlier recalled messages visible in durable-history order. It does not change the active provider scope: `recall`, `tools`, and `capture` still receive only the locked scope for the current turn.
 
 Visibility applies only to attributed recall messages in model requests. It cannot remove ordinary user, assistant, or tool history or undo information already reflected in an assistant response. Use separate sessions when participants require hard isolation.
 

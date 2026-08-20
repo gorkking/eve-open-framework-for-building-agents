@@ -279,7 +279,7 @@ export interface HarnessMemoryLifecycle {
     readonly callIds: readonly string[];
     readonly session: HarnessSession;
   }): HarnessSession;
-  saveCompletedTurn(input: {
+  captureCompletedTurn(input: {
     readonly messages: readonly ModelMessage[];
     readonly session: HarnessSession;
   }): Promise<HarnessSession>;
@@ -292,9 +292,9 @@ export interface HarnessMemoryLifecycle {
     readonly messages: readonly ModelMessage[];
     readonly session: HarnessSession;
     readonly turn: {
+      readonly id: string;
       readonly input: readonly ModelMessage[];
       readonly sequence: number;
-      readonly turnId: string;
     };
   }): Promise<HarnessSession>;
   toolOriginCallIds(

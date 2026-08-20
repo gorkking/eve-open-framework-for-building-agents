@@ -128,7 +128,7 @@ function turn(turnId: string, slots: readonly DurableMemorySlotLock[]): DurableM
     },
     slots,
     toolMetadata: [],
-    turn: { input: [], sequence, turnId },
+    turn: { id: turnId, input: [], sequence },
   };
 }
 

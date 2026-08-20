@@ -4,6 +4,7 @@ import type { Runtime, SessionCapabilities } from "#channel/types.js";
 import { dispatchDynamicModelEvent } from "#context/dynamic-model-lifecycle.js";
 import {
   buildMemoryTools,
+  captureCompletedMemoryTurn,
   finishMemoryCompaction,
   getMemoryToolOriginCallIds,
   prepareMemoryCompaction,
@@ -12,7 +13,6 @@ import {
   releaseMemoryToolOrigins,
   resolveMemoryApprovalTools,
   restoreMemoryToolTurn,
-  saveCompletedMemoryTurn,
   startMemoryCompaction,
   startMemoryTurn,
   type MemoryDefaultNamespaceContext,
@@ -188,8 +188,8 @@ function createHarnessMemoryLifecycle(input: {
     resolveApprovalTools: async ({ callIds, session }) =>
       resolveMemoryApprovalTools({ callIds, session }),
     restoreToolTurn: restoreMemoryToolTurn,
-    saveCompletedTurn: ({ messages, session }) =>
-      saveCompletedMemoryTurn({ abortSignal, memories, messages, session }),
+    captureCompletedTurn: ({ messages, session }) =>
+      captureCompletedMemoryTurn({ abortSignal, memories, messages, session }),
     startCompaction: ({ messages, session, usageInputTokens }) =>
       startMemoryCompaction({
         abortSignal,
@@ -216,7 +216,7 @@ function createMemoryDefaultNamespaceContext(
 ): MemoryDefaultNamespaceContext {
   return {
     appRoot: node.agent.metadata.appRoot,
-    nodeId: node.nodeId,
+    node: node.nodeId,
   };
 }
 

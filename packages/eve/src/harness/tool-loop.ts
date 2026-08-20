@@ -1376,9 +1376,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             messages: messages.slice(0, turnInputIndex),
             session,
             turn: {
+              id: activeTurnId(emissionState),
               input: messages.slice(turnInputIndex),
               sequence: emissionState.sequence,
-              turnId: activeTurnId(emissionState),
             },
           });
           messages = [...session.history, ...messages.slice(turnInputIndex)];
@@ -3194,12 +3194,12 @@ async function finishSuccessfulTurn(input: {
   }
   if (input.memory !== undefined) {
     try {
-      session = await input.memory.saveCompletedTurn({
+      session = await input.memory.captureCompletedTurn({
         messages: session.history,
         session,
       });
     } catch (error) {
-      log.error("memory provider completed-turn save failed after settlement", {
+      log.error("memory provider completed-turn capture failed after settlement", {
         error,
         sessionId: session.sessionId,
         turnId: activeTurnId(emissionState),

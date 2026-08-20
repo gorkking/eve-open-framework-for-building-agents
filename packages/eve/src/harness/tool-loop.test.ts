@@ -225,7 +225,7 @@ function createMemoryLifecycle(
       tools: new Map(),
     }),
     restoreToolTurn: ({ session }) => session,
-    saveCompletedTurn: async ({ session }) => session,
+    captureCompletedTurn: async ({ session }) => session,
     startCompaction: async ({ session }) => session,
     startTurn: async ({ session }) => session,
     toolOriginCallIds: () => [],
@@ -3867,7 +3867,7 @@ describe("createToolLoopHarness", () => {
   it("propagates streamed cancellation without waiting for onStepFinish or emitting failures", async () => {
     const abortController = new AbortController();
     const abortReason = new TurnCancelledError();
-    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+    const captureCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
       Promise.resolve(session),
     );
 
@@ -3904,7 +3904,7 @@ describe("createToolLoopHarness", () => {
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
         abortSignal: abortController.signal,
-        memory: createMemoryLifecycle({ saveCompletedTurn }),
+        memory: createMemoryLifecycle({ captureCompletedTurn }),
       }),
     );
 
@@ -3914,7 +3914,7 @@ describe("createToolLoopHarness", () => {
     expect(eventTypes).not.toContain("step.failed");
     expect(eventTypes).not.toContain("turn.failed");
     expect(eventTypes).not.toContain("session.failed");
-    expect(saveCompletedTurn).not.toHaveBeenCalled();
+    expect(captureCompletedTurn).not.toHaveBeenCalled();
   });
 
   it("does not retry or recover a model call once the turn signal has aborted", async () => {
@@ -4149,13 +4149,13 @@ describe("createToolLoopHarness", () => {
   it("emits a recoverable failure cascade and parks the session on a non-terminal model-call error", async () => {
     setupMockAgentError(new Error("Model blew up"));
 
-    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+    const captureCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
       Promise.resolve(session),
     );
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
-        memory: createMemoryLifecycle({ saveCompletedTurn }),
+        memory: createMemoryLifecycle({ captureCompletedTurn }),
       }),
     );
 
@@ -4183,7 +4183,7 @@ describe("createToolLoopHarness", () => {
       message: "Model blew up",
     });
     expect((stepFailed!.data as { details?: { errorId?: string } }).details?.errorId).toBeDefined();
-    expect(saveCompletedTurn).not.toHaveBeenCalled();
+    expect(captureCompletedTurn).not.toHaveBeenCalled();
   });
 
   it("rethrows a recoverable task-mode model error for durable step retry", async () => {
@@ -5803,8 +5803,8 @@ describe("createToolLoopHarness", () => {
 
     it("still parks on authorization without emitting action.result when interactive auth fires in the same step", async () => {
       const { full, modelFacing } = createAuthSignals();
-      const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
-        Promise.resolve(session),
+      const captureCompletedTurn = vi.fn(
+        async ({ session }: { readonly session: HarnessSession }) => Promise.resolve(session),
       );
 
       setupMockAgent({
@@ -5861,7 +5861,7 @@ describe("createToolLoopHarness", () => {
       const { emit, events } = createEventCollector();
       const runStep = createToolLoopHarness(
         createTestConfig("conversation", emit, {
-          memory: createMemoryLifecycle({ saveCompletedTurn }),
+          memory: createMemoryLifecycle({ captureCompletedTurn }),
           tools: new Map([
             [
               "protected_action",
@@ -5893,7 +5893,7 @@ describe("createToolLoopHarness", () => {
 
       const actionResults = events.filter((event) => event.type === "action.result");
       expect(actionResults).toHaveLength(0);
-      expect(saveCompletedTurn).not.toHaveBeenCalled();
+      expect(captureCompletedTurn).not.toHaveBeenCalled();
     });
 
     it("persists every parallel authorization signal and memory origin", async () => {
@@ -7424,7 +7424,7 @@ describe("createToolLoopHarness", () => {
   });
 
   it("parks tool approval with one durable model-visible projection", async () => {
-    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+    const captureCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
       Promise.resolve(session),
     );
     setupMockAgent(pendingBashApprovalResult());
@@ -7432,7 +7432,7 @@ describe("createToolLoopHarness", () => {
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
-        memory: createMemoryLifecycle({ saveCompletedTurn }),
+        memory: createMemoryLifecycle({ captureCompletedTurn }),
         tools: new Map([
           [
             "bash",
@@ -7525,7 +7525,7 @@ describe("createToolLoopHarness", () => {
       },
       type: "input.requested",
     });
-    expect(saveCompletedTurn).not.toHaveBeenCalled();
+    expect(captureCompletedTurn).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -8702,7 +8702,7 @@ describe("createToolLoopHarness", () => {
   });
 
   it("emits input.requested for ask_question and does not emit actions.requested", async () => {
-    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
+    const captureCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) =>
       Promise.resolve(session),
     );
     setupMockAgent({
@@ -8745,7 +8745,7 @@ describe("createToolLoopHarness", () => {
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
-        memory: createMemoryLifecycle({ saveCompletedTurn }),
+        memory: createMemoryLifecycle({ captureCompletedTurn }),
       }),
     );
     const session = createTestSession({
@@ -8792,7 +8792,7 @@ describe("createToolLoopHarness", () => {
       },
       type: "input.requested",
     });
-    expect(saveCompletedTurn).not.toHaveBeenCalled();
+    expect(captureCompletedTurn).not.toHaveBeenCalled();
   });
 
   it("delivers a stale ask_question selection as a new user turn while another question is pending", async () => {
@@ -9027,10 +9027,12 @@ describe("createToolLoopHarness", () => {
     const order: string[] = [];
     const events: UnstampedMessageStreamEvent[] = [];
     const startTurn = vi.fn(async ({ session }: { session: HarnessSession }) => session);
-    const saveCompletedTurn = vi.fn(async ({ session }: { readonly session: HarnessSession }) => {
-      order.push("memory.save");
-      return session;
-    });
+    const captureCompletedTurn = vi.fn(
+      async ({ session }: { readonly session: HarnessSession }) => {
+        order.push("memory.capture");
+        return session;
+      },
+    );
     const memory = createMemoryLifecycle({
       projectPrompt: ({ messages }) => [
         ...messages.slice(0, 1),
@@ -9043,7 +9045,7 @@ describe("createToolLoopHarness", () => {
         ),
         ...messages.slice(1),
       ],
-      saveCompletedTurn,
+      captureCompletedTurn,
       startTurn,
     });
     const emit: HarnessEmitFn = async (event) => {
@@ -9070,9 +9072,9 @@ describe("createToolLoopHarness", () => {
       expect.objectContaining({
         messages: [{ content: "Earlier", role: "user" }],
         turn: {
+          id: "turn_0",
           input: [{ content: "Current", role: "user" }],
           sequence: 0,
-          turnId: "turn_0",
         },
       }),
     );
@@ -9086,16 +9088,16 @@ describe("createToolLoopHarness", () => {
       { content: "Current", role: "user" },
       { content: "Got it.", role: "assistant" },
     ]);
-    expect(saveCompletedTurn).toHaveBeenCalledWith(
+    expect(captureCompletedTurn).toHaveBeenCalledWith(
       expect.objectContaining({ messages: result.session.history }),
     );
-    expect(order.indexOf("turn.completed")).toBeLessThan(order.indexOf("memory.save"));
-    expect(order.indexOf("memory.save")).toBeLessThan(order.indexOf("session.waiting"));
+    expect(order.indexOf("turn.completed")).toBeLessThan(order.indexOf("memory.capture"));
+    expect(order.indexOf("memory.capture")).toBeLessThan(order.indexOf("session.waiting"));
     expect(events.some((event) => JSON.stringify(event).includes("recalled context"))).toBe(false);
   });
 
-  it("reaches the ready boundary without exposing a completed-turn memory save failure", async () => {
-    const saveCompletedTurn = vi.fn(async () => {
+  it("reaches the ready boundary without exposing a completed-turn memory capture failure", async () => {
+    const captureCompletedTurn = vi.fn(async () => {
       throw new Error("private completed-turn memory failure");
     });
     setupMockAgent({
@@ -9108,13 +9110,13 @@ describe("createToolLoopHarness", () => {
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
-        memory: createMemoryLifecycle({ saveCompletedTurn }),
+        memory: createMemoryLifecycle({ captureCompletedTurn }),
       }),
     );
 
     const result = await runStep(createTestSession(), { message: "Current" });
 
-    expect(saveCompletedTurn).toHaveBeenCalledOnce();
+    expect(captureCompletedTurn).toHaveBeenCalledOnce();
     expect(result.session.history).toEqual([
       { content: "Current", role: "user" },
       { content: "Settled response", role: "assistant" },
@@ -9148,12 +9150,12 @@ describe("createToolLoopHarness", () => {
         order.push("memory.prepare.compaction");
         return session;
       },
-      saveCompletedTurn: async ({ session }) => {
-        order.push("memory.save.turn.completed");
+      captureCompletedTurn: async ({ session }) => {
+        order.push("memory.capture.turn.completed");
         return session;
       },
       startCompaction: async ({ session }) => {
-        order.push("memory.save.compaction.requested");
+        order.push("memory.capture.compaction.requested");
         return session;
       },
       startTurn: async ({ session }) => {
@@ -9186,12 +9188,12 @@ describe("createToolLoopHarness", () => {
 
     expect(order).toEqual(
       expect.arrayContaining([
-        "memory.save.compaction.requested",
+        "memory.capture.compaction.requested",
         "memory.prepare.compaction",
         "memory.recall.compaction.completed",
         "memory.tools.turn.started",
         "memory.tools.replayed",
-        "memory.save.turn.completed",
+        "memory.capture.turn.completed",
       ]),
     );
     expect(order.indexOf("memory.tools.turn.started")).toBeLessThan(order.indexOf("step.started"));
@@ -9200,9 +9202,9 @@ describe("createToolLoopHarness", () => {
       order.indexOf("compaction.requested"),
     );
     expect(order.indexOf("compaction.requested")).toBeLessThan(
-      order.indexOf("memory.save.compaction.requested"),
+      order.indexOf("memory.capture.compaction.requested"),
     );
-    expect(order.indexOf("memory.save.compaction.requested")).toBeLessThan(
+    expect(order.indexOf("memory.capture.compaction.requested")).toBeLessThan(
       order.indexOf("compaction.completed"),
     );
     expect(order.indexOf("compaction.completed")).toBeLessThan(
@@ -9213,10 +9215,10 @@ describe("createToolLoopHarness", () => {
     );
   });
 
-  it("aborts automatic compaction before rewriting history when memory pre-save fails", async () => {
+  it("aborts automatic compaction before rewriting history when memory pre-capture fails", async () => {
     vi.mocked(shouldCompact).mockReturnValue(true);
     const startCompaction = vi.fn(async () => {
-      throw new Error("private automatic pre-save failure");
+      throw new Error("private automatic pre-capture failure");
     });
     const memory = createMemoryLifecycle({ startCompaction });
     const { emit, events } = createEventCollector();
@@ -9257,7 +9259,7 @@ describe("createToolLoopHarness", () => {
       "turn.failed",
       "session.waiting",
     ]);
-    expect(JSON.stringify(events)).not.toContain("private automatic pre-save failure");
+    expect(JSON.stringify(events)).not.toContain("private automatic pre-capture failure");
     expect(compactMessages).not.toHaveBeenCalled();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
   });
@@ -9557,10 +9559,10 @@ describe("createToolLoopHarness", () => {
     expect(ToolLoopAgent).not.toHaveBeenCalled();
   });
 
-  it("keeps history unchanged when standalone memory pre-save fails", async () => {
+  it("keeps history unchanged when standalone memory pre-capture fails", async () => {
     const prepareCompaction = vi.fn(async ({ session }: { session: HarnessSession }) => session);
     const startCompaction = vi.fn(async () => {
-      throw new Error("private standalone pre-save failure");
+      throw new Error("private standalone pre-capture failure");
     });
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
@@ -9586,7 +9588,7 @@ describe("createToolLoopHarness", () => {
     expect(result.session).toBe(session);
     expect(result.session.history).toEqual(session.history);
     expect(getCompatibilityEventTypes(events)).toEqual(["compaction.requested", "session.waiting"]);
-    expect(JSON.stringify(events)).not.toContain("private standalone pre-save failure");
+    expect(JSON.stringify(events)).not.toContain("private standalone pre-capture failure");
     expect(compactMessages).not.toHaveBeenCalled();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
   });

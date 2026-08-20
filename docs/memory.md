@@ -34,22 +34,27 @@ export default defineMemory({
 });
 ```
 
-Passing `byPrincipal` as the resolver partitions the provider by the authenticated caller. Its value includes the principal type, authenticator, optional issuer, and principal ID. An unauthenticated turn resolves to `null`, so eve does not call the provider, expose its tools, or include the slot's recalled messages.
+Passing `byPrincipal` as the resolver partitions the provider by the authenticated caller. Its value includes the principal type, authenticator, optional issuer, and principal ID. It resolves `null` for an unauthenticated turn, an anonymous principal such as `none()` traffic, and a runtime principal such as a scheduled turn, so eve does not call the provider, expose its tools, or include the slot's recalled messages. Local development authenticates every request as the shared `local-dev` principal, so one development machine resolves one scope.
 
 Pass `byPrincipal` by reference, as shown above. eve supplies its scope context when it locks the operation. Inside a custom scope resolver, call `byPrincipal(ctx)` with that same context.
 
-Namespace accepts a string, `null`, a promise, or a zero-argument resolver. Scope accepts the same direct string, `null`, and promise forms, but its resolver receives trusted request context:
+Namespace accepts a string, `null`, or a resolver that receives the slot's deployment coordinates. Scope accepts the same direct string and `null` forms, but its resolver receives trusted request context:
 
 ```ts
+interface MemoryNamespaceContext {
+  appRoot: string;
+  node: string;
+  slot: string;
+}
+
 type MemoryNamespaceDefinition =
-  string | null | Promise<string | null> | (() => string | null | Promise<string | null>);
+  string | null | ((ctx: MemoryNamespaceContext) => string | null | Promise<string | null>);
 
 type MemoryScopeResolverResult = string | readonly string[] | null;
 
 type MemoryScopeDefinition =
   | string
   | null
-  | Promise<string | null>
   | ((ctx: MemoryScopeContext) => MemoryScopeResolverResult | Promise<MemoryScopeResolverResult>);
 ```
 
@@ -57,11 +62,20 @@ type MemoryScopeDefinition =
 
 Returning an array is a convenience for `components.join(":")`. The array and every component must be non-empty. It is not a structured or collision-resistant tuple encoding, so return your own canonical string when components may contain `:`.
 
-Use a resolver for work that should begin when eve locks the operation. A direct promise starts eagerly when the authored module is evaluated. Calling `defaultNamespace()` during module evaluation fails because its path and deployment context are available only during namespace resolution.
+Resolvers may be synchronous or asynchronous, and eve invokes them when it locks the operation, not when the authored module is evaluated.
 
 If either field resolves to `null`, eve disables the slot for that operation: it does not call the provider, expose its tools, or include its recalled messages.
 
-If you omit `namespace`, eve uses the exported `defaultNamespace` function. It resolves a deployment-aware value from the Vercel project when available, otherwise the local application root, plus the environment, graph node, and path-derived slot.
+If you omit `namespace`, eve uses the exported `defaultNamespace` function as the resolver. It derives a deployment-aware value from the Vercel project when available, otherwise a hash of the application root, plus the environment and the node and slot from the supplied context. It is a pure function of that context and the deployment environment, so a custom resolver can compose with it:
+
+```ts
+import { defaultNamespace, defineMemory } from "eve/memory";
+
+export default defineMemory({
+  namespace: (ctx) => `${defaultNamespace(ctx)}:${process.env.DEPLOYMENT_REGION ?? "local"}`,
+  // ...
+});
+```
 
 Set `namespace` when you need complete control over the provider's application domain:
 
@@ -76,7 +90,7 @@ export default defineMemory({
 });
 ```
 
-Custom namespaces replace the default completely. eve does not append the application root, environment, graph node, or slot. This also means two definitions with the same custom namespace and scope intentionally address the same provider partition.
+Custom namespaces replace the default completely. eve does not append the application root, environment, graph node, or slot. This also means two definitions with the same custom namespace and scope intentionally share the same provider partition.
 
 Do not derive scope from model input or unattested message fields. eve derives a collision-resistant `ctx.memory.scope.key` from exactly the resolved namespace and scope. Providers can also inspect the original values as `ctx.memory.scope.namespace` and `ctx.memory.scope.value`.
 
@@ -126,7 +140,7 @@ Descriptions help the model choose among qualified memory tools; they do not gra
 
 ## Control recall visibility
 
-A non-empty recall result appends a scope-attributed user message to durable history. The optional `visibility` field controls which earlier recalled messages enter a model request when the slot resolves a different scope:
+A non-empty recall result appends a scope-attributed message to durable history. The optional `visibility` field controls which earlier recalled messages enter a model request when the slot resolves a different scope:
 
 ```ts title="agent/memory/user.ts"
 import { defineMemory } from "eve/memory";
@@ -151,7 +165,7 @@ Visibility changes only attributed recall messages in model requests. It does no
 
 ## Define a provider
 
-A provider implements required `recall` behavior and may add `save` and `tools`:
+A provider implements required `recall` behavior and may add `capture` and `tools`:
 
 ```ts title="agent/lib/user-memory.ts"
 import { defineMemoryProvider, getMemoryMessageAttribution } from "eve/memory";
@@ -180,7 +194,7 @@ export const userMemory = defineMemoryProvider({
     return latest?.content === content ? undefined : { content, role: "user" };
   },
 
-  async save(ctx) {
+  async capture(ctx) {
     if (ctx.phase === "compaction.requested") {
       await service.checkpoint({
         history: ctx.messages,
@@ -221,14 +235,14 @@ export const userMemory = defineMemoryProvider({
 });
 ```
 
-`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their recalled messages, tools, and lifecycle calls independent. Default namespaces isolate provider addresses by slot. Custom namespaces can intentionally share an address.
+`defineMemoryProvider(...)` is an identity helper that supplies the provider types. It does not add storage behavior or impose a record model. The same provider instance can back multiple slots; eve keeps their recalled messages, tools, and lifecycle calls independent. Default namespaces isolate provider scope keys by slot. Custom namespaces can intentionally share a scope key.
 
-Every recall and save call receives:
+Every recall and capture call receives:
 
 - `ctx.memory.scope`, the active trusted partition.
 - `ctx.memory.slot`, the path-derived slot name.
 - `ctx.messages`, durable model history at the boundary, including prior recalled messages.
-- `ctx.operationId`, the identifier for one logical recall or save operation. eve reuses it across workflow replay.
+- `ctx.operationId`, the identifier for one logical recall or capture operation. eve reuses it across workflow replay.
 - `ctx.abortSignal` and the read-only session context.
 
 Turn-aware calls also receive a stable turn ID, a zero-based sequence, and normalized turn input. Compaction calls include the compaction model ID and, before compaction, input-token usage when available.
@@ -244,32 +258,34 @@ eve calls `recall` when a turn starts and after a successful compaction. Inspect
 
 The recall result is append-only:
 
-| Result                                         | Effect                                         |
-| ---------------------------------------------- | ---------------------------------------------- |
-| `{ content: string, role: "user" }`            | Append one scope-attributed user-role message. |
-| `null`, `undefined`, or no return              | Append nothing at this boundary.               |
-| A result whose content is empty after trimming | Append nothing at this boundary.               |
+| Result                                           | Effect                                                                            |
+| ------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `{ content: string, role?: "system" \| "user" }` | Append one scope-attributed message with the resolved role. Defaults to `"user"`. |
+| `null`, `undefined`, or no return                | Append nothing at this boundary.                                                  |
+| A result whose content is empty after trimming   | Append nothing at this boundary.                                                  |
 
-eve trims recall content using the same normalization as user-role instructions. A recall result never replaces, clears, or mutates an earlier message. Providers own repetition and correction policy: returning the same snapshot again appends a duplicate, while returning `null` leaves existing history unchanged.
+eve trims recall content using the same normalization as instructions. A recall result never replaces, clears, or mutates an earlier message. Providers own repetition and correction policy: returning the same snapshot again appends a duplicate, while returning `null` leaves existing history unchanged.
+
+A user-role recall enters model context in its durable history position. A system-role recall keeps the same durable position and attribution but joins the system prompt at model assembly, like a system-role instruction. Because changed system-prompt content invalidates the cached prompt prefix, prefer the default user role for frequently changing context.
 
 A provider can recall on every turn, only when `ctx.turn.sequence === 0`, or only when its latest stored context is absent from history. Use `getMemoryMessageAttribution(message)` to identify recalled messages by slot and scope without relying on eve's internal metadata representation.
 
-Turn-start recall messages are appended immediately before the admitted turn input. Post-compaction recall messages are appended after the rewritten checkpoint and retained tail. Multiple slots append in stable slot order. Recall messages are not emitted as `message.received`, but they otherwise follow the ordinary durable-history lifecycle: they appear in `ctx.messages` and completed-turn saves, and compaction may summarize or discard them.
+Turn-start recall messages are appended immediately before the admitted turn input. Post-compaction recall messages are appended after the rewritten checkpoint and retained tail. Multiple slots append in stable slot order. Recall messages are not emitted as `message.received`, but they otherwise follow the ordinary durable-history lifecycle: they appear in `ctx.messages` and completed-turn captures, and compaction may summarize or discard them.
 
 Before compaction, eve applies the active visibility policy. Scope-hidden recall cannot enter the checkpoint and is removed with the rewritten history. After compaction, eve invokes `recall({ phase: "compaction.completed" })`, allowing the provider to append fresh context when the rewritten history no longer contains it.
 
-Like [user-role instructions](./instructions), recalled context uses ordinary durable user messages and preserves the normal prompt prefix when appended. Memory adds provider lifecycle boundaries, slot-and-scope attribution, and cross-scope visibility filtering.
+Like [instructions](./instructions), recalled context uses ordinary durable messages and preserves the normal prompt prefix when appended. Memory adds provider lifecycle boundaries, slot-and-scope attribution, and cross-scope visibility filtering.
 
-## Save durable history
+## Capture durable history
 
-If the provider implements `save`, eve calls it at two boundaries:
+If the provider implements `capture`, eve calls it at two boundaries:
 
 - `"compaction.requested"` receives the complete durable history before compaction rewrites it. A failure aborts compaction before history changes.
 - `"turn.completed"` receives the settled history, including the assistant response and tool results. It does not run for failed, cancelled, input-deferred, or adapter-consumed turns.
 
-Use `ctx.operationId` as the idempotency key for externally visible save side effects. It identifies the logical slot operation and may be delivered more than once across workflow replay.
+Use `ctx.operationId` as the idempotency key for externally visible capture side effects. It identifies the logical slot operation and may be delivered more than once across workflow replay.
 
-eve awaits a completed-turn save before the next ready boundary. If it fails, eve emits a content-free diagnostic and continues because the completed response cannot be rewritten.
+eve awaits a completed-turn capture before the next ready boundary. If it fails, eve emits a content-free diagnostic and continues because the completed response cannot be rewritten.
 
 ## Provide scope-bound tools
 
@@ -291,13 +307,13 @@ Write each `execute` as an inline function expression, arrow, or method shorthan
 
 ## Lifecycle and failure behavior
 
-| Boundary               | Provider call                               | Failure behavior                                                                              |
-| ---------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Turn start             | `recall({ phase: "turn.started" })`         | Fails the turn before the model runs.                                                         |
-| After turn recall      | `tools(ctx)`                                | Diagnoses an invalid or throwing resolver and omits its tools for the turn.                   |
-| Before compaction      | `save({ phase: "compaction.requested" })`   | Aborts compaction before history changes.                                                     |
-| After compaction       | `recall({ phase: "compaction.completed" })` | Fails an automatically compacting turn; a standalone compaction emits a diagnostic and waits. |
-| After a completed turn | `save({ phase: "turn.completed" })`         | Emits a content-free diagnostic and continues to the ready boundary.                          |
+| Boundary               | Provider call                                | Failure behavior                                                                              |
+| ---------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Turn start             | `recall({ phase: "turn.started" })`          | Fails the turn before the model runs.                                                         |
+| After turn recall      | `tools(ctx)`                                 | Diagnoses an invalid or throwing resolver and omits its tools for the turn.                   |
+| Before compaction      | `capture({ phase: "compaction.requested" })` | Aborts compaction before history changes.                                                     |
+| After compaction       | `recall({ phase: "compaction.completed" })`  | Fails an automatically compacting turn; a standalone compaction emits a diagnostic and waits. |
+| After a completed turn | `capture({ phase: "turn.completed" })`       | Emits a content-free diagnostic and continues to the ready boundary.                          |
 
 Providers must apply `ctx.memory.scope.key` or both `ctx.memory.scope.namespace` and `ctx.memory.scope.value` to every downstream read and write. eve supplies no unscoped provider invocation path, but it cannot prevent provider code from ignoring the supplied scope.
 

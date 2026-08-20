@@ -16,8 +16,8 @@ const definition: CompiledMemoryDefinition = {
 describe("resolveMemoryDefinition", () => {
   it("resolves the description and three-method provider and defaults visibility to scope", async () => {
     const provider = defineMemoryProvider({
+      capture: async () => {},
       recall: () => ({ content: "remembered", role: "user" }),
-      save: async () => {},
       tools: () => null,
     });
 
@@ -52,10 +52,10 @@ describe("resolveMemoryDefinition", () => {
     ).rejects.toThrow(/description.*non-whitespace string/u);
   });
 
-  it("preserves explicit scalar, promise, and resolver addressing", async () => {
+  it("preserves explicit scalar and resolver namespace and scope definitions", async () => {
     const provider = defineMemoryProvider({ recall: () => undefined });
-    const namespace = Promise.resolve("app");
-    const scope = Promise.resolve("user-1");
+    const namespace = async () => "app";
+    const scope = async () => "user-1";
 
     await expect(
       resolveMemoryDefinition(
@@ -112,7 +112,7 @@ describe("resolveMemoryDefinition", () => {
     ).rejects.toThrow(/provider\.recall/u);
   });
 
-  it.each(["recall", "save", "tools"] as const)(
+  it.each(["recall", "capture", "tools"] as const)(
     "rejects a non-function provider.%s",
     async (method) => {
       const provider: Record<string, unknown> = { recall: () => undefined };

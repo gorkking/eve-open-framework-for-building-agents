@@ -15,7 +15,6 @@ import { defaultNamespace } from "#public/memory/index.js";
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";
 import type { ResolvedMemoryDefinition } from "#runtime/types.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { isThenable } from "#shared/guards.js";
 
 /** Resolves and validates one compiled authored memory slot. */
 export async function resolveMemoryDefinition(
@@ -85,11 +84,11 @@ function resolveNamespace(
     }
     return value;
   }
-  if (typeof value === "function" || isThenable(value)) {
+  if (typeof value === "function") {
     return value as MemoryNamespaceDefinition;
   }
   throw new Error(
-    describe(definition, 'to set "namespace" to a string, null, promise, or resolver function'),
+    describe(definition, 'to set "namespace" to a string, null, or resolver function'),
   );
 }
 
@@ -101,19 +100,17 @@ function resolveScope(definition: CompiledMemoryDefinition, value: unknown): Mem
     }
     return value;
   }
-  if (typeof value === "function" || isThenable(value)) {
+  if (typeof value === "function") {
     return value as MemoryScopeDefinition;
   }
-  throw new Error(
-    describe(definition, 'to set "scope" to a string, null, promise, or resolver function'),
-  );
+  throw new Error(describe(definition, 'to set "scope" to a string, null, or resolver function'));
 }
 
 function resolveProvider(definition: CompiledMemoryDefinition, value: unknown): MemoryProvider {
   const provider = expectObjectRecord(value, describe(definition, "to provide a provider object"));
   expectOnlyKnownKeys(
     provider,
-    ["recall", "save", "tools"],
+    ["recall", "capture", "tools"],
     describe(definition, "to use only supported provider methods."),
   );
   assertMemoryProvider(definition, provider);
@@ -128,14 +125,14 @@ function assertMemoryProvider(
     provider.recall,
     describe(definition, 'to provide a function for "provider.recall"'),
   );
-  validateOptionalProviderMethod(definition, provider, "save");
+  validateOptionalProviderMethod(definition, provider, "capture");
   validateOptionalProviderMethod(definition, provider, "tools");
 }
 
 function validateOptionalProviderMethod(
   definition: CompiledMemoryDefinition,
   provider: Record<string, unknown>,
-  method: "save" | "tools",
+  method: "capture" | "tools",
 ): void {
   if (provider[method] === undefined) return;
   expectFunction(

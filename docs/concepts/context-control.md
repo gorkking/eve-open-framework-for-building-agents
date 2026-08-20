@@ -11,7 +11,7 @@ Control context by putting information in the narrowest surface that needs it. K
 | ---------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
 | Permanent identity, rules, or constraints            | System-role [instructions](../instructions)            | System context on every model call                                               |
 | Application context that should become history       | User-role [instructions](../instructions)              | A message added to durable conversation history at its lifecycle boundary        |
-| Scoped context that outlives one session             | [Memory](../memory)                                    | Durable recalled user messages selected by the slot's visibility policy          |
+| Scoped context that outlives one session             | [Memory](../memory)                                    | Durable recalled messages selected by the slot's visibility policy               |
 | A procedure needed only for some tasks               | A [skill](../skills)                                   | Its description until the model loads the full skill                             |
 | A typed action or external operation                 | A [tool](../tools) or [connection](../connections)     | The callable schema and the result of each call                                  |
 | Files or command execution                           | The [sandbox workspace](../sandbox)                    | A workspace hint, then files and command output the model requests through tools |
@@ -28,7 +28,7 @@ Use `instructions.ts` when you need typed helpers, build-time composition, or a 
 
 ## Recall scoped context with memory
 
-Use a memory slot for provider-owned context that must survive across sessions and remain attributed to a trusted user, tenant, workspace, or other scope. eve recalls the provider at fixed lifecycle boundaries and appends each non-empty result as a durable user-role message.
+Use a memory slot for provider-owned context that must survive across sessions and remain attributed to a trusted user, tenant, workspace, or other scope. eve recalls the provider at fixed lifecycle boundaries and appends each non-empty result as a durable message with the resolved role (user by default).
 
 The memory definition controls whether recalled messages from earlier scopes remain model-visible in a shared session. Scope visibility is the default; session visibility is an explicit cross-scope disclosure policy. See [Memory](../memory) for scope resolution, recall placement, provider tools, and compaction behavior.
 
@@ -66,7 +66,7 @@ See [Dynamic capabilities](../guides/dynamic-capabilities) for the resolver API,
 
 User-role instructions follow the normal history lifecycle. Compaction can summarize them, and clear removes them without rerunning their static definitions or dynamic resolvers. System-role instructions remain outside history and continue to apply after either operation.
 
-Recalled memory is ordinary durable user-role history. Compaction may summarize or discard visible recall, while scope-hidden recall is filtered before summarization and removed with the rewritten history. After compaction, eve calls the provider's post-compaction `recall` method so it can append fresh context.
+Recalled memory is ordinary durable history. Compaction may summarize or discard visible recall, while scope-hidden recall is filtered before summarization and removed with the rewritten history. After compaction, eve calls the provider's post-compaction `recall` method so it can append fresh context.
 
 ## What to read next
 

@@ -70,12 +70,12 @@ export function captureCallbackSession(
     auth: callback.session.auth,
     id: callback.session.id,
     parent: callback.session.parent,
-    turn: turn === null ? callback.session.turn : { id: turn.turnId, sequence: turn.sequence },
+    turn: turn === null ? callback.session.turn : { id: turn.id, sequence: turn.sequence },
   };
 }
 
 export function cloneTurn(turn: MemoryTurnContext): MemoryTurnContext {
-  return { input: [...turn.input], sequence: turn.sequence, turnId: turn.turnId };
+  return { id: turn.id, input: [...turn.input], sequence: turn.sequence };
 }
 
 export function cloneScope(scope: MemoryScope): MemoryScope {

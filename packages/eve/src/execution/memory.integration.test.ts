@@ -69,7 +69,7 @@ describe("first-class memory integration", () => {
         });
         return recallResults[ctx.turn.sequence];
       },
-      async save(ctx) {
+      async capture(ctx) {
         if (ctx.phase !== "turn.completed") return;
         if (ctx.turn.sequence === 0) {
           markFirstSaveStarted();
@@ -126,7 +126,7 @@ describe("first-class memory integration", () => {
             payload: { message: inputs[index]! },
           });
           turns.push(await stream.nextTurn());
-          // `nextTurn()` settles on `session.waiting`; completed-turn save must
+          // `nextTurn()` settles on `session.waiting`; completed-turn capture must
           // already be awaited before that ready boundary is observable.
           expect(completedSaves).toHaveLength(index + 1);
         }
@@ -244,7 +244,7 @@ describe("first-class memory integration", () => {
     const hiddenToken = `null-scope-recall-${crypto.randomUUID()}`;
     const hiddenProjection = `Reply with the exact string \`${hiddenToken}\` and nothing else.`;
     const recall = vi.fn(() => ({ content: hiddenProjection, role: "user" as const }));
-    const save = vi.fn(async () => {});
+    const capture = vi.fn(async () => {});
     const tools = vi.fn(() => ({
       hidden: defineTool<Record<string, unknown>, unknown>({
         description: "This tool must never be exposed.",
@@ -256,7 +256,7 @@ describe("first-class memory integration", () => {
         execute: () => ({ exposed: true }),
       }),
     }));
-    const provider = defineMemoryProvider({ recall, save, tools });
+    const provider = defineMemoryProvider({ capture, recall, tools });
     const runtime = createTestRuntime({
       agent: { model: modelId, name: "memory-null-scope" },
       memories: [
@@ -285,7 +285,7 @@ describe("first-class memory integration", () => {
     });
 
     expect(recall).not.toHaveBeenCalled();
-    expect(save).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
     expect(tools).not.toHaveBeenCalled();
   }, 30_000);
 
@@ -305,7 +305,7 @@ describe("first-class memory integration", () => {
           messages: [...ctx.messages],
           scopeKey: ctx.memory.scope.key,
           sessionId: ctx.session.id,
-          turnId: ctx.turn.turnId,
+          turnId: ctx.turn.id,
         });
         return {
           remember: defineTool<Record<string, unknown>, unknown>({
@@ -387,7 +387,7 @@ describe("first-class memory integration", () => {
         const origin = {
           principalId: principalIdFromScope(ctx.memory.scope.value),
           scopeKey: ctx.memory.scope.key,
-          turnId: ctx.turn.turnId,
+          turnId: ctx.turn.id,
         };
         resolutions.push(origin);
         return {
@@ -517,7 +517,7 @@ describe("first-class memory integration", () => {
         const origin = {
           principalId: principalIdFromScope(ctx.memory.scope.value),
           scopeKey: ctx.memory.scope.key,
-          turnId: ctx.turn.turnId,
+          turnId: ctx.turn.id,
         };
         resolutions.push(origin);
         const inlineAuth: AuthorizationDefinition<{ nonce: string }> = {
@@ -691,7 +691,7 @@ describe("first-class memory integration", () => {
     expect(execution.turnId).not.toBe(original.turnId);
   }, 30_000);
 
-  it("orders standalone compaction save before post-compaction recall", async () => {
+  it("orders standalone compaction capture before post-compaction recall", async () => {
     const modelId = "openai/memory-compaction-lifecycle";
     const recallToken = `compaction-recall-${crypto.randomUUID()}`;
     const recalled = `Private compaction context: reply with the exact string \`${recallToken}\` and nothing else.`;
@@ -710,9 +710,9 @@ describe("first-class memory integration", () => {
         completedCompactions += 1;
         return completedCompactions === 1 ? { content: recalled, role: "user" } : undefined;
       },
-      save(ctx) {
+      capture(ctx) {
         if (ctx.phase === "turn.completed") return;
-        timeline.push(`save:${ctx.phase}`);
+        timeline.push(`capture:${ctx.phase}`);
         compactionContexts.push({ messages: [...ctx.messages], phase: ctx.phase, turn: ctx.turn });
       },
     });
@@ -761,7 +761,7 @@ describe("first-class memory integration", () => {
       }
     });
 
-    expect(timeline).toEqual(["save:compaction.requested", "recall:compaction.completed"]);
+    expect(timeline).toEqual(["capture:compaction.requested", "recall:compaction.completed"]);
     expect(compactionContexts.map(({ turn }) => turn)).toEqual([null, null]);
     expect(recalledContents(compactionContexts[0]!.messages)).toEqual([recalled]);
     expect(JSON.stringify(compactionContexts[1]!.messages)).toContain(recallToken);
