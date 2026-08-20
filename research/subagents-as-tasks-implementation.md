@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/vercel/eve/issues/1084
 status: draft
-last_updated: "2026-08-19"
+last_updated: "2026-08-20"
 ---
 
 # Subagents as tasks: additive delivery plan
@@ -167,6 +167,11 @@ Converge local and remote subagents onto the same delegated path while preservin
 definitions, then make tasks the default subagent execution and retire the flag once the
 acceptance criteria hold. Both are behavior changes, not additive, and are sequenced last
 deliberately; they get their own plans if anything nontrivial surfaces.
+
+Retiring `RuntimeAction` also requires defining `task_cancel` and `task_update` in terms of
+`defineTool`, then deleting the `task-control` metadata and dispatch path. Before that migration,
+settle the smallest generic `defineTool` execution capability that gives framework tools access to
+their durable session and task ownership state; the harness must not branch on either tool by name.
 
 ## Settled decisions
 

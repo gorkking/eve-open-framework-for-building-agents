@@ -31,7 +31,6 @@ import { PERSISTENT_SUBAGENT_TOOL_INPUT_SCHEMA } from "#runtime/subagents/regist
 import { BundleKey } from "#runtime/sessions/runtime-context-keys.js";
 import { parseJsonObject } from "#shared/json.js";
 import { activeTurnId } from "#harness/active-turn-id.js";
-import { findSessionTaskEntry, recordSessionTask } from "#tasks/session-index.js";
 import { createSubagentCalledEvent } from "#protocol/message.js";
 import { workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
@@ -166,11 +165,13 @@ export async function executeSubagentTool(input: {
         { base: session.state, next: dispatched.session.state },
       ),
     rollback: async () => {
-      const sessionWithTask = recordSessionTask(dispatched.session, { ...task, executor });
-      const entry = findSessionTaskEntry(sessionWithTask.state, task.taskId);
-      if (entry !== undefined) {
-        await cancelOwnedTask({ bundle, entry, session: sessionWithTask });
-      }
+      // The task entry commit would have persisted, built directly; the
+      // child handle cancel propagation needs lives in `dispatched.session`.
+      await cancelOwnedTask({
+        bundle,
+        entry: { ...task, executor },
+        session: dispatched.session,
+      });
     },
   });
   await emitSubagentCalled({
