@@ -228,14 +228,12 @@ describe("TurnControlReceiver", () => {
   it("drops an unknown wire version loudly and keeps consuming the inbox", async () => {
     installControlHook([parkResult()], true);
     const bufferedDeliveries: DeliverHookPayload[] = [];
-
     const action = await runReceiver(bufferedDeliveries, {
       commandInbox: createCommandInbox([
         { kind: "deliver", payloads: [{ message: "from the future" }], version: 99 } as never,
         { kind: "send", payload: { message: "still delivered" } },
       ]),
     });
-
     expect(action.kind).toBe("park");
     expect(reportDroppedWirePayloadStep).toHaveBeenCalledOnce();
     expect(bufferedDeliveries).toEqual([
@@ -248,6 +246,27 @@ describe("TurnControlReceiver", () => {
         turnPolicy: undefined,
       },
     ]);
+  });
+
+  it("handles progress during an active turn without steering or buffering a delivery", async () => {
+    installControlHook([parkResult()], true);
+    const handleProgress = vi.fn().mockResolvedValue(undefined);
+    const bufferedDeliveries: DeliverHookPayload[] = [];
+    const action = await runReceiver(bufferedDeliveries, {
+      commandInbox: createCommandInbox([
+        { commandId: "progress_1", events: [], kind: "progress", version: 1 },
+      ]),
+      progressHandler: { handleProgress },
+    });
+    expect(action.kind).toBe("park");
+    expect(handleProgress).toHaveBeenCalledWith({
+      commandId: "progress_1",
+      events: [],
+      kind: "progress",
+      version: 1,
+    });
+    expect(bufferedDeliveries).toEqual([]);
+    expect(forwardTurnCancellationStep).not.toHaveBeenCalled();
   });
 
   it("forwards cancel and reset through the active turn's private hook", async () => {
@@ -280,6 +299,9 @@ function runReceiver(
   options: {
     readonly bufferedSessionControls?: Array<"clear" | "compact" | "expired" | "reset">;
     readonly commandInbox?: SessionCommandInbox;
+    readonly progressHandler?: {
+      handleProgress(command: { readonly kind: "progress" }): Promise<void>;
+    };
     readonly seenTaskDeliveries?: Set<string>;
   } = {},
 ): ReturnType<TurnControlReceiver["waitForAction"]> {
@@ -288,6 +310,7 @@ function runReceiver(
     bufferedSessionControls: options.bufferedSessionControls ?? [],
     commandInbox: options.commandInbox ?? createCommandInbox(),
     expectedTurnId: "turn_0",
+    progressHandler: options.progressHandler,
     seenTaskDeliveries: options.seenTaskDeliveries,
     token: "turn-control",
   });

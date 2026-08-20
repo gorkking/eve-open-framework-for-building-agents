@@ -1,6 +1,7 @@
 import type { DeliverHookPayload, DeliverPayload } from "#channel/types.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import type { SessionCommandInbox } from "#execution/session-command-inbox.js";
+import type { SessionProgressHandler } from "#execution/session-progress.js";
 import type { SessionStateCursor } from "#execution/session-state-cursor.js";
 import { reportDroppedWirePayloadStep } from "#execution/report-dropped-wire-payload-step.js";
 import {
@@ -67,6 +68,7 @@ export async function nextTurnDelivery(input: {
   readonly commandInbox: SessionCommandInbox;
   readonly deferDeliveries?: boolean;
   readonly driverWritable: WritableStream<Uint8Array>;
+  readonly progressHandler?: SessionProgressHandler;
   readonly seenTaskDeliveries?: Set<string>;
   readonly stateCursor: SessionStateCursor;
 }): Promise<NextTurnInstruction> {
@@ -89,6 +91,7 @@ async function awaitNextTurnDelivery(input: {
   readonly commandInbox: SessionCommandInbox;
   readonly deferDeliveries?: boolean;
   readonly driverWritable: WritableStream<Uint8Array>;
+  readonly progressHandler?: SessionProgressHandler;
   readonly seenTaskDeliveries?: Set<string>;
   readonly stateCursor: SessionStateCursor;
 }): Promise<NextTurnInstruction> {
@@ -101,6 +104,7 @@ async function awaitNextTurnDelivery(input: {
       cancelledTaskIds,
       commandInbox: input.commandInbox,
       deferDeliveries: input.deferDeliveries,
+      progressHandler: input.progressHandler,
       seenTaskDeliveries,
     });
 
@@ -144,6 +148,7 @@ async function waitForNextSessionAction(input: {
   readonly cancelledTaskIds: Set<string>;
   readonly commandInbox: SessionCommandInbox;
   readonly deferDeliveries?: boolean;
+  readonly progressHandler?: SessionProgressHandler;
   readonly seenTaskDeliveries: Set<string>;
 }): Promise<NextSessionAction> {
   const pendingSessionControl = input.bufferedSessionControls.shift();
@@ -221,6 +226,11 @@ async function waitForNextSessionAction(input: {
         );
         input.bufferedDeliveries.splice(0, input.bufferedDeliveries.length, ...kept);
       }
+      continue;
+    }
+
+    if (decoded.kind === "progress") {
+      await input.progressHandler?.handleProgress(decoded);
       continue;
     }
 

@@ -12,8 +12,11 @@ import {
   SESSION_INBOX_WIRE_VERSION,
   SessionInboxWireError,
 } from "#execution/wire/session-inbox-contract.js";
-import type { SessionInboxWire } from "#execution/wire/session-inbox-encoder.js";
 import { sessionInboxWireV0Migration } from "#execution/wire/session-inbox-wire.v0.js";
+import {
+  sessionInboxWireV1Migration,
+  type SessionInboxWireV2,
+} from "#execution/wire/session-inbox-wire.v2.js";
 
 /**
  * The session inbox wire family: every payload persisted to a session's
@@ -31,14 +34,20 @@ import { sessionInboxWireV0Migration } from "#execution/wire/session-inbox-wire.
 export type DecodedSessionInbox =
   | DeliverHookPayload
   | SessionTimeoutHookPayload
-  | Extract<SessionCommand, { readonly kind: "cancel" | "clear" | "compact" | "reset" }>;
+  | Extract<
+      SessionCommand,
+      { readonly kind: "cancel" | "clear" | "compact" | "progress" | "reset" }
+    >;
 
 export { SessionInboxWireError } from "#execution/wire/session-inbox-contract.js";
 
 /** Prefixes chain and schema failures alike, so messages read as one voice. */
 const WIRE_LABEL = "session inbox payload";
 
-const sessionInboxMigrations: readonly VersionMigration[] = [sessionInboxWireV0Migration];
+const sessionInboxMigrations: readonly VersionMigration[] = [
+  sessionInboxWireV0Migration,
+  sessionInboxWireV1Migration,
+];
 
 /**
  * Decodes a persisted inbox payload or throws {@link SessionInboxWireError}.
@@ -61,20 +70,20 @@ function decode(value: unknown): DecodedSessionInbox {
     throw new SessionInboxWireError(error instanceof Error ? error.message : String(error));
   }
 
-  const wire = migrated as Partial<SessionInboxWire>;
+  const wire = migrated as Partial<SessionInboxWireV2>;
   if (wire.version !== SESSION_INBOX_WIRE_VERSION) {
     throw new SessionInboxWireError(
       `${WIRE_LABEL} declares version ${JSON.stringify(wire.version)}, expected ${SESSION_INBOX_WIRE_VERSION}.`,
     );
   }
-  return normalizeWire(wire as SessionInboxWire);
+  return normalizeWire(wire as SessionInboxWireV2);
 }
 
 /** Workflow-safe consumer facade. */
 export const sessionInboxWire = { decode } as const;
 
 /** Strips wire-only fields (`version`, the deliver mirror) for consumption. */
-function normalizeWire(wire: SessionInboxWire): DecodedSessionInbox {
+function normalizeWire(wire: SessionInboxWireV2): DecodedSessionInbox {
   switch (wire.kind) {
     case "deliver":
       return {
@@ -97,6 +106,13 @@ function normalizeWire(wire: SessionInboxWire): DecodedSessionInbox {
       return { kind: "reset", reason: wire.reason };
     case "cancel":
       return { kind: "cancel", taskId: wire.taskId, turnId: wire.turnId };
+    case "progress":
+      return {
+        commandId: wire.commandId,
+        events: wire.events,
+        kind: "progress",
+        version: 1,
+      };
     default:
       throw new SessionInboxWireError(
         `${WIRE_LABEL} has an unrecognized kind ${JSON.stringify((wire as { kind?: unknown }).kind)}.`,
