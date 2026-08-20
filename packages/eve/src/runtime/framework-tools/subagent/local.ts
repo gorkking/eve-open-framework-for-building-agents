@@ -14,6 +14,7 @@ import {
 import { createDurableSessionState } from "#execution/durable-session-store.js";
 import {
   checkTaskContinuationAvailability,
+  createTaskContinuationBusyResult,
   describeTaskDispatch,
 } from "#execution/tasks/parent/continuation-dispatch.js";
 import { cancelOwnedTask } from "#execution/tasks/parent/dispatch.js";
@@ -45,6 +46,7 @@ interface SubagentDefinitionInput {
 
 interface SubagentDispatchInput {
   readonly action: SubagentCallAction;
+  readonly batch: TaskExec["batch"];
   readonly callbackBaseUrl?: string;
   readonly ctx: AlsContext;
   readonly event: {
@@ -68,6 +70,7 @@ interface SubagentDispatchResult {
 }
 
 const localSubagentExecutors = new WeakSet<object>();
+const batchAgentClaims = new WeakMap<TaskExec["batch"], Map<string, string>>();
 const log = createLogger("runtime.framework-tools.subagent");
 
 export function defineSubagent(input: SubagentDefinitionInput) {
@@ -123,6 +126,7 @@ export async function executeSubagentTool(input: {
         };
   const dispatched = await dispatchSubagent({
     action,
+    batch,
     callbackBaseUrl: ctx.get(CallbackBaseUrlKey),
     ctx,
     event: { ...emission, turnId: activeTurnId(emission) },
@@ -225,6 +229,17 @@ async function dispatchSubagent(input: SubagentDispatchInput): Promise<SubagentD
       session: prepared.session,
     });
     if (busy !== undefined) throw new Error(JSON.stringify(busy.output));
+
+    const claimedTaskId = claimBatchAgent(input.batch, entry.agentId, input.task.taskId);
+    if (claimedTaskId !== undefined) {
+      const busy = createTaskContinuationBusyResult({
+        action: entry.action,
+        agentId: entry.agentId,
+        status: "working",
+        taskId: claimedTaskId,
+      });
+      throw new Error(JSON.stringify(busy.output));
+    }
   }
 
   const outcome =
@@ -289,6 +304,22 @@ async function dispatchSubagent(input: SubagentDispatchInput): Promise<SubagentD
       : {}),
     session: outcome.session,
   };
+}
+
+function claimBatchAgent(
+  batch: TaskExec["batch"],
+  agentId: string,
+  taskId: string,
+): string | undefined {
+  let claims = batchAgentClaims.get(batch);
+  if (claims === undefined) {
+    claims = new Map();
+    batchAgentClaims.set(batch, claims);
+  }
+  const claimedTaskId = claims.get(agentId);
+  if (claimedTaskId !== undefined) return claimedTaskId;
+  claims.set(agentId, taskId);
+  return undefined;
 }
 
 async function emitSubagentCalled(input: {

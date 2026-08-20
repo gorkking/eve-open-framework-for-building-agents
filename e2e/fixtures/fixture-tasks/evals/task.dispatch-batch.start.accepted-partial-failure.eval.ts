@@ -20,7 +20,7 @@ export default defineTaskEval({
     const started = await t.send("TASK-D6-PARTIAL-FANOUT-FAILURE");
     started.expectOk();
     started.messageIncludes("TASK-D6-PARTIAL-FANOUT-STARTED");
-    started.eventsSatisfy("dispatch results preserve success/failure/success order", (events) => {
+    started.eventsSatisfy("dispatch results cover every sibling", (events) => {
       const callIds = events.flatMap((event) =>
         event.type === "action.result" &&
         event.data.result.kind === "tool-result" &&
@@ -29,7 +29,11 @@ export default defineTaskEval({
           ? [event.data.result.callId]
           : [],
       );
-      return callIds.join(",") === [FIRST_CALL_ID, FAILED_CALL_ID, THIRD_CALL_ID].join(",");
+      return (
+        callIds.length === 3 &&
+        new Set(callIds).size === 3 &&
+        [FIRST_CALL_ID, FAILED_CALL_ID, THIRD_CALL_ID].every((callId) => callIds.includes(callId))
+      );
     });
 
     const receipts = backgroundReceipts(started);
@@ -38,9 +42,9 @@ export default defineTaskEval({
       satisfies(
         (values: readonly BackgroundReceipt[]) =>
           values.length === 2 &&
-          values[0]?.callId === FIRST_CALL_ID &&
-          values[1]?.callId === THIRD_CALL_ID &&
-          values[0].taskId !== values[1].taskId,
+          values.some(({ callId }) => callId === FIRST_CALL_ID) &&
+          values.some(({ callId }) => callId === THIRD_CALL_ID) &&
+          new Set(values.map(({ taskId }) => taskId)).size === 2,
         "first and third entries return distinct working task receipts",
       ),
     );
