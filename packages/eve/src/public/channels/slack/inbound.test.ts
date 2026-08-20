@@ -76,10 +76,10 @@ describe("slackEventInstallationTeamId", () => {
     expect(slackEventInstallationTeamId(envelope([{ team_id: "T_UNKNOWN" }]))).toBe("T_UNKNOWN");
   });
 
-  it("ignores explicit user-token installations", () => {
+  it("accepts an is_bot false authorization for a bot app_mention", () => {
     expect(
-      slackEventInstallationTeamId(envelope([{ is_bot: false, team_id: "T_USER" }])),
-    ).toBeUndefined();
+      slackEventInstallationTeamId(envelope([{ is_bot: false, team_id: "T_INSTALLATION" }])),
+    ).toBe("T_INSTALLATION");
   });
 });
 

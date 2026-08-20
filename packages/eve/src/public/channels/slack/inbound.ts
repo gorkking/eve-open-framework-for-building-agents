@@ -207,12 +207,10 @@ export function slackEventInstallationTeamId(envelope: SlackEventCallback): stri
     (entry) => entry.is_bot === true && typeof entry.team_id === "string",
   );
   if (botAuthorization?.team_id !== undefined) return botAuthorization.team_id;
-  // An explicit `is_bot: false` authorization is a user-token installation
-  // with no bot in that workspace, so its team id must not drive bot-token
-  // selection. Entries that omit `is_bot` stay eligible.
-  return authorizations.find(
-    (entry) => entry.is_bot === undefined && typeof entry.team_id === "string",
-  )?.team_id;
+  // Slack documents `app_mention`, which requires a bot user, with
+  // `is_bot: false`. The flag describes this authorization, not whether the
+  // app installation has a bot, so its team id remains valid token context.
+  return authorizations.find((entry) => typeof entry.team_id === "string")?.team_id;
 }
 
 /** Parses a Slack message event without applying bot or subtype policy. */
