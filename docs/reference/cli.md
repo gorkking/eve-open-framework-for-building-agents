@@ -304,7 +304,7 @@ One parent turn can dispatch several subagents into the same window, so a child'
 
 Every span carries a real duration except `agent.session`: an idle session never closes, so it is recorded as a zero-duration marker and the span tree shows its descendant extent instead. A turn's span is written when the turn settles, so a running turn shows only its steps.
 
-Public-conversation spans include system prompts, prompt messages, model responses, and tool arguments and results. Each captured value is capped at 32 KB. Non-public conversations are not traced by default; authored trace and export policies can opt them in without exposing their content.
+Public and unclassified local HTTP/TUI spans include system prompts, prompt messages, model responses, and tool arguments and results. Each captured value is capped at 32 KB. Conversations classified as direct or restricted are not traced by default; authored trace and export policies can opt them in and redact their content.
 
 Step spans carry token counts, and cost when Vercel AI Gateway served the call. Both follow the [OTel GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai) (`gen_ai.usage.*`), so a third-party backend reads them without mapping.
 
