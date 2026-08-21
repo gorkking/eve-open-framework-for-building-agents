@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpanKind } from "#compiled/@opentelemetry/api/index.js";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
-import { ChannelRequestIdKey } from "#context/keys.js";
+import { ChannelRequestIdKey, ProgressCallbackKey } from "#context/keys.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import {
   createWorkflowRuntime,
   LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
+  progressCollectorWorkflowReference,
   sessionTimeoutWorkflowReference,
   turnWorkflowReference,
   workflowEntryReference,
@@ -93,6 +94,9 @@ describe("workflowEntryReference", () => {
     );
     expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("/src/execution/");
     expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("@");
+    expect(progressCollectorWorkflowReference.workflowId).toBe(
+      `workflow//${packageInfo.name}//progressCollectorWorkflow`,
+    );
   });
 });
 
@@ -430,6 +434,53 @@ describe("createWorkflowRuntime#createSession", () => {
       input: { message: "hello" },
       sessionTimeoutMs: 86_400_000,
     });
+  });
+
+  it("starts one collector and injects its opaque callback for a root channel with renderers", async () => {
+    vi.stubEnv("VERCEL_URL", "agent.example.com");
+    const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+    mockBundleAndRun(compiledArtifactsSource, 60_000);
+    startMock
+      .mockResolvedValueOnce({ runId: "collector-run" })
+      .mockResolvedValueOnce({ runId: "driver-run" });
+
+    await buildRuntime(compiledArtifactsSource).createSession({
+      adapter: { kind: "slack", progressRenderers: [{ id: "status", render: vi.fn() }] },
+      auth: null,
+      input: { message: "hello" },
+      mode: "conversation",
+    });
+
+    expect(startMock.mock.calls[0]?.[0]).toBe(progressCollectorWorkflowReference);
+    const collectorInput = startMock.mock.calls[0]?.[1][0];
+    expect(collectorInput).toMatchObject({
+      serializedContext: expect.any(Object),
+      token: expect.any(String),
+    });
+    expect(collectorInput.token).toHaveLength(43);
+    const workflowInput = startMock.mock.calls[1]?.[1][0];
+    expect(workflowInput.serializedContext[ProgressCallbackKey.name]).toEqual({
+      url: `https://agent.example.com/eve/v1/progress/${collectorInput.token}`,
+      version: 1,
+    });
+  });
+
+  it("starts the root without progress when collector launch fails", async () => {
+    const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+    mockBundleAndRun(compiledArtifactsSource);
+    startMock
+      .mockRejectedValueOnce(new Error("collector failed"))
+      .mockResolvedValueOnce({ runId: "driver-run" });
+
+    await buildRuntime(compiledArtifactsSource).createSession({
+      adapter: { kind: "slack", progressRenderers: [{ id: "status", render: vi.fn() }] },
+      auth: null,
+      input: { message: "hello" },
+      mode: "conversation",
+    });
+
+    const workflowInput = startMock.mock.calls[1]?.[1][0];
+    expect(workflowInput.serializedContext[ProgressCallbackKey.name]).toBeUndefined();
   });
 
   it("serializes the selected dynamic subagent config for the child workflow", async () => {

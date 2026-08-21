@@ -1,6 +1,7 @@
 import { type FilePart, type TextPart, type UserContent } from "ai";
 
 import type {
+  ProgressCallbackV1,
   SessionAuthContext,
   SessionCallback,
   SessionCapabilities,
@@ -13,6 +14,9 @@ import type { ResetResponse } from "#protocol/reset-session.js";
 import type { Session } from "#channel/session.js";
 import { resolveForwardedPrincipal, type TrustedForwarders } from "#channel/forwarded-principal.js";
 import { parseSessionCallback } from "#channel/session-callback.js";
+import { parseProgressCallback } from "#channel/progress-callback.js";
+import type { ProgressWorkIdentityV1 } from "#execution/session-progress.js";
+import { progressWorkIdentityV1Schema } from "#execution/session-progress-schema.js";
 import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import { hasInternalRefScheme } from "#internal/attachments/url-refs.js";
 import { createLogger, logError } from "#internal/logging.js";
@@ -310,13 +314,18 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           );
         }
 
+        const capabilities = {
+          ...(body.capabilities ?? (body.mode === "task" ? {} : { requestInput: true })),
+        };
+
         let handle: Awaited<ReturnType<typeof createSession>>;
         try {
           handle = await createSession({
             auth: messageResult.auth,
-            capabilities:
-              body.capabilities ?? (body.mode === "task" ? undefined : { requestInput: true }),
+            capabilities,
             callback: body.callback,
+            progressCallback: body.progressCallback,
+            progressWork: body.progressWork,
             continuationToken: operationToken,
             initiatorAuth: forwarded.accepted ? forwarded.initiatorAuth : undefined,
             input: {
@@ -822,6 +831,8 @@ function defaultOnMessage(ctx: EveMessageContext): EveMessageResult {
 interface ParsedCreateBody {
   callback?: SessionCallback;
   capabilities?: SessionCapabilities;
+  progressCallback?: ProgressCallbackV1;
+  progressWork?: ProgressWorkIdentityV1;
   message: string | UserContent;
   mode?: RunMode;
   context?: readonly string[];
@@ -868,6 +879,22 @@ function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | R
   const capabilities = parseCapabilitiesField(payload.capabilities);
   if (capabilities instanceof Response) return capabilities;
 
+  let progressCallback: ProgressCallbackV1 | undefined;
+  try {
+    progressCallback = parseProgressCallback(payload.progressCallback);
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Invalid progress callback.", ok: false },
+      { status: 400 },
+    );
+  }
+
+  const progressWorkResult = progressWorkIdentityV1Schema.safeParse(payload.progressWork);
+  if (payload.progressWork !== undefined && !progressWorkResult.success) {
+    return Response.json({ error: "Invalid progress work identity.", ok: false }, { status: 400 });
+  }
+  const progressWork = progressWorkResult.success ? progressWorkResult.data : undefined;
+
   const mode = parseModeField(payload.mode);
   if (mode instanceof Response) return mode;
 
@@ -896,6 +923,8 @@ function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | R
     mode,
     context,
     outputSchema,
+    progressCallback,
+    progressWork,
   };
   if (typeof rawOperationId === "string") result.operationId = rawOperationId;
   return result;

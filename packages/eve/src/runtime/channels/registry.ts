@@ -41,6 +41,8 @@ const ADAPTER_NON_EVENT_FIELDS: ReadonlySet<string> = new Set([
   "createAdapterContext",
   "fetchFile",
   "instrumentation",
+  "progressDestination",
+  "progressRenderers",
 ]);
 
 /**
@@ -129,10 +131,15 @@ export function deserializeRuntimeAdapter(
     );
   }
 
-  // Merge the serialized state onto the adapter config. The behavior
-  // functions come from the registry entry; the state comes from the
-  // serialized context.
-  return { ...adapterConfig, state: serialized.state };
+  // Merge serialized state onto the adapter config. Object spread restores
+  // ordinary behavior fields; progress behavior is deliberately non-enumerable
+  // on compiled channels, so copy those descriptors explicitly.
+  const rehydrated: ChannelAdapter = { ...adapterConfig, state: serialized.state };
+  for (const key of ["progressDestination", "progressRenderers"] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(adapterConfig, key);
+    if (descriptor !== undefined) Object.defineProperty(rehydrated, key, descriptor);
+  }
+  return rehydrated;
 }
 
 function requireAdapterKind(

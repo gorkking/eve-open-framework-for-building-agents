@@ -371,6 +371,11 @@ export type HookPayload =
  * terminal session result. Conversation sessions use this as their first turn's
  * caller; each continuation supplies the caller for that turn.
  */
+export interface ProgressCallbackV1 {
+  readonly url: string;
+  readonly version: 1;
+}
+
 export interface SessionCallback {
   readonly callId: string;
   readonly subagentName: string;
@@ -454,6 +459,10 @@ export interface RunInput {
    * the caller for their own turn.
    */
   readonly callback?: SessionCallback;
+  /** Private remote capability for silent progress submission. */
+  readonly progressCallback?: ProgressCallbackV1;
+  /** Framework-owned current work identity for nested progress lineage. */
+  readonly progressWork?: import("#execution/session-progress.js").ProgressWorkIdentityV1;
   /**
    * Session continuation token for delivery and hook creation. Channels can
    * re-key the session during the first turn via

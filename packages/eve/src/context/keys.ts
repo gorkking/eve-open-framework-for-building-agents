@@ -9,6 +9,7 @@ import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import type { JsonObject } from "#shared/json.js";
 import type {
   ChannelInstrumentationProjection,
+  ProgressCallbackV1,
   ChannelDeliveryMetadata,
   SessionAuthContext,
   SessionCallback,
@@ -27,6 +28,7 @@ import type { SandboxAccess } from "#sandbox/state.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { PreparedRuntimeDelegationTool } from "#runtime/sessions/turn.js";
+import type { ProgressWorkIdentityV1 } from "#execution/session-progress.js";
 
 // Re-export so consumers don't need a direct channel/ import.
 export type { SessionAuthContext, SessionParent, SessionTurn } from "#channel/types.js";
@@ -101,6 +103,9 @@ export const SubagentDepthKey = new ContextKey<number>("eve.subagentDepth");
  * dispatch so HITL readiness flows through a conversation chain.
  */
 export const CapabilitiesKey = new ContextKey<SessionCapabilities>("eve.capabilities");
+export const ProgressCallbackKey = new ContextKey<ProgressCallbackV1>("eve.progressCallback");
+/** Current framework-owned node in the root progress work graph. */
+export const ProgressLineageKey = new ContextKey<ProgressWorkIdentityV1>("eve.progressLineage");
 
 /**
  * Optional framework-owned caller callback captured when the session is created.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
 import { HTTP_ADAPTER, HTTP_ADAPTER_KIND } from "#channel/http.js";
@@ -80,6 +80,31 @@ describe("createRuntimeAdapterRegistry", () => {
 
       expect(rehydrated).toEqual({ kind: HTTP_ADAPTER_KIND, state: {} });
     });
+  });
+
+  it("rehydrates non-enumerable progress renderer behavior", () => {
+    const adapter: ChannelAdapter = { kind: "slack", state: { channelId: null } };
+    const render = vi.fn();
+    const destination = vi.fn();
+    Object.defineProperties(adapter, {
+      progressDestination: { configurable: true, enumerable: false, value: destination },
+      progressRenderers: {
+        configurable: true,
+        enumerable: false,
+        value: [{ id: "slack.status.v1", render }],
+      },
+    });
+    const registry = createRuntimeAdapterRegistry({ channels: [makeChannelDefinition(adapter)] });
+
+    const rehydrated = deserializeRuntimeAdapter(registry, {
+      kind: "slack",
+      state: { channelId: "C1", threadTs: "T1" },
+    });
+
+    expect(rehydrated.progressDestination).toBe(destination);
+    expect(rehydrated.progressRenderers).toEqual([{ id: "slack.status.v1", render }]);
+    expect(rehydrated.state).toEqual({ channelId: "C1", threadTs: "T1" });
+    expect(Object.keys(rehydrated)).not.toContain("progressRenderers");
   });
 
   describe("route-declared adapters sharing a framework kind", () => {

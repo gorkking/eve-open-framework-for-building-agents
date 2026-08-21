@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   EntityConflictError,
   HookNotFoundError,
@@ -18,6 +20,7 @@ import type {
   SessionCommandResult,
 } from "#channel/types.js";
 import { serializeContext } from "#context/serialize.js";
+import { ProgressCallbackKey } from "#context/keys.js";
 import {
   buildSessionAttributes,
   buildSubagentRootAttributes,
@@ -46,6 +49,12 @@ import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.
 import { parseNdjsonStream } from "#execution/ndjson-stream.js";
 import { RuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import type { WorkflowEntryInput } from "#execution/workflow-entry.js";
+import type { ProgressCollectorInput } from "#execution/progress-collector.js";
+import { createEveProgressRoutePath } from "#protocol/routes.js";
+import {
+  createWorkflowCallbackUrl,
+  resolveWorkflowCallbackBaseUrl,
+} from "#execution/workflow-callback-url.js";
 import { walkCauseChain } from "#shared/errors.js";
 import { buildInvocationAttributes } from "#internal/invocation/metadata.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
@@ -56,6 +65,7 @@ const WORKFLOW_ENTRY_NAME = "workflowEntry";
 const TURN_WORKFLOW_NAME = "turnWorkflow";
 const SESSION_TIMEOUT_WORKFLOW_NAME = "sessionTimeoutWorkflow";
 const TASK_RUN_WORKFLOW_NAME = "taskRunWorkflow";
+const PROGRESS_COLLECTOR_WORKFLOW_NAME = "progressCollectorWorkflow";
 const EVE_PACKAGE_INFO = resolveInstalledPackageInfo();
 const COMMAND_HOOK_READY_TIMEOUT_MS = 30_000;
 
@@ -77,6 +87,7 @@ export const STABLE_WORKFLOW_NAMES: ReadonlySet<string> = new Set([
   TURN_WORKFLOW_NAME,
   SESSION_TIMEOUT_WORKFLOW_NAME,
   TASK_RUN_WORKFLOW_NAME,
+  PROGRESS_COLLECTOR_WORKFLOW_NAME,
 ]);
 
 const STABLE_ID_BASE = EVE_PACKAGE_INFO.name;
@@ -119,6 +130,11 @@ export const taskRunWorkflowReference = {
   workflowId: `workflow//${STABLE_ID_BASE}//${TASK_RUN_WORKFLOW_NAME}`,
 };
 
+/** Stable workflow reference for root-session progress collectors. */
+export const progressCollectorWorkflowReference = {
+  workflowId: `workflow//${STABLE_ID_BASE}//${PROGRESS_COLLECTOR_WORKFLOW_NAME}`,
+};
+
 /**
  * Creates a workflow-backed runtime whose long-lived driver owns the
  * event stream and dispatches each turn as a child workflow run.
@@ -140,9 +156,38 @@ export function createWorkflowRuntime(config: {
         run: input,
       });
       const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
+      const sessionTimeoutMs = effectiveAgent.limits?.sessionTimeoutMs;
+      if (
+        input.parent === undefined &&
+        input.progressCallback === undefined &&
+        sessionTimeoutMs !== false &&
+        (input.adapter.progressRenderers?.length ?? 0) > 0
+      ) {
+        const collectorContext = serializeContext(ctx);
+        const token = randomBytes(32).toString("base64url");
+        const collectorInput: ProgressCollectorInput = {
+          expiresAt: new Date(
+            Date.now() + (sessionTimeoutMs ?? 24 * 60 * 60 * 1_000),
+          ).toISOString(),
+          serializedContext: collectorContext,
+          token,
+        };
+        try {
+          await startWorkflowPreferLatest(progressCollectorWorkflowReference, [collectorInput]);
+          const fallbackOrigin = process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : "http://localhost:3000";
+          const baseUrl = resolveWorkflowCallbackBaseUrl(fallbackOrigin);
+          ctx.set(ProgressCallbackKey, {
+            url: createWorkflowCallbackUrl(baseUrl, createEveProgressRoutePath(token)),
+            version: 1,
+          });
+        } catch {
+          log.warn("failed to start progress collector");
+        }
+      }
       const serializedContext = serializeContext(ctx);
       const parentLineage = readParentLineage(serializedContext);
-      const sessionTimeoutMs = effectiveAgent.limits?.sessionTimeoutMs;
       const workflowInput: {
         -readonly [K in keyof WorkflowEntryInput]: WorkflowEntryInput[K];
       } = {

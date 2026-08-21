@@ -133,12 +133,16 @@ export function createChannelAddress<TState = undefined>(input: {
           ? input.adapter
           : {
               ...input.adapter,
+              progressDestination: input.adapter.progressDestination,
+              progressRenderers: input.adapter.progressRenderers,
               state: { ...input.adapter.state, ...(state as Record<string, unknown>) },
             };
+      const capabilities: RunInput["capabilities"] =
+        options.mode === "task" ? undefined : { requestInput: true };
       const runInput: RunInput = {
         adapter,
         auth: options.auth,
-        capabilities: options.mode === "task" ? undefined : { requestInput: true },
+        capabilities,
         callback: options.callback,
         channelName: input.channelName,
         continuationToken: namespacedToken,
