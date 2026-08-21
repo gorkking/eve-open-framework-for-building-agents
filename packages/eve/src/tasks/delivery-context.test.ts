@@ -22,6 +22,12 @@ describe("task delivery instructions", () => {
     expect(TASK_DELIVERY_INITIATING_INSTRUCTION).toContain(
       "continue independently after this turn",
     );
+    expect(TASK_DELIVERY_INITIATING_INSTRUCTION).toContain(
+      "including starting any remaining background work",
+    );
+    expect(TASK_DELIVERY_INITIATING_INSTRUCTION).toContain(
+      "When no further tool calls are needed in this turn",
+    );
     expect(TASK_DELIVERY_INITIATING_INSTRUCTION).toContain("one brief user-facing acknowledgement");
     expect(TASK_DELIVERY_INITIATING_INSTRUCTION).not.toContain(EMPTY_DELIVERY_SENTINEL);
   });

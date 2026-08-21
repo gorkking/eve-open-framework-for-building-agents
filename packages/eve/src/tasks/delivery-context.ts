@@ -5,9 +5,9 @@ import { getSessionTaskIndex, type SessionTaskIndexEntry } from "#tasks/session-
 export const TASK_DELIVERY_CONTEXT_LABEL = "[Task state]";
 
 export const TASK_DELIVERY_INITIATING_INSTRUCTION = `Background task reporting: launch acknowledgement
-The accompanying ${TASK_DELIVERY_CONTEXT_LABEL} system message is runtime-authored and lists background tasks accepted from the current turn. They continue independently after this turn.
+The accompanying ${TASK_DELIVERY_CONTEXT_LABEL} system message is runtime-authored and lists background tasks accepted so far from the current turn. They continue independently after this turn.
 
-Send one brief user-facing acknowledgement that the background work has started. Do not wait for results or report results that are not available yet. End the turn after the acknowledgement.`;
+Continue carrying out the user's request, including starting any remaining background work. When no further tool calls are needed in this turn, send one brief user-facing acknowledgement that the background work has started. Do not wait for results or report results that are not available yet. End the turn after the acknowledgement.`;
 
 export const TASK_DELIVERY_PENDING_INSTRUCTION = `Background task control: incomplete cohort
 This framework-authored instruction overrides any earlier instruction to report, summarize, acknowledge, or otherwise handle background results.
