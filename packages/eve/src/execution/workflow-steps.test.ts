@@ -51,11 +51,7 @@ import { emitTerminalSessionFailureStep } from "#execution/terminal-session-fail
 import { resolveEffectiveOutputSchema } from "#execution/effective-output-schema.js";
 import { turnStep } from "#execution/workflow-steps.js";
 import { routeProxiedDeliverStep } from "#execution/proxied-deliver-step.js";
-import {
-  LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
-  turnWorkflowReference,
-  workflowEntryReference,
-} from "#execution/workflow-runtime.js";
+import { turnWorkflowReference, workflowEntryReference } from "#execution/workflow-runtime.js";
 
 vi.mock("./durable-session-store.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./durable-session-store.js")>();
@@ -630,7 +626,7 @@ describe("dispatchTurnStep", () => {
     };
   }
 
-  it("starts turn workflows on the latest deployment in Vercel production", async () => {
+  it("keeps a parked session's turn workflow on its driver deployment in Vercel production", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     const input = createTurnInput();
     startMock.mockResolvedValue({ runId: "turn-run" });
@@ -648,12 +644,11 @@ describe("dispatchTurnStep", () => {
           "$eve.root": "sess-test",
           "$eve.type": "turn",
         },
-        deploymentId: "latest",
       },
     );
   });
 
-  it("starts turn workflows on the latest promoted generation in local development", async () => {
+  it("keeps a parked session's turn workflow on its driver generation in local development", async () => {
     vi.stubEnv("EVE_DEV", "1");
     const input = createTurnInput();
     startMock.mockResolvedValue({ runId: "turn-run" });
@@ -663,7 +658,7 @@ describe("dispatchTurnStep", () => {
     expect(startMock).toHaveBeenCalledWith(
       turnWorkflowReference,
       [createTurnWorkflowInput(input)],
-      expect.objectContaining({ deploymentId: "latest" }),
+      expect.not.objectContaining({ deploymentId: "latest" }),
     );
   });
 
@@ -688,37 +683,6 @@ describe("dispatchTurnStep", () => {
         },
       },
     );
-  });
-
-  it("falls back to the current deployment when latest is unsupported", async () => {
-    vi.stubEnv("VERCEL_ENV", "production");
-    const input = createTurnInput();
-    startMock
-      .mockRejectedValueOnce(new Error(LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE))
-      .mockResolvedValueOnce({ runId: "turn-run" });
-
-    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
-
-    const wireInput = createTurnWorkflowInput(input);
-    expect(startMock).toHaveBeenNthCalledWith(1, turnWorkflowReference, [wireInput], {
-      allowReservedAttributes: true,
-      attributes: {
-        "$eve.channel_request_id": "req_turn",
-        "$eve.parent": "sess-test",
-        "$eve.root": "sess-test",
-        "$eve.type": "turn",
-      },
-      deploymentId: "latest",
-    });
-    expect(startMock).toHaveBeenNthCalledWith(2, turnWorkflowReference, [wireInput], {
-      allowReservedAttributes: true,
-      attributes: {
-        "$eve.channel_request_id": "req_turn",
-        "$eve.parent": "sess-test",
-        "$eve.root": "sess-test",
-        "$eve.type": "turn",
-      },
-    });
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Closed-contract dispatch surface between session-mutating step
- * bodies (latest deployment) and the durable driver workflow (pinned
- * to whichever deployment called `start()`).
+ * bodies and the durable driver workflow. Both run on the deployment
+ * that started the session.
  *
  * The driver matches on `kind` and follows a fixed playbook per arm.
  * Adding a new arm is breaking (pinned drivers can't dispatch an

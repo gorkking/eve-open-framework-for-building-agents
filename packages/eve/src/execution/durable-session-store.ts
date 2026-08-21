@@ -7,13 +7,12 @@
  * `"eve.session"` stream remains as a fallback for old in-flight
  * sessions that only carry a small state handle.
  *
- * The driver workflow run is pinned to the deployment that called
- * `start()`; child turn workflows run on latest. Both
- * {@link DurableSessionState} and {@link DurableSessionSnapshot} carry
- * a `version` so a pinned driver can ferry shapes written by newer
- * steps. Adding optional fields is forward-compatible (devalue
- * preserves unknown POJO fields); shape-breaking changes bump
- * `version` and add a migrator.
+ * The driver workflow run and its child turn workflows stay pinned to
+ * the same deployment. Both {@link DurableSessionState} and
+ * {@link DurableSessionSnapshot} carry a `version` for schema
+ * evolution within that deployment. Adding optional fields is
+ * forward-compatible (devalue preserves unknown POJO fields);
+ * shape-breaking changes bump `version` and add a migrator.
  */
 import type { ModelMessage } from "ai";
 

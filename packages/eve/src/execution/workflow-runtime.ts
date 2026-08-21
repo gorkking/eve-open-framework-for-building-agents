@@ -101,9 +101,8 @@ export const workflowEntryReference = {
 /**
  * Stable workflow reference used by the driver to dispatch per-turn
  * child workflow runs. The id omits the package version stamp so
- * `start(turnWorkflowReference, args, { deploymentId: "latest" })`
- * routes to the latest deployment's turn workflow even when the eve
- * version differs from the caller's deployment.
+ * explicitly version-routed callers can find the same workflow on a
+ * newer deployment even when the eve version differs.
  */
 export const turnWorkflowReference = {
   workflowId: `workflow//${STABLE_ID_BASE}//${TURN_WORKFLOW_NAME}`,
