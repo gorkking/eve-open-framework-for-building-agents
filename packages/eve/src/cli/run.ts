@@ -1,4 +1,4 @@
-import { Command, CommanderError, InvalidArgumentError } from "#compiled/commander/index.js";
+import { Command, CommanderError, InvalidArgumentError, Option } from "#compiled/commander/index.js";
 import { registerBuildCommand, type BuildHost } from "#cli/commands/build.js";
 import { devBootPhase, type DevBootProgressReporter } from "#internal/dev-boot-progress.js";
 import { resolveApplicationRoot } from "#internal/application/paths.js";
@@ -342,7 +342,11 @@ function createCliProgram(
     )
     .option("--no-ui", "Start the server without an interactive UI")
     .option("--name <name>", "Title shown in the terminal UI (defaults to the app folder name)")
-    .option("--input <text>", "Pre-fill the prompt input, or start onboarding with /model")
+    .option("--input <text>", "Pre-fill the prompt input")
+    // Fresh `eve init` crosses a process boundary before it reaches this
+    // command, so onboarding needs an explicit handoff rather than a magic
+    // prompt string.
+    .addOption(new Option("--onboard", "Start fresh-agent onboarding").hideHelp())
     .option(
       "--tools <mode>",
       "How tool calls render: full | collapsed | auto-collapsed | hidden",
@@ -430,6 +434,7 @@ function createCliProgram(
         const tuiInput: RunDevelopmentTuiInput = {
           target,
           initialInput: options.input,
+          initialOnboarding: options.onboard === true ? "agent" : undefined,
           onBootProgress: report,
           lifecycle,
           ...display,

@@ -577,7 +577,11 @@ describe("EveTUIRunner idle session follow", () => {
       }),
       name: "Weather Agent",
       appRoot: "/tmp/weather-agent",
-      initialInput: "/model",
+      initialOnboarding: "agent",
+      initialAgentSetupFlow: vi.fn(async () => ({
+        kind: "done" as const,
+        result: { kind: "done" as const, addedItems: [], items: [], failures: [], facts: [], output: [] },
+      })),
       bootDetections: [],
       getVercelAuthStatus: vi.fn(async (): Promise<"authenticated"> => "authenticated"),
       promptCommandHandler: { handle },
@@ -3187,7 +3191,11 @@ describe("EveTUIRunner boot setup detection", () => {
       serverUrl: "http://localhost:3000",
       name: "Weather Agent",
       appRoot: "/tmp/weather-agent",
-      initialInput: "/model",
+      initialOnboarding: "agent",
+      initialAgentSetupFlow: vi.fn(async () => ({
+        kind: "done" as const,
+        result: { kind: "done" as const, addedItems: [], items: [], failures: [], facts: [], output: [] },
+      })),
       bootDetections: input.bootDetections ?? [
         {
           id: "test",
@@ -3250,7 +3258,14 @@ describe("EveTUIRunner boot setup detection", () => {
       renderer,
       name: "Weather Agent",
       appRoot: "/tmp/weather-agent",
-      initialInput: "/model",
+      initialOnboarding: "agent",
+      initialAgentSetupFlow: vi.fn(async () => {
+        order.push("initial-agent");
+        return {
+          kind: "done" as const,
+          result: { kind: "done" as const, addedItems: [], items: [], failures: [], facts: [], output: [] },
+        };
+      }),
       bootDetections: [
         {
           id: "test",
@@ -3269,7 +3284,7 @@ describe("EveTUIRunner boot setup detection", () => {
 
     await runner.run();
 
-    expect(order).toEqual(["vc:install", "vc:login", "model", "add", "prompt"]);
+    expect(order).toEqual(["vc:install", "vc:login", "model", "initial-agent", "prompt"]);
     expect(handle).toHaveBeenNthCalledWith(
       1,
       { type: "extension", name: "vc:install", argument: "" },
@@ -3282,11 +3297,12 @@ describe("EveTUIRunner boot setup detection", () => {
     );
     expect(handle).toHaveBeenCalledWith(
       { type: "extension", name: "model", argument: "" },
-      { renderer, title: "Weather Agent", initialModelStep: "provider" },
-    );
-    expect(handle).toHaveBeenCalledWith(
-      { type: "extension", name: "add", argument: "" },
-      { renderer, title: "Weather Agent" },
+      {
+        renderer,
+        title: "Weather Agent",
+        initialModelStep: "provider",
+        keepSetupFlowOpen: true,
+      },
     );
   });
 
@@ -3300,7 +3316,7 @@ describe("EveTUIRunner boot setup detection", () => {
       renderer: fakeRenderer({ setupFlow }),
       name: "Weather Agent",
       appRoot: "/tmp/weather-agent",
-      initialInput: "/model",
+      initialOnboarding: "agent",
       bootDetections: [
         {
           id: "test",

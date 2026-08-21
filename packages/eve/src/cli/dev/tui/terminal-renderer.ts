@@ -17,6 +17,7 @@ import type {
   SubagentView,
   SubagentToolUpdate,
 } from "./runner.js";
+import type { RegistryResultReportEntry } from "./registry-result-message.js";
 import { interruptedError } from "./errors.js";
 import {
   dismissTypeahead,
@@ -1744,6 +1745,30 @@ export class TerminalRenderer implements AgentTUIRenderer {
           ? { kind: "flow", title: tone, body: content, live: false }
           : { kind: "result", body: content, live: false },
     );
+    this.#paint();
+  }
+
+  renderRegistryResult(entries: readonly RegistryResultReportEntry[]): void {
+    if (entries.length === 0) return;
+    this.#start();
+    for (const entry of entries) {
+      this.#pushBlock({
+        kind: "command",
+        body: entry.title,
+        live: false,
+        ...(entry.status === "error" ? { status: "error" } : {}),
+      });
+      const body = [
+        ...(entry.lines.length > 0 ? entry.lines : ["Installed."]),
+        ...(entry.detail === undefined ? [] : ["", entry.detail]),
+      ].join("\n");
+      this.#pushBlock({
+        kind: "result",
+        body,
+        live: false,
+        ...(entry.status === "success" ? { status: "done" } : {}),
+      });
+    }
     this.#paint();
   }
 

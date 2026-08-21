@@ -12,6 +12,7 @@ import { RegistryFlowFailedError, runRegistryFlow } from "#setup/flows/registry.
 import type { Prompter } from "#setup/prompter.js";
 import { WizardCancelledError } from "#setup/step.js";
 
+import { formatRegistrySessionResult } from "./registry-result-message.js";
 import { createTuiPrompter, type TuiPrompterRenderer } from "./tui-prompter.js";
 import type { PromptCommandExtensionName } from "./prompt-commands.js";
 import type { SetupFlowIndicator, SetupFlowRenderer } from "./setup-flow.js";
@@ -64,27 +65,6 @@ export interface TuiSetupFlows {
   runModelFlow: typeof runModelFlow;
   runRegistryFlow: typeof runRegistryFlow;
   runDeployFlow: typeof runDeployFlow;
-}
-
-function joinedTitles(titles: readonly string[]): string {
-  if (titles.length === 0) return "";
-  if (titles.length === 1) return titles[0]!;
-  if (titles.length === 2) return `${titles[0]} and ${titles[1]}`;
-  return `${titles.slice(0, -1).join(", ")}, and ${titles.at(-1)}`;
-}
-
-function registryResultMessage(
-  result: Extract<Awaited<ReturnType<typeof runRegistryFlow>>, { kind: "done" }>,
-): string {
-  const lines = [`Added ${joinedTitles(result.items.map((item) => item.title))}`];
-  for (const item of result.items) {
-    if (item.facts.length === 0 && item.output.length === 0) continue;
-    lines.push("", item.title);
-    const width = Math.max(0, ...item.facts.map((fact) => fact.label.length));
-    for (const fact of item.facts) lines.push(`  ${fact.label.padEnd(width)}  ${fact.value}`);
-    for (const output of item.output) lines.push(`  ${output}`);
-  }
-  return lines.join("\n");
 }
 
 export interface TuiSetupCommandResult {
@@ -265,7 +245,7 @@ async function executeSetupCommand(
         const outcome: TuiSetupCommandResult = {
           message:
             result.addedItems.length > 0
-              ? registryResultMessage(result)
+              ? formatRegistrySessionResult(result)
               : "No registry items added.",
           preserveFlowDiagnostics: true,
         };
@@ -303,7 +283,7 @@ async function executeSetupCommand(
     if (error instanceof RegistryFlowFailedError) {
       const completed = error.completed;
       return {
-        message: `${registryResultMessage(completed)}\n\n${error.message}`,
+        message: `${formatRegistrySessionResult(completed)}\n\n${error.message}`,
         tone: "error",
         preserveFlowDiagnostics: true,
       };

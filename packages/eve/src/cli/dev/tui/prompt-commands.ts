@@ -1,4 +1,9 @@
-export type PromptCommandExtensionName = "model" | "add" | "deploy" | "vc:install" | "vc:login";
+export type PromptCommandExtensionName =
+  | "model"
+  | "add"
+  | "deploy"
+  | "vc:install"
+  | "vc:login";
 
 type PromptCommandTarget = "local" | "remote";
 

@@ -181,8 +181,7 @@ describe("runInitCommand", () => {
       "exec",
       "eve",
       "dev",
-      "--input",
-      "/model",
+      "--onboard",
     ]);
     // Substring assertions keep the expectations color-agnostic; picocolors
     // decides at import time whether the strings carry escape codes. The boot
@@ -376,8 +375,7 @@ describe("runInitCommand", () => {
         "exec",
         "eve",
         "dev",
-        "--input",
-        "/model",
+        "--onboard",
       ]);
       expect(output.messages[1]).toContain("Created an eve agent in ");
       expect(output.messages[1]).toContain(projectPath);
@@ -402,9 +400,9 @@ describe("runInitCommand", () => {
   });
 
   it.each([
-    ["npm", "overrides", ["exec", "--", "eve", "dev", "--input", "/model"]],
-    ["yarn", "resolutions", ["eve", "dev", "--input", "/model"]],
-    ["bun", "overrides", ["x", "eve", "dev", "--input", "/model"]],
+    ["npm", "overrides", ["exec", "--", "eve", "dev", "--onboard"]],
+    ["yarn", "resolutions", ["eve", "dev", "--onboard"]],
+    ["bun", "overrides", ["x", "eve", "dev", "--onboard"]],
   ] as const)(
     "scaffolds a fresh project owned by the invoking manager %s without pnpm policy",
     async (kind, aiPinField, devArguments) => {
@@ -467,20 +465,19 @@ describe("runInitCommand", () => {
       "x",
       "eve",
       "dev",
-      "--input",
-      "/model",
+      "--onboard",
     ]);
   });
 
   it.each([
-    ["npm", "package-lock.json", "bun", ["exec", "--", "eve", "dev", "--input", "/model"]],
-    ["yarn", "yarn.lock", "npm", ["eve", "dev", "--input", "/model"]],
-    ["bun", "bun.lock", "npm", ["x", "eve", "dev", "--input", "/model"]],
+    ["npm", "package-lock.json", "bun", ["exec", "--", "eve", "dev", "--onboard"]],
+    ["yarn", "yarn.lock", "npm", ["eve", "dev", "--onboard"]],
+    ["bun", "bun.lock", "npm", ["x", "eve", "dev", "--onboard"]],
     [
       "pnpm",
       "pnpm-lock.yaml",
       "npm",
-      ["--config.minimum-release-age=0", "exec", "eve", "dev", "--input", "/model"],
+      ["--config.minimum-release-age=0", "exec", "eve", "dev", "--onboard"],
     ],
   ] as const)(
     "scaffolds a fresh named project with the ancestor %s lockfile before the launcher",
@@ -649,8 +646,8 @@ describe("runInitCommand", () => {
   });
 
   it.each([
-    ["yarn", "yarn.lock", "resolutions", ["eve", "dev", "--input", "/model"]],
-    ["bun", "bun.lock", "overrides", ["x", "eve", "dev", "--input", "/model"]],
+    ["yarn", "yarn.lock", "resolutions", ["eve", "dev", "--onboard"]],
+    ["bun", "bun.lock", "overrides", ["x", "eve", "dev", "--onboard"]],
   ] as const)(
     "scaffolds a fresh %s workspace member without nested root-only package fields",
     async (kind, lockfile, rootAiPinField, devArguments) => {
@@ -727,8 +724,7 @@ describe("runInitCommand", () => {
       "--",
       "eve",
       "dev",
-      "--input",
-      "/model",
+      "--onboard",
     ]);
   });
 
@@ -753,8 +749,7 @@ describe("runInitCommand", () => {
       "exec",
       "eve",
       "dev",
-      "--input",
-      "/model",
+      "--onboard",
     ]);
   });
 
@@ -786,8 +781,7 @@ describe("runInitCommand", () => {
       "exec",
       "eve",
       "dev",
-      "--input",
-      "/model",
+      "--onboard",
     ]);
   });
 
@@ -1224,7 +1218,7 @@ describe("runInitCommand", () => {
     expect(deps.spawnPackageManager).toHaveBeenCalledWith(
       "pnpm",
       join(parentDirectory, "my-agent"),
-      ["--config.minimum-release-age=0", "exec", "eve", "dev", "--input", "/model"],
+      ["--config.minimum-release-age=0", "exec", "eve", "dev", "--onboard"],
     );
   });
 

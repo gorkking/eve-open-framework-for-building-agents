@@ -72,6 +72,7 @@ export type RegistryFlowResult =
       kind: "done";
       addedItems: readonly string[];
       items: readonly import("./registry-session.js").RegistrySessionItemResult[];
+      failures?: readonly import("./registry-session.js").RegistrySessionItemFailure[];
       facts: readonly RegistrySetupFact[];
       output?: readonly string[];
       deployed?: "production";

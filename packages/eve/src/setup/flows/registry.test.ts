@@ -62,6 +62,7 @@ describe("runRegistryFlow", () => {
         },
       ],
       facts: [],
+      failures: [],
       output: [],
     });
     expect(flowDeps.installRegistryItem).toHaveBeenCalledWith(
@@ -446,7 +447,14 @@ describe("runRegistryFlow", () => {
 
     await expect(
       runRegistryFlow({ appRoot: APP_ROOT, prompter: fake.prompter, deps: deps() }),
-    ).resolves.toEqual({ kind: "done", addedItems: [], items: [], facts: [], output: [] });
+    ).resolves.toEqual({
+      kind: "done",
+      addedItems: [],
+      items: [],
+      facts: [],
+      failures: [],
+      output: [],
+    });
 
     expect(fake.selectMessages).toEqual([
       "Add an integration",

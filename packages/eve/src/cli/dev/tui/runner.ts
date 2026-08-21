@@ -76,6 +76,13 @@ import {
   type BootDetectionContext,
   type SetupIssue,
 } from "./setup-issues.js";
+import { runInitialAgentSetupFlow } from "#setup/flows/initial-agent.js";
+import { createTuiPrompter } from "./tui-prompter.js";
+import {
+  formatRegistrySessionResult,
+  registryResultReportEntries,
+  type RegistryResultReportEntry,
+} from "./registry-result-message.js";
 import type { SetupFlowRenderer } from "./setup-flow.js";
 import type { TraceViewerRenderer } from "./traces/trace-viewer-session.js";
 import type { RemoteDevelopmentTarget } from "./target.js";
@@ -260,6 +267,8 @@ export type AgentTUIRenderer = {
   /** Commits the startup `/vc:login` invocation to the transcript. */
   renderCommandInvocation?(text: string, status?: "failed"): void;
   renderCommandResult?(text: string, tone?: "success" | "error"): void;
+  /** Renders each completed registry item as a durable startup setup result. */
+  renderRegistryResult?(entries: readonly RegistryResultReportEntry[]): void;
   readonly setupFlow?: SetupFlowRenderer;
   /**
    * The renderer's full-screen local trace viewer, opened by `/traces`.
@@ -433,11 +442,12 @@ export type EveTUIRunnerOptions = TuiDisplayOptions & {
   serverUrl?: string;
   /** Absolute local application root; omitted for remote `--url` sessions. */
   appRoot?: string;
-  /**
-   * Seeds the editable prompt buffer for the first prompt. A bare local
-   * `/model` starts initial model onboarding.
-   */
+  /** Seeds the editable prompt buffer for the first prompt. */
   initialInput?: string;
+  /** Explicit fresh-agent onboarding handoff from `eve init`. */
+  initialOnboarding?: "agent";
+  /** Test seam for the startup-only channel and integration planner. */
+  initialAgentSetupFlow?: typeof runInitialAgentSetupFlow;
   /** Handles non-core slash commands without adding feature branches to the runner. */
   promptCommandHandler?: PromptCommandHandler;
   /** Commands shown in discovery for this local or remote session. */
@@ -486,11 +496,11 @@ export class EveTUIRunner {
   readonly #runtimeArtifacts?: DevelopmentRuntimeArtifactRefresher;
   readonly #serverUrl?: string;
   readonly #appRoot?: string;
-  /**
-   * Seeds the first prompt's editable buffer. A bare local `/model` starts
-   * fresh-agent onboarding.
-   */
+  /** Seeds the first prompt's editable buffer. */
   readonly #initialInput?: string;
+  /** Explicit fresh-agent onboarding handoff from `eve init`. */
+  readonly #initialOnboarding?: "agent";
+  readonly #initialAgentSetupFlow?: typeof runInitialAgentSetupFlow;
   readonly #promptCommandHandler?: PromptCommandHandler;
   readonly #availablePromptCommands: readonly PromptCommandSpec[];
   readonly #withExclusiveTerminal?: <T>(task: () => Promise<T>) => Promise<T>;
@@ -590,6 +600,10 @@ export class EveTUIRunner {
     this.#contextSize = options.contextSize;
     this.#formatTransportError = options.formatTransportError ?? toErrorMessage;
     if (options.initialInput !== undefined) this.#initialInput = options.initialInput;
+    if (options.initialOnboarding !== undefined)
+      this.#initialOnboarding = options.initialOnboarding;
+    if (options.initialAgentSetupFlow !== undefined)
+      this.#initialAgentSetupFlow = options.initialAgentSetupFlow;
     if (options.appRoot !== undefined) {
       this.#appRoot = options.appRoot;
       const trackerOptions: VercelStatusTrackerOptions = {
@@ -743,18 +757,14 @@ export class EveTUIRunner {
     this.#vercelStatus?.refreshIdentity();
     this.#mcpConnectionStatus?.refresh();
 
-    const initialCommand =
-      this.#initialInput === undefined ? undefined : parsePromptCommand(this.#initialInput);
-    const initialModelOnboarding =
-      initialCommand?.type === "extension" &&
-      initialCommand.name === "model" &&
-      initialCommand.argument === "" &&
+    const initialAgentOnboarding =
+      this.#initialOnboarding === "agent" &&
       this.#appRoot !== undefined &&
       this.#promptCommandHandler !== undefined &&
       this.#renderer.setupFlow !== undefined;
-    if (initialModelOnboarding) {
+    if (initialAgentOnboarding) {
       initialDraft = undefined;
-      await this.#runInitialModelOnboarding(title);
+      await this.#runInitialAgentOnboarding(title);
     }
 
     while (true) {
@@ -1652,6 +1662,7 @@ export class EveTUIRunner {
       readonly trigger: "startup" | "command";
       readonly initialModelStep?: "provider";
       readonly keepSetupFlowOpen?: true;
+      readonly suppressTranscript?: true;
     },
   ): Promise<void> {
     const outcome = await this.#handleExtensionCommand(command, {
@@ -1659,21 +1670,22 @@ export class EveTUIRunner {
       keepSetupFlowOpen: input.keepSetupFlowOpen,
       title,
     });
-    this.#renderStartupCommandInvocation(command, input.trigger);
-    this.#renderCommandOutcome(outcome?.message, outcome?.tone);
+    if (input.suppressTranscript !== true) {
+      this.#renderStartupCommandInvocation(command, input.trigger);
+      this.#renderCommandOutcome(outcome?.message, outcome?.tone);
+    }
     await this.#applyCommandEffect(outcome?.effect);
     this.#refreshHeaderFromRemoteConnection();
   }
 
   /**
-   * Fresh `eve init` launches the TUI with `/model` prefilled. Project-backed
-   * model access depends on the Vercel CLI and a Vercel session, so resolve
-   * only those missing prerequisites before entering the model picker. A probe
+   * Fresh `eve init` explicitly requests this sequence. Project-backed model
+   * access depends on the Vercel CLI and a Vercel session, so resolve only
+   * those missing prerequisites before entering the model picker. A probe
    * failure still opens `/model`: its API-key and external-provider paths do
-   * not require Vercel. After model setup, open the categorized registry hub so
-   * a new user has concrete next steps before reaching the chat prompt.
+   * not require Vercel.
    */
-  async #runInitialModelOnboarding(title: string): Promise<void> {
+  async #runInitialAgentOnboarding(title: string): Promise<void> {
     const appRoot = this.#appRoot;
     if (appRoot === undefined) return;
 
@@ -1715,10 +1727,48 @@ export class EveTUIRunner {
     await this.#executeExtensionCommand({ type: "extension", name: "model", argument: "" }, title, {
       trigger: "startup",
       initialModelStep: "provider",
+      keepSetupFlowOpen: true,
+      suppressTranscript: true,
     });
-    await this.#executeExtensionCommand({ type: "extension", name: "add", argument: "" }, title, {
-      trigger: "startup",
-    });
+
+    const flow = this.#renderer.setupFlow;
+    if (flow === undefined) return;
+    flow.begin("Set up your agent", "pulse");
+    try {
+      const result = await (this.#initialAgentSetupFlow ?? runInitialAgentSetupFlow)({
+        appRoot,
+        prompter: createTuiPrompter(flow),
+        signal: this.#lifecycle?.signal,
+        onItemStart: (item, index, total) =>
+          flow.replaceContent?.({
+            headline: `Adding ${item.title ?? item.name} · ${index + 1} of ${total}`,
+            facts: [],
+          }),
+      });
+      if (result.kind === "done") {
+        const entries = registryResultReportEntries(result.result);
+        if (entries.length > 0 && this.#renderer.renderRegistryResult !== undefined) {
+          this.#renderer.renderRegistryResult(entries);
+        } else {
+          const report = formatRegistrySessionResult(result.result);
+          this.#renderCommandOutcome(
+            report === "" ? "Your agent is ready. Add channels and integrations any time with /add." : report,
+            result.result.failures.length > 0
+              ? "error"
+              : result.result.items.length > 0
+                ? "success"
+                : undefined,
+          );
+        }
+        if (result.result.deployed === "production") {
+          await this.#applyCommandEffect({ kind: "deployed" });
+        }
+      }
+    } catch (error) {
+      this.#renderCommandOutcome(`Agent setup failed: ${toErrorMessage(error)}`, "error");
+    } finally {
+      flow.end({ preserveDiagnostics: true });
+    }
   }
 
   #refreshHeaderFromRemoteConnection(): void {
