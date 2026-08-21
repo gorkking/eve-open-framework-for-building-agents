@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { IFileSystem } from "just-bash";
@@ -220,6 +220,10 @@ export function createJustBashHandle(
         metadata,
         sessionKey: sandbox.sessionKey,
       };
+    },
+    async destroy() {
+      await sandbox.dispose();
+      await rm(sandbox.rootPath, { force: true, recursive: true });
     },
     async stop() {
       await sandbox.dispose();

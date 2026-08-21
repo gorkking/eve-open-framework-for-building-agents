@@ -335,6 +335,7 @@ function createApprovalContext(input: {
     callId: "call_1",
     getSandbox: vi.fn(),
     getSkill: vi.fn(),
+    sandbox: { destroy: vi.fn() },
     session: {
       auth: { current: null, initiator: null },
       id: "test-session",

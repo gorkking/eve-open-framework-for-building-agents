@@ -1,8 +1,15 @@
 import type { SkillHandle } from "#execution/skills/types.js";
 import type { RuntimeSandboxSession } from "#shared/sandbox-session.js";
+import type { SandboxDestroyOptions } from "#shared/sandbox-backend.js";
 import type { SessionAuth, SessionParent, SessionTurn } from "#context/keys.js";
 
 export type { SessionAuth, SessionParent, SessionTurn };
+
+/** Authored lifecycle operations for the current session's sandbox. */
+export interface SessionSandboxLifecycle {
+  /** Permanently destroys this sandbox and its session-owned snapshots. */
+  destroy(options?: SandboxDestroyOptions): Promise<void>;
+}
 
 /**
  * Shared runtime context available to all authored callbacks that run
@@ -22,6 +29,9 @@ export interface SessionContext {
     readonly turn: SessionTurn;
     readonly parent?: SessionParent;
   };
+
+  /** Lazy lifecycle operations for the current session's sandbox. */
+  readonly sandbox: SessionSandboxLifecycle;
 
   /**
    * Resolves the session's sandbox. Throws when no sandbox is available

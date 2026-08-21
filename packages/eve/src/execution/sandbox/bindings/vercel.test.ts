@@ -45,6 +45,7 @@ function createMockDetachedCommand(
 
 function createMockSandbox(input: {
   name: string;
+  sourceSnapshotId?: string;
   snapshotId?: string;
   status?: string;
   tags?: Record<string, string>;
@@ -58,6 +59,13 @@ function createMockSandbox(input: {
       rm: vi.fn().mockResolvedValue(undefined),
       unlink: vi.fn().mockResolvedValue(undefined),
     },
+    listSnapshots: vi.fn(
+      async (): Promise<{
+        [Symbol.asyncIterator](): AsyncGenerator<{ id: string; status: string }>;
+      }> => ({
+        async *[Symbol.asyncIterator]() {},
+      }),
+    ),
     name: input.name,
     readFile: vi.fn(async (file: { path: string }): Promise<object | null> => {
       const content = files.get(file.path);
@@ -65,6 +73,7 @@ function createMockSandbox(input: {
     }),
     runCommand: vi.fn().mockResolvedValue(createMockCommandResult()),
     snapshot: vi.fn().mockResolvedValue({ snapshotId: `${input.name}-snapshot` }),
+    sourceSnapshotId: input.sourceSnapshotId,
     status: input.status ?? "running",
     stop: vi.fn().mockResolvedValue(undefined),
     get tags() {
@@ -1095,6 +1104,85 @@ describe("createVercelSandbox", () => {
     expect(sessionSandbox.runCommand).toHaveBeenCalledWith(
       expect.objectContaining({ args: ["-lc", "printf resumed"], cmd: "bash" }),
     );
+  });
+
+  it("stops compute and deletes every session snapshot before deleting the sandbox", async () => {
+    const templateSandbox = createMockSandbox({ name: "template" });
+    const sessionSandbox = createMockSandbox({
+      name: "session",
+      sourceSnapshotId: "template-source",
+    });
+    const snapshots = [
+      { id: "snapshot-1", status: "created" },
+      { id: "template-source", status: "created" },
+      { id: "snapshot-deleted", status: "deleted" },
+      { id: "snapshot-2", status: "created" },
+    ];
+    const order: string[] = [];
+    sessionSandbox.stop.mockImplementation(async () => {
+      order.push("stop");
+    });
+    sessionSandbox.listSnapshots.mockImplementation(async () => {
+      order.push("list");
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield* snapshots;
+        },
+      };
+    });
+    sessionSandbox.delete.mockImplementation(async () => {
+      order.push("sandbox-delete");
+    });
+    const snapshotDelete = vi.fn(async ({ signal }: { signal?: AbortSignal }) => {
+      expect(signal).toBe(abortSignal);
+    });
+    const snapshotGet = vi.fn(async ({ snapshotId }: { snapshotId: string }) => ({
+      delete: vi.fn(async (options: { signal?: AbortSignal }) => {
+        await snapshotDelete(options);
+        order.push(`delete:${snapshotId}`);
+      }),
+    }));
+    const sandboxModule = {
+      Sandbox: {
+        create: vi
+          .fn()
+          .mockResolvedValueOnce(templateSandbox)
+          .mockResolvedValueOnce(sessionSandbox),
+        get: vi.fn().mockResolvedValue(null),
+      },
+      Snapshot: { get: snapshotGet },
+    };
+    const backend = createTestVercelSandbox({
+      loadSandboxModule: async () => sandboxModule as never,
+    });
+    await backend.prewarm({
+      runtimeContext: { appRoot: "/tmp/test-app-root" },
+      seedFiles: [],
+      templateKey: "template-key",
+    });
+    const handle = await backend.create({
+      runtimeContext: { appRoot: "/tmp/test-app-root" },
+      sessionKey: "session-key",
+      templateKey: "template-key",
+    });
+    const abortSignal = new AbortController().signal;
+
+    await expect(handle.destroy({ abortSignal })).resolves.toBeUndefined();
+
+    expect(order).toEqual([
+      "stop",
+      "list",
+      "delete:snapshot-1",
+      "delete:snapshot-2",
+      "sandbox-delete",
+    ]);
+    expect(sessionSandbox.listSnapshots).toHaveBeenCalledWith({ limit: 100, signal: abortSignal });
+    expect(snapshotGet).toHaveBeenCalledTimes(2);
+    expect(snapshotGet).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: abortSignal, snapshotId: "snapshot-1" }),
+    );
+    expect(snapshotDelete).toHaveBeenCalledTimes(2);
+    expect(sessionSandbox.delete).toHaveBeenCalledWith({ signal: abortSignal });
   });
 
   it("skips the stop call on shutdown when the sandbox is not running", async () => {

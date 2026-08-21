@@ -61,7 +61,7 @@ function createTestRegistry(
   };
 }
 
-function createBackend(): SandboxBackend {
+function createBackend(options?: { readonly destroy?: () => Promise<void> }): SandboxBackend {
   const sandbox = mockSandbox({ id: "sbx_session_auth" });
   const create = vi.fn(async (input: SandboxBackendCreateInput) => {
     return {
@@ -70,6 +70,7 @@ function createBackend(): SandboxBackend {
         metadata: {},
         sessionKey: input.sessionKey,
       }),
+      destroy: vi.fn(options?.destroy ?? (async () => {})),
       stop: vi.fn(async () => {}),
       useSessionFn: async () => sandbox.session,
       shutdown: async () => {},
@@ -82,6 +83,7 @@ function createBackend(): SandboxBackend {
 
 async function ensure(input: {
   readonly compiledArtifactsSource?: RuntimeCompiledArtifactsSource;
+  readonly ownsSandbox?: boolean;
   readonly runOnSession?: (callback: () => Promise<void>) => Promise<void>;
   readonly registry: RuntimeSandboxRegistry;
   readonly state?: SandboxState;
@@ -91,6 +93,7 @@ async function ensure(input: {
     compiledArtifactsSource:
       input.compiledArtifactsSource ?? createBundledRuntimeCompiledArtifactsSource(),
     nodeId: "__root__",
+    ownsSandbox: input.ownsSandbox,
     registry: input.registry,
     runOnSession: input.runOnSession,
     sessionId: "session_1",
@@ -426,6 +429,55 @@ describe("ensureSandboxAccess", () => {
 
     const handle = await vi.mocked(backend.create).mock.results[0]?.value;
     expect(handle?.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroys the sandbox and reprovisions a fresh handle on the next access", async () => {
+    const ctx = new ContextContainer();
+    ctx.set(SessionKey, createSession());
+    const onSession = vi.fn();
+    const backend = createBackend();
+    const access = await ensure({
+      registry: createTestRegistry({ onSession }, backend),
+      runOnSession: async (callback) => await contextStorage.run(ctx, callback),
+    });
+
+    await expect(access.destroy!()).resolves.toBeUndefined();
+    await expect(access.captureState()).resolves.toEqual({ initialized: false, session: null });
+    await access.get();
+
+    expect(backend.create).toHaveBeenCalledTimes(2);
+    expect(onSession).toHaveBeenCalledTimes(2);
+    const firstHandle = await vi.mocked(backend.create).mock.results[0]!.value;
+    expect(firstHandle.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the current handle and state when destruction fails", async () => {
+    const backend = createBackend({
+      destroy: async () => {
+        throw new Error("provider unreachable");
+      },
+    });
+    const access = await ensure({ registry: createTestRegistry({}, backend) });
+
+    await expect(access.destroy!()).rejects.toThrow("provider unreachable");
+    await access.get();
+
+    expect(backend.create).toHaveBeenCalledTimes(1);
+    await expect(access.captureState()).resolves.toMatchObject({
+      initialized: true,
+      session: { backendName: "test" },
+    });
+  });
+
+  it("rejects destruction from a session that does not own the shared sandbox", async () => {
+    const backend = createBackend();
+    const access = await ensure({ ownsSandbox: false, registry: createTestRegistry({}, backend) });
+
+    await expect(access.destroy!()).rejects.toThrow(
+      "Only the owning session can destroy a shared sandbox",
+    );
+
+    expect(backend.create).not.toHaveBeenCalled();
   });
 });
 

@@ -27,6 +27,8 @@ import { bufferToStream, streamToBuffer } from "#execution/sandbox/stream-utils.
  * or file contents without touching disk or spawning processes.
  */
 export interface MockSandboxInput {
+  /** Callback invoked when authored runtime code destroys this sandbox. */
+  readonly destroy?: () => Promise<void> | void;
   /**
    * Stable sandbox identifier. Defaults to `"sbx_mock"`.
    */
@@ -251,6 +253,9 @@ export function mockSandbox(input: MockSandboxInput = {}): MockSandbox {
         initialized: false,
         session: null,
       };
+    },
+    async destroy(): Promise<void> {
+      await input.destroy?.();
     },
     async get(): Promise<SandboxSession> {
       return session;

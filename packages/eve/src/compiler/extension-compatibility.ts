@@ -22,22 +22,22 @@ interface ExtensionCapabilityContract {
 const EXTENSION_CAPABILITY_CONTRACTS = {
   extension: { current: 1, supported: [1], dropped: {} },
   tool: {
-    current: 17,
-    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17],
+    current: 18,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18],
     dropped: { 15: "TaskExec replaces stageEffect with send" },
   },
   dynamicTool: {
-    current: 18,
-    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    current: 19,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     dropped: {},
   },
-  channel: { current: 7, supported: [1, 2, 3, 4, 5, 6, 7], dropped: {} },
+  channel: { current: 8, supported: [1, 2, 3, 4, 5, 6, 7, 8], dropped: {} },
   schedule: { current: 3, supported: [1, 2, 3], dropped: {} },
   subagent: { current: 2, supported: [1, 2], dropped: {} },
-  connection: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },
+  connection: { current: 6, supported: [1, 2, 3, 4, 5, 6], dropped: {} },
   hook: {
-    current: 14,
-    supported: [10, 11, 12, 13, 14],
+    current: 15,
+    supported: [10, 11, 12, 13, 14, 15],
     dropped: {
       1: "Model identity moved from session.started runtime metadata to step.started call attribution.",
       2: "Model identity moved from session.started runtime metadata to step.started call attribution.",
@@ -59,7 +59,7 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
     dropped: {},
   },
   config: { current: 1, supported: [1], dropped: {} },
-  state: { current: 3, supported: [1, 2, 3], dropped: {} },
+  state: { current: 4, supported: [1, 2, 3, 4], dropped: {} },
 } as const satisfies Record<string, ExtensionCapabilityContract>;
 
 /** One independently versioned extension-facing contract. */

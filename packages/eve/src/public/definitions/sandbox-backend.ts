@@ -1,6 +1,7 @@
 export type {
   SandboxBackendHandle,
   SandboxBackendSessionState,
+  SandboxDestroyOptions,
   SandboxSeedFile,
   SandboxBackendTags,
   SandboxBackendRuntimeContext,

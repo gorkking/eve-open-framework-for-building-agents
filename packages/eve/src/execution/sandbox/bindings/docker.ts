@@ -276,6 +276,13 @@ export function createDockerSandboxBackend(
             sessionKey: createInput.sessionKey,
           };
         },
+        async destroy() {
+          await stopDockerContainerIfRunning(cli, containerName);
+          expectDockerSuccess(
+            await cli.run(["rm", "-f", containerName]),
+            `delete sandbox session container "${containerName}"`,
+          );
+        },
         async stop() {
           await stopDockerContainerIfRunning(cli, containerName);
         },

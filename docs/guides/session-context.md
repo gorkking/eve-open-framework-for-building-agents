@@ -9,6 +9,7 @@ eve passes a runtime `ctx` to tool executors, hook handlers, channel event handl
 | ---------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
 | `ctx.session`                | Session identity, turn metadata, auth, and parent lineage | This page                                       |
 | `ctx.getSandbox()`           | The current agent's live sandbox handle                   | [Sandbox](../sandbox)                           |
+| `ctx.sandbox.destroy()`      | Permanent deletion of the current session sandbox         | [Sandbox](../sandbox#destroy-a-sandbox)         |
 | `ctx.getSkill(identifier)`   | A handle for a skill visible to the current agent         | [Skills](../skills#read-skill-files-at-runtime) |
 | `defineState(name, initial)` | Durable typed state shared by runtime code in one session | [State](../concepts/state)                      |
 
@@ -60,6 +61,16 @@ const result = await sandbox.run({ command: "npm test" });
 ```
 
 The accessor is asynchronous because eve may need to bind or restore the sandbox. A subagent sees its own sandbox, not its parent's. The returned runtime handle can also stop compute while preserving the durable sandbox state. See [Sandbox](../sandbox#using-the-sandbox) for the I/O API and lifecycle.
+
+## `ctx.sandbox.destroy()`
+
+Call `ctx.sandbox.destroy()` to permanently remove the current session sandbox:
+
+```ts
+await ctx.sandbox.destroy();
+```
+
+eve stops compute, deletes the session's physical sandbox and persisted state, then clears reconnect state. The next sandbox access provisions a fresh workspace and runs `onSession` again. Reusable template state remains available. Only the owning session can destroy a shared sandbox. See [Destroy a sandbox](../sandbox#destroy-a-sandbox) for backend behavior and shared sandbox ownership.
 
 ## `ctx.getSkill(identifier)`
 

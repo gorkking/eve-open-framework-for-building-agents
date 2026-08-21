@@ -13,6 +13,11 @@ export interface SandboxBackendHandle<SO = Record<string, never>> {
   readonly useSessionFn: SandboxSessionUseFn<SO>;
   captureState(): Promise<SandboxBackendSessionState>;
   /**
+   * Permanently destroys this sandbox and its session-owned snapshots.
+   * Reusable template snapshots must not be deleted.
+   */
+  destroy(options?: SandboxDestroyOptions): Promise<void>;
+  /**
    * Stops the underlying compute at an authored runtime boundary while
    * preserving any backend state needed to reopen the durable session.
    * Provider errors must reject this call.
@@ -25,6 +30,11 @@ export interface SandboxBackendHandle<SO = Record<string, never>> {
    * when the backend supports durable sessions.
    */
   shutdown(): Promise<void>;
+}
+
+/** Options for permanently destroying one sandbox. */
+export interface SandboxDestroyOptions {
+  readonly abortSignal?: AbortSignal;
 }
 
 /**

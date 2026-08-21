@@ -27,6 +27,8 @@ import type { SandboxAccess, SandboxSessionState, SandboxState } from "#sandbox/
 export interface EnsureSandboxAccessInput {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly nodeId: string;
+  /** Whether this durable session owns the sandbox lifecycle. */
+  readonly ownsSandbox?: boolean;
   readonly registry: RuntimeSandboxRegistry;
   readonly sessionId: string;
   readonly runOnSession?: (callback: () => Promise<void>) => Promise<void>;
@@ -176,6 +178,21 @@ export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Prom
         initialized,
         session: persistedSession,
       };
+    },
+    async destroy(options) {
+      if (input.ownsSandbox === false) {
+        throw new Error(
+          "Only the owning session can destroy a shared sandbox. Destroy it from the parent session instead.",
+        );
+      }
+      const handle = await getHandle();
+      if (handle === null) {
+        throw new Error("The sandbox is not available in the current authored runtime context.");
+      }
+      await handle.destroy(options);
+      handlePromise = undefined;
+      initialized = false;
+      persistedSession = null;
     },
     async get(): Promise<SandboxSession | null> {
       const handle = await getHandle();

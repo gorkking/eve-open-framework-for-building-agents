@@ -228,6 +228,26 @@ stop-specific state is needed. Lifecycle `use()` calls return the I/O-only
 `SandboxSession` because bootstrap and session initialization do not own runtime
 teardown.
 
+### Destroy a sandbox
+
+Permanently destroy the current session sandbox from an authored runtime callback:
+
+```ts
+await ctx.sandbox.destroy();
+```
+
+eve stops compute first, deletes the physical sandbox and every snapshot owned by that session sandbox, and clears the saved reconnect state. It preserves the reusable template snapshot that contains `bootstrap` and seeded workspace files.
+
+The durable eve session remains active. The next call to `ctx.getSandbox()` provisions a fresh workspace from the current sandbox definition and runs `onSession` again. Files and other workspace changes from the deleted sandbox are not restored.
+
+Backend behavior differs:
+
+- **Vercel Sandbox**: stops the persistent sandbox, deletes every created session snapshot, then deletes the sandbox record
+- **microsandbox**: stops and removes the session VM and its persisted state snapshot
+- **Docker and just-bash**: stop compute and discard their session runtime state
+
+Only the session that owns a shared sandbox can destroy it. Destroying the owner's sandbox affects every parent or child currently using it. Provider failures reject the call and preserve eve's current reconnect state so you can retry.
+
 Session sandboxes are keyed per durable session, not per deployment, so redeploying your app does not by itself discard them. A definition change to the authored sandbox source, workspace seed content, or `revalidationKey` replaces the sandbox on the next turn and runs `onSession` again.
 
 Reattachment still depends on the backend retaining its physical sandbox state. If a persisted Vercel sandbox is no longer available, eve creates a replacement, using the current template when one is configured. Files and other changes made after the original sandbox was created are not restored automatically. Because the durable session still has the same sandbox key, `onSession` does not run again for this replacement. Persist important artifacts outside the sandbox, and do not rely on `onSession` as the only place that applies security-critical configuration.

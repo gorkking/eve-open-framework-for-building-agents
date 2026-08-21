@@ -23,6 +23,22 @@ export function buildCallbackContext(): SessionContext {
       parent: session.parent,
     },
 
+    sandbox: {
+      async destroy(options) {
+        const access = ctx.get(SandboxKey);
+        if (access === undefined) {
+          throw new Error(
+            "eve sandbox runtime access is unavailable in the current async context. " +
+              "Call ctx.sandbox.destroy() only from authored runtime functions such as tools, hooks, and channel events.",
+          );
+        }
+        if (access.destroy === undefined) {
+          throw new Error("The active sandbox runtime does not support destruction.");
+        }
+        await access.destroy(options);
+      },
+    },
+
     getSandbox(): Promise<RuntimeSandboxSession> {
       const access = ctx.get(SandboxKey);
       if (access === undefined) {

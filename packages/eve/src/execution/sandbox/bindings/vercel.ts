@@ -35,6 +35,11 @@ import { adaptMultiplexedCommandToSandboxProcess } from "#execution/sandbox/mult
 import { buildSandboxSession } from "#execution/sandbox/session.js";
 import { streamToBuffer } from "#execution/sandbox/stream-utils.js";
 import {
+  getVercelSandboxCredentials,
+  getVercelSandboxFetch,
+  type VercelSandboxCredentials,
+} from "#execution/sandbox/bindings/vercel-credentials.js";
+import {
   createVercelEveImageSandbox,
   type CreateVercelSandbox,
   type VercelSandboxCreateParams,
@@ -141,7 +146,12 @@ export function createVercelSandbox(
         await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
       }
 
-      return createHandle(session.sandbox, createInput.sessionKey);
+      return createHandle({
+        createOptions,
+        sandbox: session.sandbox,
+        sandboxModule,
+        sessionKey: createInput.sessionKey,
+      });
     },
     async prewarm(
       prewarmInput: SandboxBackendPrewarmInput<VercelSandboxBootstrapUseOptions>,
@@ -449,10 +459,13 @@ function withBaseSetupNetworkPolicy(
   return { ...createOptions, networkPolicy: "allow-all" };
 }
 
-function createHandle(
-  sandbox: VercelSandbox,
-  sessionKey: string,
-): SandboxBackendHandle<VercelSandboxSessionUseOptions> {
+function createHandle(input: {
+  readonly createOptions: VercelCreateOptions;
+  readonly sandbox: VercelSandbox;
+  readonly sandboxModule: VercelModule;
+  readonly sessionKey: string;
+}): SandboxBackendHandle<VercelSandboxSessionUseOptions> {
+  const { sandbox, sessionKey } = input;
   return {
     session: buildSandboxSession(
       createVercelInternalSandboxSession(sandbox, sessionKey),
@@ -474,6 +487,30 @@ function createHandle(
         sessionKey,
       };
     },
+    async destroy(options) {
+      await stopVercelSandbox(sandbox);
+      const snapshots = await sandbox.listSnapshots({
+        limit: 100,
+        signal: options?.abortSignal,
+      });
+      const credentials = await resolveVercelSnapshotCredentials(input.createOptions);
+      for await (const metadata of snapshots) {
+        if (
+          metadata.status !== "created" ||
+          (sandbox.sourceSnapshotId !== undefined && metadata.id === sandbox.sourceSnapshotId)
+        ) {
+          continue;
+        }
+        const snapshot = await input.sandboxModule.Snapshot.get({
+          ...credentials,
+          fetch: getVercelSandboxFetch(input.createOptions),
+          signal: options?.abortSignal,
+          snapshotId: metadata.id,
+        });
+        await snapshot.delete({ signal: options?.abortSignal });
+      }
+      await sandbox.delete({ signal: options?.abortSignal });
+    },
     async stop() {
       await stopVercelSandbox(sandbox);
     },
@@ -485,6 +522,16 @@ function createHandle(
       }
     },
   };
+}
+
+async function resolveVercelSnapshotCredentials(
+  createOptions: VercelCreateOptions,
+): Promise<VercelSandboxCredentials | Record<string, never>> {
+  try {
+    return await getVercelSandboxCredentials(createOptions);
+  } catch {
+    return {};
+  }
 }
 
 async function stopVercelSandbox(sandbox: VercelSandbox): Promise<void> {
