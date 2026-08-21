@@ -14,6 +14,8 @@ import { createLogger, logError } from "#internal/logging.js";
 import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
 import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { childProgressWork } from "#execution/progress-work.js";
+import { reportProgress } from "#execution/submit-progress.js";
 
 const log = createLogger("execution.subagent-start-local");
 
@@ -36,12 +38,22 @@ export async function startLocalSubagent(input: {
   readonly parentContinuationToken: string | undefined;
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
+  readonly progressCallback?: Parameters<typeof buildSubagentRunInput>[0]["progressCallback"];
+  readonly progressWork: import("#execution/session-progress.js").ProgressWorkIdentityV1;
   readonly sandboxSessionId: string;
   readonly session: RuntimeSession;
   readonly source: SubagentInputSource;
   readonly taskOwned: boolean;
 }): Promise<DispatchOutcome> {
   const { action, source } = input;
+  const work = childProgressWork({
+    callId: action.callId,
+    kind: "subagent",
+    name: action.subagentName,
+    parentSessionId: input.session.sessionId,
+    parentTurnId: input.batchEvent.turnId,
+    parentWork: input.progressWork,
+  });
   const childRuntime = createWorkflowRuntime({
     compiledArtifactsSource: input.bundle.compiledArtifactsSource,
     dynamicSubagentAgentConfig: input.dynamicSubagentAgentConfig,
@@ -59,6 +71,8 @@ export async function startLocalSubagent(input: {
     parentContinuationToken: input.parentContinuationToken,
     parentTraceContext: input.parentTraceContext,
     persistentSessions: input.persistentSessions,
+    progressCallback: input.progressCallback,
+    progressWork: work,
     sandboxSessionId: input.sandboxSessionId,
     session: input.session,
     source,
@@ -119,6 +133,18 @@ export async function startLocalSubagent(input: {
     // child on the next attempt.
     childSessionId = error.ownerSessionId;
   }
+
+  await reportProgress({
+    callback: input.progressCallback,
+    events: [
+      {
+        eventId: `${work.id}:started`,
+        kind: "work.started",
+        startedAt: new Date().toISOString(),
+        work: { ...work, sessionId: childSessionId },
+      },
+    ],
+  });
 
   const address = {
     continuationToken: childContinuationToken,

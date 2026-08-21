@@ -166,6 +166,34 @@ describe("buildSubagentRunInput", () => {
     });
   });
 
+  it("propagates callback routing and child work identity to nested local progress", () => {
+    const progressCallback = {
+      token: "root-token",
+      url: "https://root.example.com/eve/v1/callback/root-token",
+      version: 1 as const,
+    };
+    const progressWork = {
+      callId: "call-1",
+      id: "work:parent:turn:call-1",
+      kind: "subagent" as const,
+      parentId: "work:root:turn",
+      rootSessionId: "root",
+      rootTurnId: "turn",
+    };
+    const { runInput } = buildRuntimeSubagentRunInput({
+      action: makeAction(),
+      auth: null,
+      batchEvent: { sequence: 1, turnId: "turn-99" },
+      initiatorAuth: null,
+      progressCallback,
+      progressWork,
+      session: makeSession(),
+    });
+
+    expect(runInput.progressCallback).toBe(progressCallback);
+    expect(runInput.progressWork).toEqual(progressWork);
+  });
+
   it("increments subagent depth for the child run input", () => {
     const nestedSession: HarnessSession = {
       ...makeSession(),

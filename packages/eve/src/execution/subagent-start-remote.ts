@@ -14,6 +14,8 @@ import {
 import { createLogger, logError } from "#internal/logging.js";
 import type { RuntimeRemoteAgentCallActionRequest } from "#runtime/actions/types.js";
 import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
+import { childProgressWork } from "#execution/progress-work.js";
+import { reportProgress } from "#execution/submit-progress.js";
 
 const log = createLogger("execution.subagent-start-remote");
 
@@ -24,6 +26,7 @@ export async function startRemoteSubagent(input: {
   readonly batchEvent: { readonly sequence: number; readonly turnId: string };
   readonly bundle: CompiledBundle;
   readonly callbackBaseUrl: string | undefined;
+  readonly capabilities?: import("#channel/types.js").SessionCapabilities;
   readonly currentSession: RuntimeSession;
   readonly dynamicRemoteAgent?: NonNullable<
     Parameters<typeof resolveRemoteAgentForAction>[0]["dynamicRemoteAgent"]
@@ -32,10 +35,20 @@ export async function startRemoteSubagent(input: {
   readonly parentContinuationToken: string | undefined;
   readonly parentTraceContext: Parameters<typeof startRemoteAgentSession>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
+  readonly progressCallback?: Parameters<typeof startRemoteAgentSession>[0]["progressCallback"];
+  readonly progressWork: import("#execution/session-progress.js").ProgressWorkIdentityV1;
   readonly session: RuntimeSession;
   readonly taskOwned: boolean;
 }): Promise<DispatchOutcome> {
   const { action } = input;
+  const work = childProgressWork({
+    callId: action.callId,
+    kind: "remote-agent",
+    name: action.remoteAgentName,
+    parentSessionId: input.session.sessionId,
+    parentTurnId: input.batchEvent.turnId,
+    parentWork: input.progressWork,
+  });
 
   // Preflight resolution failures happen before ownership exists, so they
   // reject without touching the handle store.
@@ -88,9 +101,23 @@ export async function startRemoteSubagent(input: {
       operationId: operation.id,
       parentTraceContext: input.parentTraceContext,
       persistentSessions: input.persistentSessions,
+      progressCallback: input.progressCallback,
+      progressWork: work,
       remote: resolvedRemote,
       session: input.session,
     });
+    await reportProgress({
+      callback: input.progressCallback,
+      events: [
+        {
+          eventId: `${work.id}:started`,
+          kind: "work.started",
+          startedAt: new Date().toISOString(),
+          work: { ...work, sessionId: child.sessionId },
+        },
+      ],
+    });
+
     const address = {
       callbackBaseUrl,
       kind: "agent/remote",

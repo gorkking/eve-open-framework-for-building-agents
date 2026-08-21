@@ -95,6 +95,8 @@ export function buildSubagentRunInput(input: {
   /** Hook token owned by the workflow currently waiting for this child. */
   readonly parentContinuationToken?: string;
   readonly parentTraceContext?: SessionTraceContext;
+  readonly progressCallback?: import("#channel/types.js").ProgressCallbackV1;
+  readonly progressWork?: import("#execution/session-progress.js").ProgressWorkIdentityV1;
   /**
    * Whether the parent agent opted into
    * `experimental.subagentPersistentSessions`. Persistent children run in
@@ -181,6 +183,8 @@ export function buildSubagentRunInput(input: {
       },
     },
     parentTraceContext: input.parentTraceContext,
+    progressCallback: input.progressCallback,
+    progressWork: input.progressWork,
     subagentDepth: subagentDepth.nextChildDepth,
   };
 

@@ -17,6 +17,8 @@ import {
   AuthKey,
   CapabilitiesKey,
   ChannelInstrumentationKey,
+  ProgressCallbackKey,
+  ProgressLineageKey,
   InitiatorAuthKey,
   SandboxKey,
 } from "#context/keys.js";
@@ -60,6 +62,7 @@ import {
   getSubagentName,
 } from "#execution/dispatch-action-failures.js";
 import { startLocalSubagent } from "#execution/subagent-start-local.js";
+import type { ProgressWorkIdentityV1 } from "#execution/session-progress.js";
 import { startRemoteSubagent } from "#execution/subagent-start-remote.js";
 import { hydrateDurableSession } from "#execution/session.js";
 import { buildSubagentRunInput, type SubagentInputSource } from "#execution/subagent-tool.js";
@@ -155,6 +158,8 @@ export interface PreparedRuntimeActionDispatch {
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
+  readonly progressCallback?: import("#channel/types.js").ProgressCallbackV1;
+  readonly progressWork: ProgressWorkIdentityV1;
   readonly sandboxSessionId: string;
   readonly serializedContext: Record<string, unknown>;
   readonly plan: readonly DispatchPlanEntry[];
@@ -282,6 +287,15 @@ async function prepareActionDispatch(input: {
     initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
     parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
     plan,
+    progressCallback: ctx.get(ProgressCallbackKey),
+    progressWork: ctx.get(ProgressLineageKey) ?? {
+      id: `root:${session.sessionId}:${batch.event.turnId}`,
+      kind: "root-turn",
+      rootSessionId: session.rootSessionId ?? session.sessionId,
+      rootTurnId: batch.event.turnId,
+      sessionId: session.sessionId,
+      turnId: batch.event.turnId,
+    },
     sandboxSessionId,
     serializedContext: input.serializedContext,
     session,
@@ -545,6 +559,8 @@ export async function startSubagent(input: {
   readonly parentContinuationToken: string | undefined;
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
+  readonly progressCallback?: import("#channel/types.js").ProgressCallbackV1;
+  readonly progressWork: ProgressWorkIdentityV1;
   readonly sandboxSessionId: string;
   readonly serializedContext: Record<string, unknown>;
   readonly session: RuntimeSession;
@@ -575,6 +591,8 @@ export async function startSubagent(input: {
         parentContinuationToken: input.parentContinuationToken,
         parentTraceContext,
         persistentSessions: input.persistentSessions,
+        progressCallback: input.progressCallback,
+        progressWork: input.progressWork,
         sandboxSessionId: input.sandboxSessionId,
         session: input.session,
         source: input.target.source,
@@ -587,12 +605,15 @@ export async function startSubagent(input: {
         batchEvent: input.batchEvent,
         bundle: input.bundle,
         callbackBaseUrl: input.callbackBaseUrl,
+        capabilities: input.capabilities,
         currentSession: input.currentSession,
         dynamicRemoteAgent: input.target.dynamicRemoteAgent,
         initiatorAuth: input.initiatorAuth,
         parentContinuationToken: input.parentContinuationToken,
         parentTraceContext,
         persistentSessions: input.persistentSessions,
+        progressCallback: input.progressCallback,
+        progressWork: input.progressWork,
         session: input.session,
         taskOwned: input.taskOwned,
       });
