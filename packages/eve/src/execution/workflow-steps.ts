@@ -83,7 +83,10 @@ import { createDurableSessionState, readDurableSession } from "#execution/durabl
 import type { TurnStepInput } from "#execution/durable-session-migrations/turn-workflow.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { appendTaskAgentAnnouncement } from "#execution/tasks/parent/agent-views.js";
-import { resolveTaskDeliveryContext } from "#tasks/delivery-context.js";
+import {
+  resolveInitiatingTaskContext,
+  resolveTaskDeliveryContext,
+} from "#tasks/delivery-context.js";
 import {
   readRetainedBackgroundToolResult,
   runBackgroundStep,
@@ -264,6 +267,20 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       resolved = {
         ...resolved,
         context: [...(resolved.context ?? []), taskContext.context],
+      };
+    }
+  }
+
+  if (tasksEnabled && ctx.get(TurnTaskDeliveryKey) === "none") {
+    const taskContext = resolveInitiatingTaskContext({
+      state: durableSession.state,
+      turnId: activeTurnId(initialEmissionState),
+    });
+    if (taskContext !== undefined) {
+      ctx.set(TurnTaskDeliveryKey, taskContext.phase);
+      resolved = {
+        ...resolved,
+        context: [...(resolved?.context ?? []), taskContext.context],
       };
     }
   }

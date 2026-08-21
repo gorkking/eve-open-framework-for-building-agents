@@ -8,21 +8,35 @@ const COMPLETION = /Background task (task_[a-z0-9]+) \([^)]+\) is completed\./gi
 function reportingEval() {
   return defineEval({
     description:
-      "Background work produces one acknowledgment, no intermediate delivery, and one consolidated final report.",
+      "A stock Eve agent acknowledges accepted background work, keeps partial wakes silent, and reports once after settlement.",
+    tags: ["real-model"],
     async test(t) {
-      const started = await t.send(`TASK-REPORTING-PROBE
+      const started =
+        await t.send(`Please investigate these three independent checks in parallel using the built-in agent tool. Call agent exactly three times in one response, once with each message below, and do not call other tools yourself.
 
-Call report_worker exactly three times in one response and call no other tool:
-
-1. message="delayMs=10000, result=WAKE-MECHANISM"
-2. message="delayMs=40000, result=CHANNEL-DELIVERY"
-3. message="delayMs=70000, result=REPORTING-POLICY"
-
-After the three task receipts, reply only with "investigation started". Then handle the background results normally.`);
+1. "Call probe exactly once with check=first. After it returns, reply with exactly the result value from the tool."
+2. "Call probe exactly once with check=second. After it returns, reply with exactly the result value from the tool."
+3. "Call probe exactly once with check=third. After it returns, reply with exactly the result value from the tool."`);
 
       started.expectOk();
-      started.calledTool("report_worker", { count: TASK_COUNT });
-      started.messageIncludes("investigation started");
+      started.calledSubagent("agent", { count: TASK_COUNT });
+      await t.require(
+        started,
+        satisfies(
+          (turn: EveEvalTurn) => hasPostReceiptAcknowledgement(turn),
+          "one non-empty acknowledgement follows all background task receipts",
+        ),
+      );
+      await t.require(
+        started.message,
+        satisfies(
+          (message: unknown) =>
+            typeof message === "string" &&
+            message.trim().length > 0 &&
+            RESULTS.every((result) => !message.includes(result)),
+          "the initiating turn acknowledges work without claiming results",
+        ),
+      );
       const taskIds = backgroundTaskIds(started);
       await t.require(
         taskIds,
@@ -110,19 +124,33 @@ After the three task receipts, reply only with "investigation started". Then han
 export default Array.from({ length: 8 }, reportingEval);
 
 function backgroundTaskIds(turn: EveEvalTurn): readonly string[] {
-  return turn.events.flatMap((event) => {
-    if (
-      event.type !== "action.result" ||
-      event.data.result.kind !== "tool-result" ||
-      event.data.result.toolName !== "report_worker"
-    ) {
-      return [];
-    }
-    const output = event.data.result.output;
-    if (output === null || typeof output !== "object") return [];
-    const taskId = Reflect.get(output, "taskId");
-    return typeof taskId === "string" ? [taskId] : [];
-  });
+  return turn.events.flatMap((event) =>
+    event.type === "subagent.completed" &&
+    event.data.subagentName === "agent" &&
+    event.data.backgroundTask !== undefined
+      ? [event.data.backgroundTask.taskId]
+      : [],
+  );
+}
+
+function hasPostReceiptAcknowledgement(turn: EveEvalTurn): boolean {
+  const receiptIndexes = turn.events.flatMap((event, index) =>
+    event.type === "subagent.completed" &&
+    event.data.subagentName === "agent" &&
+    event.data.backgroundTask !== undefined
+      ? [index]
+      : [],
+  );
+  if (receiptIndexes.length !== TASK_COUNT) return false;
+  const lastReceiptIndex = Math.max(...receiptIndexes);
+  return turn.events.some(
+    (event, index) =>
+      index > lastReceiptIndex &&
+      event.type === "message.completed" &&
+      event.data.finishReason !== "tool-calls" &&
+      event.data.message !== null &&
+      event.data.message.trim().length > 0,
+  );
 }
 
 function completedTaskIds(turn: EveEvalTurn): readonly string[] {

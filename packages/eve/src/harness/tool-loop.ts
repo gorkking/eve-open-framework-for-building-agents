@@ -209,6 +209,7 @@ import {
   hasEmptyDeliverySentinel,
 } from "#shared/empty-delivery.js";
 import {
+  TASK_DELIVERY_INITIATING_INSTRUCTION,
   TASK_DELIVERY_PENDING_INSTRUCTION,
   TASK_DELIVERY_SETTLED_INSTRUCTION,
 } from "#tasks/delivery-context.js";
@@ -1289,18 +1290,26 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const approvedTools = getApprovedTools(session);
 
     const taskDeliveryPhase = ctx?.get(TurnTaskDeliveryKey);
-    const emptyDeliveryEnabled =
+    const deliveryInstruction =
       // A structured-output run must always produce its declared result.
-      session.outputSchema === undefined &&
+      session.outputSchema !== undefined ||
       // Eligibility requires durable framework provenance from the active context.
-      ctx !== undefined &&
+      ctx === undefined ||
       // A child must always return its result to its parent, even when framework-triggered.
-      ctx.get(ParentSessionKey) === undefined &&
-      // A schedule-initiated root turn may have nothing worth delivering.
-      (isScheduleAppAuth(ctx.get(AuthKey)) ||
-        // A task-notification root turn may act on the wake without messaging the user.
-        taskDeliveryPhase === "pending" ||
-        taskDeliveryPhase === "settled");
+      ctx.get(ParentSessionKey) !== undefined
+        ? undefined
+        : taskDeliveryPhase === "pending"
+          ? TASK_DELIVERY_PENDING_INSTRUCTION
+          : taskDeliveryPhase === "settled"
+            ? TASK_DELIVERY_SETTLED_INSTRUCTION
+            : // A schedule-initiated root turn may have nothing worth delivering.
+              isScheduleAppAuth(ctx.get(AuthKey))
+              ? CONDITIONAL_DELIVERY_INSTRUCTION
+              : taskDeliveryPhase === "initiating"
+                ? TASK_DELIVERY_INITIATING_INSTRUCTION
+                : undefined;
+    const emptyDeliveryEnabled =
+      deliveryInstruction !== undefined && taskDeliveryPhase !== "initiating";
 
     // --- Execute via ToolLoopAgent ------------------------------------------
 
@@ -1333,13 +1342,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         systemMessages.push({ role: "system", content: skillAnnouncement });
       }
     }
-    if (emptyDeliveryEnabled) {
-      const deliveryInstruction =
-        taskDeliveryPhase === "pending"
-          ? TASK_DELIVERY_PENDING_INSTRUCTION
-          : taskDeliveryPhase === "settled"
-            ? TASK_DELIVERY_SETTLED_INSTRUCTION
-            : CONDITIONAL_DELIVERY_INSTRUCTION;
+    if (deliveryInstruction !== undefined) {
       systemMessages.push({
         role: "system",
         content: deliveryInstruction,
