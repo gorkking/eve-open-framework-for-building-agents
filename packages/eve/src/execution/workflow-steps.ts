@@ -28,6 +28,7 @@ import {
   SessionDynamicToolRuntimeRevisionKey,
   TasksEnabledKey,
   TurnTaskDeliveryKey,
+  TurnTaskStateKey,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
@@ -122,6 +123,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const ctx = await deserializeContext(input.serializedContext);
   if (rawInput.input?.kind === "deliver") {
     ctx.set(TurnTaskDeliveryKey, "none");
+    ctx.delete(TurnTaskStateKey);
   }
   const adapter = ctx.require(ChannelKey);
   const bundle = ctx.require(BundleKey);
@@ -278,10 +280,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     });
     if (taskContext !== undefined) {
       ctx.set(TurnTaskDeliveryKey, taskContext.phase);
-      resolved = {
-        ...resolved,
-        context: [...(resolved?.context ?? []), taskContext.context],
-      };
+      ctx.set(TurnTaskStateKey, taskContext.context);
     }
   }
 

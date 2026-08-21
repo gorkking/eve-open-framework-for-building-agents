@@ -28,6 +28,7 @@ import {
   SessionDynamicSubagentSelectionsKey,
   StepDynamicToolMetadataKey,
   TurnTaskDeliveryKey,
+  TurnTaskStateKey,
 } from "#context/keys.js";
 import { SCHEDULE_APP_AUTH } from "#channel/schedule-auth.js";
 import { decodeSandboxRef, isSandboxRefUrl } from "#internal/attachments/sandbox-refs.js";
@@ -11349,15 +11350,16 @@ describe("createToolLoopHarness", () => {
       const runStep = createToolLoopHarness(createTestConfig("conversation"));
       const ctx = new ContextContainer();
       ctx.set(TurnTaskDeliveryKey, "initiating");
+      ctx.set(TurnTaskStateKey, '[Task state]\n{"tasks":[]}');
 
       await contextStorage.run(ctx, () =>
-        runStep(createTestSession(), { message: "[Task state]" }),
+        runStep(createTestSession(), { message: "Start the background work." }),
       );
 
       const { instructions } = getLastAgentSettings();
       expect(instructions).toEqual({
         role: "system",
-        content: `You are a test assistant.\n\n${TASK_DELIVERY_INITIATING_INSTRUCTION}`,
+        content: `You are a test assistant.\n\n[Task state]\n{"tasks":[]}\n\n${TASK_DELIVERY_INITIATING_INSTRUCTION}`,
       });
     });
 

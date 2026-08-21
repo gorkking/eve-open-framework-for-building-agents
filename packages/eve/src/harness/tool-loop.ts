@@ -38,6 +38,7 @@ import {
   ParentTraceContextKey,
   SessionCallbackKey,
   TurnTaskDeliveryKey,
+  TurnTaskStateKey,
 } from "#context/keys.js";
 import {
   buildDynamicInstructionMessages,
@@ -1340,6 +1341,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const skillAnnouncement = ctx.get(PendingSkillAnnouncementKey);
       if (skillAnnouncement !== undefined && skillAnnouncement.length > 0) {
         systemMessages.push({ role: "system", content: skillAnnouncement });
+      }
+      const taskState = ctx.get(TurnTaskStateKey);
+      if (taskState !== undefined) {
+        systemMessages.push({ role: "system", content: taskState });
       }
     }
     if (deliveryInstruction !== undefined) {
