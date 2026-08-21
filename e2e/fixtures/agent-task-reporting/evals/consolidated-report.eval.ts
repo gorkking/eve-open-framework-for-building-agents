@@ -12,7 +12,7 @@ function reportingEval() {
     tags: ["real-model"],
     async test(t) {
       const started =
-        await t.send(`Please investigate these three independent checks in parallel using the built-in agent tool. Call agent exactly three times in one response, once with each message below, and do not call other tools yourself.
+        await t.send(`Please investigate these three independent checks in parallel using the built-in agent tool. Your next response must emit all three agent calls together. Do not call one agent and wait before issuing the others. Do not call other tools yourself.
 
 1. "Call probe exactly once with check=first. After it returns, reply with exactly the result value from the tool."
 2. "Call probe exactly once with check=second. After it returns, reply with exactly the result value from the tool."

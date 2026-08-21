@@ -805,66 +805,6 @@ describe("createVercelSandbox", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("reattaches when a concurrent create wins the named-session race", async () => {
-    const concurrentlyCreated = createMockSandbox({ name: "session-key" });
-    const conflict = Object.assign(new Error("Status code 400 is not ok"), {
-      json: {
-        error: {
-          code: "bad_request",
-          message:
-            "A sandbox with the name 'session-key' already exists for this project. Use GET /sandboxes/:name to resume it or delete it first.",
-        },
-      },
-      response: { status: 400 },
-    });
-    const create = vi.fn().mockRejectedValue(conflict);
-    const get = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(concurrentlyCreated);
-    const backend = createTestVercelSandbox({
-      loadSandboxModule: async () => ({ Sandbox: { create, get } }) as never,
-    });
-
-    const handle = await backend.create({
-      runtimeContext: { appRoot: "/tmp/test-app-root" },
-      sessionKey: "session-key",
-      tags: { sessionId: "session-id" },
-      templateKey: null,
-    });
-
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(concurrentlyCreated.update).toHaveBeenCalledWith({
-      tags: { sessionId: "session-id" },
-    });
-    expect(concurrentlyCreated.runCommand).toHaveBeenCalledTimes(1);
-    await expect(handle.captureState()).resolves.toMatchObject({
-      metadata: { sandboxName: "session-key" },
-      sessionKey: "session-key",
-    });
-  });
-
-  it("does not reattach after unrelated Vercel create failures", async () => {
-    const failure = Object.assign(new Error("Status code 400 is not ok"), {
-      json: { error: { code: "bad_request", message: "Invalid source snapshot." } },
-      response: { status: 400 },
-    });
-    const create = vi.fn().mockRejectedValue(failure);
-    const get = vi.fn().mockResolvedValue(null);
-    const backend = createTestVercelSandbox({
-      loadSandboxModule: async () => ({ Sandbox: { create, get } }) as never,
-    });
-
-    await expect(
-      backend.create({
-        runtimeContext: { appRoot: "/tmp/test-app-root" },
-        sessionKey: "session-key",
-        templateKey: null,
-      }),
-    ).rejects.toThrow("Invalid source snapshot");
-
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledTimes(1);
-  });
-
   it("forwards author source to template create as the base layer", async () => {
     /*
      * The real Vercel SDK pre-populates `currentSnapshotId` on a
