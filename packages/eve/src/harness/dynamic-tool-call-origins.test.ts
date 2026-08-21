@@ -9,9 +9,14 @@ import {
   recordDynamicToolCallOrigin,
   releaseDynamicToolCallOrigin,
   releaseDynamicToolCallOriginsForTurn,
+  resolveDynamicToolOriginDeployment,
 } from "#harness/dynamic-tool-call-origins.js";
 
-function definition(definitionId: string, name = "update"): DurableDynamicToolMetadata {
+function definition(
+  definitionId: string,
+  name = "update",
+  runtimeDeploymentId?: string,
+): DurableDynamicToolMetadata {
   return {
     callbacks: {
       execute: { closure: { value: definitionId }, stepId: `execute-${definitionId}` },
@@ -24,6 +29,7 @@ function definition(definitionId: string, name = "update"): DurableDynamicToolMe
     name,
     ownerId: "tenant-tools",
     resolverSlug: "tenant-tools",
+    runtimeDeploymentId,
     runtimeRevision: "deployment:one",
     sourceId: "agent/tools/tenant.ts",
   };
@@ -125,6 +131,46 @@ describe("dynamic tool call origins", () => {
 
     expect(Object.keys(reconciled.calls)).toEqual(["call-approval", "call-auth"]);
     expect(Object.keys(reconciled.definitions)).toEqual(["approval", "auth"]);
+  });
+
+  it("selects the deployment for the call or authorization attempt being resumed", () => {
+    let state = record(
+      createDynamicToolOriginState(),
+      "call-a",
+      definition("definition-a", "update", "deployment-a"),
+    );
+    state = record(state, "call-b", definition("definition-b", "update", "deployment-b"), "turn-b");
+    state = addDynamicToolAuthorizationAttempts(state, "call-b", ["attempt-b"]);
+
+    expect(
+      resolveDynamicToolOriginDeployment(state, {
+        authorizationAttemptIds: new Set(),
+        callIds: new Set(["call-a"]),
+      }),
+    ).toBe("deployment-a");
+    expect(
+      resolveDynamicToolOriginDeployment(state, {
+        authorizationAttemptIds: new Set(["attempt-b"]),
+        callIds: new Set(),
+      }),
+    ).toBe("deployment-b");
+    expect(() =>
+      resolveDynamicToolOriginDeployment(state, {
+        authorizationAttemptIds: new Set(["attempt-b"]),
+        callIds: new Set(["call-a"]),
+      }),
+    ).toThrow("spans multiple originating deployments");
+  });
+
+  it("fails closed when a matching origin has no deployment", () => {
+    const state = record(createDynamicToolOriginState(), "call-a");
+
+    expect(() =>
+      resolveDynamicToolOriginDeployment(state, {
+        authorizationAttemptIds: new Set(),
+        callIds: new Set(["call-a"]),
+      }),
+    ).toThrow('Dynamic tool call "call-a" does not record an originating deployment');
   });
 
   it("fails closed for unknown versions and malformed references", () => {

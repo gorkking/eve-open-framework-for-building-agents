@@ -2731,9 +2731,7 @@ async function handleStepResult(input: {
     const { challenges } = signal;
     addAuthorizationAttemptsForDynamicToolCall(
       callId,
-      challenges.flatMap((challenge) =>
-        challenge.attemptId === undefined ? [] : [challenge.attemptId],
-      ),
+      challenges.map((challenge) => challenge.attemptId ?? challenge.name),
     );
 
     if (emit) {

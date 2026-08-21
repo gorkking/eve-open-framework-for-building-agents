@@ -1,5 +1,3 @@
-import type { ModelMessage } from "ai";
-
 import type { AlsContext } from "#context/container.js";
 import { contextStorage } from "#context/container.js";
 import type { ContextReader } from "#context/key.js";
@@ -13,6 +11,7 @@ import { getPendingAuthorization } from "#harness/authorization.js";
 import {
   addDynamicToolAuthorizationAttempts,
   createDynamicToolOriginState,
+  parseDynamicToolOriginState,
   readDynamicToolCallOrigin,
   readDynamicToolOriginDefinition,
   reconcileDynamicToolCallOrigins,
@@ -27,7 +26,7 @@ import type { SessionStateMap } from "#harness/types.js";
 export function resolveDynamicToolMetadataForCall(input: {
   readonly callId: string;
   readonly current?: DurableDynamicToolMetadata;
-  readonly knownCall: boolean;
+  readonly requireOrigin: boolean;
   readonly toolName: string;
 }): DurableDynamicToolMetadata | undefined {
   const ctx = contextStorage.getStore();
@@ -44,7 +43,7 @@ export function resolveDynamicToolMetadataForCall(input: {
     return readDynamicToolOriginDefinition(state, input.callId)!;
   }
   if (input.current === undefined) return undefined;
-  if (input.knownCall) {
+  if (input.requireOrigin) {
     throw new Error(
       `Dynamic tool call "${input.callId}" is pending, but its originating definition is missing. The call cannot safely resume.`,
     );
@@ -64,26 +63,6 @@ export function resolveDynamicToolMetadataForCall(input: {
     }),
   );
   return input.current;
-}
-
-export function hasDynamicToolCallInMessages(
-  messages: readonly ModelMessage[] | undefined,
-  callId: string,
-): boolean {
-  for (const message of messages ?? []) {
-    if (!Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (
-        typeof part === "object" &&
-        part !== null &&
-        "toolCallId" in part &&
-        part.toolCallId === callId
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 export function addAuthorizationAttemptsForDynamicToolCall(
@@ -133,8 +112,8 @@ export function reconcileDynamicToolOrigins(
     ),
   );
   const pendingAuthorizationAttemptIds = new Set(
-    getPendingAuthorization(sessionState)?.challenges.flatMap((challenge) =>
-      challenge.attemptId === undefined ? [] : [challenge.attemptId],
+    getPendingAuthorization(sessionState)?.challenges.map(
+      (challenge) => challenge.attemptId ?? challenge.name,
     ) ?? [],
   );
   writeOriginState(
@@ -151,14 +130,12 @@ export function readArchivedDynamicToolDefinitions(
 ): readonly DurableDynamicToolMetadata[] {
   const state = ctx.get(DynamicToolCallOriginsKey);
   if (state === undefined) return [];
-  readDynamicToolCallOrigin(state, "");
-  return Object.values(state.definitions);
+  return Object.values(parseDynamicToolOriginState(state).definitions);
 }
 
 function readOriginState(ctx: AlsContext): DurableDynamicToolOriginState {
   const state = ctx.get(DynamicToolCallOriginsKey) ?? createDynamicToolOriginState();
-  readDynamicToolCallOrigin(state, "");
-  return state;
+  return parseDynamicToolOriginState(state);
 }
 
 function writeOriginState(ctx: AlsContext, state: DurableDynamicToolOriginState): void {

@@ -22,6 +22,7 @@ import {
 import {
   AuthKey,
   CapabilitiesKey,
+  DynamicToolRuntimeDeploymentIdKey,
   ModeKey,
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
@@ -58,9 +59,8 @@ import {
 } from "#harness/workflow-runtime-action-state.js";
 import { getPendingWorkflowInterrupt } from "#harness/workflow-interrupt-state.js";
 import { getPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
-import type { HarnessSession, SettledTurn, StepInput, StepResult } from "#harness/types.js";
+import type { HarnessSession, StepInput, StepResult } from "#harness/types.js";
 import { getTurnUsageState, takeSessionUsageDelta, toUsage } from "#harness/turn-tag-state.js";
-import type { TokenUsage } from "#shared/token-usage.js";
 import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import {
   createAuthorizationCompletedEvent,
@@ -79,11 +79,8 @@ import {
 import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { forwardTaskEventToSessionCallback } from "#execution/task-event-callback.js";
 import { resolveEffectiveOutputSchema } from "#execution/effective-output-schema.js";
-import {
-  createDurableSessionState,
-  type DurableSessionState,
-  readDurableSession,
-} from "#execution/durable-session-store.js";
+import { createDurableSessionState, readDurableSession } from "#execution/durable-session-store.js";
+import type { DurableStepResult } from "#execution/durable-step-result.js";
 import type { TurnStepInput } from "#execution/durable-session-migrations/turn-workflow.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { appendTaskAgentAnnouncement } from "#execution/tasks/parent/agent-views.js";
@@ -97,70 +94,15 @@ import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
 import { createExecutionHistoryView } from "#execution/history-view.js";
-import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
+import { resolveDynamicRuntimeIdentity } from "#execution/dynamic-runtime-identity.js";
 
 const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
 
-/**
- * Result of one durable harness step. `cancelled` is returned so workflow-core
- * does not retry it; `park` carries the pending state needed by the next action.
- */
-export type DurableStepResult =
-  | {
-      readonly action: "continue" | "done";
-      readonly output?: unknown;
-      readonly isError?: boolean;
-      /**
-       * Optional durable pause for the turn workflow to fulfill before
-       * dispatching this result's next action.
-       */
-      readonly sleepDurationMs?: number;
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-      /** Session-total token usage; set on `done` when the session spent any. */
-      readonly usage?: TokenUsage;
-      /**
-       * Usage the final turn added beyond what earlier settled turns already
-       * reported; feeds the terminal `AgentTurnOutcome` for conversation
-       * children. Task sessions settle once, so their callers read `usage`.
-       */
-      readonly usageDelta?: TokenUsage;
-    }
-  | {
-      readonly action: "cancelled";
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-    }
-  | {
-      readonly action: "park";
-      readonly authorizationAttemptIds?: readonly string[];
-      readonly authorizationNames?: readonly string[];
-      readonly hasPendingAuthorization: boolean;
-      readonly hasPendingInputBatch: boolean;
-      readonly pendingRuntimeActionKeys?: readonly string[];
-      /**
-       * Selects the dispatch step for `pendingRuntimeActionKeys`:
-       * `dispatchTaskStep` when the agent runs `experimental.tasks`,
-       * `dispatchRuntimeActionsStep` otherwise (including when absent).
-       */
-      readonly tasksEnabled?: boolean;
-      readonly sleepDurationMs?: number;
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-      readonly settled?: SettledTurn;
-    }
-  | {
-      readonly action: "dispatch-workflow-runtime-actions";
-      readonly pendingRuntimeActionKeys: readonly string[];
-      readonly sleepDurationMs?: number;
-      readonly serializedContext: Record<string, unknown>;
-      readonly sessionState: DurableSessionState;
-    };
-
 export type { TurnStepInput };
+export type { DurableStepResult } from "#execution/durable-step-result.js";
 
 /**
  * Runs one atomic harness step inside a durable `"use step"` boundary.
@@ -350,11 +292,14 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     turnAgent: effectiveAgent.turnAgent,
   };
   const runtimeIdentity = buildRuntimeIdentity(effectiveNode);
+  let runtimeDeploymentId: string | undefined;
   try {
-    const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
-    const dynamicRuntimeRevision = deploymentId
-      ? `deployment:${deploymentId}`
-      : await resolveRuntimeCompiledArtifactsVersionedCacheKey(bundle.compiledArtifactsSource);
+    const dynamicRuntimeIdentity = await resolveDynamicRuntimeIdentity(
+      bundle.compiledArtifactsSource,
+      dynamicToolResolvers.length > 0,
+    );
+    runtimeDeploymentId = dynamicRuntimeIdentity.deploymentId;
+    const dynamicRuntimeRevision = dynamicRuntimeIdentity.revision;
     const sessionStarted = initialEmissionState.sessionStarted;
 
     if (!sessionStarted) {
@@ -376,6 +321,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           resolvers: dynamicToolResolvers,
           event: refreshEvent,
           messages: history.initial.messages,
+          runtimeDeploymentId,
           runtimeRevision: dynamicRuntimeRevision,
         }),
       ]);
@@ -454,6 +400,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // or the pending batch would re-park and later re-dispatch.
     throwIfTurnAborted(input.abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
+      if (runtimeDeploymentId !== undefined) {
+        ctx.setVirtualContext(DynamicToolRuntimeDeploymentIdKey, runtimeDeploymentId);
+      }
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
         input: resolved,

@@ -16,6 +16,7 @@ import { dispatchDynamicInstructionEvent } from "#context/dynamic-instruction-li
 import {
   AuthKey,
   ChannelInstrumentationKey,
+  DynamicToolCallOriginsKey,
   InitiatorAuthKey,
   LiveStepDynamicModelSelectionKey,
   ParentSessionKey,
@@ -8985,7 +8986,9 @@ describe("createToolLoopHarness", () => {
       state,
     });
 
-    const result = await runStep(session);
+    const ctx = new ContextContainer();
+    ctx.set(DynamicToolCallOriginsKey, { calls: {}, definitions: {}, version: 1 });
+    const result = await contextStorage.run(ctx, () => runStep(session));
 
     expect(result.next).toBeNull();
     expect(result.session).toMatchObject({
@@ -9007,6 +9010,7 @@ describe("createToolLoopHarness", () => {
     expect(resolveModel).not.toHaveBeenCalled();
     expect(compactMessages).not.toHaveBeenCalled();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
+    expect(ctx.get(DynamicToolCallOriginsKey)).toBeUndefined();
   });
 
   it("compacts user instructions as ordinary history without starting a model turn", async () => {

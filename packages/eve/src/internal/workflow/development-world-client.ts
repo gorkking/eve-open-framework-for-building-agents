@@ -196,6 +196,7 @@ function createQueueHandler(
         {
           generationId,
           source: createDiskRuntimeCompiledArtifactsSource(runtimeAppRoot, {
+            deploymentId: generationId,
             durableReference: "development-generation",
             moduleMapLoaderPath: resolvePackageSourceFilePath(
               "src/internal/authored-module-map-loader.ts",

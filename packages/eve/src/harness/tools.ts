@@ -23,17 +23,12 @@ import { normalizeToolJsonOutput, normalizeToolModelOutput } from "#harness/tool
 import type { ToolExecuteOptions } from "#shared/tool-definition.js";
 import { isAsyncIterable } from "#shared/async-iterable.js";
 import { resolveDynamicToolDefinitionForCall } from "#context/build-dynamic-tools.js";
-import { hasDynamicToolCallInMessages } from "#harness/dynamic-tool-call-routing.js";
 
 type NativeApprovalStatus = Exclude<ApprovalStatus, boolean>;
 
 const toolApprovals = new WeakMap<
   object,
-  (
-    toolInput: unknown,
-    callId: string,
-    messages: readonly import("ai").ModelMessage[],
-  ) => Promise<NativeApprovalStatus>
+  (toolInput: unknown, callId: string) => Promise<NativeApprovalStatus>
 >();
 
 /**
@@ -94,11 +89,7 @@ export function buildToolSet(input: {
                   value: authorizationPendingModelText(output.connections),
                 };
               }
-              const resolvedDefinition = resolveDynamicToolDefinitionForCall({
-                callId: toolCallId ?? "",
-                current: definition,
-                knownCall: true,
-              });
+              const resolvedDefinition = resolveToolDefinitionForOutput(definition, toolCallId);
               const authorToModelOutput = resolvedDefinition.toModelOutput;
               if (authorToModelOutput !== undefined) {
                 return normalizeToolModelOutput({
@@ -126,11 +117,7 @@ export function buildToolSet(input: {
                 readonly output: unknown;
                 readonly toolCallId?: string;
               }) => {
-                const resolvedDefinition = resolveDynamicToolDefinitionForCall({
-                  callId: toolCallId ?? "",
-                  current: definition,
-                  knownCall: true,
-                });
+                const resolvedDefinition = resolveToolDefinitionForOutput(definition, toolCallId);
                 const toModelOutput = resolvedDefinition.toModelOutput;
                 return normalizeToolModelOutput({
                   output:
@@ -195,7 +182,7 @@ export function wrapToolExecute(
     const resolvedDefinition = resolveDynamicToolDefinitionForCall({
       callId: options.toolCallId,
       current: definition,
-      knownCall: hasDynamicToolCallInMessages(options.messages, options.toolCallId),
+      requireOrigin: false,
     });
     const execute = resolvedDefinition.execute;
     if (execute === undefined) {
@@ -304,16 +291,12 @@ export async function buildToolSetWithProviderTools(input: {
 function buildApprovalFn(
   definition: HarnessToolDefinition,
   input: { readonly approvedTools?: ReadonlySet<string> },
-): (
-  toolInput: unknown,
-  callId: string,
-  messages: readonly import("ai").ModelMessage[],
-) => Promise<NativeApprovalStatus> {
-  return async (toolInput: unknown, callId: string, messages) => {
+): (toolInput: unknown, callId: string) => Promise<NativeApprovalStatus> {
+  return async (toolInput: unknown, callId: string) => {
     const resolvedDefinition = resolveDynamicToolDefinitionForCall({
       callId,
       current: definition,
-      knownCall: hasDynamicToolCallInMessages(messages, callId),
+      requireOrigin: false,
     });
     if (resolvedDefinition.approval === undefined) return undefined;
 
@@ -334,11 +317,30 @@ function buildApprovalFn(
 export function buildToolApproval(
   tools: ToolSet,
 ): ToolApprovalConfiguration<ToolSet, Record<string, unknown>> {
-  return async ({ messages = [], toolCall }) => {
+  return async ({ toolCall }) => {
     const toolDefinition = tools[toolCall.toolName];
     if (toolDefinition === undefined) return undefined;
 
     const approval = toolApprovals.get(toolDefinition);
-    return (await approval?.(toolCall.input, toolCall.toolCallId, messages)) as ToolApprovalStatus;
+    return (await approval?.(toolCall.input, toolCall.toolCallId)) as ToolApprovalStatus;
   };
+}
+
+function resolveToolDefinitionForOutput(
+  definition: HarnessToolDefinition,
+  toolCallId: string | undefined,
+): HarnessToolDefinition {
+  if (toolCallId === undefined) {
+    if (definition.dynamicDefinition !== undefined) {
+      throw new Error(
+        `Dynamic tool "${definition.name}" cannot project output without a tool call id.`,
+      );
+    }
+    return definition;
+  }
+  return resolveDynamicToolDefinitionForCall({
+    callId: toolCallId,
+    current: definition,
+    requireOrigin: true,
+  });
 }

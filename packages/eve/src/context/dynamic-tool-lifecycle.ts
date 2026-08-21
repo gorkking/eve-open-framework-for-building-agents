@@ -6,6 +6,7 @@ import { replayDynamicTools } from "#context/build-dynamic-tools.js";
 import type { ContextContainer } from "#context/container.js";
 import type { ContextKey } from "#context/key.js";
 import {
+  DynamicToolRuntimeDeploymentIdKey,
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
   StepDynamicToolMetadataKey,
@@ -217,6 +218,7 @@ function createMetadata(input: {
   readonly event: "session.started" | "turn.started" | "step.started";
   readonly name: string;
   readonly resolver: ResolvedDynamicToolResolver;
+  readonly runtimeDeploymentId?: string;
   readonly runtimeRevision: string;
 }): DurableDynamicToolMetadata {
   const metadata = {
@@ -229,6 +231,7 @@ function createMetadata(input: {
     ownerId: input.resolver.slug,
     outputSchema: serializeOutputSchema(input.entry.outputSchema),
     resolverSlug: input.resolver.slug,
+    runtimeDeploymentId: input.runtimeDeploymentId,
     runtimeRevision: input.runtimeRevision,
     sourceId: input.resolver.sourceId,
   };
@@ -245,6 +248,7 @@ function createMetadata(input: {
         metadata.inputSchema,
         metadata.outputSchema ?? null,
         metadata.callbacks,
+        metadata.runtimeDeploymentId ?? null,
       ]),
     )
     .digest("base64url")}`;
@@ -261,6 +265,7 @@ async function resolveToolsFromEvent(
   event: UnstampedMessageStreamEvent,
   messages: readonly ModelMessage[],
   runtimeRevision = ctx.get(SessionDynamicToolRuntimeRevisionKey) ?? "runtime:unversioned",
+  runtimeDeploymentId = ctx.get(DynamicToolRuntimeDeploymentIdKey),
 ): Promise<ResolvedDynamicToolEvent> {
   const outcomes = await Promise.allSettled(
     resolvers.map(async (resolver) => {
@@ -278,6 +283,7 @@ async function resolveToolsFromEvent(
             event: event.type as "session.started" | "turn.started" | "step.started",
             name,
             resolver,
+            runtimeDeploymentId,
             runtimeRevision,
           }),
         ),
@@ -385,6 +391,7 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   readonly resolvers: readonly ResolvedDynamicToolResolver[];
   readonly event: SessionStartedStreamEvent;
   readonly messages: readonly ModelMessage[];
+  readonly runtimeDeploymentId?: string;
   readonly runtimeRevision: string;
 }): Promise<void> {
   if (input.ctx.get(SessionDynamicToolRuntimeRevisionKey) === input.runtimeRevision) return;
@@ -400,6 +407,7 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
           input.event,
           input.messages,
           input.runtimeRevision,
+          input.runtimeDeploymentId,
         );
   input.ctx.set(SessionDynamicToolMetadataKey, metadata);
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);

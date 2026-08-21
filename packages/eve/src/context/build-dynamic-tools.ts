@@ -136,13 +136,13 @@ export function buildResponseAuthorizationTools(input: {
   for (const tool of input.context === undefined ? [] : buildDynamicTools(input.context)) {
     if (!tools.has(tool.name)) tools.set(tool.name, tool);
   }
+  for (const [name, tool] of input.authoredTools) {
+    if (!tools.has(name)) tools.set(name, tool);
+  }
   for (const tool of input.context === undefined
     ? []
     : replayDynamicTools(readArchivedDynamicToolDefinitions(input.context))) {
     if (!tools.has(tool.name)) tools.set(tool.name, tool);
-  }
-  for (const [name, tool] of input.authoredTools) {
-    if (!tools.has(name)) tools.set(name, tool);
   }
   return tools;
 }
@@ -158,13 +158,13 @@ export function buildDynamicTools(ctx: ContextReader): readonly HarnessToolDefin
 export function resolveDynamicToolDefinitionForCall(input: {
   readonly callId: string;
   readonly current: HarnessToolDefinition;
-  readonly knownCall: boolean;
+  readonly requireOrigin: boolean;
 }): HarnessToolDefinition {
   const currentMetadata = input.current.dynamicDefinition;
   const resolved = resolveDynamicToolMetadataForCall({
     callId: input.callId,
     current: currentMetadata,
-    knownCall: input.knownCall,
+    requireOrigin: input.requireOrigin,
     toolName: input.current.name,
   });
   if (resolved === undefined) return input.current;

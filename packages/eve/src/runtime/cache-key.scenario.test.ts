@@ -82,6 +82,22 @@ describe("resolveRuntimeCompiledArtifactsVersionedCacheKey", () => {
       ),
     ).resolves.toEqual(`disk:${appRoot}:authored-source:${moduleMapLoaderPath}`);
   });
+
+  it("keeps deployment-bound sources separate from unbound sources", async () => {
+    const appRoot = await createScratchDirectory("eve-cache-key-");
+    const moduleMapLoaderPath = "/tmp/authored-module-map-loader.mjs";
+
+    await expect(
+      resolveRuntimeCompiledArtifactsVersionedCacheKey(
+        createDiskRuntimeCompiledArtifactsSource(appRoot, {
+          deploymentId: "generation-a",
+          moduleMapLoaderPath,
+        }),
+      ),
+    ).resolves.toEqual(
+      `disk:${appRoot}:authored-source:${moduleMapLoaderPath}:deployment:generation-a`,
+    );
+  });
 });
 
 async function writeCompileMetadata(input: {

@@ -31,6 +31,11 @@ export function createDynamicToolOriginState(): DurableDynamicToolOriginState {
   return { calls: {}, definitions: {}, version: 1 };
 }
 
+export function parseDynamicToolOriginState(value: unknown): DurableDynamicToolOriginState {
+  assertDynamicToolOriginState(value as DurableDynamicToolOriginState);
+  return value as DurableDynamicToolOriginState;
+}
+
 export function readDynamicToolCallOrigin(
   state: DurableDynamicToolOriginState,
   callId: string,
@@ -159,6 +164,41 @@ export function reconcileDynamicToolCallOrigins(
   );
   if (Object.keys(calls).length === Object.keys(state.calls).length) return state;
   return collectUnreferencedDefinitions({ calls, definitions: state.definitions, version: 1 });
+}
+
+export function resolveDynamicToolOriginDeployment(
+  state: DurableDynamicToolOriginState,
+  input: {
+    readonly authorizationAttemptIds: ReadonlySet<string>;
+    readonly callIds: ReadonlySet<string>;
+  },
+): string | undefined {
+  assertDynamicToolOriginState(state);
+  const deployments = new Set<string>();
+  let matched = false;
+  for (const origin of Object.values(state.calls)) {
+    const matchesCall = input.callIds.has(origin.callId);
+    const matchesAuthorization = origin.authorizationAttemptIds?.some((attemptId) =>
+      input.authorizationAttemptIds.has(attemptId),
+    );
+    if (!matchesCall && matchesAuthorization !== true) continue;
+
+    matched = true;
+    const deploymentId = state.definitions[origin.definitionId]?.runtimeDeploymentId;
+    if (deploymentId === undefined) {
+      throw new Error(
+        `Dynamic tool call "${origin.callId}" does not record an originating deployment and cannot safely resume.`,
+      );
+    }
+    deployments.add(deploymentId);
+  }
+  if (deployments.size > 1) {
+    throw new Error(
+      `Dynamic tool continuation spans multiple originating deployments (${[...deployments].join(", ")}). Respond to calls from one deployment at a time.`,
+    );
+  }
+  if (!matched) return undefined;
+  return deployments.values().next().value as string | undefined;
 }
 
 function collectUnreferencedDefinitions(

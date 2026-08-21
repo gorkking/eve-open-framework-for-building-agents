@@ -18,6 +18,8 @@ export interface RuntimeBundledCompiledArtifactsSource {
  */
 export interface RuntimeDiskCompiledArtifactsSource {
   readonly appRoot: string;
+  /** Workflow deployment selected for this immutable artifact source. */
+  readonly deploymentId?: string;
   readonly kind: "disk";
   /**
    * Native filesystem path to the package-owned authored-source module map
@@ -58,6 +60,7 @@ export function createBundledRuntimeCompiledArtifactsSource(): RuntimeBundledCom
 export function createDiskRuntimeCompiledArtifactsSource(
   appRoot: string,
   options: {
+    readonly deploymentId?: string;
     readonly durableReference?: "development-generation";
     readonly moduleMapLoaderPath?: string;
     readonly sandboxAppRoot?: string;
@@ -66,10 +69,12 @@ export function createDiskRuntimeCompiledArtifactsSource(
   if (
     options.moduleMapLoaderPath !== undefined ||
     options.sandboxAppRoot !== undefined ||
-    options.durableReference !== undefined
+    options.durableReference !== undefined ||
+    options.deploymentId !== undefined
   ) {
     return {
       appRoot,
+      deploymentId: options.deploymentId,
       durableReference: options.durableReference,
       kind: "disk",
       moduleMapLoaderPath: options.moduleMapLoaderPath,
@@ -111,9 +116,12 @@ export function getRuntimeCompiledArtifactsCacheKey(
     return "bundled";
   }
 
-  if (source.moduleMapLoaderPath !== undefined) {
-    return `disk:${source.appRoot}:authored-source:${source.moduleMapLoaderPath}`;
-  }
+  const sourceKey =
+    source.moduleMapLoaderPath !== undefined
+      ? `disk:${source.appRoot}:authored-source:${source.moduleMapLoaderPath}`
+      : `disk:${source.appRoot}`;
 
-  return `disk:${source.appRoot}`;
+  return source.deploymentId === undefined
+    ? sourceKey
+    : `${sourceKey}:deployment:${source.deploymentId}`;
 }

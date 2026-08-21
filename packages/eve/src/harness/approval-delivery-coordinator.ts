@@ -340,7 +340,7 @@ async function authorizeCandidate(input: {
       : resolveDynamicToolDefinitionForCall({
           callId: input.request.action.callId,
           current: currentDefinition,
-          knownCall: true,
+          requireOrigin: true,
         }).approval;
   const responsePolicy =
     approval !== undefined && typeof approval !== "function" ? approval.response : undefined;
@@ -408,9 +408,7 @@ async function authorizeCandidate(input: {
     if (isAuthorizationSignal(authorization)) {
       addAuthorizationAttemptsForDynamicToolCall(
         input.request.action.callId,
-        authorization.challenges.flatMap((challenge) =>
-          challenge.attemptId === undefined ? [] : [challenge.attemptId],
-        ),
+        authorization.challenges.map((challenge) => challenge.attemptId ?? challenge.name),
       );
       const providerExpiresAt = authorization.challenges
         .map((entry) => Date.parse(entry.challenge.expiresAt ?? ""))

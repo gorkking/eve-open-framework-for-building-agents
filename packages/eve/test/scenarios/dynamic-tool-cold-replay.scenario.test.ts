@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -12,7 +12,12 @@ import {
   DEV_SERVER_SCENARIO_TIMEOUT_MS,
   TRANSACTIONAL_REBUILD_DESCRIPTOR,
 } from "./dev-server-descriptors.js";
-import { startEveDev, waitForCondition } from "./dev-server-harness.js";
+import {
+  forceDevelopmentRebuild,
+  startEveDev,
+  waitForCondition,
+  withinDeadline,
+} from "./dev-server-harness.js";
 
 const scenarioApp = useScenarioApp();
 
@@ -75,13 +80,14 @@ export function createDurableMarkerTool(key: string) {
 }
 `;
 
-const DYNAMIC_TOOLS_SOURCE = `import { appendFileSync } from "node:fs";
+function createDynamicToolsSource(revision: string): string {
+  return `import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineDynamic } from "eve/tools";
 import { createDurableMarkerTool } from "../lib/durable-factory.ts";
 
-const guardedMarker = createDurableMarkerTool("guarded");
-const companionMarker = createDurableMarkerTool("companion");
+const guardedMarker = createDurableMarkerTool("guarded-${revision}");
+const companionMarker = createDurableMarkerTool("companion-${revision}");
 
 export default defineDynamic({
   events: {
@@ -95,6 +101,7 @@ export default defineDynamic({
   },
 });
 `;
+}
 
 const DYNAMIC_TOOL_COLD_REPLAY_DESCRIPTOR: ScenarioAppDescriptor = {
   ...TRANSACTIONAL_REBUILD_DESCRIPTOR,
@@ -106,7 +113,7 @@ const DYNAMIC_TOOL_COLD_REPLAY_DESCRIPTOR: ScenarioAppDescriptor = {
       ),
     ),
     "agent/lib/durable-factory.ts": DURABLE_FACTORY_SOURCE,
-    "agent/tools/durable-dynamic.ts": DYNAMIC_TOOLS_SOURCE,
+    "agent/tools/durable-dynamic.ts": createDynamicToolsSource("a"),
   },
 };
 
@@ -125,33 +132,44 @@ async function readMarker(appRoot: string, phase: string, key: string): Promise<
 
 describe("dynamic tool cold replay", () => {
   it(
-    "resumes every callback phase from an imported factory in a fresh process",
+    "retains an originating definition across a rebuilt module and fresh process",
     async () => {
       const app = await scenarioApp(DYNAMIC_TOOL_COLD_REPLAY_DESCRIPTOR);
-      const pinnedEnv = {
-        VERCEL_DEPLOYMENT_ID: "dynamic-tool-cold-replay",
-        WORKFLOW_INLINE_OWNERSHIP_LEASE_SECONDS: "1",
+      const env = { WORKFLOW_INLINE_OWNERSHIP_LEASE_SECONDS: "1" };
+      let server = await startEveDev(app.appRoot, { env });
+      let previousServerOutput = "";
+      const complete = async <T>(operation: Promise<T>, stage: string): Promise<T> => {
+        try {
+          return await withinDeadline(operation, `Timed out during ${stage}.`, 45_000);
+        } catch (error) {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}\n\nprevious server:\n${previousServerOutput}\n\nstdout:\n${server.stdout()}\n\nstderr:\n${server.stderr()}`,
+            { cause: error },
+          );
+        }
       };
-      let server = await startEveDev(app.appRoot, { env: pinnedEnv });
 
       try {
         const client = new Client({ host: server.url });
         const created = await client.sessions.create({ message: "Hello." });
-        await expect(created.response.result()).resolves.toMatchObject({
+        await expect(
+          complete(created.response.result(), "session creation"),
+        ).resolves.toMatchObject({
           inputRequests: [],
           status: "waiting",
         });
 
-        const waiting = await (
-          await created.session.send("Call tools in parallel: guarded_marker, companion_marker")
-        ).result();
+        const waitingResponse = await created.session.send(
+          "Call tools in parallel: guarded_marker, companion_marker",
+        );
+        const waiting = await complete(waitingResponse.result(), "originating approval requests");
         expect(waiting.status).toBe("waiting");
         expect(
           waiting.inputRequests,
           `Expected two approval requests.\n\nevents:\n${JSON.stringify(waiting.events, null, 2)}\n\nstdout:\n${server.stdout()}\n\nstderr:\n${server.stderr()}`,
         ).toHaveLength(2);
 
-        const firstRequest = await readMarker(app.appRoot, "approval-request", "guarded");
+        const firstRequest = await readMarker(app.appRoot, "approval-request", "guarded-a");
         const resolverRunsBeforeRestart = (
           await readFile(join(app.appRoot, ".dynamic-resolver-runs"), "utf8")
         )
@@ -160,6 +178,19 @@ describe("dynamic tool cold replay", () => {
         expect(resolverRunsBeforeRestart).toHaveLength(1);
         const sessionState = created.session.state;
 
+        // Shift every transformed callback's source coordinate and replace the
+        // same model-visible names before resuming the parked generation.
+        await writeFile(
+          join(app.appRoot, "agent", "lib", "durable-factory.ts"),
+          `\n\n${DURABLE_FACTORY_SOURCE}`,
+        );
+        await writeFile(
+          join(app.appRoot, "agent", "tools", "durable-dynamic.ts"),
+          createDynamicToolsSource("b"),
+        );
+        await complete(forceDevelopmentRebuild(server.url), "candidate generation rebuild");
+
+        previousServerOutput = `stdout:\n${server.stdout()}\n\nstderr:\n${server.stderr()}`;
         await server.crash();
         await waitForCondition(async () => {
           try {
@@ -169,23 +200,22 @@ describe("dynamic tool cold replay", () => {
             return error instanceof Error && "code" in error && error.code === "ENOENT";
           }
         }, "The crashed development server did not release its state record.");
-        server = await startEveDev(app.appRoot, { env: pinnedEnv });
+        server = await startEveDev(app.appRoot, { env });
 
         const resumedSession = new Client({ host: server.url }).sessions.attach(
           sessionState.sessionId,
           { streamIndex: sessionState.streamIndex },
         );
-        const resumed = await (
-          await resumedSession.respond(
-            waiting.inputRequests.map((request) => ({
-              optionId: "approve",
-              requestId: request.requestId,
-            })),
-          )
-        ).result();
+        const resumedResponse = await resumedSession.respond(
+          waiting.inputRequests.map((request) => ({
+            optionId: "approve",
+            requestId: request.requestId,
+          })),
+        );
+        const resumed = await complete(resumedResponse.result(), "originating approval resume");
         expect(resumed.status).toBe("waiting");
 
-        for (const key of ["guarded", "companion"]) {
+        for (const key of ["guarded-a", "companion-a"]) {
           const response = await readMarker(app.appRoot, "approval-response", key);
           const execute = await readMarker(app.appRoot, "execute", key);
           const projection = await readMarker(app.appRoot, "projection", key);
@@ -202,6 +232,48 @@ describe("dynamic tool cold replay", () => {
           .trim()
           .split("\n");
         expect(resolverRunsAfterRestart).toEqual(resolverRunsBeforeRestart);
+
+        const nextWaitingResponse = await resumedSession.send(
+          "Call tools in parallel: guarded_marker, companion_marker",
+        );
+        const nextWaiting = await complete(
+          nextWaitingResponse.result(),
+          "replacement approval request",
+        );
+        expect(
+          nextWaiting.inputRequests,
+          `Expected replacement approval requests.\n\nevents:\n${JSON.stringify(nextWaiting.events, null, 2)}\n\nstdout:\n${server.stdout()}\n\nstderr:\n${server.stderr()}`,
+        ).toHaveLength(2);
+        const secondRequest = await readMarker(app.appRoot, "approval-request", "guarded-b");
+        expect(secondRequest.pid).not.toBe(firstRequest.pid);
+
+        const nextResponseStream = await resumedSession.respond(
+          nextWaiting.inputRequests.map((request) => ({
+            optionId: "approve",
+            requestId: request.requestId,
+          })),
+        );
+        const nextResult = await complete(
+          nextResponseStream.result(),
+          "replacement approval resume",
+        );
+        expect(nextResult.status).toBe("waiting");
+
+        for (const key of ["guarded-b", "companion-b"]) {
+          const nextResponse = await readMarker(app.appRoot, "approval-response", key);
+          const nextExecute = await readMarker(app.appRoot, "execute", key);
+          const nextProjection = await readMarker(app.appRoot, "projection", key);
+          expect(nextResponse.pid).toBe(secondRequest.pid);
+          expect(nextExecute.pid).toBe(secondRequest.pid);
+          expect(nextProjection.pid).toBe(secondRequest.pid);
+        }
+
+        const resolverRunsAfterNextTurn = (
+          await readFile(join(app.appRoot, ".dynamic-resolver-runs"), "utf8")
+        )
+          .trim()
+          .split("\n");
+        expect(resolverRunsAfterNextTurn).toHaveLength(2);
       } finally {
         await server.stop();
       }

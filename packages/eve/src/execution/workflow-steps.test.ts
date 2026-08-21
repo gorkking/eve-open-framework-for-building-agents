@@ -8,6 +8,7 @@ import { ContextKey } from "#context/key.js";
 import {
   AuthKey,
   ContinuationTokenKey,
+  DynamicToolCallOriginsKey,
   DynamicSubagentAgentConfigKey,
   ModeKey,
   SessionCallbackKey,
@@ -18,6 +19,7 @@ import {
   SessionDynamicToolRuntimeRevisionKey,
   SessionIdKey,
   TurnTaskDeliveryKey,
+  type DurableDynamicToolMetadata,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { serializeContext } from "#context/serialize.js";
@@ -28,6 +30,11 @@ import { TurnCancelledError } from "#harness/turn-cancellation.js";
 import { getPendingAuthorization, setPendingAuthorization } from "#harness/authorization.js";
 import { getProxyInputRequests, upsertProxyInputRequests } from "#harness/proxy-input-requests.js";
 import { appendPendingInputBatch } from "#harness/input-requests.js";
+import {
+  addDynamicToolAuthorizationAttempts,
+  createDynamicToolOriginState,
+  recordDynamicToolCallOrigin,
+} from "#harness/dynamic-tool-call-origins.js";
 import type { HarnessSession, StepResult } from "#harness/types.js";
 import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
 import { createInputRequestedEvent } from "#protocol/message.js";
@@ -162,6 +169,7 @@ vi.mock("../runtime/sessions/compiled-agent-cache.js", () => ({
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   getHookByToken: vi.fn(async (token: string) => currentSessionHook(token)),
   getRun: (...args: unknown[]) => getRunMock(...args),
+  getWorld: vi.fn(async () => ({ getDeploymentId: async () => "deployment-test" })),
   resumeHook: (...args: unknown[]) => resumeHookMock(...args),
   start: (...args: unknown[]) => startMock(...args),
 }));
@@ -650,6 +658,70 @@ describe("dispatchTurnStep", () => {
     };
   }
 
+  function dynamicDefinition(deploymentId: string): DurableDynamicToolMetadata {
+    return {
+      callbacks: { execute: { closure: {}, stepId: `execute-${deploymentId}` } },
+      definitionId: `definition-${deploymentId}`,
+      description: "Update",
+      entryKey: "update",
+      event: "turn.started",
+      inputSchema: { type: "object" },
+      name: "update",
+      ownerId: "updates",
+      resolverSlug: "updates",
+      runtimeDeploymentId: deploymentId,
+      runtimeRevision: `deployment:${deploymentId}`,
+      sourceId: "agent/tools/update.ts",
+    };
+  }
+
+  function createOriginContinuationInput(
+    delivery: Parameters<typeof dispatchTurnStep>[0]["delivery"],
+  ): Parameters<typeof dispatchTurnStep>[0] {
+    const definition = dynamicDefinition("generation-a");
+    const origins = recordDynamicToolCallOrigin(createDynamicToolOriginState(), definition, {
+      callId: "call-a",
+      originatingStepIndex: 0,
+      originatingTurnId: "turn-a",
+      toolName: definition.name,
+    });
+    const session = appendPendingInputBatch({
+      requests: [
+        {
+          action: {
+            callId: "call-a",
+            input: {},
+            kind: "tool-call",
+            toolName: definition.name,
+          },
+          allowFreeform: false,
+          display: "confirmation",
+          kind: "tool-approval",
+          options: [
+            { id: "approve", label: "Approve" },
+            { id: "cancel", label: "Cancel" },
+          ],
+          prompt: "Approve update",
+          requestId: "approval-a",
+        },
+      ],
+      responseMessages: [],
+      session: createStubSession(),
+    });
+    return {
+      ...createTurnInput(),
+      delivery,
+      serializedContext: { [DynamicToolCallOriginsKey.name]: origins },
+      sessionState: {
+        ...createStubSessionState(),
+        snapshot: {
+          session: projectToDurableSession(session),
+          version: DURABLE_SESSION_VERSION,
+        },
+      },
+    };
+  }
+
   it("starts turn workflows on the latest deployment in Vercel production", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     const input = createTurnInput();
@@ -684,6 +756,114 @@ describe("dispatchTurnStep", () => {
       turnWorkflowReference,
       [createTurnWorkflowInput(input)],
       expect.objectContaining({ deploymentId: "latest" }),
+    );
+  });
+
+  it("routes an approval continuation to its originating deployment", async () => {
+    vi.stubEnv("EVE_DEV", "1");
+    const input = createOriginContinuationInput({
+      kind: "deliver",
+      payloads: [{ inputResponses: [{ optionId: "approve", requestId: "approval-a" }] }],
+    });
+    startMock.mockResolvedValue({ runId: "turn-run" });
+
+    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+
+    expect(startMock).toHaveBeenCalledWith(
+      turnWorkflowReference,
+      [createTurnWorkflowInput(input)],
+      expect.objectContaining({ deploymentId: "generation-a" }),
+    );
+  });
+
+  it("keeps an unrelated message on latest while an older origin remains pending", async () => {
+    vi.stubEnv("EVE_DEV", "1");
+    const input = createOriginContinuationInput({
+      kind: "deliver",
+      payloads: [{ message: "new work" }],
+    });
+    startMock.mockResolvedValue({ runId: "turn-run" });
+
+    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+
+    expect(startMock).toHaveBeenCalledWith(
+      turnWorkflowReference,
+      [createTurnWorkflowInput(input)],
+      expect.objectContaining({ deploymentId: "latest" }),
+    );
+  });
+
+  it("routes a legacy authorization callback through its originating deployment", async () => {
+    vi.stubEnv("EVE_DEV", "1");
+    const base = createOriginContinuationInput({ kind: "deliver", payloads: [] });
+    const origins = addDynamicToolAuthorizationAttempts(
+      base.serializedContext[DynamicToolCallOriginsKey.name] as ReturnType<
+        typeof createDynamicToolOriginState
+      >,
+      "call-a",
+      ["github"],
+    );
+    const input = {
+      ...base,
+      delivery: {
+        kind: "deliver" as const,
+        payloads: [
+          {
+            authorizationCallback: {
+              callback: { params: {} },
+              connectionName: "github",
+              legacy: true,
+            },
+          },
+        ],
+      },
+      serializedContext: { [DynamicToolCallOriginsKey.name]: origins },
+    };
+    startMock.mockResolvedValue({ runId: "turn-run" });
+
+    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+
+    expect(startMock).toHaveBeenCalledWith(
+      turnWorkflowReference,
+      [createTurnWorkflowInput(input)],
+      expect.objectContaining({ deploymentId: "generation-a" }),
+    );
+  });
+
+  it("routes a correlated authorization callback through its originating deployment", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    const base = createOriginContinuationInput({ kind: "deliver", payloads: [] });
+    const origins = addDynamicToolAuthorizationAttempts(
+      base.serializedContext[DynamicToolCallOriginsKey.name] as ReturnType<
+        typeof createDynamicToolOriginState
+      >,
+      "call-a",
+      ["attempt-a"],
+    );
+    const input = {
+      ...base,
+      delivery: {
+        kind: "deliver" as const,
+        payloads: [
+          {
+            authorizationCallback: {
+              attemptId: "attempt-a",
+              callback: { params: {} },
+              connectionName: "github",
+            },
+          },
+        ],
+      },
+      serializedContext: { [DynamicToolCallOriginsKey.name]: origins },
+    };
+    startMock.mockResolvedValue({ runId: "turn-run" });
+
+    await expect(dispatchTurnStep(input)).resolves.toEqual({ runId: "turn-run" });
+
+    expect(startMock).toHaveBeenCalledWith(
+      turnWorkflowReference,
+      [createTurnWorkflowInput(input)],
+      expect.objectContaining({ deploymentId: "generation-a" }),
     );
   });
 

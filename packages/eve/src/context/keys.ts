@@ -166,6 +166,8 @@ export interface DurableDynamicToolMetadata {
   readonly ownerId: string;
   readonly outputSchema?: JsonObject;
   readonly resolverSlug: string;
+  /** Workflow deployment or development generation that can execute this definition. */
+  readonly runtimeDeploymentId?: string;
   readonly runtimeRevision: string;
   readonly sourceId: string;
   readonly entryKey: string;
@@ -185,6 +187,11 @@ export const SessionDynamicToolMetadataKey = new ContextKey<readonly DurableDyna
  */
 export const SessionDynamicToolRuntimeRevisionKey = new ContextKey<string>(
   "eve.sessionDynamicToolRuntimeRevision",
+);
+
+/** Deployment selected for the current turn; virtual and never serialized on its own. */
+export const DynamicToolRuntimeDeploymentIdKey = new ContextKey<string>(
+  "eve.dynamicToolRuntimeDeploymentId",
 );
 
 /**

@@ -27,6 +27,7 @@ const { buildDynamicTools, buildResponseAuthorizationTools } =
 import { ContextContainer } from "#context/container.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import {
+  DynamicToolRuntimeDeploymentIdKey,
   SessionIdKey,
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
@@ -442,6 +443,7 @@ describe("dispatchDynamicToolEvent", () => {
     const entry = createReplayableTool("stable definition");
     const resolver = createResolver("stable", ["session.started"], () => ({ tool: entry }));
     ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_one");
+    ctx.setVirtualContext(DynamicToolRuntimeDeploymentIdKey, "dpl_one");
 
     await dispatchDynamicToolEvent({
       ctx,
@@ -463,6 +465,7 @@ describe("dispatchDynamicToolEvent", () => {
     expect(first).toMatchObject({
       event: "session.started",
       ownerId: "stable",
+      runtimeDeploymentId: "dpl_one",
       runtimeRevision: "deployment:dpl_one",
       sourceId: "test:stable",
     });
@@ -472,6 +475,7 @@ describe("dispatchDynamicToolEvent", () => {
       resolvers: [resolver],
       messages: [],
       event: createSessionStartedEvent(),
+      runtimeDeploymentId: "dpl_two",
       runtimeRevision: "deployment:dpl_two",
     });
 

@@ -224,6 +224,145 @@ describe("dynamic tool call routing", () => {
     expect(restored.get(DynamicToolCallOriginsKey)).toBeUndefined();
   });
 
+  it("releases a parked origin when approval is denied", async () => {
+    const b = definition({ definitionId: "definition-b", value: "B" });
+    const callbacks = installCallbacks([b]);
+    const ctx = new ContextContainer();
+    ctx.set(SessionKey, {
+      auth: { current: null, initiator: null },
+      sessionId: "dynamic-origin-denied",
+      turn: { id: "turn-b", sequence: 0 },
+    });
+    ctx.set(TurnDynamicToolMetadataKey, [b]);
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        {
+          content: [
+            {
+              input: JSON.stringify({ id: "item-2" }),
+              toolCallId: "call-b",
+              toolName: "update",
+              type: "tool-call",
+            },
+          ],
+          finishReason: { raw: undefined, unified: "tool-calls" },
+          usage,
+          warnings: [],
+        },
+        {
+          content: [{ text: "Cancelled.", type: "text" }],
+          finishReason: { raw: undefined, unified: "stop" },
+          usage,
+          warnings: [],
+        },
+      ],
+      modelId: "dynamic-origin-model",
+      provider: "eve-integration-mock",
+    });
+    const config: ToolLoopHarnessConfig = {
+      mode: "conversation",
+      resolveModel: async (): Promise<LanguageModel> => model,
+      tools: new Map(),
+    };
+    const session: HarnessSession = {
+      agent: {
+        modelReference: { id: "dynamic-origin-model" },
+        system: "Test assistant",
+        tools: [{ description: "Update", inputSchema: { type: "object" }, name: "update" }],
+      },
+      compaction: { recentWindowSize: 10, threshold: 100_000 },
+      continuationToken: "http:dynamic-origin-denied",
+      history: [],
+      sessionId: "dynamic-origin-denied",
+    };
+
+    const parked = await contextStorage.run(ctx, () =>
+      createToolLoopHarness(config)(session, { message: "Update item-2" }),
+    );
+    const requestId = getPendingInputBatches(parked.session.state)[0]?.requests[0]?.requestId;
+    expect(requestId).toBeTypeOf("string");
+
+    await contextStorage.run(ctx, () =>
+      createToolLoopHarness(config)(parked.session, {
+        inputResponses: [{ optionId: "cancel", requestId: requestId! }],
+      }),
+    );
+
+    expect(callbacks.get("B")).not.toHaveBeenCalled();
+    expect(ctx.get(DynamicToolCallOriginsKey)).toBeUndefined();
+  });
+
+  it("releases a new origin after tool execution fails", async () => {
+    const b = definition({ definitionId: "definition-b", value: "B" });
+    const callbacks = installCallbacks([b]);
+    callbacks.get("B")!.mockImplementation(() => {
+      throw new Error("execution failed");
+    });
+    const ctx = new ContextContainer();
+    ctx.set(SessionKey, {
+      auth: { current: null, initiator: null },
+      sessionId: "dynamic-origin-tool-error",
+      turn: { id: "turn-b", sequence: 0 },
+    });
+    ctx.set(TurnDynamicToolMetadataKey, [b]);
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        {
+          content: [
+            {
+              input: JSON.stringify({ id: "item-2" }),
+              toolCallId: "call-b",
+              toolName: "update",
+              type: "tool-call",
+            },
+          ],
+          finishReason: { raw: undefined, unified: "tool-calls" },
+          usage,
+          warnings: [],
+        },
+        {
+          content: [{ text: "The update failed.", type: "text" }],
+          finishReason: { raw: undefined, unified: "stop" },
+          usage,
+          warnings: [],
+        },
+      ],
+      modelId: "dynamic-origin-model",
+      provider: "eve-integration-mock",
+    });
+    const config: ToolLoopHarnessConfig = {
+      mode: "conversation",
+      resolveModel: async (): Promise<LanguageModel> => model,
+      tools: new Map(),
+    };
+    const session: HarnessSession = {
+      agent: {
+        modelReference: { id: "dynamic-origin-model" },
+        system: "Test assistant",
+        tools: [{ description: "Update", inputSchema: { type: "object" }, name: "update" }],
+      },
+      compaction: { recentWindowSize: 10, threshold: 100_000 },
+      continuationToken: "http:dynamic-origin-tool-error",
+      history: [],
+      sessionId: "dynamic-origin-tool-error",
+    };
+
+    const parked = await contextStorage.run(ctx, () =>
+      createToolLoopHarness(config)(session, { message: "Update item-2" }),
+    );
+    const requestId = getPendingInputBatches(parked.session.state)[0]?.requests[0]?.requestId;
+    expect(requestId).toBeTypeOf("string");
+
+    await contextStorage.run(ctx, () =>
+      createToolLoopHarness(config)(parked.session, {
+        inputResponses: [{ optionId: "approve", requestId: requestId! }],
+      }),
+    );
+
+    expect(callbacks.get("B")).toHaveBeenCalledOnce();
+    expect(ctx.get(DynamicToolCallOriginsKey)).toBeUndefined();
+  });
+
   it("resumes an approved call with A after same-name definition B becomes current", async () => {
     const a = definition({ definitionId: "definition-a", value: "A" });
     const b = definition({ definitionId: "definition-b", value: "B" });
@@ -361,7 +500,7 @@ describe("dynamic tool call routing", () => {
         resolveDynamicToolDefinitionForCall({
           callId: "call-a",
           current: replayDynamicTools([b])[0]!,
-          knownCall: true,
+          requireOrigin: true,
         }),
       ),
     ).toThrow('Dynamic tool call "call-a" is pending, but its originating definition is missing.');
