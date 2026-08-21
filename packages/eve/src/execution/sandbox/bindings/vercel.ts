@@ -40,8 +40,10 @@ import {
   type VercelSandboxCreateParams,
 } from "#execution/sandbox/bindings/vercel-create-sdk.js";
 import {
+  isVercelSandboxAlreadyExistsError,
   isVercelSandboxMissingError,
   isVercelSnapshotUnavailableError,
+  vercelSandboxErrorMessage,
 } from "#execution/sandbox/bindings/vercel-errors.js";
 import { getNamedVercelSandbox } from "#execution/sandbox/bindings/vercel-lookup.js";
 import { normalizeVercelReadStream } from "#execution/sandbox/bindings/vercel-read-stream.js";
@@ -131,12 +133,12 @@ export function createVercelSandbox(
           });
         }
         throw new Error(
-          `Failed to create sandbox session "${createInput.sessionKey}": ${errorMessage(error)}`,
+          `Failed to create sandbox session "${createInput.sessionKey}": ${vercelSandboxErrorMessage(error)}`,
           { cause: error },
         );
       }
 
-      if (template === null && session.created) {
+      if (template === null && session.needsBaseSetup) {
         await ensureVercelSandboxBaseRuntime(session.sandbox);
         await applyInitialVercelNetworkPolicy(session.sandbox, createOptions.networkPolicy);
       }
@@ -159,7 +161,7 @@ export function createVercelSandbox(
         });
       } catch (error) {
         throw new Error(
-          `Failed to prewarm Vercel sandbox template "${prewarmInput.templateKey}": ${errorMessage(error)}`,
+          `Failed to prewarm Vercel sandbox template "${prewarmInput.templateKey}": ${vercelSandboxErrorMessage(error)}`,
           { cause: error },
         );
       }
@@ -252,7 +254,7 @@ async function readTemplateForCreate(input: {
       throw error;
     }
     throw new Error(
-      `Failed to read sandbox template "${input.templateKey}": ${errorMessage(error)}`,
+      `Failed to read sandbox template "${input.templateKey}": ${vercelSandboxErrorMessage(error)}`,
       { cause: error },
     );
   }
@@ -373,7 +375,7 @@ interface EnsureSessionInput {
 }
 
 interface VercelSandboxSessionCreateResult {
-  readonly created: boolean;
+  readonly needsBaseSetup: boolean;
   readonly sandbox: VercelSandbox;
 }
 
@@ -387,7 +389,7 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
 
   if (existing !== null) {
     await ensureVercelSandboxTags(existing, input.tags);
-    return { created: false, sandbox: existing };
+    return { needsBaseSetup: false, sandbox: existing };
   }
 
   const sessionCreateOptions = await input.resolveSessionCreateOptions?.({
@@ -398,13 +400,34 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
     createParams.tags = input.tags;
   }
 
-  return {
-    created: true,
-    sandbox: await input.createSandbox({
+  try {
+    return {
+      needsBaseSetup: true,
+      sandbox: await input.createSandbox({
+        createOptions: createParams,
+        sandboxModule: input.sandboxModule,
+      }),
+    };
+  } catch (error) {
+    if (!isVercelSandboxAlreadyExistsError(error)) {
+      throw error;
+    }
+
+    const concurrentlyCreated = await getNamedVercelSandbox({
       createOptions: createParams,
       sandboxModule: input.sandboxModule,
-    }),
-  };
+      sandboxName,
+    });
+    if (concurrentlyCreated === null) {
+      throw error;
+    }
+
+    await ensureVercelSandboxTags(concurrentlyCreated, input.tags);
+    return {
+      needsBaseSetup: input.snapshotId === undefined,
+      sandbox: concurrentlyCreated,
+    };
+  }
 }
 
 function createSessionCreateParams(
@@ -663,24 +686,6 @@ function areVercelSandboxTagsEqual(
   }
 
   return nextEntries.every(([key, value]) => currentTags[key] === value);
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    const responseJson = (error as { readonly json?: unknown }).json;
-    const responseText = (error as { readonly text?: unknown }).text;
-    const responseBody =
-      typeof responseText === "string" && responseText.length > 0
-        ? responseText
-        : responseJson !== undefined
-          ? JSON.stringify(responseJson)
-          : undefined;
-    if (responseBody !== undefined) {
-      return `${error.message}: ${responseBody}`;
-    }
-    return error.message;
-  }
-  return String(error);
 }
 
 /**
