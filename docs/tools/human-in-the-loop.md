@@ -107,7 +107,7 @@ Each request includes a `kind` discriminator: `tool-approval`, `question`, or
 `toolName` and `requestId` identify the action and request but do not encode its
 semantics.
 
-The run picks back up exactly where it parked. Because the pause is durable, nothing is held in memory while it waits — the process can restart and the parked turn survives.
+The run picks back up exactly where it parked. Because the pause is durable, nothing is held in memory while it waits — the process can restart and the parked turn survives. For a dynamic tool approval, eve also preserves the exact tool definition that admitted the call. A later resolver event or deployment can replace that tool name for new calls without changing the parked call's approval policy, authorization, execution, or model output.
 
 When a background subagent requests input, eve emits the same `input.requested` event on its parent session. Answering through that parent session routes the response directly to the blocked child without invoking the parent model.
 

@@ -42,6 +42,7 @@ import {
 } from "#harness/channel-delivery-instrumentation.js";
 import { getInstrumentationRuntime } from "#harness/instrumentation/runtime.js";
 import { preserveSerializedInstrumentationState } from "#harness/instrumentation/state.js";
+import { reconcileDynamicToolOrigins } from "#harness/dynamic-tool-call-routing.js";
 import { RuntimeActionSettlementTimesKey } from "#harness/runtime-action-settlement-state.js";
 import { preserveSerializedAgentTraceState } from "#tracing/agent-trace-context-store.js";
 import { matchAuthorizationCallbacks } from "#execution/authorization-callback-match.js";
@@ -321,6 +322,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     );
     await instrumentation?.forceFlush();
     const rekeyed = reconcileSessionContinuationToken(ctx, initialSession);
+    reconcileDynamicToolOrigins(ctx, rekeyed.state);
     const nextSerializedContext = serializeContext(ctx);
     const nextState =
       rekeyed === initialSession
@@ -571,6 +573,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   // Re-stamp if a handler called `session.continuation.rekey(...)` (eg. Slack auto-anchor).
   const rekeyed = reconcileSessionContinuationToken(ctx, stepResult.session);
+  reconcileDynamicToolOrigins(ctx, rekeyed.state);
   const nextSerializedContext = serializeContext(ctx);
   stepResult = { ...stepResult, session: rekeyed };
 

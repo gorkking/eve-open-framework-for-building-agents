@@ -32,6 +32,10 @@ import { getInstrumentationRuntime } from "#harness/instrumentation/runtime.js";
 import { getTurnUsageState, toUsage } from "#harness/turn-tag-state.js";
 import { clearPendingWorkflowInterrupt } from "#harness/workflow-interrupt-state.js";
 import {
+  reconcileDynamicToolOrigins,
+  releaseDynamicToolOriginsForTurn,
+} from "#harness/dynamic-tool-call-routing.js";
+import {
   encodeMessageStreamEvent,
   type UnstampedMessageStreamEvent,
   stampMessageStreamEvent,
@@ -76,6 +80,7 @@ export async function settleCancelledTurnStep(input: {
   });
 
   let emissionState = getHarnessEmissionState(durableSession.state);
+  const cancelledTurnId = activeTurnId(emissionState);
   // A descendant HITL wait already streamed this turn's waiting boundary
   // (the proxy epilogue clears the turn id); re-emitting would fabricate
   // a turn id and duplicate the boundary.
@@ -150,6 +155,8 @@ export async function settleCancelledTurnStep(input: {
       emissionState,
     ),
   );
+  releaseDynamicToolOriginsForTurn(ctx, cancelledTurnId);
+  reconcileDynamicToolOrigins(ctx, cancelledSession.state);
   const totals = getTurnUsageState(session.state)?.session;
 
   const base = {

@@ -19,6 +19,10 @@ import type {
 } from "#channel/types.js";
 import { ContextKey } from "#context/key.js";
 import type { InstrumentationChannelDeliveryRef } from "#harness/instrumentation/lifecycle.js";
+import type {
+  DurableDynamicToolOriginState,
+  DynamicToolOriginCoordinate,
+} from "#harness/dynamic-tool-call-origins.js";
 import type { DurableDynamicToolCallbacks } from "#shared/durable-dynamic-tool-callbacks.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import type { DynamicRemoteAgentConfig } from "#runtime/subagents/dynamic-remote-agent-config.js";
@@ -154,11 +158,16 @@ export const LiveStepDynamicModelSelectionKey = new ContextKey<LiveDynamicModelS
 
 export interface DurableDynamicToolMetadata {
   readonly callbacks: DurableDynamicToolCallbacks;
+  readonly definitionId: string;
   readonly name: string;
   readonly description: string;
+  readonly event: "session.started" | "turn.started" | "step.started";
   readonly inputSchema: JsonObject;
+  readonly ownerId: string;
   readonly outputSchema?: JsonObject;
   readonly resolverSlug: string;
+  readonly runtimeRevision: string;
+  readonly sourceId: string;
   readonly entryKey: string;
 }
 
@@ -189,6 +198,16 @@ export const TurnDynamicToolMetadataKey = new ContextKey<readonly DurableDynamic
 /** Step-scoped dynamic tool metadata, replaced before each model step. */
 export const StepDynamicToolMetadataKey = new ContextKey<readonly DurableDynamicToolMetadata[]>(
   "eve.stepDynamicToolMetadata",
+);
+
+/** Durable call-id routes for dynamic definitions that may outlive their resolution. */
+export const DynamicToolCallOriginsKey = new ContextKey<DurableDynamicToolOriginState>(
+  "eve.dynamicToolCallOrigins",
+);
+
+/** Current model-call coordinate used when a dynamic call is first admitted. */
+export const DynamicToolCallCoordinateKey = new ContextKey<DynamicToolOriginCoordinate>(
+  "eve.dynamicToolCallCoordinate",
 );
 
 export type DurableDynamicSubagentSelection =

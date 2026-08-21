@@ -180,11 +180,16 @@ describe("replayDynamicSessionTools", () => {
   ): DurableDynamicToolMetadata {
     return {
       callbacks: { execute: { closure, stepId } },
+      definitionId: `definition:${name}`,
       description: `${name} description`,
       entryKey: name,
+      event: "session.started",
       inputSchema: { type: "object" },
       name,
+      ownerId: "test",
       resolverSlug: "test",
+      runtimeRevision: "runtime:test",
+      sourceId: "agent/tools/test.ts",
     };
   }
 
@@ -432,6 +437,47 @@ function stampTestTool(entry: DynamicToolEntry): DynamicToolEntry {
 }
 
 describe("dispatchDynamicToolEvent", () => {
+  it("derives stable definition identity from provenance and runtime revision", async () => {
+    const ctx = createCtx();
+    const entry = createReplayableTool("stable definition");
+    const resolver = createResolver("stable", ["session.started"], () => ({ tool: entry }));
+    ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_one");
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    const first = ctx.get(SessionDynamicToolMetadataKey)![0]!;
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: makeEvent("session.started"),
+    });
+    const repeated = ctx.get(SessionDynamicToolMetadataKey)![0]!;
+
+    expect(repeated.definitionId).toBe(first.definitionId);
+    expect(first).toMatchObject({
+      event: "session.started",
+      ownerId: "stable",
+      runtimeRevision: "deployment:dpl_one",
+      sourceId: "test:stable",
+    });
+
+    await refreshDynamicSessionToolsForRuntimeRevision({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: createSessionStartedEvent(),
+      runtimeRevision: "deployment:dpl_two",
+    });
+
+    expect(ctx.get(SessionDynamicToolMetadataKey)![0]!.definitionId).not.toBe(first.definitionId);
+  });
+
   it("replaces session tools with the current deployment's resolver output", async () => {
     const ctx = createCtx();
     const oldResolver = createResolver("old", ["session.started"], () => ({
@@ -1200,11 +1246,16 @@ describe("framework dynamic tools (no bundler transform)", () => {
           approvalRequest: { closure: {}, stepId: "legacy-turn-approval" },
           execute: { closure: {}, stepId: "legacy-turn-execute" },
         },
+        definitionId: "definition:legacy-turn-guarded",
         description: "legacy guarded tool",
         entryKey: "legacy:guarded",
+        event: "turn.started",
         inputSchema: { type: "object" },
         name: "guarded",
+        ownerId: "legacy",
         resolverSlug: "legacy",
+        runtimeRevision: "runtime:test",
+        sourceId: "agent/tools/legacy.ts",
       },
     ]);
 
@@ -1228,11 +1279,16 @@ describe("framework dynamic tools (no bundler transform)", () => {
           approvalResponse: { closure: {}, stepId: "step-response" },
           execute: { closure: {}, stepId: "step-execute" },
         },
+        definitionId: "definition:step-guarded",
         description: "step",
         entryKey: "step:guarded",
+        event: "step.started",
         inputSchema: { type: "object" },
         name: "guarded",
+        ownerId: "step",
         resolverSlug: "step",
+        runtimeRevision: "runtime:test",
+        sourceId: "agent/tools/step.ts",
       },
     ]);
     ctx.set(SessionDynamicToolMetadataKey, [
@@ -1242,11 +1298,16 @@ describe("framework dynamic tools (no bundler transform)", () => {
           approvalResponse: { closure: {}, stepId: "session-authorizer" },
           execute: { closure: {}, stepId: "session-execute" },
         },
+        definitionId: "definition:session-guarded",
         description: "session",
         entryKey: "session:guarded",
+        event: "session.started",
         inputSchema: { type: "object" },
         name: "guarded",
+        ownerId: "session",
         resolverSlug: "session",
+        runtimeRevision: "runtime:test",
+        sourceId: "agent/tools/session.ts",
       },
     ]);
 

@@ -33,11 +33,18 @@ import { contextStorage } from "#context/container.js";
 import {
   AuthKey,
   ChannelInstrumentationKey,
+  DynamicToolCallCoordinateKey,
   ParentSessionKey,
   ParentTraceContextKey,
   SessionCallbackKey,
   TurnTaskDeliveryKey,
 } from "#context/keys.js";
+import {
+  addAuthorizationAttemptsForDynamicToolCall,
+  clearDynamicToolCallOrigins,
+  releaseCurrentDynamicToolOriginsForTurn,
+  releaseDynamicToolCallOrigins,
+} from "#harness/dynamic-tool-call-routing.js";
 import {
   buildDynamicInstructionMessages,
   drainDynamicInstructionUserMessages,
@@ -721,6 +728,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     };
 
     if (config.clearOnly === true) {
+      if (store !== undefined) clearDynamicToolCallOrigins(store);
       session = {
         ...session,
         compaction: {
@@ -1099,6 +1107,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         }
       }
     }
+    releaseDynamicToolCallOrigins(
+      pending.rejectedActions?.flatMap((batch) => batch.results.map((result) => result.callId)) ??
+        [],
+    );
 
     // --- Turn preamble ------------------------------------------------------
 
@@ -1272,6 +1284,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         projectedMessages,
       );
     }
+
+    ctx?.setVirtualContext(DynamicToolCallCoordinateKey, {
+      originatingStepIndex: emissionState.stepIndex,
+      originatingTurnId: emissionState.turnId,
+    });
 
     const approvedTools = getApprovedTools(session);
 
@@ -1730,6 +1747,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         // so the gateway-wrapped upstream 4xx body would otherwise be
         // invisible to OTel providers.
         const finalError = recoveryResult.error;
+        releaseCurrentDynamicToolOriginsForTurn(emissionState.turnId);
         if (turnSpan) {
           recordErrorOnSpan(turnSpan, finalError);
         }
@@ -2544,6 +2562,7 @@ async function handleStepResult(input: {
     excludedCallIds: invalidInputToolCallIds,
   });
   const approvalRequestCallIds = new Set(approvalRequests.map((request) => request.action.callId));
+  const authSignal = findAuthorizationSignalFromToolResults(result.toolResults);
   const questionRequests = extractQuestionInputRequests({
     toolCalls: result.toolCalls,
     excludedCallIds: new Set([...invalidInputToolCallIds, ...approvalRequestCallIds]),
@@ -2583,6 +2602,11 @@ async function handleStepResult(input: {
         tools: advertisedRuntimeActionTools,
       }),
     );
+
+  releaseSettledDynamicToolCallOrigins(
+    result,
+    new Set([...approvalRequestCallIds, ...(authSignal === undefined ? [] : [authSignal.callId])]),
+  );
 
   if (pendingRuntimeActions.length > 0) {
     // Stamp the live emission state onto the parked session so the
@@ -2702,9 +2726,15 @@ async function handleStepResult(input: {
 
   // --- Park on authorization request ------------------------------------------
 
-  const authSignal = findAuthorizationSignalFromToolResults(result.toolResults);
   if (authSignal) {
-    const { challenges } = authSignal;
+    const { callId, signal } = authSignal;
+    const { challenges } = signal;
+    addAuthorizationAttemptsForDynamicToolCall(
+      callId,
+      challenges.flatMap((challenge) =>
+        challenge.attemptId === undefined ? [] : [challenge.attemptId],
+      ),
+    );
 
     if (emit) {
       for (const superseded of getSupersededAuthorizationChallenges(
@@ -3285,22 +3315,48 @@ async function runModelCallWithRetries<T>(
 
 function findAuthorizationSignalFromToolResults(
   toolResults: readonly TypedToolResult<ToolSet>[] | undefined,
-): AuthorizationSignal | undefined {
+): { readonly callId: string; readonly signal: AuthorizationSignal } | undefined {
   const ctx = contextStorage.getStore();
   if (ctx !== undefined) {
     for (const toolResult of toolResults ?? []) {
       const stashed = readToolInterrupt(ctx, toolResult.toolCallId);
       if (stashed !== undefined && isAuthorizationSignal(stashed)) {
-        return stashed;
+        return { callId: toolResult.toolCallId, signal: stashed };
       }
     }
   }
 
   for (const toolResult of toolResults ?? []) {
     if (isAuthorizationSignal(toolResult.output)) {
-      return toolResult.output;
+      return { callId: toolResult.toolCallId, signal: toolResult.output };
     }
   }
 
   return undefined;
+}
+
+function releaseSettledDynamicToolCallOrigins(
+  result: HarnessStepResult,
+  retainedCallIds: ReadonlySet<string>,
+): void {
+  const settled = new Set<string>();
+  const collect = (part: unknown): void => {
+    if (typeof part !== "object" || part === null) return;
+    const candidate = part as { readonly toolCallId?: unknown; readonly type?: unknown };
+    if (
+      (candidate.type === "tool-result" || candidate.type === "tool-error") &&
+      typeof candidate.toolCallId === "string" &&
+      !retainedCallIds.has(candidate.toolCallId)
+    ) {
+      settled.add(candidate.toolCallId);
+    }
+  };
+  for (const part of result.content ?? []) collect(part);
+  for (const part of result.toolResults ?? []) collect(part);
+  for (const message of result.response.messages) {
+    if (Array.isArray(message.content)) {
+      for (const part of message.content) collect(part);
+    }
+  }
+  releaseDynamicToolCallOrigins(settled);
 }

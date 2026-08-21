@@ -2067,11 +2067,16 @@ describe("createToolLoopHarness", () => {
           approvalRequest: { closure: {}, stepId: "test-step-approval" },
           execute: { closure: {}, stepId: "test-step-execute" },
         },
+        definitionId: "definition:tfl-get-line-status",
         description: "Get TfL line status.",
         entryKey: "tfl__getLineStatus",
+        event: "step.started",
         inputSchema: { type: "object" },
         name: "tfl__getLineStatus",
+        ownerId: "tfl",
         resolverSlug: "tfl",
+        runtimeRevision: "runtime:test",
+        sourceId: "agent/tools/tfl.ts",
       },
     ]);
 

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { ModelMessage } from "ai";
 
 import { replayDynamicTools } from "#context/build-dynamic-tools.js";
@@ -212,18 +214,41 @@ export function validateDurableDynamicToolCallbacks(
 function createMetadata(input: {
   readonly entry: DynamicToolEntry;
   readonly entryKey: string;
+  readonly event: "session.started" | "turn.started" | "step.started";
   readonly name: string;
   readonly resolver: ResolvedDynamicToolResolver;
+  readonly runtimeRevision: string;
 }): DurableDynamicToolMetadata {
-  return {
+  const metadata = {
     callbacks: validateDurableDynamicToolCallbacks(input.name, input.entry),
     description: input.entry.description,
     entryKey: input.entryKey,
+    event: input.event,
     inputSchema: serializeInputSchema(input.entry.inputSchema),
     name: input.name,
+    ownerId: input.resolver.slug,
     outputSchema: serializeOutputSchema(input.entry.outputSchema),
     resolverSlug: input.resolver.slug,
+    runtimeRevision: input.runtimeRevision,
+    sourceId: input.resolver.sourceId,
   };
+  const definitionId = `dynamic-tool:${createHash("sha256")
+    .update(
+      JSON.stringify([
+        metadata.sourceId,
+        metadata.ownerId,
+        metadata.runtimeRevision,
+        metadata.event,
+        metadata.entryKey,
+        metadata.name,
+        metadata.description,
+        metadata.inputSchema,
+        metadata.outputSchema ?? null,
+        metadata.callbacks,
+      ]),
+    )
+    .digest("base64url")}`;
+  return { ...metadata, definitionId };
 }
 
 interface ResolvedDynamicToolEvent {
@@ -235,6 +260,7 @@ async function resolveToolsFromEvent(
   resolvers: readonly ResolvedDynamicToolResolver[],
   event: UnstampedMessageStreamEvent,
   messages: readonly ModelMessage[],
+  runtimeRevision = ctx.get(SessionDynamicToolRuntimeRevisionKey) ?? "runtime:unversioned",
 ): Promise<ResolvedDynamicToolEvent> {
   const outcomes = await Promise.allSettled(
     resolvers.map(async (resolver) => {
@@ -246,7 +272,14 @@ async function resolveToolsFromEvent(
       const named = qualifyDynamicToolNames(resolver, isSingle, entries);
       return {
         metadata: named.map(({ name, entryKey, entry }) =>
-          createMetadata({ entry, entryKey, name, resolver }),
+          createMetadata({
+            entry,
+            entryKey,
+            event: event.type as "session.started" | "turn.started" | "step.started",
+            name,
+            resolver,
+            runtimeRevision,
+          }),
         ),
         resolver,
       };
@@ -361,7 +394,13 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
   const { metadata } =
     matching.length === 0
       ? { metadata: [] }
-      : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
+      : await resolveToolsFromEvent(
+          input.ctx,
+          matching,
+          input.event,
+          input.messages,
+          input.runtimeRevision,
+        );
   input.ctx.set(SessionDynamicToolMetadataKey, metadata);
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
 }

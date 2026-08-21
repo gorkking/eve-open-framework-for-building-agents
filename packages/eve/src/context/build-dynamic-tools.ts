@@ -17,6 +17,10 @@ import type {
 } from "#public/definitions/approval.js";
 import type { DurableDynamicCallbackReference } from "#shared/durable-dynamic-tool-callbacks.js";
 import { toInputSchema, toOutputSchema } from "#shared/tool-schema.js";
+import {
+  readArchivedDynamicToolDefinitions,
+  resolveDynamicToolMetadataForCall,
+} from "#harness/dynamic-tool-call-routing.js";
 
 const log = createLogger("dynamic-tools");
 
@@ -92,6 +96,7 @@ export function replayDynamicTools(
 
     return {
       description: entry.description,
+      dynamicDefinition: entry,
       execute: createToolExecuteWithAuth({
         scope: entry.name,
         execute: (input, context) => {
@@ -131,6 +136,11 @@ export function buildResponseAuthorizationTools(input: {
   for (const tool of input.context === undefined ? [] : buildDynamicTools(input.context)) {
     if (!tools.has(tool.name)) tools.set(tool.name, tool);
   }
+  for (const tool of input.context === undefined
+    ? []
+    : replayDynamicTools(readArchivedDynamicToolDefinitions(input.context))) {
+    if (!tools.has(tool.name)) tools.set(tool.name, tool);
+  }
   for (const [name, tool] of input.authoredTools) {
     if (!tools.has(name)) tools.set(name, tool);
   }
@@ -142,4 +152,24 @@ export function buildDynamicTools(ctx: ContextReader): readonly HarnessToolDefin
   const turn = replayDynamicTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
   const session = replayDynamicTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
   return [...step, ...turn, ...session];
+}
+
+/** Resolves a callback-sensitive phase through the call's durable origin. */
+export function resolveDynamicToolDefinitionForCall(input: {
+  readonly callId: string;
+  readonly current: HarnessToolDefinition;
+  readonly knownCall: boolean;
+}): HarnessToolDefinition {
+  const currentMetadata = input.current.dynamicDefinition;
+  const resolved = resolveDynamicToolMetadataForCall({
+    callId: input.callId,
+    current: currentMetadata,
+    knownCall: input.knownCall,
+    toolName: input.current.name,
+  });
+  if (resolved === undefined) return input.current;
+  if (currentMetadata !== undefined && resolved.definitionId === currentMetadata.definitionId) {
+    return input.current;
+  }
+  return replayDynamicTools([resolved])[0]!;
 }

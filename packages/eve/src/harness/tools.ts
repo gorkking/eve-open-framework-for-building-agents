@@ -22,12 +22,18 @@ import { stashToolInterrupt } from "#harness/tool-interrupts.js";
 import { normalizeToolJsonOutput, normalizeToolModelOutput } from "#harness/tool-model-output.js";
 import type { ToolExecuteOptions } from "#shared/tool-definition.js";
 import { isAsyncIterable } from "#shared/async-iterable.js";
+import { resolveDynamicToolDefinitionForCall } from "#context/build-dynamic-tools.js";
+import { hasDynamicToolCallInMessages } from "#harness/dynamic-tool-call-routing.js";
 
 type NativeApprovalStatus = Exclude<ApprovalStatus, boolean>;
 
 const toolApprovals = new WeakMap<
   object,
-  (toolInput: unknown, callId: string) => Promise<NativeApprovalStatus>
+  (
+    toolInput: unknown,
+    callId: string,
+    messages: readonly import("ai").ModelMessage[],
+  ) => Promise<NativeApprovalStatus>
 >();
 
 /**
@@ -65,8 +71,9 @@ export function buildToolSet(input: {
       continue;
     }
 
-    const authorToModelOutput = definition.toModelOutput;
     const approval = buildApprovalFn(definition, input);
+    const hasModelOutput =
+      definition.toModelOutput !== undefined || definition.dynamicDefinition !== undefined;
     const aiTool = tool({
       description: definition.description,
       execute: wrapToolExecute(definition),
@@ -87,11 +94,17 @@ export function buildToolSet(input: {
                   value: authorizationPendingModelText(output.connections),
                 };
               }
+              const resolvedDefinition = resolveDynamicToolDefinitionForCall({
+                callId: toolCallId ?? "",
+                current: definition,
+                knownCall: true,
+              });
+              const authorToModelOutput = resolvedDefinition.toModelOutput;
               if (authorToModelOutput !== undefined) {
                 return normalizeToolModelOutput({
                   output: await authorToModelOutput(output),
                   toolCallId,
-                  toolName: definition.name,
+                  toolName: resolvedDefinition.name,
                 });
               }
               if (typeof output === "string") {
@@ -100,11 +113,11 @@ export function buildToolSet(input: {
               return normalizeToolModelOutput({
                 output: { type: "json" as const, value: output ?? null },
                 toolCallId,
-                toolName: definition.name,
+                toolName: resolvedDefinition.name,
               });
             },
           }
-        : authorToModelOutput !== undefined
+        : hasModelOutput
           ? {
               toModelOutput: async ({
                 output,
@@ -112,17 +125,27 @@ export function buildToolSet(input: {
               }: {
                 readonly output: unknown;
                 readonly toolCallId?: string;
-              }) =>
-                normalizeToolModelOutput({
-                  output: await authorToModelOutput(output),
+              }) => {
+                const resolvedDefinition = resolveDynamicToolDefinitionForCall({
+                  callId: toolCallId ?? "",
+                  current: definition,
+                  knownCall: true,
+                });
+                const toModelOutput = resolvedDefinition.toModelOutput;
+                return normalizeToolModelOutput({
+                  output:
+                    toModelOutput === undefined
+                      ? { type: "json" as const, value: output ?? null }
+                      : await toModelOutput(output),
                   toolCallId,
-                  toolName: definition.name,
-                }),
+                  toolName: resolvedDefinition.name,
+                });
+              },
             }
           : {}),
     });
     tools[definition.name] = aiTool;
-    if (definition.approval !== undefined) {
+    if (definition.approval !== undefined || definition.dynamicDefinition !== undefined) {
       toolApprovals.set(aiTool, approval);
     }
   }
@@ -166,10 +189,20 @@ export function buildToolSetFromDefinitions(input: {
 export function wrapToolExecute(
   definition: HarnessToolDefinition,
 ): ((input: any, options: ToolExecuteOptions) => Promise<any> | AsyncIterable<any>) | undefined {
-  const execute = definition.execute;
-  if (execute === undefined) return undefined;
+  if (definition.execute === undefined) return undefined;
 
   return (input, options) => {
+    const resolvedDefinition = resolveDynamicToolDefinitionForCall({
+      callId: options.toolCallId,
+      current: definition,
+      knownCall: hasDynamicToolCallInMessages(options.messages, options.toolCallId),
+    });
+    const execute = resolvedDefinition.execute;
+    if (execute === undefined) {
+      return Promise.reject(
+        new Error(`Dynamic tool "${resolvedDefinition.name}" has no replayable executor.`),
+      );
+    }
     let output: unknown;
     try {
       output = execute(input, options);
@@ -178,11 +211,11 @@ export function wrapToolExecute(
     }
 
     if (isAsyncIterable(output)) {
-      return normalizeToolExecuteIterable(output, definition.name, options);
+      return normalizeToolExecuteIterable(output, resolvedDefinition.name, options);
     }
 
     return Promise.resolve(output).then((value) =>
-      normalizeToolExecuteOutput(value, definition.name, options),
+      normalizeToolExecuteOutput(value, resolvedDefinition.name, options),
     );
   };
 }
@@ -271,18 +304,27 @@ export async function buildToolSetWithProviderTools(input: {
 function buildApprovalFn(
   definition: HarnessToolDefinition,
   input: { readonly approvedTools?: ReadonlySet<string> },
-): (toolInput: unknown, callId: string) => Promise<NativeApprovalStatus> {
-  return async (toolInput: unknown, callId: string) => {
-    if (definition.approval === undefined) return undefined;
+): (
+  toolInput: unknown,
+  callId: string,
+  messages: readonly import("ai").ModelMessage[],
+) => Promise<NativeApprovalStatus> {
+  return async (toolInput: unknown, callId: string, messages) => {
+    const resolvedDefinition = resolveDynamicToolDefinitionForCall({
+      callId,
+      current: definition,
+      knownCall: hasDynamicToolCallInMessages(messages, callId),
+    });
+    if (resolvedDefinition.approval === undefined) return undefined;
 
     const toolInputRecord = isObject(toolInput) ? toolInput : undefined;
 
-    const status = await resolveApprovalPolicy(definition.approval)({
+    const status = await resolveApprovalPolicy(resolvedDefinition.approval)({
       ...buildCallbackContext(),
       approvedTools: input.approvedTools ?? new Set(),
       callId,
       toolInput: toolInputRecord,
-      toolName: definition.name,
+      toolName: resolvedDefinition.name,
     });
     return typeof status === "boolean" ? (status ? "user-approval" : "not-applicable") : status;
   };
@@ -292,11 +334,11 @@ function buildApprovalFn(
 export function buildToolApproval(
   tools: ToolSet,
 ): ToolApprovalConfiguration<ToolSet, Record<string, unknown>> {
-  return async ({ toolCall }) => {
+  return async ({ messages = [], toolCall }) => {
     const toolDefinition = tools[toolCall.toolName];
     if (toolDefinition === undefined) return undefined;
 
     const approval = toolApprovals.get(toolDefinition);
-    return (await approval?.(toolCall.input, toolCall.toolCallId)) as ToolApprovalStatus;
+    return (await approval?.(toolCall.input, toolCall.toolCallId, messages)) as ToolApprovalStatus;
   };
 }

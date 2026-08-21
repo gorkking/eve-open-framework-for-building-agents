@@ -134,6 +134,8 @@ approval checks.
 
 Pass `defineDynamic` an `events` object whose handlers return either a single `defineTool(...)`, a `Record<string, defineTool(...)>`, or `null` for no tools. Wrap every entry in `defineTool()`. eve records durable descriptors for `execute`, approval request and response policies, and `toModelOutput`, so a parked call can reconstruct the same callbacks in a fresh process.
 
+Once the model emits a dynamic tool call, eve binds that call ID to the resolved definition. Later resolver events and deployments can replace the same-named tool for new calls, but pending approval, authorization, execution, and model-output projection continue with the definition that admitted the parked call. If that origin record is missing or invalid, eve fails the resume instead of routing the call to the current same-named definition.
+
 Dynamic tool executors receive the same `ToolContext` as static authored tools, including inline provider auth through `ctx.getToken(provider)` and `ctx.requireAuth(provider)`.
 
 The example below builds one tool per warehouse table. A map return names each tool by its bare key, so the model sees `orders`, `users`, and so on.

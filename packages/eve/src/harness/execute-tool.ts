@@ -1,5 +1,6 @@
 import type { FlexibleSchema } from "ai";
 
+import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import type { Approval } from "#public/definitions/approval.js";
 import type { ToolExecuteOptions } from "#shared/tool-definition.js";
 
@@ -29,6 +30,8 @@ export type HarnessRuntimeActionDefinition =
 export interface HarnessToolDefinition {
   readonly approvalKey?: (toolInput: Readonly<Record<string, unknown>>) => string;
   readonly description: string;
+  /** Internal replay snapshot for definitions produced by `defineDynamic`. */
+  readonly dynamicDefinition?: DurableDynamicToolMetadata;
   readonly execute?: (input: any, options: ToolExecuteOptions) => any;
   readonly frameworkAction?: "load-skill";
   readonly inputSchema: FlexibleSchema;

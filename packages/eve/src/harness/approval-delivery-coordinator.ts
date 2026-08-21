@@ -29,6 +29,8 @@ import { isApprovalRequest } from "#harness/input-request-class.js";
 import { getPendingInputBatches } from "#harness/pending-input-batches.js";
 import type { HarnessSession, HarnessToolMap, StepInput } from "#harness/types.js";
 import type { InputRequest } from "#runtime/input/types.js";
+import { resolveDynamicToolDefinitionForCall } from "#context/build-dynamic-tools.js";
+import { addAuthorizationAttemptsForDynamicToolCall } from "#harness/dynamic-tool-call-routing.js";
 
 const UNAUTHENTICATED_APPROVAL_FEEDBACK = "Authentication is required to respond to this approval.";
 const TEXT_APPROVAL_FEEDBACK =
@@ -331,7 +333,15 @@ async function authorizeCandidate(input: {
     return { challenges: [], didCommit: false, session };
   }
 
-  const approval = input.tools.get(input.request.action.toolName)?.approval;
+  const currentDefinition = input.tools.get(input.request.action.toolName);
+  const approval =
+    currentDefinition === undefined
+      ? undefined
+      : resolveDynamicToolDefinitionForCall({
+          callId: input.request.action.callId,
+          current: currentDefinition,
+          knownCall: true,
+        }).approval;
   const responsePolicy =
     approval !== undefined && typeof approval !== "function" ? approval.response : undefined;
   if (responsePolicy === undefined) {
@@ -396,6 +406,12 @@ async function authorizeCandidate(input: {
   } catch (error) {
     const authorization = await handleApprovalResponsePolicyError(error).catch(() => undefined);
     if (isAuthorizationSignal(authorization)) {
+      addAuthorizationAttemptsForDynamicToolCall(
+        input.request.action.callId,
+        authorization.challenges.flatMap((challenge) =>
+          challenge.attemptId === undefined ? [] : [challenge.attemptId],
+        ),
+      );
       const providerExpiresAt = authorization.challenges
         .map((entry) => Date.parse(entry.challenge.expiresAt ?? ""))
         .filter(Number.isFinite)

@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { createTestRuntime } from "#internal/testing/app-harness.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
+import { DynamicToolCallOriginsKey, type DurableDynamicToolMetadata } from "#context/keys.js";
 import { createDurableSessionState } from "#execution/durable-session-store.js";
 import { settleCancelledTurnStep } from "#execution/settle-cancelled-turn-step.js";
+import {
+  createDynamicToolOriginState,
+  recordDynamicToolCallOrigin,
+  type DurableDynamicToolOriginState,
+} from "#harness/dynamic-tool-call-origins.js";
 import { setHarnessEmissionState } from "#harness/emission.js";
 import { deriveAgentOperationId } from "#harness/handles/operation-id.js";
 import {
@@ -12,6 +18,7 @@ import {
   getAgentHandleStore,
   type AgentHandle,
 } from "#harness/handles/store.js";
+import { appendPendingInputBatch } from "#harness/input-requests.js";
 import type { HarnessSession } from "#harness/types.js";
 
 /**
@@ -86,8 +93,8 @@ function createCancelledTurnSession(handles: readonly AgentHandle[]): HarnessSes
   );
 }
 
-function buildSerializedContext(): Record<string, unknown> {
-  return {
+function buildSerializedContext(origins?: DurableDynamicToolOriginState): Record<string, unknown> {
+  const serialized: Record<string, unknown> = {
     "eve.auth": null,
     "eve.bundle": { source: createBundledRuntimeCompiledArtifactsSource() },
     "eve.channel": { kind: "http", state: {} },
@@ -95,6 +102,72 @@ function buildSerializedContext(): Record<string, unknown> {
     "eve.mode": "conversation",
     "eve.sessionId": PARENT_SESSION_ID,
   };
+  if (origins !== undefined) serialized[DynamicToolCallOriginsKey.name] = origins;
+  return serialized;
+}
+
+function dynamicDefinition(definitionId: string): DurableDynamicToolMetadata {
+  return {
+    callbacks: {
+      execute: { closure: { definitionId }, stepId: `execute-${definitionId}` },
+    },
+    definitionId,
+    description: `Definition ${definitionId}`,
+    entryKey: "update",
+    event: "turn.started",
+    inputSchema: { type: "object" },
+    name: "update",
+    ownerId: "updates",
+    resolverSlug: "updates",
+    runtimeRevision: "deployment:test",
+    sourceId: "agent/tools/update.ts",
+  };
+}
+
+function originState(): DurableDynamicToolOriginState {
+  let state = recordDynamicToolCallOrigin(
+    createDynamicToolOriginState(),
+    dynamicDefinition("definition-old"),
+    {
+      callId: "call-old",
+      originatingStepIndex: 0,
+      originatingTurnId: "turn-0",
+      toolName: "update",
+    },
+  );
+  state = recordDynamicToolCallOrigin(state, dynamicDefinition("definition-current"), {
+    callId: "call-current",
+    originatingStepIndex: 1,
+    originatingTurnId: "turn-1",
+    toolName: "update",
+  });
+  return state;
+}
+
+function sessionWithPendingOlderCall(): HarnessSession {
+  return appendPendingInputBatch({
+    requests: [
+      {
+        action: {
+          callId: "call-old",
+          input: {},
+          kind: "tool-call",
+          toolName: "update",
+        },
+        allowFreeform: false,
+        display: "confirmation",
+        kind: "tool-approval",
+        options: [
+          { id: "approve", label: "Approve" },
+          { id: "cancel", label: "Cancel" },
+        ],
+        prompt: "Approve older call",
+        requestId: "approval-old",
+      },
+    ],
+    responseMessages: [],
+    session: createCancelledTurnSession([]),
+  });
 }
 
 describe("settleCancelledTurnStep handle store", () => {
@@ -120,6 +193,31 @@ describe("settleCancelledTurnStep handle store", () => {
           },
           PARKED_HANDLE,
         ],
+      });
+    });
+  });
+
+  it("releases only origins owned by the cancelled turn", async () => {
+    const runtime = createTestRuntime({ agent: { name: "settle-cancel-origins" } });
+
+    await runtime.run(async () => {
+      const result = await settleCancelledTurnStep({
+        parentWritable: new WritableStream<Uint8Array>({ write() {} }),
+        serializedContext: buildSerializedContext(originState()),
+        sessionState: createDurableSessionState({ session: sessionWithPendingOlderCall() }),
+      });
+
+      expect(result.serializedContext[DynamicToolCallOriginsKey.name]).toMatchObject({
+        calls: {
+          "call-old": {
+            definitionId: "definition-old",
+            originatingTurnId: "turn-0",
+          },
+        },
+        definitions: {
+          "definition-old": { definitionId: "definition-old" },
+        },
+        version: 1,
       });
     });
   });

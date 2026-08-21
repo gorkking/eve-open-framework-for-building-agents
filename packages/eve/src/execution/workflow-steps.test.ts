@@ -2589,11 +2589,16 @@ describe("turnStep", () => {
         callbacks: {
           execute: { closure: {}, stepId: "eve:dynamic-tool//old" },
         },
+        definitionId: "definition:old-tool",
         description: "Stale deployment tool",
         entryKey: "old_tool",
+        event: "session.started",
         inputSchema: { type: "object" },
         name: "old_tool",
+        ownerId: "old",
         resolverSlug: "old",
+        runtimeRevision: "deployment:dpl_old",
+        sourceId: "agent/tools/old.ts",
       },
     ]);
 
