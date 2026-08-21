@@ -5,6 +5,14 @@ const transform = (markdown: string) =>
   transformSitemapMarkdown(markdown, {
     resolveTitle: (title, url) =>
       title === "Overview" && url === "/docs/channels/overview" ? "Channels" : title,
+    resources: [
+      {
+        description: "Machine-readable contract for the documentation helper API.",
+        href: "/openapi.json",
+        title: "eve.dev OpenAPI specification",
+        type: "API specification",
+      },
+    ],
     templates: [
       { slug: "chat", title: "Chat agent template", description: "A persisted chat agent." },
     ],
@@ -37,6 +45,15 @@ describe("transformSitemapMarkdown", () => {
 
     expect(output).toContain(
       "- [Chat agent template](/templates/chat) | Type: Example | Summary: A persisted chat agent. | Canonical: /templates/chat",
+    );
+  });
+
+  it("lists project and machine-readable resources by name", () => {
+    const output = transform("# Documentation Sitemap");
+
+    expect(output).toContain("## Project and machine resources");
+    expect(output).toContain(
+      "- [eve.dev OpenAPI specification](/openapi.json) | Type: API specification | Summary: Machine-readable contract for the documentation helper API. | Canonical: /openapi.json",
     );
   });
 });

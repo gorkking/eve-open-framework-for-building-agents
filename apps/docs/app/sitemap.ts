@@ -14,6 +14,7 @@ import { geistdocsSource } from "@/lib/geistdocs/source";
 import { getSiteOrigin } from "@/lib/geistdocs/url";
 import { integrations } from "@/lib/integrations/data";
 import { templateManifest } from "@/lib/templates/manifest";
+import { trustPages } from "@/lib/trust/pages";
 
 const getLastModified = (data: unknown): Date | undefined => {
   if (!data || typeof data !== "object" || !("lastModified" in data)) return;
@@ -47,6 +48,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       ...integrations.map(({ slug }) => ({ pathname: integrationPath(slug) })),
       { pathname: canonicalRoutes.templates },
       ...templateManifest.map(({ slug }) => ({ pathname: templatePath(slug) })),
+      ...trustPages.map(({ slug }) => ({ pathname: `/${slug}` })),
     ],
   });
 }

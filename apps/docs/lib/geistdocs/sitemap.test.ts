@@ -5,11 +5,14 @@ const sourceDate = new Date("2026-07-20T12:00:00.000Z");
 
 const sources = [
   { pathname: "/" },
+  { pathname: "/about" },
+  { pathname: "/contact" },
   { pathname: "/docs/getting-started", lastModified: sourceDate },
   { pathname: "/docs/getting-started", lastModified: new Date("2026-08-01") },
   { pathname: "/evals" },
   { pathname: "/integrations" },
   { pathname: "/integrations/slack" },
+  { pathname: "/privacy" },
   { pathname: "/templates" },
   { pathname: "/templates/eve-chat-template" },
   { pathname: "/docs/channels" },
@@ -31,10 +34,13 @@ describe("createCanonicalSitemap", () => {
 
     expect(sitemap.map(({ url }) => url)).toEqual([
       "https://eve.dev/",
+      "https://eve.dev/about",
+      "https://eve.dev/contact",
       "https://eve.dev/docs/getting-started",
       "https://eve.dev/evals",
       "https://eve.dev/integrations",
       "https://eve.dev/integrations/slack",
+      "https://eve.dev/privacy",
       "https://eve.dev/templates",
       "https://eve.dev/templates/eve-chat-template",
     ]);

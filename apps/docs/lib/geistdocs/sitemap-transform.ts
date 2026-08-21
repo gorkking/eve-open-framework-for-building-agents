@@ -4,8 +4,16 @@ interface TemplateDiscoveryEntry {
   title: string;
 }
 
+interface ResourceDiscoveryEntry {
+  description: string;
+  href: string;
+  title: string;
+  type: string;
+}
+
 interface TransformSitemapOptions {
   resolveTitle: (title: string, url: string) => string;
+  resources: ResourceDiscoveryEntry[];
   templates: TemplateDiscoveryEntry[];
 }
 
@@ -35,7 +43,7 @@ const addCanonical = (metadata: string, url: string): string =>
 
 export const transformSitemapMarkdown = (
   markdown: string,
-  { resolveTitle, templates }: TransformSitemapOptions,
+  { resolveTitle, resources, templates }: TransformSitemapOptions,
 ): string => {
   const transformed = markdown.replace(
     SITEMAP_ENTRY_PATTERN,
@@ -51,5 +59,10 @@ export const transformSitemapMarkdown = (
       `- [${template.title}](/templates/${template.slug}) | Type: Example | Summary: ${template.description} | Canonical: /templates/${template.slug}`,
   );
 
-  return `${transformed.trimEnd()}\n\n## Templates\n\n${templateLines.join("\n")}\n`;
+  const resourceLines = resources.map(
+    (resource) =>
+      `- [${resource.title}](${resource.href}) | Type: ${resource.type} | Summary: ${resource.description} | Canonical: ${resource.href}`,
+  );
+
+  return `${transformed.trimEnd()}\n\n## Project and machine resources\n\n${resourceLines.join("\n")}\n\n## Templates\n\n${templateLines.join("\n")}\n`;
 };

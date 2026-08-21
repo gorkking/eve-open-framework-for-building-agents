@@ -6,9 +6,15 @@ export const createLlmsIndex = (): string => `# eve
 
 Use this file to choose the smallest relevant documentation set. Use \`/sitemap.md\` for the exhaustive page map and \`/llms-full.txt\` only for offline indexing or a large context window. For an installed project, prefer \`node_modules/eve/docs/\`: those docs match the installed eve version, while eve.dev documents the latest release.
 
-eve.dev publishes framework documentation. It is not a shared API, authorization server, MCP server, or A2A server. Every deployed eve app exposes its own \`/eve/v1\` routes and authentication policy. External API, OpenAPI, and MCP URLs in these docs describe third-party connections or examples unless stated otherwise.
+eve.dev publishes framework documentation. It is not a shared eve runtime API, authorization server, MCP server, or A2A server. The site exposes only the documentation search and Ask AI helpers described by \`/openapi.json\`. Every deployed eve app exposes its own \`/eve/v1\` routes and authentication policy. External API, OpenAPI, and MCP URLs in these docs describe third-party connections or examples unless stated otherwise.
 
 Documentation links below point directly to Markdown. Remove the \`.md\` suffix for the canonical HTML page.
+
+## When to use eve
+
+Use eve when you need a backend AI agent that must keep durable session state, survive interruptions, wait for human input, run in an isolated sandbox, or serve the same agent through HTTP and messaging channels. eve is also a fit when you want agent capabilities to be reviewable as files, need deployment on either Vercel or self-hosted infrastructure, or want built-in eval and observability hooks around a long-running agent.
+
+Do not use eve.dev as a hosted agent endpoint. Build and deploy an eve application when an agent needs to receive messages or call tools. For a short, stateless model call inside an established application, the AI SDK may be the smaller surface.
 
 ## Introduction
 
@@ -76,12 +82,19 @@ Documentation links below point directly to Markdown. Remove the \`.md\` suffix 
 
 ## API Reference and Discovery
 
+- [eve.dev OpenAPI Specification](${EVE_ORIGIN}/openapi.json): Discover the read-only documentation search and Ask AI helper endpoints with typed request, response, and error schemas.
 - [TypeScript API Reference](${EVE_ORIGIN}/docs/reference/typescript-api.md): Find public \`define*\` helpers, runtime context, and import paths.
 - [CLI Reference](${EVE_ORIGIN}/docs/reference/cli.md): Find every eve command and option.
 - [Responsible Use](${EVE_ORIGIN}/docs/responsible-use.md): Review deployer responsibilities and safeguards.
 - [Documentation Map](${EVE_ORIGIN}/sitemap.md): Browse every documentation, integration, and template page with type and summary metadata.
 - [Agent Instructions](${EVE_ORIGIN}/agents.md): Read operational guidance for coding agents working with eve.
 - [Full Documentation Corpus](${EVE_ORIGIN}/llms-full.txt): Load all docs and integration content for offline indexing or a large context window.
+
+## Site and Project Information
+
+- [About eve](${EVE_ORIGIN}/about.md): Verify the framework's identity, source, license, beta status, and documentation scope.
+- [Contact the eve Project](${EVE_ORIGIN}/contact.md): Choose the correct channel for help, issues, contributions, conduct concerns, or private security reports.
+- [Privacy on eve.dev](${EVE_ORIGIN}/privacy.md): Understand site analytics, Ask AI processing, and the governing Vercel Privacy Notice.
 
 ## Optional
 

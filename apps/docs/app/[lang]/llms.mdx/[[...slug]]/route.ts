@@ -9,7 +9,7 @@ import {
 } from "@/lib/analytics/events";
 import { trackServerEvent } from "@/lib/analytics/server";
 import { applyMarkdownRouteCanonical } from "@/lib/geistdocs/markdown-canonical";
-import { getMarkdownRequestedPath } from "@/lib/geistdocs/markdown-path";
+import { getMarkdownRequestedPath, markdownNotFoundOptions } from "@/lib/geistdocs/markdown-path";
 import { geistdocsSource } from "@/lib/geistdocs/source";
 import { getSiteOrigin } from "@/lib/geistdocs/url";
 import { integrationSource } from "@/lib/integrations/source";
@@ -17,7 +17,7 @@ import { integrationSource } from "@/lib/integrations/source";
 export const revalidate = false;
 
 const markdownRoute = createDocsMarkdownRoute({
-  notFound: { getRequestedPath: getMarkdownRequestedPath },
+  notFound: markdownNotFoundOptions,
   sources: [geistdocsSource, integrationSource],
 });
 

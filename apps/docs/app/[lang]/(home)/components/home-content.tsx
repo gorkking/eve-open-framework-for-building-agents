@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { canonicalAlternates, canonicalRoutes } from "@/lib/geistdocs/canonical";
+import { createHomeStructuredData } from "@/lib/geistdocs/home-structured-data";
 import { pageTitleMetadata, siteTitle } from "@/lib/geistdocs/metadata-title";
 import { staticOgImage } from "@/lib/geistdocs/og";
 import { ArchitectureDiagram } from "./architecture";
@@ -14,12 +15,17 @@ const titleMetadata = pageTitleMetadata(siteTitle);
 
 export const homeMetadata: Metadata = {
   ...titleMetadata,
+  applicationName: "eve",
   description: tagline,
+  keywords: ["eve", "eve agent framework", "durable AI agents", "filesystem-first agents"],
   alternates: canonicalAlternates(canonicalRoutes.home),
   openGraph: {
     ...titleMetadata.openGraph,
     description: tagline,
     images: [staticOgImage],
+    siteName: "eve",
+    type: "website",
+    url: canonicalRoutes.home,
   },
   twitter: {
     ...titleMetadata.twitter,
@@ -29,15 +35,28 @@ export const homeMetadata: Metadata = {
   },
 };
 
-export const HomeContent = () => (
-  <div className="mx-auto w-full max-w-[1080px] pb-32">
-    <section className="relative isolate flex min-h-[80vh] flex-col items-center justify-center gap-y-5 px-4 pt-24 pb-12 text-center sm:px-12 sm:pb-16 sm:pt-42">
-      <HeroAudience tagline={tagline} />
-    </section>
-    <FileTree />
-    <NextjsInterop />
-    <ArchitectureDiagram />
-    <FeatureGrid />
-    <CTA />
-  </div>
-);
+export const HomeContent = () => {
+  const structuredData = createHomeStructuredData();
+
+  return (
+    <>
+      <script
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(structuredData).replace(/</g, "\\u003c"),
+        }}
+        id="eve-home-structured-data"
+        type="application/ld+json"
+      />
+      <main className="mx-auto w-full max-w-[1080px] pb-32">
+        <section className="relative isolate flex min-h-[80vh] flex-col items-center justify-center gap-y-5 px-4 pt-24 pb-12 text-center sm:px-12 sm:pb-16 sm:pt-42">
+          <HeroAudience tagline={tagline} />
+        </section>
+        <FileTree />
+        <NextjsInterop />
+        <ArchitectureDiagram />
+        <FeatureGrid />
+        <CTA />
+      </main>
+    </>
+  );
+};

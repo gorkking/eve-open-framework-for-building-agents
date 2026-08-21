@@ -8,6 +8,7 @@ describe("createLlmsIndex", () => {
     expect(output).toMatch(/^# eve\n\n> /);
     expect(output).not.toMatch(/^---/);
     expect(output).toContain("## Introduction");
+    expect(output).toContain("## When to use eve");
     expect(output).toContain("## Build");
     expect(output).toContain("## Integrate");
     expect(output).toContain("## Operate");
@@ -21,8 +22,12 @@ describe("createLlmsIndex", () => {
 
     expect(output).toContain("node_modules/eve/docs/");
     expect(output).toContain(
-      "It is not a shared API, authorization server, MCP server, or A2A server",
+      "It is not a shared eve runtime API, authorization server, MCP server, or A2A server",
     );
+    expect(output).toContain("https://eve.dev/openapi.json");
+    expect(output).toContain("https://eve.dev/about.md");
+    expect(output).toContain("https://eve.dev/contact.md");
+    expect(output).toContain("https://eve.dev/privacy.md");
     expect(output).toContain("https://eve.dev/sitemap.md");
     expect(output).toContain("https://eve.dev/agents.md");
     expect(output).toContain("https://eve.dev/llms-full.txt");

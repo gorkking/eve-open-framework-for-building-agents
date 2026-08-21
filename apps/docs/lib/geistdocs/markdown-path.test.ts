@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getMarkdownRequestedPath } from "./markdown-path";
+import { getMarkdownRequestedPath, markdownNotFoundOptions } from "./markdown-path";
 
 describe("getMarkdownRequestedPath", () => {
   it("restores flattened docs paths", () => {
@@ -16,5 +16,10 @@ describe("getMarkdownRequestedPath", () => {
 
   it("maps the shared route root to the docs root", () => {
     expect(getMarkdownRequestedPath({ slug: [] })).toBe("/docs");
+  });
+
+  it("returns a real 404 for missing Markdown pages", () => {
+    expect(markdownNotFoundOptions.status).toBe(404);
+    expect(markdownNotFoundOptions.getRequestedPath).toBe(getMarkdownRequestedPath);
   });
 });

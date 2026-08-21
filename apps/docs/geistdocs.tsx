@@ -33,6 +33,22 @@ export const suggestions = [
 ];
 
 export const agent = {
+  api: {
+    openApiUrl: "/openapi.json",
+  },
+  links: [
+    { label: "About eve", href: "/about", description: "Project identity and scope" },
+    {
+      label: "Contact the eve project",
+      href: "/contact",
+      description: "Community, issue, contribution, and security channels",
+    },
+    {
+      label: "Privacy on eve.dev",
+      href: "/privacy",
+      description: "Site analytics, Ask AI, and the governing Vercel Privacy Notice",
+    },
+  ],
   product: {
     name: "eve",
     description:
@@ -52,7 +68,7 @@ export const agent = {
     "Use /llms.txt as a concise task-oriented index and /sitemap.md as the exhaustive page map.",
     "Use /llms-full.txt only when you need the complete documentation corpus for offline indexing or a large context window.",
     "Fetch individual docs or integration pages with a .md or .mdx extension for focused page-level context. Template pages are HTML discovery pages and do not expose this alternate Markdown route.",
-    "Treat eve.dev as framework documentation, not a shared API, authorization server, MCP server, or A2A server. Every deployed eve app exposes its own /eve/v1 routes and authentication policy; external API, OpenAPI, and MCP URLs in the docs may describe third-party connections or examples.",
+    "Treat eve.dev as framework documentation, not a shared eve runtime API, authorization server, MCP server, or A2A server. The /openapi.json contract covers only the site's documentation search and Ask AI helpers. Every deployed eve app exposes its own /eve/v1 routes and authentication policy; external API, OpenAPI, and MCP URLs in the docs may describe third-party connections or examples.",
     "Do not assume API, authentication, OpenAPI, or MCP support unless it is listed in this file.",
   ],
 };

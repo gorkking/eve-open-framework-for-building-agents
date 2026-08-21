@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markdownRoutes } from "./markdown-routes";
+import { markdownRoutes, supportsMarkdownNegotiation } from "./markdown-routes";
 
 const integrationsRoute = markdownRoutes.find(({ from }) => from === "/integrations/*path");
 
@@ -23,4 +23,37 @@ describe("markdownRoutes", () => {
       to: "/[lang]/llms.mdx/*path",
     });
   });
+
+  it("maps trust pages to their shared Markdown source", () => {
+    expect(markdownRoutes).toContainEqual({
+      from: "/about",
+      to: "/[lang]/trust-markdown/about",
+    });
+    expect(markdownRoutes).toContainEqual({
+      from: "/contact",
+      to: "/[lang]/trust-markdown/contact",
+    });
+    expect(markdownRoutes).toContainEqual({
+      from: "/privacy",
+      to: "/[lang]/trust-markdown/privacy",
+    });
+  });
+
+  it.each([
+    "/docs/getting-started",
+    "/docs/getting-started.md",
+    "/integrations/slack",
+    "/about",
+    "/contact.md",
+    "/en/privacy",
+  ])("recognizes negotiated path %s", (pathname) => {
+    expect(supportsMarkdownNegotiation(pathname)).toBe(true);
+  });
+
+  it.each(["/", "/templates", "/openapi.json", "/missing"])(
+    "does not negotiate unrelated path %s",
+    (pathname) => {
+      expect(supportsMarkdownNegotiation(pathname)).toBe(false);
+    },
+  );
 });

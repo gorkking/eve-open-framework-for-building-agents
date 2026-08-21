@@ -17,12 +17,18 @@ interface CreateCanonicalSitemapOptions {
 }
 
 const alternateRepresentationPattern = /\.(?:md|mdx|txt|xml)$/i;
+const indexableTopLevelPaths = new Set([
+  "/about",
+  "/contact",
+  "/evals",
+  "/integrations",
+  "/privacy",
+  "/templates",
+]);
 
 const isIndexableHtmlPath = (pathname: string): boolean =>
   pathname === "/" ||
-  pathname === "/evals" ||
-  pathname === "/integrations" ||
-  pathname === "/templates" ||
+  indexableTopLevelPaths.has(pathname) ||
   /^\/docs\/.+/.test(pathname) ||
   /^\/integrations\/[^/]+$/.test(pathname) ||
   /^\/templates\/[^/]+$/.test(pathname);

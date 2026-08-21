@@ -4,6 +4,7 @@ import { Navbar } from "@vercel/geistdocs/navbar";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { GeistdocsProvider } from "@/components/geistdocs/provider";
+import { SiteFooterLinks } from "@/components/geistdocs/site-footer-links";
 import { config } from "@/lib/geistdocs/config";
 import { mono, sans } from "@/lib/geistdocs/fonts";
 import { staticOgImage } from "@/lib/geistdocs/og";
@@ -45,6 +46,7 @@ const Layout = async ({ children, params }: LayoutProps<"/[lang]">) => {
         <GeistdocsProvider basePath={config.basePath} lang={lang}>
           <Navbar config={config} />
           {children}
+          <SiteFooterLinks />
           <Footer />
         </GeistdocsProvider>
       </body>
