@@ -41,6 +41,7 @@ import {
 } from "#execution/sandbox/bindings/vercel-create-sdk.js";
 import {
   isVercelSandboxMissingError,
+  isVercelSnapshotNotFoundError,
   isVercelSnapshotUnavailableError,
 } from "#execution/sandbox/bindings/vercel-errors.js";
 import { getNamedVercelSandbox } from "#execution/sandbox/bindings/vercel-lookup.js";
@@ -114,10 +115,7 @@ export function createVercelSandbox(
           tags,
         });
       } catch (error) {
-        if (
-          template !== null &&
-          (isVercelSnapshotUnavailableError(error) || isVercelSandboxMissingError(error))
-        ) {
+        if (template !== null && VercelTemplateSnapshotUnavailableError.is(error)) {
           prewarmedTemplates.delete(template.templateKey);
           const staleTemplate = await getNamedVercelSandbox({
             createOptions,
@@ -377,13 +375,41 @@ interface VercelSandboxSessionCreateResult {
   readonly sandbox: VercelSandbox;
 }
 
+class VercelTemplateSnapshotUnavailableError extends Error {
+  static is(error: unknown): error is VercelTemplateSnapshotUnavailableError {
+    return error instanceof VercelTemplateSnapshotUnavailableError;
+  }
+}
+
 async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSessionCreateResult> {
   const sandboxName = getVercelSandboxName(input.existingMetadata) ?? input.sessionKey;
-  const existing = await getNamedVercelSandbox({
-    createOptions: input.createOptions,
-    sandboxModule: input.sandboxModule,
-    sandboxName,
-  });
+  let existing: VercelSandbox | null;
+  try {
+    existing = await getNamedVercelSandbox({
+      createOptions: input.createOptions,
+      resume: true,
+      sandboxModule: input.sandboxModule,
+      sandboxName,
+    });
+  } catch (error) {
+    if (!isVercelSnapshotNotFoundError(error)) {
+      throw error;
+    }
+
+    const stale = await getNamedVercelSandbox({
+      createOptions: input.createOptions,
+      sandboxModule: input.sandboxModule,
+      sandboxName,
+    });
+    try {
+      await stale?.delete();
+    } catch (deleteError) {
+      if (!isVercelSandboxMissingError(deleteError)) {
+        throw deleteError;
+      }
+    }
+    existing = null;
+  }
 
   if (existing !== null) {
     await ensureVercelSandboxTags(existing, input.tags);
@@ -398,13 +424,23 @@ async function ensureSession(input: EnsureSessionInput): Promise<VercelSandboxSe
     createParams.tags = input.tags;
   }
 
-  return {
-    created: true,
-    sandbox: await input.createSandbox({
-      createOptions: createParams,
-      sandboxModule: input.sandboxModule,
-    }),
-  };
+  try {
+    return {
+      created: true,
+      sandbox: await input.createSandbox({
+        createOptions: createParams,
+        sandboxModule: input.sandboxModule,
+      }),
+    };
+  } catch (error) {
+    if (
+      input.snapshotId !== undefined &&
+      (isVercelSnapshotUnavailableError(error) || isVercelSandboxMissingError(error))
+    ) {
+      throw new VercelTemplateSnapshotUnavailableError(undefined, { cause: error });
+    }
+    throw error;
+  }
 }
 
 function createSessionCreateParams(
