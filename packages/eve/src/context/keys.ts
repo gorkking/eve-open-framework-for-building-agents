@@ -71,7 +71,7 @@ export const SessionIdKey = new ContextKey<string>("eve.sessionId");
 export const ContinuationTokenKey = new ContextKey<string>("eve.continuationToken");
 export const ChannelRequestIdKey = new ContextKey<string>("eve.channelRequestId");
 export const ChannelDeliveryKey = new ContextKey<ChannelDeliveryMetadata>("eve.channelDelivery");
-/** Task-cohort reporting phase for the active root turn. */
+/** Task-cohort phase when the active turn began from a task-addressed durable delivery. */
 export const TurnTaskDeliveryKey = new ContextKey<"none" | "pending" | "settled">(
   "eve.turnTaskDelivery",
 );

@@ -8,7 +8,7 @@ const COMPLETION = /Background task (task_[a-z0-9]+) \([^)]+\) is completed\./gi
 function reportingEval() {
   return defineEval({
     description:
-      "Related background results produce no intermediate delivery and one consolidated final report.",
+      "Background work produces one acknowledgment, no intermediate delivery, and one consolidated final report.",
     async test(t) {
       const started = await t.send(`TASK-REPORTING-PROBE
 
@@ -18,17 +18,11 @@ Call report_worker exactly three times in one response and call no other tool:
 2. message="delayMs=40000, result=CHANNEL-DELIVERY"
 3. message="delayMs=70000, result=REPORTING-POLICY"
 
-Once the background work is complete, return a single report combining all three results.`);
+After the three task receipts, reply only with "investigation started". Then handle the background results normally.`);
 
       started.expectOk();
       started.calledTool("report_worker", { count: TASK_COUNT });
-      await t.require(
-        started.message,
-        satisfies(
-          (message) => message === undefined,
-          "initiating turn is silent after task receipts",
-        ),
-      );
+      started.messageIncludes("investigation started");
       const taskIds = backgroundTaskIds(started);
       await t.require(
         taskIds,

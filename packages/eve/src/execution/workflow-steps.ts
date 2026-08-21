@@ -83,10 +83,7 @@ import { createDurableSessionState, readDurableSession } from "#execution/durabl
 import type { TurnStepInput } from "#execution/durable-session-migrations/turn-workflow.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { appendTaskAgentAnnouncement } from "#execution/tasks/parent/agent-views.js";
-import {
-  resolveInitiatingTaskContext,
-  resolveTaskDeliveryContext,
-} from "#tasks/delivery-context.js";
+import { resolveTaskDeliveryContext } from "#tasks/delivery-context.js";
 import {
   readRetainedBackgroundToolResult,
   runBackgroundStep,
@@ -253,29 +250,22 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     resolved = { runtimeActionResults: input.input.results };
   }
 
-  const deliveredTaskContext =
+  if (
     resolved !== undefined &&
     rawInput.input?.kind === "deliver" &&
     rawInput.input.taskDeliveryId !== undefined
-      ? resolveTaskDeliveryContext({
-          state: durableSession.state,
-          taskDeliveryId: rawInput.input.taskDeliveryId,
-        })
-      : undefined;
-  const taskContext =
-    deliveredTaskContext ??
-    (tasksEnabled && ctx.get(TurnTaskDeliveryKey) === "none"
-      ? resolveInitiatingTaskContext({
-          state: durableSession.state,
-          turnId: activeTurnId(initialEmissionState),
-        })
-      : undefined);
-  if (taskContext !== undefined) {
-    ctx.set(TurnTaskDeliveryKey, taskContext.phase);
-    resolved = {
-      ...resolved,
-      context: [...(resolved?.context ?? []), taskContext.context],
-    };
+  ) {
+    const taskContext = resolveTaskDeliveryContext({
+      state: durableSession.state,
+      taskDeliveryId: rawInput.input.taskDeliveryId,
+    });
+    if (taskContext !== undefined) {
+      ctx.set(TurnTaskDeliveryKey, taskContext.phase);
+      resolved = {
+        ...resolved,
+        context: [...(resolved.context ?? []), taskContext.context],
+      };
+    }
   }
 
   // Persist adapter-state mutations across the step boundary.

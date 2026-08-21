@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { SessionStateMap } from "#harness/types.js";
 import { EMPTY_DELIVERY_SENTINEL } from "#shared/empty-delivery.js";
 import {
-  resolveInitiatingTaskContext,
   resolveTaskDeliveryContext,
   TASK_DELIVERY_CONTEXT_LABEL,
   TASK_DELIVERY_PENDING_INSTRUCTION,
@@ -23,7 +22,7 @@ describe("task delivery instructions", () => {
       "overrides any earlier instruction to report, summarize, acknowledge",
     );
     expect(TASK_DELIVERY_PENDING_INSTRUCTION).toContain(
-      "may call tools only if the current task state requires immediate action",
+      "may call tools only if the newly delivered task result requires immediate action",
     );
     expect(TASK_DELIVERY_PENDING_INSTRUCTION).toContain(
       "Do not provide progress, status, an acknowledgement, or a waiting message",
@@ -112,42 +111,9 @@ describe("resolveTaskDeliveryContext", () => {
   });
 });
 
-describe("resolveInitiatingTaskContext", () => {
-  it("projects pending delegated tasks from the active parent turn", () => {
-    expect(
-      resolveInitiatingTaskContext({
-        state: taskState([
-          taskEntry("task_1", "turn_1", undefined, { data: {}, kind: "subagent" }),
-          taskEntry("task_2", "turn_2", undefined, { data: {}, kind: "subagent" }),
-        ]),
-        turnId: "turn_1",
-      }),
-    ).toEqual({
-      context:
-        '[Task state]\n{"tasks":[{"name":"report_probe","status":"pending","taskId":"task_1"}]}',
-      phase: "pending",
-    });
-  });
-
-  it("does not classify a background tool that returned its final value as delegated", () => {
-    expect(
-      resolveInitiatingTaskContext({
-        state: taskState([taskEntry("task_1", "turn_1")]),
-        turnId: "turn_1",
-      }),
-    ).toBeUndefined();
-  });
-});
-
-function taskEntry(
-  taskId: string,
-  createdByTurnId: string,
-  terminalView?: TaskView,
-  executor?: { readonly data: Record<string, never>; readonly kind: string },
-) {
+function taskEntry(taskId: string, createdByTurnId: string, terminalView?: TaskView) {
   return {
     createdByTurnId,
-    executor,
     metadata,
     taskId,
     taskInboxToken: `inbox-${taskId}`,
