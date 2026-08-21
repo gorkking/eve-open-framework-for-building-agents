@@ -1,0 +1,31 @@
+diff --git a/dist/internal/sidebar.js b/dist/internal/sidebar.js
+index eedcfef1f4a0657c91a5b626194d964bd7c97029..6c0f3767de684af2c97376bb8abff89106ef087d 100644
+--- a/dist/internal/sidebar.js
++++ b/dist/internal/sidebar.js
+@@ -120,7 +120,7 @@ const useOpenedFolders = (nodes, activeUrl, openFirstLevel, scope) => {
+             return current.filter((openId) => !closing.has(openId));
+         });
+     };
+-    return { opened, toggleFolder };
++    return { desiredOpenIds, opened, toggleFolder };
+ };
+ const SidebarSeparatorRow = ({ depth, item, }) => (_jsxs("li", { className: cn("mt-4 flex items-center gap-2 px-2 pt-2 pb-1 text-gray-900 text-label-13 first:mt-0 [&_svg]:size-4", depth > 0 && "ml-3"), children: [item.icon ? _jsx("span", { className: "shrink-0", children: item.icon }) : null, _jsx("span", { className: "min-w-0 truncate", children: item.name })] }));
+ const SidebarTreeItems = ({ depth, nodes, parentPath, state, }) => (_jsx(_Fragment, { children: nodes.map((node, index) => (_jsx(SidebarTreeNode, { depth: depth, node: node, path: [...parentPath, index], state: state }, getSidebarNodeId(node, [...parentPath, index], state.idScope)))) }));
+@@ -175,7 +175,7 @@ const SidebarTree = ({ activeUrl, idScope, nodes, onNavigate, openFirstLevel = f
+     const generatedId = useId().replace(UNSAFE_ID_CHARACTERS, "");
+     const resolvedIdScope = idScope ?? `sidebar-${generatedId}`;
+     const listRef = useRef(null);
+-    const { opened, toggleFolder } = useOpenedFolders(nodes, activeUrl, openFirstLevel, resolvedIdScope);
++    const { desiredOpenIds, opened, toggleFolder } = useOpenedFolders(nodes, activeUrl, openFirstLevel, resolvedIdScope);
+     const state = {
+         activeUrl,
+         idPrefix: `sidebar-${generatedId}`,
+@@ -184,7 +184,7 @@ const SidebarTree = ({ activeUrl, idScope, nodes, onNavigate, openFirstLevel = f
+         opened,
+         toggleFolder,
+     };
+-    useActiveItemScroll(listRef, activeUrl, scrollActive && visible, opened.join(":"));
++    useActiveItemScroll(listRef, activeUrl, scrollActive && visible, desiredOpenIds.join(":"));
+     return (_jsx("ul", { className: "m-0 flex list-none flex-col gap-px p-0", ref: listRef, children: _jsx(SidebarTreeItems, { depth: 0, nodes: nodes, parentPath: [], state: state }) }));
+ };
+ const SidebarRootList = ({ activeSection, activeUrl, groups, onSelect, visible, }) => {
