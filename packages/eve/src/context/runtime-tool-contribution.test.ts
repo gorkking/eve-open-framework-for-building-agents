@@ -304,6 +304,37 @@ describe("runtime tool contributions", () => {
     expect(names(ctx)).toEqual([]);
   });
 
+  it("normalizes the empty harness turn sentinel before dispatching step contributors", async () => {
+    const ctx = new ContextContainer();
+    let receivedCoordinate: unknown;
+    const contributor: RuntimeToolContributor = {
+      eventNames: ["step.started"],
+      ownerId: "step-owner",
+      resolve: ({ coordinate }) => {
+        receivedCoordinate = coordinate;
+        return null;
+      },
+      sourceId: "source:step-owner",
+    };
+
+    await dispatchRuntimeToolContributors({
+      contributors: [contributor],
+      ctx,
+      event: {
+        ...STEP_EVENT,
+        data: { ...STEP_EVENT.data, sequence: 3, stepIndex: 2, turnId: "" },
+      },
+      messages: [],
+      runtimeRevision: "deployment:one",
+    });
+
+    expect(receivedCoordinate).toEqual({
+      event: "step.started",
+      stepIndex: 2,
+      turnId: "turn_3",
+    });
+  });
+
   it("refreshes registered sources and removes contributors absent from a new revision", async () => {
     const ctx = new ContextContainer();
     contribute({

@@ -280,12 +280,17 @@ export function runtimeToolContributionCoordinate(
       return { event: "session.started" };
     case "turn.started":
       return { event: "turn.started", turnId: event.data.turnId };
-    case "step.started":
+    case "step.started": {
+      // Resumed harness state may still carry the between-turn sentinel; the
+      // next active turn uses the same sequence-derived identity as preamble.
+      const turnId =
+        event.data.turnId === "" ? `turn_${String(event.data.sequence)}` : event.data.turnId;
       return {
         event: "step.started",
         stepIndex: event.data.stepIndex,
-        turnId: event.data.turnId,
+        turnId,
       };
+    }
     default:
       return undefined;
   }
