@@ -122,6 +122,7 @@ export const createEvalsOgImage = async (rows: BenchmarkRow[]): Promise<ImageRes
               style={{
                 color: "#888888",
                 display: "flex",
+                fontFeatureSettings: '"tnum" 1',
                 justifyContent: "flex-end",
                 width: 84,
               }}
@@ -131,6 +132,7 @@ export const createEvalsOgImage = async (rows: BenchmarkRow[]): Promise<ImageRes
             <div
               style={{
                 display: "flex",
+                fontFeatureSettings: '"tnum" 1',
                 fontWeight: 500,
                 justifyContent: "flex-end",
                 width: 104,
