@@ -18,7 +18,7 @@ Call report_worker exactly three times in one response and call no other tool:
 2. message="delayMs=40000, result=CHANNEL-DELIVERY"
 3. message="delayMs=70000, result=REPORTING-POLICY"
 
-After the three task receipts, reply only with "investigation started". Then handle the background results normally.`);
+Once the background work is complete, return a single report combining all three results.`);
 
       started.expectOk();
       started.calledTool("report_worker", { count: TASK_COUNT });

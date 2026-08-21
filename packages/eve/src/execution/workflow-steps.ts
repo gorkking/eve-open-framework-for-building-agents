@@ -253,36 +253,29 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     resolved = { runtimeActionResults: input.input.results };
   }
 
-  if (
+  const deliveredTaskContext =
     resolved !== undefined &&
     rawInput.input?.kind === "deliver" &&
     rawInput.input.taskDeliveryId !== undefined
-  ) {
-    const taskContext = resolveTaskDeliveryContext({
-      state: durableSession.state,
-      taskDeliveryId: rawInput.input.taskDeliveryId,
-    });
-    if (taskContext !== undefined) {
-      ctx.set(TurnTaskDeliveryKey, taskContext.phase);
-      resolved = {
-        ...resolved,
-        context: [...(resolved.context ?? []), taskContext.context],
-      };
-    }
-  }
-
-  if (tasksEnabled && ctx.get(TurnTaskDeliveryKey) === "none") {
-    const taskContext = resolveInitiatingTaskContext({
-      state: durableSession.state,
-      turnId: activeTurnId(initialEmissionState),
-    });
-    if (taskContext !== undefined) {
-      ctx.set(TurnTaskDeliveryKey, taskContext.phase);
-      resolved = {
-        ...resolved,
-        context: [...(resolved?.context ?? []), taskContext.context],
-      };
-    }
+      ? resolveTaskDeliveryContext({
+          state: durableSession.state,
+          taskDeliveryId: rawInput.input.taskDeliveryId,
+        })
+      : undefined;
+  const taskContext =
+    deliveredTaskContext ??
+    (tasksEnabled && ctx.get(TurnTaskDeliveryKey) === "none"
+      ? resolveInitiatingTaskContext({
+          state: durableSession.state,
+          turnId: activeTurnId(initialEmissionState),
+        })
+      : undefined);
+  if (taskContext !== undefined) {
+    ctx.set(TurnTaskDeliveryKey, taskContext.phase);
+    resolved = {
+      ...resolved,
+      context: [...(resolved?.context ?? []), taskContext.context],
+    };
   }
 
   // Persist adapter-state mutations across the step boundary.
