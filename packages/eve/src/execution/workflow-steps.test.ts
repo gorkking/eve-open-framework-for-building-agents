@@ -2363,6 +2363,87 @@ describe("turnStep", () => {
     expect(observedTaskDeliveries).toEqual(["settled", "none", "none"]);
   });
 
+  it("supplies pending task state before the initiating turn reports delegated work", async () => {
+    const tasksBundle = {
+      adapterRegistry: {
+        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
+      },
+      compiledArtifactsSource: {} as never,
+      graph: {
+        nodesByNodeId: new Map(),
+        root: {
+          sandboxRegistry: { sandbox: null },
+          turnAgent: TestTurnAgent,
+        },
+      },
+      moduleMap: { nodes: {} },
+      hookRegistry: createEmptyHookRegistry(),
+      resolvedAgent: { config: { experimental: { tasks: true } } },
+      subagentRegistry: {},
+      toolRegistry: {},
+      turnAgent: TestTurnAgent,
+    } as never;
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(tasksBundle);
+
+    const session = createStubSession({
+      state: {
+        "eve.harness.emission": {
+          sequence: 0,
+          sessionStarted: true,
+          stepIndex: 1,
+          turnId: "turn_0",
+        },
+        "eve.tasks": {
+          tasks: [
+            {
+              createdByStepIndex: 0,
+              createdByTurnId: "turn_0",
+              executor: { data: {}, kind: "subagent" },
+              metadata: { kind: "report-probe", name: "report_probe" },
+              taskId: "task_1",
+              taskInboxToken: "task-token",
+              taskRunId: "run_1",
+            },
+          ],
+        },
+      },
+    });
+    installSessionStoreMocks([session]);
+
+    let observedInput: unknown;
+    let observedPhase: unknown;
+    vi.mocked(createExecutionNodeStep).mockImplementation(() => {
+      return async (stepSession, stepInput): Promise<StepResult> => {
+        observedInput = stepInput;
+        observedPhase = contextStorage.getStore()?.get(TurnTaskDeliveryKey);
+        return { next: { done: true, output: "ok" }, session: stepSession };
+      };
+    });
+    const serializedContext = createSerializedContext();
+    serializedContext[TurnTaskDeliveryKey.name] = "none";
+
+    await turnStep({
+      input: undefined,
+      parentWritable: createTestWritable(),
+      serializedContext,
+      sessionState: createStubSessionState({
+        emissionState: {
+          sequence: 0,
+          sessionStarted: true,
+          stepIndex: 1,
+          turnId: "turn_0",
+        },
+      }),
+    });
+
+    expect(observedPhase).toBe("pending");
+    expect(observedInput).toEqual({
+      context: [
+        '[Task state]\n{"tasks":[{"name":"report_probe","status":"pending","taskId":"task_1"}]}',
+      ],
+    });
+  });
+
   it("projects a requested sleep onto the durable step result", async () => {
     const session = createStubSession();
     installSessionStoreMocks([session]);
