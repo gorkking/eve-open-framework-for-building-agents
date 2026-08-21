@@ -63,7 +63,7 @@ export default otel({
 });
 ```
 
-Zero-config `eve dev` also admits `unknown` so local HTTP/TUI sessions remain observable. It still rejects conversations classified as `direct` or `restricted`.
+Zero-config `eve dev` also admits `unknown` so local HTTP/TUI sessions remain observable. It still rejects conversations classified as `private`.
 
 `tracePolicy` only decides whether a trace is created. Every accepted trace still passes through the export pipeline. Configure `exportPolicy` to redact content, drop spans, or drop and replace attributes before one destination receives them.
 
@@ -222,7 +222,7 @@ Without an `instrumentation.ts`, `eve dev` records spans to disk — one trace p
 - [`/traces`](dev-tui#logs-and-traces) in the dev TUI: a live trace viewer that replays captured content as a conversation.
 - [`eve traces`](../reference/cli#eve-traces): a span tree in the terminal, `eve traces ls` to list. Works after `eve dev` exits.
 
-Local traces retain model and tool content for public and unclassified local HTTP/TUI sessions. Conversations classified as `direct` or `restricted` are not traced by default. If a custom `tracePolicy` admits them, configure the local trace export policy when their content should be redacted.
+Local traces retain model and tool content for public and unclassified local HTTP/TUI sessions. Conversations classified as `private` are not traced by default. If a custom `tracePolicy` admits them, configure the local trace export policy when their content should be redacted.
 
 Writing `instrumentation.ts` replaces this: your `setup` takes over and nothing is recorded locally. For span attributes, retention, and the `EVE_TRACES*` variables, see [`eve traces`](../reference/cli#eve-traces).
 
