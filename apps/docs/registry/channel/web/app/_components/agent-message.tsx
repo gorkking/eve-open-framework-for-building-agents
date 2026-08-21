@@ -46,6 +46,12 @@ export type AgentInputResponse = {
 
 type EveFilePart = Extract<EveMessagePart, { type: "file" }>;
 
+const STREAM_ANIMATION = {
+  duration: 120,
+  sep: "word",
+  stagger: 20,
+} as const;
+
 export function AgentMessage({
   canRespond,
   isStreaming,
@@ -103,7 +109,11 @@ function AgentMessagePart({
       return null;
     case "text":
       return (
-        <MessageResponse caret="block" isAnimating={showCaret}>
+        <MessageResponse
+          animated={showCaret ? STREAM_ANIMATION : false}
+          caret="block"
+          isAnimating={showCaret}
+        >
           {part.text}
         </MessageResponse>
       );
