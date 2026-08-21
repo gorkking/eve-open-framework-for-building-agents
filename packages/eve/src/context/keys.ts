@@ -162,8 +162,22 @@ export interface DurableDynamicToolMetadata {
   readonly description: string;
   readonly inputSchema: JsonObject;
   readonly outputSchema?: JsonObject;
+  /**
+   * Owner identity used for replacement and collision detection. Authored
+   * dynamic tools carry their resolver slug; runtime-contributed tools carry
+   * their contribution owner id.
+   */
   readonly resolverSlug: string;
   readonly entryKey: string;
+  /** Present only when the entry was contributed by runtime code rather than an authored dynamic resolver. */
+  readonly contribution?: RuntimeToolContributionProvenance;
+}
+
+/** Provenance recorded for tools contributed through the runtime contribution seam. */
+export interface RuntimeToolContributionProvenance {
+  readonly ownerId: string;
+  readonly runtimeRevision: string;
+  readonly sourceId: string;
 }
 
 /**

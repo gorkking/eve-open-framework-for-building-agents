@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAllFrameworkToolDefinitions,
   getAllFrameworkToolNames,
-  getFrameworkDynamicToolResolvers,
+  getFrameworkRuntimeToolContributors,
   getFrameworkToolDefinitions,
   getOptInFrameworkToolNames,
 } from "#runtime/framework-tools/index.js";
@@ -79,11 +79,12 @@ describe("framework-tools/index", () => {
     }
   });
 
-  it("registers connection search through the framework dynamic tool registry", () => {
-    expect(getFrameworkDynamicToolResolvers()).toMatchObject([
+  it("registers connection search as a framework runtime tool contributor", () => {
+    expect(getFrameworkRuntimeToolContributors()).toMatchObject([
       {
         eventNames: ["step.started"],
         logicalPath: "eve:framework/connection-search-dynamic",
+        ownerId: "eve.connection-search",
         slug: "connection",
         sourceId: "eve:connection-search-dynamic",
       },

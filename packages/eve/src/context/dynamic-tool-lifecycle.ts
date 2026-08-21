@@ -1,13 +1,16 @@
 import type { ModelMessage } from "ai";
 
+import {
+  applyRuntimeToolContributions,
+  durableKeyForEvent,
+} from "#context/runtime-tool-contribution.js";
+import { createDurableDynamicToolMetadata } from "#context/durable-dynamic-tool-metadata.js";
 import { replayDynamicTools } from "#context/build-dynamic-tools.js";
 import type { ContextContainer } from "#context/container.js";
-import type { ContextKey } from "#context/key.js";
 import {
   SessionDynamicToolMetadataKey,
   SessionDynamicToolRuntimeRevisionKey,
   StepDynamicToolMetadataKey,
-  TurnDynamicToolMetadataKey,
   type DurableDynamicToolMetadata,
 } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
@@ -19,18 +22,8 @@ import {
   ALLOWED_DYNAMIC_TOOL_EVENTS,
   isBrandedToolEntry,
 } from "#shared/dynamic-tool-definition.js";
-import {
-  hasUnregisteredDurableDynamicCallbacks,
-  type DurableDynamicCallbackPhase,
-  type DurableDynamicCallbackReference,
-  type DurableDynamicToolCallbacks,
-  type StampedDurableDynamicCallback,
-  readDurableDynamicToolCallbacks,
-  registerDurableDynamicCallback,
-} from "#shared/durable-dynamic-tool-callbacks.js";
+import { hasUnregisteredDurableDynamicCallbacks } from "#shared/durable-dynamic-tool-callbacks.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { parseJsonObject } from "#shared/json.js";
-import { serializeInputSchema, serializeOutputSchema } from "#shared/tool-schema.js";
 import type { ResolvedDynamicToolResolver } from "#runtime/types.js";
 
 const log = createLogger("dynamic-tools");
@@ -64,21 +57,6 @@ export function replayDynamicSessionTools(
   return replayDynamicTools(metadata);
 }
 
-function durableKeyForEvent(
-  eventType: string,
-): ContextKey<readonly DurableDynamicToolMetadata[]> | undefined {
-  switch (eventType) {
-    case "session.started":
-      return SessionDynamicToolMetadataKey;
-    case "turn.started":
-      return TurnDynamicToolMetadataKey;
-    case "step.started":
-      return StepDynamicToolMetadataKey;
-    default:
-      return undefined;
-  }
-}
-
 function readDynamicToolResult(
   resolver: ResolvedDynamicToolResolver,
   value: unknown,
@@ -104,134 +82,6 @@ function readDynamicToolResult(
   return { entries, isSingle: false };
 }
 
-function validateReference(input: {
-  readonly name: string;
-  readonly phase: DurableDynamicCallbackPhase;
-  readonly stamped: StampedDurableDynamicCallback | undefined;
-  readonly required: boolean;
-}): DurableDynamicCallbackReference | undefined {
-  if (input.stamped === undefined) {
-    if (input.required) {
-      throw new Error(
-        `Dynamic tool "${input.name}" callback "${input.phase}" does not have a durable descriptor. ` +
-          "Author the callback inline in transformed source or use an eve durable callback helper.",
-      );
-    }
-    return undefined;
-  }
-  const unknownKeys = Object.keys(input.stamped).filter(
-    (key) => key !== "closure" && key !== "callback",
-  );
-  if (unknownKeys.includes("stepId")) {
-    throw new Error(
-      `Dynamic tool "${input.name}" callback "${input.phase}" was persisted by a pre-release eve ` +
-        "version that identified callbacks by build offset. Start a new session to re-resolve it.",
-    );
-  }
-  if (unknownKeys.length > 0) {
-    throw new Error(
-      `Dynamic tool "${input.name}" has invalid ${input.phase} callback metadata: unknown key(s) ${unknownKeys.join(", ")}.`,
-    );
-  }
-  if (typeof input.stamped.callback !== "function") {
-    throw new Error(
-      `Dynamic tool "${input.name}" callback "${input.phase}" does not have a durable descriptor. ` +
-        "Author the callback inline in transformed source or use an eve durable callback helper.",
-    );
-  }
-  let closure: DurableDynamicCallbackReference["closure"];
-  try {
-    closure = parseJsonObject(input.stamped.closure);
-  } catch (error) {
-    throw new Error(
-      `Dynamic tool "${input.name}" callback "${input.phase}" has a non-serializable capture. ${toErrorMessage(error)}`,
-    );
-  }
-  registerDurableDynamicCallback({
-    callback: input.stamped.callback,
-    phase: input.phase,
-    toolName: input.name,
-  });
-  return { closure };
-}
-
-export function validateDurableDynamicToolCallbacks(
-  name: string,
-  entry: DynamicToolEntry,
-): DurableDynamicToolCallbacks {
-  const raw = readDurableDynamicToolCallbacks(entry) ?? {};
-  const unknownPhases = Object.keys(raw).filter(
-    (key) =>
-      key !== "execute" &&
-      key !== "approvalRequest" &&
-      key !== "approvalResponse" &&
-      key !== "toModelOutput",
-  );
-  if (unknownPhases.length > 0) {
-    throw new Error(
-      `Dynamic tool "${name}" has unknown durable callback phase(s): ${unknownPhases.join(", ")}.`,
-    );
-  }
-
-  const hasApproval = entry.approval !== undefined;
-  const hasApprovalResponse =
-    entry.approval !== undefined &&
-    typeof entry.approval !== "function" &&
-    entry.approval.response !== undefined;
-  const execute = validateReference({
-    name,
-    phase: "execute",
-    stamped: raw.execute,
-    required: true,
-  })!;
-  const approvalRequest = validateReference({
-    name,
-    phase: "approvalRequest",
-    stamped: raw.approvalRequest,
-    required: hasApproval,
-  });
-  const approvalResponse = validateReference({
-    name,
-    phase: "approvalResponse",
-    stamped: raw.approvalResponse,
-    required: hasApprovalResponse,
-  });
-  const toModelOutput = validateReference({
-    name,
-    phase: "toModelOutput",
-    stamped: raw.toModelOutput,
-    required: entry.toModelOutput !== undefined,
-  });
-
-  const callbacks: {
-    execute: DurableDynamicCallbackReference;
-    approvalRequest?: DurableDynamicCallbackReference;
-    approvalResponse?: DurableDynamicCallbackReference;
-    toModelOutput?: DurableDynamicCallbackReference;
-  } = { execute };
-  if (approvalRequest !== undefined) callbacks.approvalRequest = approvalRequest;
-  if (approvalResponse !== undefined) callbacks.approvalResponse = approvalResponse;
-  if (toModelOutput !== undefined) callbacks.toModelOutput = toModelOutput;
-  return callbacks;
-}
-
-function createMetadata(input: {
-  readonly entry: DynamicToolEntry;
-  readonly entryKey: string;
-  readonly name: string;
-  readonly resolver: ResolvedDynamicToolResolver;
-}): DurableDynamicToolMetadata {
-  return {
-    callbacks: validateDurableDynamicToolCallbacks(input.name, input.entry),
-    description: input.entry.description,
-    entryKey: input.entryKey,
-    inputSchema: serializeInputSchema(input.entry.inputSchema),
-    name: input.name,
-    outputSchema: serializeOutputSchema(input.entry.outputSchema),
-    resolverSlug: input.resolver.slug,
-  };
-}
-
 interface ResolvedDynamicToolEvent {
   readonly metadata: readonly DurableDynamicToolMetadata[];
 }
@@ -252,7 +102,12 @@ async function resolveToolsFromEvent(
       const named = qualifyDynamicToolNames(resolver, isSingle, entries);
       return {
         metadata: named.map(({ name, entryKey, entry }) =>
-          createMetadata({ entry, entryKey, name, resolver }),
+          createDurableDynamicToolMetadata({
+            entry,
+            entryKey,
+            name,
+            resolverSlug: resolver.slug,
+          }),
         ),
         resolver,
       };
@@ -316,8 +171,17 @@ export async function resolveStepDynamicTools(input: {
     matching.length === 0
       ? { metadata: [] }
       : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
-  input.ctx.set(StepDynamicToolMetadataKey, metadata);
-  if (coordinate !== undefined) resolvedStepTools.set(input.ctx, { coordinate, metadata });
+  const finalMetadata = await applyRuntimeToolContributions({
+    ctx: input.ctx,
+    event: input.event,
+    messages: input.messages,
+    resolverMetadata: metadata,
+    replacesResolverEntries: "all",
+    runtimeRevision: input.ctx.get(SessionDynamicToolRuntimeRevisionKey) ?? "",
+  });
+  input.ctx.set(StepDynamicToolMetadataKey, finalMetadata);
+  if (coordinate !== undefined)
+    resolvedStepTools.set(input.ctx, { coordinate, metadata: finalMetadata });
 }
 
 export async function dispatchDynamicToolEvent(input: {
@@ -344,12 +208,30 @@ export async function dispatchDynamicToolEvent(input: {
   if (durableKey === undefined) return;
 
   if (input.event.type === "session.started") {
-    input.ctx.set(SessionDynamicToolMetadataKey, metadata);
+    input.ctx.set(
+      SessionDynamicToolMetadataKey,
+      await applyRuntimeToolContributions({
+        ctx: input.ctx,
+        event: input.event,
+        messages: input.messages,
+        resolverMetadata: metadata,
+        replacesResolverEntries: "all",
+        runtimeRevision: input.ctx.get(SessionDynamicToolRuntimeRevisionKey) ?? "",
+      }),
+    );
     return;
   }
-  const slugs = new Set(matching.map((resolver) => resolver.slug));
-  const kept = (input.ctx.get(durableKey) ?? []).filter((entry) => !slugs.has(entry.resolverSlug));
-  input.ctx.set(durableKey, [...kept, ...metadata]);
+  input.ctx.set(
+    durableKey,
+    await applyRuntimeToolContributions({
+      ctx: input.ctx,
+      event: input.event,
+      messages: input.messages,
+      resolverMetadata: metadata,
+      replacesResolverEntries: new Set(matching.map((resolver) => resolver.slug)),
+      runtimeRevision: input.ctx.get(SessionDynamicToolRuntimeRevisionKey) ?? "",
+    }),
+  );
 }
 
 /**
@@ -377,6 +259,18 @@ export async function refreshDynamicSessionToolsForRuntimeRevision(input: {
     matching.length === 0
       ? { metadata: [] }
       : await resolveToolsFromEvent(input.ctx, matching, input.event, input.messages);
-  input.ctx.set(SessionDynamicToolMetadataKey, metadata);
+  // Re-running the contribution pass re-registers persisted contributed
+  // callbacks in this process and drops contributors the revision removed.
+  input.ctx.set(
+    SessionDynamicToolMetadataKey,
+    await applyRuntimeToolContributions({
+      ctx: input.ctx,
+      event: input.event,
+      messages: input.messages,
+      resolverMetadata: metadata,
+      replacesResolverEntries: "all",
+      runtimeRevision: input.runtimeRevision,
+    }),
+  );
   input.ctx.set(SessionDynamicToolRuntimeRevisionKey, input.runtimeRevision);
 }

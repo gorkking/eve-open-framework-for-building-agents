@@ -19,8 +19,9 @@ const {
   replayDynamicSessionTools,
   dispatchDynamicToolEvent,
   refreshDynamicSessionToolsForRuntimeRevision,
-  validateDurableDynamicToolCallbacks,
 } = await import("#context/dynamic-tool-lifecycle.js");
+const { validateDurableDynamicToolCallbacks } =
+  await import("#context/durable-dynamic-tool-metadata.js");
 const { buildDynamicTools, buildResponseAuthorizationTools } =
   await import("#context/build-dynamic-tools.js");
 
