@@ -30,9 +30,11 @@ function respond(request: MockModelRequest): MockModelResponse | string {
     const results = taskState.tasks.flatMap((task) => {
       if (task.output?.type !== "result") return [];
       const result =
-        task.output.data !== null && typeof task.output.data === "object"
-          ? Reflect.get(task.output.data, "result")
-          : undefined;
+        typeof task.output.data === "string"
+          ? task.output.data
+          : task.output.data !== null && typeof task.output.data === "object"
+            ? Reflect.get(task.output.data, "result")
+            : undefined;
       return typeof result === "string" ? [result] : [];
     });
     return `Consolidated report: ${results.join(", ")}`;
@@ -42,13 +44,13 @@ function respond(request: MockModelRequest): MockModelResponse | string {
     return `Mock reply: ${request.lastUserMessage ?? ""}`;
   }
 
-  const probeResults = request.toolResults.filter((result) => result.name === "report_probe");
+  const probeResults = request.toolResults.filter((result) => result.name === "report_worker");
   if (probeResults.length > 0) return "investigation started";
   return {
     toolCalls: RESULTS.map((result, index) => ({
       id: `report-probe-${String(index + 1)}`,
-      input: { delayMs: DELAYS_MS[index], result },
-      name: "report_probe",
+      input: { message: `delayMs=${String(DELAYS_MS[index])}, result=${result}` },
+      name: "report_worker",
     })),
   };
 }

@@ -10,23 +10,25 @@ function reportingEval() {
     description:
       "Related background results produce no intermediate delivery and one consolidated final report.",
     async test(t) {
-      if (new URL(t.target.url).hostname.endsWith(".vercel.app")) {
-        t.skip("The in-process timer executor is not restart-safe on a serverless deployment.");
-      }
-
       const started = await t.send(`TASK-REPORTING-PROBE
 
-Call report_probe exactly three times in one response and call no other tool:
+Call report_worker exactly three times in one response and call no other tool:
 
-1. delayMs=10000, result=WAKE-MECHANISM
-2. delayMs=40000, result=CHANNEL-DELIVERY
-3. delayMs=70000, result=REPORTING-POLICY
+1. message="delayMs=10000, result=WAKE-MECHANISM"
+2. message="delayMs=40000, result=CHANNEL-DELIVERY"
+3. message="delayMs=70000, result=REPORTING-POLICY"
 
 After the three task receipts, reply only with "investigation started". Then handle the background results normally.`);
 
       started.expectOk();
-      started.calledTool("report_probe", { count: TASK_COUNT });
-      started.messageIncludes("investigation started");
+      started.calledTool("report_worker", { count: TASK_COUNT });
+      await t.require(
+        started.message,
+        satisfies(
+          (message) => message === undefined,
+          "initiating turn is silent after task receipts",
+        ),
+      );
       const taskIds = backgroundTaskIds(started);
       await t.require(
         taskIds,
@@ -118,7 +120,7 @@ function backgroundTaskIds(turn: EveEvalTurn): readonly string[] {
     if (
       event.type !== "action.result" ||
       event.data.result.kind !== "tool-result" ||
-      event.data.result.toolName !== "report_probe"
+      event.data.result.toolName !== "report_worker"
     ) {
       return [];
     }
