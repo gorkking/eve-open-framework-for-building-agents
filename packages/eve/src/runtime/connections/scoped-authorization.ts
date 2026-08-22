@@ -16,6 +16,7 @@ import {
   type AuthorizationSignal,
   consumeAuthorizationResult,
   createAuthorizationAttempt,
+  getReusableAuthorizationChallenge,
   requestAuthorization,
 } from "#harness/authorization.js";
 import type { JsonValue } from "#public/types/json.js";
@@ -173,11 +174,14 @@ export async function startScopedAuthorization(
   const { scope, authorization, connection } = input;
   if (!supportsInteractiveAuthorization(authorization)) return undefined;
 
+  const principal = resolveScopedPrincipal(input);
+  const pending = getReusableAuthorizationChallenge(scope, principal);
+  if (pending !== undefined) return requestAuthorization([pending]);
+
   const attempt = createAuthorizationAttempt(scope);
   if (attempt === undefined) return undefined;
 
   const interactive = authorization as InteractiveAuthorizationDefinition<JsonValue>;
-  const principal = resolveScopedPrincipal(input);
   const callbackUrl = resolveAuthorizationCallbackUrl({
     authorization,
     callbackUrl: attempt.hookUrl,

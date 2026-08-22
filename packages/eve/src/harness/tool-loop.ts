@@ -186,6 +186,7 @@ import { normalizeProviderToolHistory } from "#harness/provider-tool-history.js"
 import {
   type AuthorizationSignal,
   getSupersededAuthorizationChallenges,
+  isPendingAuthorizationChallenge,
   isAuthorizationSignal,
   setPendingAuthorization,
 } from "#harness/authorization.js";
@@ -2789,6 +2790,7 @@ async function handleStepResult(input: {
         );
       }
       for (const ch of challenges) {
+        if (isPendingAuthorizationChallenge(baseSession.state, ch)) continue;
         await emit(
           createAuthorizationRequiredEvent({
             attemptId: ch.attemptId,

@@ -46,6 +46,7 @@ import {
   getPendingAuthorization,
   modelFacingAuthorizationOutput,
   requestAuthorization,
+  setPendingAuthorization,
 } from "#harness/authorization.js";
 import {
   getPendingInputRequestIds,
@@ -5869,15 +5870,15 @@ describe("createToolLoopHarness", () => {
   });
 
   describe("authorization signal detection", () => {
-    function createAuthSignals() {
+    function createAuthSignals(attemptId = "attempt-protected-action", userCode = "GFI-QLM") {
       const full = requestAuthorization([
         {
-          attemptId: "attempt-protected-action",
+          attemptId,
           name: "protected_action",
           challenge: {
             url: "https://idp.example/auth",
             instructions: "Sign in to continue",
-            userCode: "GFI-QLM",
+            userCode,
           },
           hookUrl: "https://app.example/callback",
           principal: { type: "app" },
@@ -6042,6 +6043,95 @@ describe("createToolLoopHarness", () => {
 
       const actionResults = events.filter((event) => event.type === "action.result");
       expect(actionResults).toHaveLength(0);
+    });
+
+    it("does not report or re-emit a reused pending authorization", async () => {
+      const { full, modelFacing } = createAuthSignals("attempt-existing", "OLD-CODE");
+
+      setupMockAgent({
+        finishReason: "tool-calls",
+        fullStreamParts: [
+          {
+            input: { action: "run" },
+            toolCallId: "call-1",
+            toolName: "protected_action",
+            type: "tool-call",
+          },
+          {
+            output: modelFacing,
+            toolCallId: "call-1",
+            toolName: "protected_action",
+            type: "tool-result",
+          },
+          { finishReason: "tool-calls", type: "finish-step" },
+        ],
+        response: {
+          messages: [
+            {
+              content: [
+                {
+                  input: { action: "run" },
+                  toolCallId: "call-1",
+                  toolName: "protected_action",
+                  type: "tool-call",
+                },
+              ],
+              role: "assistant",
+            },
+          ],
+        },
+        text: "",
+        toolCalls: [
+          {
+            input: { action: "run" },
+            toolCallId: "call-1",
+            toolName: "protected_action",
+            type: "tool-call",
+          },
+        ],
+        toolResults: [
+          {
+            output: modelFacing,
+            toolCallId: "call-1",
+            toolName: "protected_action",
+            type: "tool-result",
+          },
+        ],
+      });
+
+      const { emit, events } = createEventCollector();
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", emit, {
+          tools: new Map([
+            [
+              "protected_action",
+              {
+                description: "Run a protected action",
+                execute: vi.fn(),
+                inputSchema: jsonSchema({ type: "object" }),
+                name: "protected_action",
+              },
+            ],
+          ]),
+        }),
+      );
+      const ctx = new ContextContainer();
+      stashToolInterrupt(ctx, "call-1", full);
+      const session = createTestSession({
+        state: setPendingAuthorization(undefined, { challenges: full.challenges }),
+      });
+
+      const result = await contextStorage.run(ctx, () =>
+        runStep(session, { message: "run protected action" }),
+      );
+
+      expect(
+        events.filter(
+          (event) => event.type === "authorization.completed" && event.data.outcome === "failed",
+        ),
+      ).toHaveLength(0);
+      expect(events.filter((event) => event.type === "authorization.required")).toHaveLength(0);
+      expect(getPendingAuthorization(result.session.state)?.challenges).toEqual(full.challenges);
     });
   });
 
