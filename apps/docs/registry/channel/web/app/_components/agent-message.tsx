@@ -197,23 +197,26 @@ function StreamingMessageResponse({
   useEffect(() => {
     if (!isRevealing) return;
     const interval = window.setInterval(() => {
-      setDisplayed((current) => {
-        const next = target.current;
-        if (!next.startsWith(current)) return next;
-        if (current.length === next.length) {
-          if (!streaming.current) setIsRevealing(false);
-          return current;
-        }
+      const current = displayedRef.current;
+      const next = target.current;
+      if (!next.startsWith(current)) {
+        displayedRef.current = next;
+        setDisplayed(next);
+        return;
+      }
+      if (current.length === next.length) {
+        if (!streaming.current) setIsRevealing(false);
+        return;
+      }
 
-        const pending = Array.from(next.slice(current.length));
-        const elapsed = performance.now() - (pendingSince.current ?? performance.now());
-        const remainingMs = Math.max(STREAM_FRAME_MS, STREAM_MAX_LAG_MS - elapsed);
-        const count = Math.max(1, Math.ceil((pending.length * STREAM_FRAME_MS) / remainingMs));
-        const revealed = current + pending.slice(0, count).join("");
-        displayedRef.current = revealed;
-        if (revealed.length === next.length) pendingSince.current = undefined;
-        return revealed;
-      });
+      const pending = Array.from(next.slice(current.length));
+      const elapsed = performance.now() - (pendingSince.current ?? performance.now());
+      const remainingMs = Math.max(STREAM_FRAME_MS, STREAM_MAX_LAG_MS - elapsed);
+      const count = Math.max(1, Math.ceil((pending.length * STREAM_FRAME_MS) / remainingMs));
+      const revealed = current + pending.slice(0, count).join("");
+      displayedRef.current = revealed;
+      if (revealed.length === next.length) pendingSince.current = undefined;
+      setDisplayed(revealed);
     }, STREAM_FRAME_MS);
     return () => window.clearInterval(interval);
   }, [isRevealing]);
