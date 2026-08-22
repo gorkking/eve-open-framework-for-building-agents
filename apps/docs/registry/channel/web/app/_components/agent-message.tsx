@@ -37,6 +37,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useEffect, useRef, useState } from "react";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -46,11 +47,8 @@ export type AgentInputResponse = {
 
 type EveFilePart = Extract<EveMessagePart, { type: "file" }>;
 
-const STREAM_ANIMATION = {
-  duration: 120,
-  sep: "word",
-  stagger: 20,
-} as const;
+const STREAM_FRAME_MS = 50;
+const STREAM_CHARACTERS_PER_FRAME = 15;
 
 export function AgentMessage({
   canRespond,
@@ -108,15 +106,7 @@ function AgentMessagePart({
     case "step-start":
       return null;
     case "text":
-      return (
-        <MessageResponse
-          animated={showCaret ? STREAM_ANIMATION : false}
-          caret="block"
-          isAnimating={showCaret}
-        >
-          {part.text}
-        </MessageResponse>
-      );
+      return <StreamingMessageResponse isStreaming={showCaret} text={part.text} />;
     case "reasoning":
       return (
         <Reasoning defaultOpen isStreaming={part.state === "streaming"}>
@@ -164,6 +154,41 @@ function AgentMessagePart({
       );
     }
   }
+}
+
+function StreamingMessageResponse({
+  isStreaming,
+  text,
+}: {
+  readonly isStreaming: boolean;
+  readonly text: string;
+}) {
+  const target = useRef(text);
+  const [displayed, setDisplayed] = useState(() => (isStreaming ? "" : text));
+
+  useEffect(() => {
+    target.current = text;
+    if (!isStreaming) setDisplayed(text);
+  }, [isStreaming, text]);
+
+  useEffect(() => {
+    if (!isStreaming) return;
+    const interval = window.setInterval(() => {
+      setDisplayed((current) => {
+        const next = target.current;
+        if (!next.startsWith(current)) return next;
+        if (current.length === next.length) return current;
+        return next.slice(0, current.length + STREAM_CHARACTERS_PER_FRAME);
+      });
+    }, STREAM_FRAME_MS);
+    return () => window.clearInterval(interval);
+  }, [isStreaming]);
+
+  return (
+    <MessageResponse caret="block" isAnimating={isStreaming}>
+      {displayed}
+    </MessageResponse>
+  );
 }
 
 function QuestionRequest({

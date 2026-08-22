@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Smooth generated Web Chat responses by animating new words between provider stream chunks instead of revealing each large chunk at once.
+Smooth generated Web Chat responses by revealing streamed text through one ordered buffer between provider chunks instead of displaying each large chunk at once.
