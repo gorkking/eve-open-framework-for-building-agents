@@ -37,7 +37,6 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useEffect, useRef, useState } from "react";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -47,9 +46,11 @@ export type AgentInputResponse = {
 
 type EveFilePart = Extract<EveMessagePart, { type: "file" }>;
 
-const STREAM_FRAME_MS = 33;
-const STREAM_MAX_LAG_MS = 165;
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const STREAM_CHUNK_FADE = {
+  duration: 100,
+  sep: "word",
+  stagger: 0,
+} as const;
 
 export function AgentMessage({
   canRespond,
@@ -107,7 +108,15 @@ function AgentMessagePart({
     case "step-start":
       return null;
     case "text":
-      return <StreamingMessageResponse isStreaming={showCaret} text={part.text} />;
+      return (
+        <MessageResponse
+          animated={showCaret ? STREAM_CHUNK_FADE : false}
+          caret="block"
+          isAnimating={showCaret}
+        >
+          {part.text}
+        </MessageResponse>
+      );
     case "reasoning":
       return (
         <Reasoning defaultOpen isStreaming={part.state === "streaming"}>
@@ -155,77 +164,6 @@ function AgentMessagePart({
       );
     }
   }
-}
-
-function StreamingMessageResponse({
-  isStreaming,
-  text,
-}: {
-  readonly isStreaming: boolean;
-  readonly text: string;
-}) {
-  const hasStreamed = useRef(isStreaming);
-  const streaming = useRef(isStreaming);
-  const target = useRef(text);
-  const displayedRef = useRef(isStreaming ? "" : text);
-  const pendingSince = useRef<number | undefined>(undefined);
-  const [displayed, setDisplayed] = useState(displayedRef.current);
-  const [isRevealing, setIsRevealing] = useState(isStreaming);
-
-  useEffect(() => {
-    streaming.current = isStreaming;
-    target.current = text;
-    hasStreamed.current ||= isStreaming;
-
-    const cannotAnimate =
-      !hasStreamed.current ||
-      window.matchMedia(REDUCED_MOTION_QUERY).matches ||
-      !text.startsWith(displayedRef.current);
-    if (cannotAnimate) {
-      displayedRef.current = text;
-      pendingSince.current = undefined;
-      setDisplayed(text);
-      setIsRevealing(false);
-      return;
-    }
-    if (text.length > displayedRef.current.length) {
-      pendingSince.current ??= performance.now();
-      setIsRevealing(true);
-    }
-  }, [isStreaming, text]);
-
-  useEffect(() => {
-    if (!isRevealing) return;
-    const interval = window.setInterval(() => {
-      const current = displayedRef.current;
-      const next = target.current;
-      if (!next.startsWith(current)) {
-        displayedRef.current = next;
-        setDisplayed(next);
-        return;
-      }
-      if (current.length === next.length) {
-        if (!streaming.current) setIsRevealing(false);
-        return;
-      }
-
-      const pending = Array.from(next.slice(current.length));
-      const elapsed = performance.now() - (pendingSince.current ?? performance.now());
-      const remainingMs = Math.max(STREAM_FRAME_MS, STREAM_MAX_LAG_MS - elapsed);
-      const count = Math.max(1, Math.ceil((pending.length * STREAM_FRAME_MS) / remainingMs));
-      const revealed = current + pending.slice(0, count).join("");
-      displayedRef.current = revealed;
-      if (revealed.length === next.length) pendingSince.current = undefined;
-      setDisplayed(revealed);
-    }, STREAM_FRAME_MS);
-    return () => window.clearInterval(interval);
-  }, [isRevealing]);
-
-  return (
-    <MessageResponse caret="block" isAnimating={isStreaming || isRevealing}>
-      {displayed}
-    </MessageResponse>
-  );
 }
 
 function QuestionRequest({

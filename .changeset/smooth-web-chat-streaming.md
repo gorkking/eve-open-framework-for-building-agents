@@ -2,4 +2,4 @@
 "eve": patch
 ---
 
-Smooth generated Web Chat responses by adaptively revealing streamed text through one bounded-latency ordered buffer between provider chunks instead of displaying each large chunk at once.
+Smooth generated Web Chat responses by fading each newly received model chunk in as one ordered unit instead of displaying large chunks abruptly.

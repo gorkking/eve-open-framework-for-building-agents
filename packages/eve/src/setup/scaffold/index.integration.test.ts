@@ -241,7 +241,7 @@ describe("ensureChannel", () => {
     );
     expect(agentChatSource).toContain("<PromptInputTextarea disabled={isRestoring}");
     expect(agentChatSource).toContain('turnPolicy: "steer"');
-    expect(agentChatSource).toContain("<StreamingMessageResponse");
+    expect(agentChatSource).toContain("animated={showCaret ? STREAM_CHUNK_FADE : false}");
     expect(agentChatSource).toContain("{showPendingThinking ? <PendingThinking /> : null}");
     expect(agentChatSource).not.toContain("StatusDot");
     await expect(readFile(join(projectRoot, "next.config.ts"), "utf8")).resolves.toContain(
