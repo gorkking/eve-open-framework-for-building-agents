@@ -47,8 +47,9 @@ export type AgentInputResponse = {
 
 type EveFilePart = Extract<EveMessagePart, { type: "file" }>;
 
-const STREAM_FRAME_MS = 50;
-const STREAM_CHARACTERS_PER_FRAME = 15;
+const STREAM_FRAME_MS = 33;
+const STREAM_MAX_LAG_MS = 165;
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 export function AgentMessage({
   canRespond,
@@ -163,29 +164,62 @@ function StreamingMessageResponse({
   readonly isStreaming: boolean;
   readonly text: string;
 }) {
+  const hasStreamed = useRef(isStreaming);
+  const streaming = useRef(isStreaming);
   const target = useRef(text);
-  const [displayed, setDisplayed] = useState(() => (isStreaming ? "" : text));
+  const displayedRef = useRef(isStreaming ? "" : text);
+  const pendingSince = useRef<number | undefined>(undefined);
+  const [displayed, setDisplayed] = useState(displayedRef.current);
+  const [isRevealing, setIsRevealing] = useState(isStreaming);
 
   useEffect(() => {
+    streaming.current = isStreaming;
     target.current = text;
-    if (!isStreaming) setDisplayed(text);
+    hasStreamed.current ||= isStreaming;
+
+    const cannotAnimate =
+      !hasStreamed.current ||
+      window.matchMedia(REDUCED_MOTION_QUERY).matches ||
+      !text.startsWith(displayedRef.current);
+    if (cannotAnimate) {
+      displayedRef.current = text;
+      pendingSince.current = undefined;
+      setDisplayed(text);
+      setIsRevealing(false);
+      return;
+    }
+    if (text.length > displayedRef.current.length) {
+      pendingSince.current ??= performance.now();
+      setIsRevealing(true);
+    }
   }, [isStreaming, text]);
 
   useEffect(() => {
-    if (!isStreaming) return;
+    if (!isRevealing) return;
     const interval = window.setInterval(() => {
       setDisplayed((current) => {
         const next = target.current;
         if (!next.startsWith(current)) return next;
-        if (current.length === next.length) return current;
-        return next.slice(0, current.length + STREAM_CHARACTERS_PER_FRAME);
+        if (current.length === next.length) {
+          if (!streaming.current) setIsRevealing(false);
+          return current;
+        }
+
+        const pending = Array.from(next.slice(current.length));
+        const elapsed = performance.now() - (pendingSince.current ?? performance.now());
+        const remainingMs = Math.max(STREAM_FRAME_MS, STREAM_MAX_LAG_MS - elapsed);
+        const count = Math.max(1, Math.ceil((pending.length * STREAM_FRAME_MS) / remainingMs));
+        const revealed = current + pending.slice(0, count).join("");
+        displayedRef.current = revealed;
+        if (revealed.length === next.length) pendingSince.current = undefined;
+        return revealed;
       });
     }, STREAM_FRAME_MS);
     return () => window.clearInterval(interval);
-  }, [isStreaming]);
+  }, [isRevealing]);
 
   return (
-    <MessageResponse caret="block" isAnimating={isStreaming}>
+    <MessageResponse caret="block" isAnimating={isStreaming || isRevealing}>
       {displayed}
     </MessageResponse>
   );
